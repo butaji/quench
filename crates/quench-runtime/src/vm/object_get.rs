@@ -541,7 +541,7 @@ impl<H: Host> Vm<H> {
     /// `set_plain_named_property` makes the named one; `false` leaves the write, and any key
     /// that function refuses, to the general path, which interns a new name.
     pub(super) fn try_plain_string_key_set(&mut self, object: Value, key: Value, value: Value) -> bool {
-        let Some(atom) = self.heap.string(key).and_then(|text| self.lookup_js_atom(text)) else {
+        let Some(atom) = self.lookup_string_atom(key) else {
             return false;
         };
         self.set_plain_named_property(object, atom, value).is_some()
@@ -554,22 +554,58 @@ impl<H: Host> Vm<H> {
         if let Some(index) = key.as_int() {
             return self.plain_index_get(object, usize::try_from(index).ok()?);
         }
-        if let Some(text) = self.heap.string(key) {
-            return self.plain_named_get(object, self.lookup_js_atom(text)?);
+        if let Some(atom) = self.lookup_string_atom(key) {
+            return self.plain_named_get(object, atom);
+        }
+        if self.heap.string(key).is_some() {
+            return None;
         }
         match self.heap.get(key)? {
             // A host-private symbol names only an own property, which the general path reads.
             Cell::Symbol(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate => {
-                self.plain_symbol_get(object, key)
+                self.plain_proved_get(object, PropertyKey::symbol(key))
             }
             _ => None,
         }
     }
 
-    /// `plain_property_get` of a symbol key, answered by the proof of where the walk from a
-    /// receiver of the same shape found it (`symbol_load_proofs`), or by `prove_symbol_load`.
+    /// A symbol-keyed read at lane site `site` (a record's address) of the own data slot its
+    /// site entry names for `object`'s shape (`SymbolLoadProofs::site_own_slot`).
+    #[inline(always)]
+    pub(super) fn site_symbol_own_read(&self, site: usize, object: Value, key: Value) -> Option<Value> {
+        let data = self.heap.ordinary_object(object)?;
+        let epoch = crate::heap::prototype_layout_epoch();
+        let slot = self.symbol_load_proofs.site_own_slot(site, data.shape(), key, epoch)?;
+        // SAFETY: the entry copies a proof's own data slot of this shape.
+        Some(unsafe { self.heap.property_get_unchecked(data, slot as usize) })
+    }
+
+    /// Records at lane site `site` the own slot a proof gives `key` on `object`'s shape, for
+    /// `site_symbol_own_read`; nothing for any other key or answer.
+    pub(super) fn record_site_symbol_read(&self, site: usize, object: Value, key: Value) {
+        if !matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            return;
+        }
+        if let Some(data) = self.heap.ordinary_object(object) {
+            let epoch = crate::heap::prototype_layout_epoch();
+            self.symbol_load_proofs.record_site_own_slot(site, data.shape(), key, epoch);
+        }
+    }
+
+    /// `plain_named_get` with its walk proved (`plain_proved_get`), for callers that may record.
     #[inline]
-    fn plain_symbol_get(&mut self, object: Value, key: Value) -> Option<Value> {
+    pub(super) fn plain_named_load(&mut self, object: Value, atom: Atom) -> Option<Value> {
+        if !self.plain_named_key(atom) {
+            return None;
+        }
+        self.plain_proved_get(object, PropertyKey::string(atom))
+    }
+
+    /// `plain_property_get` of a symbol key or a key `plain_named_key` admits, answered by
+    /// the proof of where the walk from a receiver of the same shape found it
+    /// (`symbol_load_proofs`), or by `prove_symbol_load`.
+    #[inline]
+    fn plain_proved_get(&mut self, object: Value, key: PropertyKey) -> Option<Value> {
         use super::symbol_load_proof::SymbolLoadAnswer;
         let data = self.heap.ordinary_object(object)?;
         let epoch = crate::heap::prototype_layout_epoch();
@@ -606,7 +642,7 @@ impl<H: Host> Vm<H> {
         use super::symbol_load_proof::SymbolLoadAnswer;
         let data = self.heap.ordinary_object(object)?;
         let epoch = crate::heap::prototype_layout_epoch();
-        match self.symbol_load_proofs.answer(data.shape(), key, epoch)? {
+        match self.symbol_load_proofs.answer(data.shape(), PropertyKey::symbol(key), epoch)? {
             SymbolLoadAnswer::Getter { prototype, holder, slot }
                 if !data.has_side_descriptors() && data.proto() == prototype =>
             {
@@ -623,9 +659,9 @@ impl<H: Host> Vm<H> {
     /// to one advances the epoch and retires the proof.
     #[cold]
     #[inline(never)]
-    fn prove_symbol_load(&mut self, object: Value, key: Value, epoch: u64) -> Option<Value> {
+    fn prove_symbol_load(&mut self, object: Value, key: PropertyKey, epoch: u64) -> Option<Value> {
         use super::symbol_load_proof::SymbolLoadAnswer;
-        let symbol = PropertyKey::symbol(key);
+        let symbol = key;
         let data = self.heap.ordinary_object(object)?;
         let (shape, prototype) = (data.shape(), data.proto());
         let mut current = object;
@@ -692,7 +728,7 @@ impl<H: Host> Vm<H> {
     fn prove_symbol_chain(
         &mut self,
         shape: u32,
-        key: Value,
+        key: PropertyKey,
         epoch: u64,
         prototype: Value,
         depth: u8,
@@ -753,7 +789,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         receiver: Value,
     ) -> Result<Value, JsError> {
-        if let Some(value) = self.plain_named_get(object, atom) {
+        if let Some(value) = self.plain_named_load(object, atom) {
             return Ok(value);
         }
         let _stack = self.enter_stack()?;
@@ -1028,6 +1064,35 @@ impl<H: Host> Vm<H> {
         Some(PrivateBrand { home: *self.private_homes.get(&key)?, name: atom })
     }
 
+    /// The private brand of `atom` at lane site `site` of `function`, whose frame captures
+    /// from `environment`: the home the site found last for that environment
+    /// (`PrivateSiteHomes`), else the running frame's home (`private_name_home`) when `frame`
+    /// is set, or the memoized one (`memoized_private_brand`) for a frameless activation.
+    /// `None` leaves the access to the general path.
+    pub(super) fn site_private_brand(
+        &mut self,
+        p: &ResidualProgram,
+        site: usize,
+        environment: Value,
+        function: u32,
+        frame: bool,
+        atom: Atom,
+    ) -> Option<PrivateBrand> {
+        let epoch = self.heap.collection_epoch();
+        if let Some(home) = self.private_site_homes.home(site, environment, epoch) {
+            return Some(PrivateBrand { home, name: atom });
+        }
+        let brand = if frame {
+            PrivateBrand { home: self.private_name_home(p, atom)?, name: atom }
+        } else {
+            self.memoized_private_brand(p, environment, function, atom)?
+        };
+        if p.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty()) {
+            self.private_site_homes.record(site, environment, epoch, brand.home);
+        }
+        Some(brand)
+    }
+
     /// `private_field_value` through `memoized_private_brand`.
     pub(super) fn memoized_private_field_value(
         &self,
@@ -1039,22 +1104,6 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         let brand = self.memoized_private_brand(p, environment, function, atom)?;
         self.object_data(target)?.private_field(brand)
-    }
-
-    /// `set_private_field_value` through `memoized_private_brand`.
-    pub(super) fn memoized_set_private_field_value(
-        &mut self,
-        p: &ResidualProgram,
-        environment: Value,
-        function: u32,
-        target: Value,
-        atom: Atom,
-        value: Value,
-    ) -> bool {
-        let Some(brand) = self.memoized_private_brand(p, environment, function, atom) else {
-            return false;
-        };
-        self.object_data_mut(target).is_some_and(|object| object.set_private_field(brand, value))
     }
 
     /// The store of private field `atom` of `target` under the running frame's home for the

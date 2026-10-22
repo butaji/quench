@@ -1718,7 +1718,7 @@ impl Lowering<'_> {
     }
 
     /// Whether `register` holds a Wasm local rather than an operand-stack value.
-    fn is_local_register(&self, register: Register) -> bool {
+    pub(super) fn is_local_register(&self, register: Register) -> bool {
         self.local_base
             .is_some_and(|base| (base..base + self.locals).contains(&register))
     }

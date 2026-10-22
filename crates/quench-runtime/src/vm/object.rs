@@ -793,6 +793,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
+        self.reused_iterator_result = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
         self.regexp_object_shapes = None;
@@ -876,6 +877,9 @@ impl<H: Host> Vm<H> {
         frame: usize,
         base: FieldBase,
     ) -> Result<Value, JsError> {
+        if let Some(local) = base.local_index() {
+            return self.load_local_binding(p, frame, usize::from(local), None);
+        }
         match base.register_index() {
             Some(register) => Ok(self.read(frame, register)),
             None => self.checked_this_binding(p, frame),
@@ -1572,6 +1576,23 @@ impl<H: Host> Vm<H> {
         Some(slot)
     }
 
+    /// An own-data slot from a site's hashed megamorphic entries, once its inline entries
+    /// overflowed: the store at an AST-building site sees a receiver shape per node kind
+    /// (Babel's and TypeScript's `node.end =` and `e.parent =`), so its writes stay cached
+    /// in the lane instead of each leaving it. Out of line, as the hash probe needs
+    /// registers the inline store does not.
+    #[inline(never)]
+    fn hashed_megamorphic_own_field_slot(&self, site: usize, receiver: u32) -> Option<u16> {
+        // SAFETY: as for `inline_megamorphic_field_slot`.
+        let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site) };
+        if table_index == NO_MEGAMORPHIC_FIELD {
+            return None;
+        }
+        let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
+        set.overflow.as_ref()?;
+        set.get(receiver, NO_FIELD_HOLDER).map(|entry| entry.slot)
+    }
+
     /// `get_field_cached` past the inline own-data hits: hashed megamorphic and
     /// prototype-holder hits, then the uncached path. The receiver is an ordinary object.
     #[inline(never)]
@@ -1945,8 +1966,16 @@ impl<H: Host> Vm<H> {
         match self.field_miss_data_value(object, atom, site) {
             Some(value) => Ok(value),
             None => {
-                self.record_accessor_field_cache(object, atom, site);
-                self.get_property(p, object, atom)
+                // A getter the site's accessor entry answers is the `[[Get]]` result's whole
+                // computation: its call with the receiver, without walking the chain again.
+                let getter = self.cached_field_getter(object, atom, site).or_else(|| {
+                    self.record_accessor_field_cache(object, atom, site);
+                    self.cached_field_getter(object, atom, site)
+                });
+                match getter {
+                    Some(getter) => self.call_value(p, getter, object, &[]),
+                    None => self.get_property(p, object, atom),
+                }
             }
         }
     }
@@ -2156,8 +2185,9 @@ impl<H: Host> Vm<H> {
             );
             return Some(value);
         }
-        let ordinary = self.heap.ordinary_object(object).is_some();
-        let (cache, value) = self.inherited_field(receiver, ordinary, atom)?;
+        let cache_absence = self.heap.ordinary_object(object).is_some()
+            || self.heap.array(object).is_some();
+        let (cache, value) = self.inherited_field(receiver, cache_absence, atom)?;
         if self.field_cache_records(site) {
             self.note_field_cache_write(site);
             self.record_inherited_field(site, cache);
@@ -2234,10 +2264,7 @@ impl<H: Host> Vm<H> {
                 InheritedFieldAnswer::Slot(slot) => {
                     // A holder in the object records, as most prototypes are, without the
                     // out-of-line lookup of one in a slot.
-                    let holder = match self.heap.object_record(cache.proved_holder) {
-                        Some(holder) => holder,
-                        None => self.heap.ordinary_object(cache.proved_holder)?,
-                    };
+                    let holder = self.heap.object(cache.proved_holder)?;
                     // SAFETY: the proof keeps the holder and its recorded shape.
                     unsafe { self.heap.property_get_shaped(holder, usize::from(slot)) }?
                 }
@@ -2249,7 +2276,7 @@ impl<H: Host> Vm<H> {
         let mut holder = None;
         let mut holder_value = Value::UNDEFINED;
         for &shape in &cache.prototype_shapes[..usize::from(cache.depth)] {
-            let Some(data) = self.heap.ordinary_object(prototype) else {
+            let Some(data) = self.shape_property_lookup(prototype, cache.atom) else {
                 return None;
             };
             if data.shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
@@ -2287,7 +2314,7 @@ impl<H: Host> Vm<H> {
         let mut link = proof.prototype;
         for _ in 0..proof.depth {
             self.heap.mark_prototype(link);
-            link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
+            link = self.heap.object(link).map_or(Value::NULL, Object::proto);
         }
         if crate::heap::prototype_layout_epoch() != proof.epoch {
             return;
@@ -2306,7 +2333,7 @@ impl<H: Host> Vm<H> {
     fn inherited_field(
         &self,
         object: &Object,
-        ordinary: bool,
+        cache_absence: bool,
         atom: Atom,
     ) -> Option<(InheritedFieldCache, Value)> {
         if self.shape_slot(object.shape(), atom).is_some() {
@@ -2314,6 +2341,7 @@ impl<H: Host> Vm<H> {
         }
         let mut cache = InheritedFieldCache {
             receiver: object.shape(),
+            atom,
             prototype_shapes: [NO_FIELD_HOLDER; INHERITED_FIELD_CACHE_MAX_DEPTH],
             depth: 0,
             answer: InheritedFieldAnswer::Absent,
@@ -2322,10 +2350,10 @@ impl<H: Host> Vm<H> {
             proved_holder: Value::UNDEFINED,
             next: NO_INHERITED_FIELD,
         };
-        // Shapes alone prove a name absent only for an ordinary receiver, whose shape holds
-        // every property it has; an arguments object's indices and other index names, and any
-        // exotic receiver's own answers, stay uncached.
-        let absence_cacheable = ordinary
+        // Shapes prove non-index, non-virtual names absent for ordinary receivers and direct
+        // arrays, whose indexed elements and virtual length are excluded by the caller's shape
+        // lookup. An arguments object's indices and other index names stay uncached.
+        let absence_cacheable = cache_absence
             && !object.is_arguments_object()
             && !self.atom_class(atom).contains(AtomClass::ARRAY_INDEX);
         let mut prototype = object.proto();
@@ -2333,7 +2361,7 @@ impl<H: Host> Vm<H> {
             if prototype.is_null() {
                 return absence_cacheable.then_some((cache, Value::UNDEFINED));
             }
-            let Some(data) = self.heap.ordinary_object(prototype) else {
+            let Some(data) = self.shape_property_lookup(prototype, atom) else {
                 return None;
             };
             let shape = data.shape();
@@ -2829,6 +2857,7 @@ impl<H: Host> Vm<H> {
             Some(cache.slot)
         } else {
             self.inline_megamorphic_field_slot(index, shape)
+                .or_else(|| self.hashed_megamorphic_own_field_slot(index, shape))
         };
         let Some(slot) = slot else {
             return false;

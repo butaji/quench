@@ -30,7 +30,7 @@ pub use wasm::{
 
 pub use bytecode::{KeptBytes, ResidualProgram};
 pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
-pub use heap::{RootId, HeapMemoryComposition};
+pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId};
 pub use snapshot::{SnapshotReader, SnapshotWriter};
 pub use host::{
     CapabilityId, Host, HostContext, HostExecutionContext, HostGlobal, ModuleLoadError, ModuleLoadErrorKind,

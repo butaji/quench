@@ -1,0 +1,18 @@
+quench        richards       throughput    1402  memory-first    1298  x0.926
+quench        deltablue      throughput    1077  memory-first    1094  x1.016
+quench        crypto         throughput    2467  memory-first    2278  x0.923
+quench        raytrace       throughput    2696  memory-first    1182  x0.438
+quench        earley-boyer   throughput    4361  memory-first    2241  x0.514
+quench        regexp         throughput    2645  memory-first    1976  x0.747
+quench        splay          throughput    3979  memory-first    3740  x0.940
+quench        navier-stokes  throughput    2831  memory-first    2724  x0.962
+quench memory-first/throughput score geomean 0.777
+quench --jit  richards       throughput    1406  memory-first    1319  x0.938
+quench --jit  deltablue      throughput    1279  memory-first     783  x0.612
+quench --jit  crypto         throughput    5062  memory-first    4011  x0.792
+quench --jit  raytrace       throughput    2531  memory-first    1140  x0.450
+quench --jit  earley-boyer   throughput    3825  memory-first    2153  x0.563
+quench --jit  regexp         throughput    2458  memory-first    1850  x0.753
+quench --jit  splay          throughput    3927  memory-first    3997  x1.018
+quench --jit  navier-stokes  throughput   20409  memory-first   19966  x0.978
+quench --jit memory-first/throughput score geomean 0.736

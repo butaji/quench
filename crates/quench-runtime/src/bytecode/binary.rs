@@ -1212,10 +1212,19 @@ impl<'a> BinaryReader<'a> {
     pub(super) fn magic(&mut self, value: &[u8]) -> Result<(), String> {
         if self.take(value.len())? == value { Ok(()) } else { Err("invalid residual header".into()) }
     }
-    pub(super) fn u8(&mut self) -> Result<u8, String> { Ok(self.take(1)?[0]) }
-    pub(super) fn u16(&mut self) -> Result<u16, String> { Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap())) }
-    pub(super) fn u32(&mut self) -> Result<u32, String> { Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap())) }
-    pub(super) fn u64(&mut self) -> Result<u64, String> { Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap())) }
+    /// The next `N` bytes, read without a call; a truncated residual reports through `take`.
+    #[inline(always)]
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], String> {
+        if let Some(bytes) = self.bytes.get(self.cursor..).and_then(<[u8]>::first_chunk::<N>) {
+            self.cursor += N;
+            return Ok(*bytes);
+        }
+        self.take(N).map(|bytes| bytes.try_into().expect("take returns N bytes"))
+    }
+    pub(super) fn u8(&mut self) -> Result<u8, String> { Ok(self.array::<1>()?[0]) }
+    pub(super) fn u16(&mut self) -> Result<u16, String> { Ok(u16::from_le_bytes(self.array()?)) }
+    pub(super) fn u32(&mut self) -> Result<u32, String> { Ok(u32::from_le_bytes(self.array()?)) }
+    pub(super) fn u64(&mut self) -> Result<u64, String> { Ok(u64::from_le_bytes(self.array()?)) }
     pub(super) fn string(&mut self) -> Result<String, String> {
         let len = self.u32()? as usize;
         String::from_utf8(self.take(len)?.to_vec()).map_err(|_| "invalid residual string".into())
