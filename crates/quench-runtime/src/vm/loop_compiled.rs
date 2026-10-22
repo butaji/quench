@@ -146,6 +146,9 @@ pub(super) struct LoopEntry {
     length: usize,
 }
 
+/// The longest array a region indexes: a negative `i32` index zero-extends past it, so one
+/// unsigned comparison bounds every `i32` index.
+const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
 const ENTRY_INTERRUPT: usize = 0;
 const ENTRY_CAPTURES: usize = 1;
 const WORD_BYTES: i32 = 8;
@@ -175,10 +178,13 @@ impl LoopEntry {
         self.words[ENTRY_CAPTURES..ENTRY_CAPTURES + count].iter().map(|bits| Value::from_bits(*bits)).collect()
     }
 
-    /// Arrays follow the captures, in the region's order.
-    pub(super) fn push_array(&mut self, elements: *mut Value, length: usize) {
+    /// Arrays follow the captures, in the region's order. An array longer than
+    /// `MAX_INDEXED_LENGTH` declines the entry.
+    pub(super) fn push_array(&mut self, elements: *mut Value, length: usize) -> Option<()> {
+        (length <= MAX_INDEXED_LENGTH).then_some(())?;
         self.push(elements.addr() as u64);
         self.push(length as u64);
+        Some(())
     }
 }
 
@@ -1027,8 +1033,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// unless it is an integral Number below the length.
     fn index(&mut self, pc: u32, key: Typed, length: ir::Value) -> ir::Value {
         let index = match key.representation {
-            // A negative index reads as one past every length.
-            Representation::Int32 => self.builder.ins().sextend(types::I64, key.value),
+            // A negative index zero-extends past every length (`MAX_INDEXED_LENGTH`).
+            Representation::Int32 => self.builder.ins().uextend(types::I64, key.value),
             Representation::Float64 => {
                 let index = self.builder.ins().fcvt_to_sint_sat(types::I64, key.value);
                 let back = self.builder.ins().fcvt_from_sint(types::F64, index);
@@ -1182,14 +1188,22 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             Op::IncDec => {
                 let operand = self.register(instruction.register_b());
-                let operator = if instruction.boolean_flag()? {
-                    FloatOperator::Subtract
-                } else {
-                    FloatOperator::Add
-                };
-                let one = self.read(Source::Number(1.0));
+                let decrement = instruction.boolean_flag()?;
                 let result = instruction.result_register();
-                let value = self.arithmetic(pc, Arithmetic::Float(operator), result, operand, one);
+                let value = if operand.representation == Representation::Int32
+                    && self.representations[&result] == Representation::Int32
+                {
+                    // Only the extreme the step leaves `i32` from overflows.
+                    let (limit, step) = if decrement { (i32::MIN, -1) } else { (i32::MAX, 1) };
+                    let overflow = self.builder.ins().icmp_imm_s(IntCC::Equal, operand.value, i64::from(limit));
+                    self.guard_int32(pc, overflow, Widening::Register(result));
+                    let value = self.builder.ins().iadd_imm_s(operand.value, step);
+                    Typed { value, representation: Representation::Int32 }
+                } else {
+                    let operator = if decrement { FloatOperator::Subtract } else { FloatOperator::Add };
+                    let one = self.read(Source::Number(1.0));
+                    self.arithmetic(pc, Arithmetic::Float(operator), result, operand, one)
+                };
                 self.define(result, value);
                 self.fall_through(pc)
             }
