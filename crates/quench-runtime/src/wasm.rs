@@ -26,6 +26,8 @@ pub(crate) const INDEX_GROW_FAILURE: i64 = -1;
 pub use memory::{WasmData, WasmDataMode, WasmMemory};
 mod control;
 mod inline;
+#[cfg(test)]
+pub(crate) use inline::COMPILED_CALLS_KEPT_FOR_TEST;
 mod scalar;
 mod types;
 pub use types::WasmTypes;
@@ -33,6 +35,7 @@ pub(crate) mod simd;
 pub(crate) mod table;
 pub(crate) use scalar::{ScalarBits, V128_BYTES, WasmSignatures};
 pub use scalar::{
+    WasmHostSignature,
     WasmCallableType, WasmFunctionBody, WasmFunctionImport, WasmReferenceKind, WasmSignature,
     WasmType, WasmValue,
 };
@@ -206,6 +209,15 @@ pub struct WasmModule {
     pub(crate) tags: Rc<[WasmTag]>,
     pub(crate) start: Option<u32>,
     pub(crate) exports: Rc<[WasmExport]>,
+    /// The custom sections in module order, for `WebAssembly.Module.customSections`.
+    pub(crate) custom_sections: Rc<[WasmCustomSection]>,
+}
+
+/// One custom section: its name and contents.
+#[derive(Clone, Debug)]
+pub struct WasmCustomSection {
+    pub name: Rc<str>,
+    pub bytes: Rc<[u8]>,
 }
 
 /// A typed entry derived from a module's canonical signature table.
@@ -365,6 +377,20 @@ impl WasmModule {
         self
     }
 
+    /// Attach the module's custom sections in module order.
+    pub fn with_custom_sections(mut self, sections: Vec<WasmCustomSection>) -> Self {
+        self.custom_sections = sections.into();
+        self
+    }
+
+    /// The contents of the custom sections named `name`, in module order.
+    pub fn custom_sections_named<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a [u8]> {
+        self.custom_sections
+            .iter()
+            .filter(move |section| &*section.name == name)
+            .map(|section| &*section.bytes)
+    }
+
     pub fn exports(&self) -> &[WasmExport] {
         &self.exports
     }
@@ -408,7 +434,7 @@ impl Engine {
         params: u16,
         locals: u16,
         has_result: bool,
-        operators: impl IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+        operators: impl IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>> + Clone,
     ) -> Result<WasmI32Function, Diagnostic> {
         Self::lower_wasm_i32_module(name, 0, [(params, locals, has_result, operators)])
     }
@@ -421,7 +447,7 @@ impl Engine {
         bodies: impl IntoIterator<Item = (u16, u16, bool, I)>,
     ) -> Result<WasmI32Function, Diagnostic>
     where
-        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>> + Clone,
     {
         Self::lower_wasm_module(
             name,
@@ -446,7 +472,7 @@ impl Engine {
         bodies: impl IntoIterator<Item = WasmFunctionBody<I>>,
     ) -> Result<WasmFunction, Diagnostic>
     where
-        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>> + Clone,
     {
         Self::lower_wasm_module_with_types(name, entry, bodies, &WasmTypes::default())
     }
@@ -460,7 +486,7 @@ impl Engine {
         types: &WasmTypes,
     ) -> Result<WasmFunction, Diagnostic>
     where
-        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>> + Clone,
     {
         Self::lower_wasm_module_with_globals(name, entry, bodies, types, &[])
     }
@@ -474,7 +500,7 @@ impl Engine {
         globals: &[WasmGlobal],
     ) -> Result<WasmFunction, Diagnostic>
     where
-        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>> + Clone,
     {
         Self::lower_wasm_module_definition(name, bodies, types, globals)?
             .function(entry)
@@ -489,7 +515,7 @@ impl Engine {
         globals: &[WasmGlobal],
     ) -> Result<WasmModule, Diagnostic>
     where
-        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>> + Clone,
     {
         Self::lower_wasm_module_with_state(name, bodies, types, globals, &[], &[])
     }
@@ -504,7 +530,7 @@ impl Engine {
         data: &[WasmData],
     ) -> Result<WasmModule, Diagnostic>
     where
-        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>> + Clone,
     {
         Self::lower_wasm_module_with_tables(name, bodies, types, globals, memories, data, &[])
     }
@@ -520,7 +546,7 @@ impl Engine {
         tables: &[WasmTable],
     ) -> Result<WasmModule, Diagnostic>
     where
-        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>> + Clone,
     {
         Self::lower_wasm_module_with_elements(
             name,
@@ -546,7 +572,7 @@ impl Engine {
         elements: &[WasmElement],
     ) -> Result<WasmModule, Diagnostic>
     where
-        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>> + Clone,
     {
         Self::lower_wasm_module_with_imports(
             name,
@@ -574,7 +600,7 @@ impl Engine {
         imports: &[WasmFunctionImport],
     ) -> Result<WasmModule, Diagnostic>
     where
-        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>> + Clone,
     {
         Self::lower_wasm_module_with_tags(
             name,
@@ -604,7 +630,7 @@ impl Engine {
         tags: &[WasmTag],
     ) -> Result<WasmModule, Diagnostic>
     where
-        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>> + Clone,
     {
         Self::lower_wasm_module_for(
             crate::ExecutionMode::Interpreted,
@@ -639,7 +665,7 @@ impl Engine {
         tags: &[WasmTag],
     ) -> Result<WasmModule, Diagnostic>
     where
-        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>> + Clone,
     {
         if tables
             .iter()
@@ -763,26 +789,27 @@ impl Engine {
             ));
         }
         let mut constants = vec![Constant::Number(0.0), Constant::Undefined];
-        let mut functions = Vec::with_capacity(bodies.len());
-        let bodies = bodies
+        let sources: Vec<_> = bodies
             .into_iter()
-            .map(|(locals, operators)| {
-                // Reserve to the source's bound instead of doubling: a large
-                // body's untouched capacity stays unmapped, and no grow copies
-                // the whole body while the old buffer is still live.
-                let operators = operators.into_iter();
-                let mut collected = Vec::with_capacity(operators.size_hint().1.unwrap_or(0));
-                for operator in operators {
-                    collected
-                        .push(operator.map_err(|e| Diagnostic::unsupported(name, e.to_string()))?);
-                }
-                Ok((locals, collected))
-            })
-            .collect::<Result<Vec<_>, Diagnostic>>()?;
-        let bodies = inline::inline_leaf_calls(bodies, &signature_pool, inline::leaf_budget(mode))
-            .ok_or_else(|| Diagnostic::unsupported(name, "too many Wasm locals"))?;
-        for (index, (locals, operators)) in bodies.into_iter().enumerate() {
-            let index = u32::try_from(index)
+            .map(|(locals, operators)| inline::Source { locals, operators })
+            .collect();
+        let mut functions = Vec::with_capacity(sources.len());
+        let plan = inline::LeafPlan::new(
+            name,
+            &sources,
+            inline::Bindings {
+                memories,
+                globals: globals.len(),
+            },
+            &signature_pool,
+            inline::leaf_budget(mode, || {
+                sources.iter().map(|source| source.operators.clone().into_iter().count()).sum()
+            }),
+        )?;
+        for position in 0..sources.len() {
+            // The body is streamed, inlined, from its source.
+            let form = plan.lowered(position)?;
+            let index = u32::try_from(position)
                 .map_err(|_| Diagnostic::unsupported(name, "too many Wasm functions"))?;
             let signature = signature_pool.defined_signature(index).unwrap().clone();
             let params = u16::try_from(signature.params.len())
@@ -791,7 +818,7 @@ impl Engine {
                 .map_err(|_| Diagnostic::unsupported(name, "too many Wasm function results"))?;
             let error = |message: &str| Diagnostic::unsupported(name, message);
             let local_count = usize::from(params)
-                .checked_add(locals.len())
+                .checked_add(form.locals.len())
                 .and_then(|count| u16::try_from(count).ok())
                 .ok_or_else(|| error("too many Wasm locals"))?;
             // Instance bindings the body uses get registers loaded once per call.
@@ -801,12 +828,11 @@ impl Engine {
                 reserved += Register::from(used);
                 register
             };
-            let memory_registers: Vec<_> = memory::direct_access_memories(memories, &operators)
-                .into_iter()
-                .map(&mut reserve)
-                .collect();
-            let global_registers: Vec<_> = accessed_globals(globals.len(), &operators)
-                .into_iter()
+            let memory_registers: Vec<_> =
+                form.memories.iter().copied().map(&mut reserve).collect();
+            let mut accessed = form.globals.iter().peekable();
+            let global_registers: Vec<_> = (0..globals.len() as u32)
+                .map(|global| accessed.next_if_eq(&&global).is_some())
                 .map(&mut reserve)
                 .collect();
             let local_base = (usize::from(reserved) + usize::from(local_count)
@@ -847,9 +873,9 @@ impl Engine {
             // Defaultable locals get residual defaults; others remain uninitialized.
             // The frontend proves assignment before non-defaultable local reads.
             if let Some(base) = local_base {
-                lowering.fill_register_locals(base, params, &locals, &operators)?;
+                lowering.fill_register_locals(base, params, &form.locals, &form.assigned_first)?;
             } else {
-                for (index, ty) in locals.into_iter().enumerate() {
+                for (index, ty) in form.locals.iter().copied().enumerate() {
                     if ty.is_defaultable() {
                         let slot = usize::from(params) + index;
                         lowering.load_default(0, ty)?;
@@ -871,12 +897,12 @@ impl Engine {
             for (slot, register) in bindings {
                 lowering.emit(Op::WasmInstanceBinding, register, 0, 0, slot as u32)?;
             }
-            for operator in operators {
+            plan.lower(position, &form, &mut |operator| {
                 if lowering.controls.is_empty() {
                     return Err(error("operators after Wasm function end"));
                 }
-                lowering.operator(operator)?;
-            }
+                lowering.operator(operator)
+            })?;
             if !lowering.controls.is_empty() {
                 return Err(error("missing Wasm function end"));
             }
@@ -890,7 +916,7 @@ impl Engine {
                 params,
                 length: params,
                 parameter_end_pc: 0,
-                parameter_atoms: vec![],
+                parameter_atoms: vec![].into(),
                 rest: false,
                 is_async: false,
                 is_generator: false,
@@ -905,21 +931,17 @@ impl Engine {
                 simple_parameters: true,
                 strict: true,
                 locals: lowering.temporary_base + lowering.temporary_locals,
-                local_atoms: vec![],
-                environment_atoms: vec![],
+                local_atoms: vec![].into(),
+                environment_atoms: vec![].into(),
                 selective_capture_slots: None,
-                local_registers: Vec::new(),
+                local_registers: Vec::new().into(),
                 inherited_with_scope: false,
-                lexical_atoms: vec![],
-                global_lexical_atoms: vec![],
-                global_var_atoms: vec![],
-                global_function_atoms: vec![],
-                global_annex_b_var_atoms: vec![],
-                global_immutable_atoms: vec![],
+                lexical_atoms: vec![].into(),
+                global_declarations: None,
                 name_bindings: Default::default(),
-                binding_sites: vec![],
+                binding_sites: vec![].into(),
                 source_positions: Default::default(),
-                environment_clones: vec![],
+                environment_clones: vec![].into(),
                 code: lowering.code,
                 wide: lowering.wide,
                 registers: lowering.registers,
@@ -931,8 +953,8 @@ impl Engine {
                 live_parameter_reflection: Default::default(),
                 static_name_scope: Default::default(),
                 call_plan: Default::default(),
-                handlers: lowering.handlers,
-                register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
+                handlers: lowering.handlers.into(),
+                register_roots: Default::default(),
                 undefined_register: None,
                 parameter_registers: lowering.local_base,
                 initial_register: crate::bytecode::InitialRegister::I32Zero,
@@ -940,7 +962,8 @@ impl Engine {
             functions.push(function);
             constants = lowering.constants;
         }
-        let register_roots = crate::compile::liveness::derive(&mut functions, &[], &[], &[]);
+        let no_method_sites: &[crate::compile::liveness::MethodSite] = &[];
+        crate::compile::liveness::mark_register_roots(&mut functions, no_method_sites, &[], &[]);
         let program = ResidualProgram {
             specialized: false,
             kind: ProgramKind::Wasm,
@@ -951,15 +974,21 @@ impl Engine {
             source: None,
             atoms: AtomTable::default(),
             constants,
-            functions,
+            functions: functions
+                .into_iter()
+                .map(crate::bytecode::FunctionSlot::compiled)
+                .collect(),
             cache_sites: 0,
             method_sites: vec![],
             method_arguments: vec![],
             field_sites: vec![],
             object_sites: vec![],
             regexp_literal_sites: vec![],
+            literal_templates: Vec::new(),
             superinstructions: vec![],
-            register_roots,
+            replay: None,
+            encoded_records: None,
+            validated: Default::default(),
         };
         program
             .validate()
@@ -975,6 +1004,7 @@ impl Engine {
             tags: tags.into(),
             start: None,
             exports: Rc::default(),
+            custom_sections: Rc::default(),
         })
     }
 }
@@ -1434,53 +1464,6 @@ enum Alias {
     I32(i32),
 }
 
-/// Declared locals whose first textual use is a `local.set`/`local.tee` at
-/// function-body nesting: straight-line body code runs in order, so every read
-/// of such a local follows that write.
-fn first_use_assigns(params: u16, declared: usize, operators: &[Operator<'_>]) -> Vec<bool> {
-    let mut assigned = vec![false; declared];
-    let mut seen = vec![false; declared];
-    let mut nesting = 0_usize;
-    for operator in operators {
-        match operator {
-            Operator::Block { .. }
-            | Operator::Loop { .. }
-            | Operator::If { .. }
-            | Operator::Try { .. }
-            | Operator::TryTable { .. } => nesting += 1,
-            Operator::End | Operator::Delegate { .. } => nesting = nesting.saturating_sub(1),
-            Operator::LocalGet { local_index }
-            | Operator::LocalSet { local_index }
-            | Operator::LocalTee { local_index } => {
-                let Some(index) = (*local_index as usize).checked_sub(usize::from(params)) else {
-                    continue;
-                };
-                if index < declared && !seen[index] {
-                    seen[index] = true;
-                    assigned[index] =
-                        nesting == 0 && !matches!(operator, Operator::LocalGet { .. });
-                }
-            }
-            _ => {}
-        }
-    }
-    assigned
-}
-
-/// Globals the body reads or writes, by global index.
-fn accessed_globals(count: usize, operators: &[Operator<'_>]) -> Vec<bool> {
-    let mut used = vec![false; count];
-    for operator in operators {
-        if let Operator::GlobalGet { global_index } | Operator::GlobalSet { global_index } =
-            operator
-            && let Some(global) = used.get_mut(*global_index as usize)
-        {
-            *global = true;
-        }
-    }
-    used
-}
-
 /// Locals live in frame registers while the whole register file stays small.
 const MAX_REGISTER_LOCALS: usize = 4096;
 
@@ -1828,9 +1811,8 @@ impl Lowering<'_> {
         base: Register,
         params: u16,
         locals: &[wasmparser::ValType],
-        operators: &[Operator<'_>],
+        assigned_first: &[bool],
     ) -> Result<(), Diagnostic> {
-        let assigned_first = first_use_assigns(params, locals.len(), operators);
         let mut run: Option<(Register, u16, u32)> = None;
         for (index, ty) in locals.iter().copied().enumerate() {
             let register = base + params + index as Register;

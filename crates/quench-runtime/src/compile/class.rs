@@ -174,7 +174,7 @@ impl FunctionCompiler<'_, '_> {
             self.push_private_bindings(private_bindings);
         }
         for field in &fields {
-            if class_field_value(*field).is_some() {
+            if class_field_initializer(*field).is_some() {
                 self.hidden_local(&class_field_initializer_name(
                     class_field_span(*field).start,
                 ));
@@ -185,7 +185,7 @@ impl FunctionCompiler<'_, '_> {
             .collect();
         let scopes = self.capture_scopes();
         for field in &fields {
-            let Some(expression) = class_field_value(*field) else {
+            let Some(expression) = class_field_initializer(*field) else {
                 continue;
             };
             let id = self.owner.compile_function(
@@ -289,10 +289,11 @@ impl FunctionCompiler<'_, '_> {
                     ..FunctionOptions::default()
                 },
             );
-            self.owner.functions[constructor_id as usize]
-                .as_mut()
-                .expect("compiled class constructor")
-                .instance_initializer = Some(initializer);
+            // A replay of the function enclosing the class finds the constructor as the load
+            // left it.
+            if let Some(constructor) = self.owner.functions.get_mut(constructor_id) {
+                constructor.instance_initializer = Some(initializer);
+            }
         }
         let class_value = self.reg();
         self.emit(Op::MakeClosure, class_value, 0, 0, constructor_id);
@@ -525,16 +526,15 @@ impl FunctionCompiler<'_, '_> {
                 None
             };
             self.store_atom(home_atom, target);
-            let function_id = self.owner.compile_class_method(
+            let function_id = self.owner.compile_replayable_class_method(
                 method,
-                Some(element.span()),
-                &scopes,
-                Some(self.function_id),
-                None,
-                None,
-                false,
-                home_atom,
-                self.with_depth,
+                super::replay::ClassMethodContext {
+                    element_span: element.span(),
+                    home_atom,
+                    scopes: scopes.clone(),
+                    parent: Some(self.function_id),
+                    with_depth: self.with_depth,
+                },
             );
             let function = self.reg();
             self.emit(Op::MakeClosure, function, 0, 0, function_id);
@@ -595,7 +595,9 @@ impl FunctionCompiler<'_, '_> {
                     } else {
                         None
                     };
-                    let value = if initializer.is_some() {
+                    let value = if let Some(constant) = class_field_constant(field) {
+                        self.literal(constant)
+                    } else if initializer.is_some() {
                         let atom = self.owner.atom(&class_field_initializer_name(span.start));
                         let callee = self.load_atom(atom);
                         let value = self.reg();
@@ -733,13 +735,28 @@ impl FunctionCompiler<'_, '_> {
         fields: &[ClassField<'_>],
         private_methods: &[Atom],
     ) {
+        if fields.is_empty() && private_methods.is_empty() {
+            return;
+        }
         let this = self.reg();
         self.emit(Op::LoadThis, this, 0, 0, 0);
-        let home_atom = self
-            .super_home_atom
-            .expect("class constructor carries its private home object");
-        let home_name = self.owner.atoms[home_atom as usize].to_string();
-        let home = self.load_name(&home_name);
+        let private_field = |field: &ClassField<'_>| {
+            matches!(
+                field,
+                ClassField::Property(field)
+                    if matches!(&field.key, PropertyKey::PrivateIdentifier(_))
+            )
+        };
+        // Only private elements read the private home object.
+        let home = if private_methods.is_empty() && !fields.iter().any(private_field) {
+            0
+        } else {
+            let home_atom = self
+                .super_home_atom
+                .expect("class constructor carries its private home object");
+            let home_name = self.owner.atoms[home_atom as usize].to_string();
+            self.load_name(&home_name)
+        };
         for atom in private_methods {
             self.emit(Op::MarkPrivateName, 0, this, home, *atom);
         }
@@ -769,7 +786,12 @@ impl FunctionCompiler<'_, '_> {
                 }
                 _ => backing,
             };
-            let value = if initializer.is_some() {
+            let value = if let Some(initializer) = initializer.filter(|initializer| {
+                observes_nothing(initializer) || self.initializer_inlines(initializer)
+            }) {
+                // Evaluating it here, in the constructor, is evaluating it in its initializer.
+                self.expression(initializer)
+            } else if initializer.is_some() {
                 let atom = self.owner.atom(&class_field_initializer_name(span.start));
                 let callee = self.load_atom(atom);
                 let value = self.reg();
@@ -795,7 +817,8 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::SetField, value, this, cache, field_atom);
             } else {
                 let field_atom = name.unwrap();
-                self.emit(Op::DefineField, value, this, 0, field_atom);
+                let cache = self.owner.cache_site();
+                self.emit(Op::DefineField, value, this, cache, field_atom);
             }
         }
     }
@@ -873,6 +896,93 @@ fn class_field_initializer_name(start: u32) -> String {
     format!("\0quench:field-initializer:{start}")
 }
 
+/// The identifiers a function initializer references, and whether it reads `new.target` or
+/// calls `eval` directly, either of which ties it to its own activation.
+#[derive(Default)]
+struct InitializerReferences<'a> {
+    names: Vec<&'a str>,
+    activation_bound: bool,
+}
+
+impl<'a> oxc_ast_visit::Visit<'a> for InitializerReferences<'a> {
+    fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
+        self.names.push(identifier.name.as_str());
+    }
+
+    fn visit_new_target(&mut self, _: &oxc_ast::ast::NewTarget) {
+        self.activation_bound = true;
+    }
+
+    fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
+        if super::early::is_direct_eval_call(call) {
+            self.activation_bound = true;
+        }
+        oxc_ast_visit::walk::walk_call_expression(self, call);
+    }
+}
+
+impl FunctionCompiler<'_, '_> {
+    /// Whether a field initializer evaluates the same in the constructor as in its
+    /// initializer function. Both run with the same receiver and home object inside the same
+    /// enclosing scopes, so its names resolve the same unless the constructor itself binds
+    /// one, and the constructor runs no code of its own before its fields. `new.target` and
+    /// direct `eval` see the activation; an initializer can name neither `arguments` nor
+    /// `await` or `yield` (early errors).
+    fn initializer_inlines(&mut self, initializer: &Expression<'_>) -> bool {
+        use oxc_ast_visit::Visit;
+        let mut references = InitializerReferences::default();
+        references.visit_expression(initializer);
+        // A name a function initializer binds as a parameter resolves inside it, to that
+        // parameter or an inner shadow, never to the constructor's binding.
+        let params = match initializer {
+            Expression::ArrowFunctionExpression(arrow) => Some(&arrow.params),
+            Expression::FunctionExpression(function) => Some(&function.params),
+            _ => None,
+        };
+        let own = params
+            .into_iter()
+            .flat_map(|params| {
+                params
+                    .items
+                    .iter()
+                    .flat_map(|param| param.pattern.get_binding_identifiers())
+                    .chain(params.rest.iter().flat_map(|rest| rest.rest.argument.get_binding_identifiers()))
+            })
+            .map(|binding| binding.name.as_str())
+            .collect::<Vec<_>>();
+        !references.activation_bound
+            && references.names.iter().filter(|name| !own.contains(name)).all(|name| {
+                let atom = self.owner.atom(name);
+                !self.binds_own_name(atom)
+            })
+    }
+}
+
+/// Whether a field initializer reads nothing its scope or receiver could change: a static
+/// constant (`binding_time::expression`), or an array or object literal of static constants
+/// with plain keys. Each evaluation still makes a fresh array or object.
+fn observes_nothing(initializer: &Expression<'_>) -> bool {
+    let constant = |value: &Expression<'_>| binding_time::expression(value).static_value().is_some();
+    match initializer {
+        Expression::ParenthesizedExpression(inner) => observes_nothing(&inner.expression),
+        Expression::ArrayExpression(array) => array.elements.iter().all(|element| {
+            element.as_expression().is_some_and(constant)
+        }),
+        Expression::ObjectExpression(object) => object.properties.iter().all(|property| {
+            matches!(
+                property,
+                ObjectPropertyKind::ObjectProperty(property)
+                    if property.kind == PropertyKind::Init
+                        && !property.computed
+                        && !property.method
+                        && !property.shorthand
+                        && constant(&property.value)
+            )
+        }),
+        value => constant(value),
+    }
+}
+
 fn class_field_value<'a>(field: ClassField<'a>) -> Option<&'a Expression<'a>> {
     match field {
         ClassField::Property(field) => field.value.as_ref(),
@@ -880,11 +990,23 @@ fn class_field_value<'a>(field: ClassField<'a>) -> Option<&'a Expression<'a>> {
     }
 }
 
+/// The value of a field whose initializer is a constant. Evaluating one observes nothing an
+/// initializer function would provide (its receiver, home object or new.target) and names
+/// no function, so the definition stores the constant itself.
+fn class_field_constant(field: ClassField<'_>) -> Option<Constant> {
+    class_field_value(field).and_then(|value| super::binding_time::expression(value).static_value())
+}
+
+/// The initializer expression a field evaluates in a function of its own: any but a constant.
+fn class_field_initializer<'a>(field: ClassField<'a>) -> Option<&'a Expression<'a>> {
+    class_field_value(field).filter(|_| class_field_constant(field).is_none())
+}
+
 impl Compiler<'_> {
     fn compile_auto_accessor_methods(
         &mut self,
         accessor: &AccessorProperty<'_>,
-        scopes: &[Rc<FxHashMap<Atom, u16>>],
+        scopes: &super::capture_scope::ScopeChain,
         parent: Option<u32>,
         home_atom: Atom,
         with_depth: u16,
@@ -944,22 +1066,19 @@ impl Compiler<'_> {
         );
         // Generated parser names are scaffolding; the actual property key owns
         // the accessor's name, including computed and private keys.
-        self.functions[getter as usize]
-            .as_mut()
-            .expect("compiled auto-accessor getter")
-            .name = None;
-        self.functions[setter as usize]
-            .as_mut()
-            .expect("compiled auto-accessor setter")
-            .name = None;
+        for accessor in [getter, setter] {
+            if let Some(accessor) = self.functions.get_mut(accessor) {
+                accessor.name = None;
+            }
+        }
         Some((getter, setter))
     }
 
-    fn compile_class_method(
+    pub(super) fn compile_class_method(
         &mut self,
         method: &MethodDefinition<'_>,
         source_span: Option<Span>,
-        scopes: &[Rc<FxHashMap<Atom, u16>>],
+        scopes: &super::capture_scope::ScopeChain,
         parent: Option<u32>,
         instance_fields: Option<&[ClassField<'_>]>,
         instance_private_methods: Option<&[Atom]>,
@@ -1025,7 +1144,7 @@ impl Compiler<'_> {
     fn compile_class_static_block(
         &mut self,
         block: &StaticBlock<'_>,
-        scopes: &[Rc<FxHashMap<Atom, u16>>],
+        scopes: &super::capture_scope::ScopeChain,
         parent: Option<u32>,
         home_atom: Atom,
         with_depth: u16,

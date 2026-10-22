@@ -69,7 +69,7 @@ impl<H: Host> Vm<H> {
         prototype: Value,
     ) -> Value {
         self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), Rc::new(values)),
+            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), values),
         })
     }
 
@@ -127,7 +127,7 @@ impl<H: Host> Vm<H> {
             let element = self.call_value(p, method, value, &invoke_arguments)?;
             result.push_str(&self.to_string(p, element)?);
         }
-        Ok(self.heap.alloc(Cell::String(result.into())))
+        Ok(self.heap.alloc_string(result.into()))
     }
 
     fn array_of_native(
@@ -193,7 +193,7 @@ impl<H: Host> Vm<H> {
         let array = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(prototype),
-                Rc::new(Vec::new()),
+                Vec::new(),
             ),
         });
         self.heap.sparse_set_length(array, length);
@@ -244,7 +244,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Array.from map function is not callable".into()));
         }
         let map_this = args.get(2).copied().unwrap_or(Value::UNDEFINED);
-        let iterator_symbol = self.well_known_symbols.get("iterator").copied();
+        let iterator_symbol = self.well_known_symbols.get(WellKnownSymbol::Iterator);
         let iterator_method = iterator_symbol
             .map(|symbol| self.get_index(p, source, symbol))
             .transpose()?
@@ -449,7 +449,7 @@ impl<H: Host> Vm<H> {
         }
 
         {
-            let length_atom = self.intern_atom("length");
+            let length_atom = self.length_atom;
             let length_value = self.get_property(p, source, length_atom)?;
             let number = self.to_number(p, length_value)?;
             let length = if number.is_nan() || number <= 0.0 {
@@ -615,13 +615,13 @@ impl<H: Host> Vm<H> {
                 if !self.is_object_like(value) {
                     return Err(self.type_error(p, "iterator result is not an object".into()));
                 }
-                let done_atom = self.intern_atom("done");
+                let done_atom = self.runtime_atoms.done;
                 let done = self.get_property(p, value, done_atom)?;
                 if self.truthy(done) {
                     self.set_array_from_async_length(p, state.result, state.index)?;
                     return self.promise_resolve_value(p, state.output, state.result);
                 }
-                let value_atom = self.intern_atom("value");
+                let value_atom = self.runtime_atoms.value;
                 let item = self.get_property(p, value, value_atom)?;
                 self.array_from_async_map_or_store(p, state_value, state, item)
             }
@@ -703,7 +703,7 @@ impl<H: Host> Vm<H> {
         if self.heap.array(target).is_some() {
             return Ok(());
         }
-        let length_atom = self.intern_atom("length");
+        let length_atom = self.length_atom;
         let succeeded = self.set_property_with_receiver(
             p,
             target,
@@ -784,95 +784,107 @@ impl<H: Host> Vm<H> {
         {
             return Err(self.type_error(p, "sort comparator is not callable".into()));
         }
-        let comparator = comparator.map(|value| self.heap.root(value));
-        let mut object_root = None;
-        let mut values = Vec::new();
-        let outcome = (|| {
-            let object = self.box_object_or_type_error(p, this)?;
-            let root = self.heap.root(object);
-            object_root = Some(root);
-            let length = self.array_like_length(p, object)?;
-            if !mutate && length > MAX_ARRAY_LENGTH {
-                return Err(self.range_error(p, "invalid array length".into()));
-            }
-            let mut undefined_count = 0;
+        let object = self.box_object_or_type_error(p, this)?;
+        // The receiver, the comparator and every value read stay reachable while guest code
+        // (getters, the comparator) runs: they join the call roots for the whole sort.
+        self.with_call_roots([object].into_iter().chain(comparator), |vm| {
+            vm.array_sort_rooted(p, object, comparator, mutate)
+        })
+    }
+
+    /// `array_sort_native` once its receiver and comparator are rooted.
+    fn array_sort_rooted(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        comparator: Option<Value>,
+        mutate: bool,
+    ) -> Result<Value, JsError> {
+        let length = self.array_like_length(p, object)?;
+        if !mutate && length > MAX_ARRAY_LENGTH {
+            return Err(self.range_error(p, "invalid array length".into()));
+        }
+        let roots = self.active_call_roots.len();
+        let mut undefined_count = 0;
+        if let Some(elements) = self.present_dense_elements(object, 0..length).map(<[Value]>::to_vec) {
+            // SortIndexedProperties reads each present own data element, observing nothing.
+            let present = elements.into_iter().filter(|value| !value.is_undefined());
+            self.active_call_roots.extend(present);
+            undefined_count = length - (self.active_call_roots.len() - roots);
+        } else {
             for index in 0..length {
                 let key = Value::number(index as f64);
-                let object = self.heap.root_value(root).unwrap();
                 if !mutate || self.has_property(p, object, key)? {
-                    let object = self.heap.root_value(root).unwrap();
-                    let value = self.get_index(p, object, key)?;
-                    if value.is_undefined() {
-                        undefined_count += 1;
-                    } else {
-                        values.push(self.heap.root(value));
+                    match self.get_index(p, object, key)? {
+                        Value::UNDEFINED => undefined_count += 1,
+                        value => self.active_call_roots.push(value),
                     }
                 }
             }
-            super::sort::try_stable_sort_by(&mut values, |left, right| {
-                self.sort_compare(p, comparator, *left, *right)
-            })?;
-            if mutate {
-                let sorted_count = values.len();
-                for (index, value) in values.iter().enumerate() {
-                    let object = self.heap.root_value(root).unwrap();
-                    let value = self.heap.root_value(*value).unwrap();
-                    self.set_index_mode(p, object, Value::number(index as f64), value, true)?;
-                }
-                for index in sorted_count..sorted_count + undefined_count {
-                    let object = self.heap.root_value(root).unwrap();
-                    self.set_index_mode(
-                        p,
-                        object,
-                        Value::number(index as f64),
-                        Value::UNDEFINED,
-                        true,
-                    )?;
-                }
-                for index in sorted_count + undefined_count..length {
-                    let object = self.heap.root_value(root).unwrap();
-                    let deleted =
-                        self.object_delete_property(p, &[object, Value::number(index as f64)])?;
-                    if !self.truthy(deleted) {
-                        return Err(self.type_error(p, "cannot delete array-like element".into()));
-                    }
-                }
-                Ok(self.heap.root_value(root).unwrap())
-            } else {
-                let mut result: Vec<_> = values
-                    .iter()
-                    .map(|root| self.heap.root_value(*root).unwrap())
-                    .collect();
-                result.resize(length, Value::UNDEFINED);
-                Ok(self.new_array(result))
-            }
-        })();
-        for value in values {
-            self.heap.release_root(value);
         }
-        if let Some(root) = object_root {
-            self.heap.release_root(root);
-        }
-        if let Some(root) = comparator {
-            self.heap.release_root(root);
-        }
+        let mut values = self.active_call_roots[roots..].to_vec();
+        let outcome = super::sort::try_stable_sort_by(&mut values, |left, right| {
+            self.sort_compare(p, comparator, *left, *right)
+        })
+        .and_then(|()| self.store_sorted(p, object, &values, undefined_count, length, mutate));
+        self.active_call_roots.truncate(roots);
         outcome
     }
 
-    // Undefined values are counted outside the sortable snapshot.
+    /// The sorted `values`, then `undefined_count` undefineds and holes up to `length`:
+    /// written back into `object` when sorting in place, else a new array.
+    fn store_sorted(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        values: &[Value],
+        undefined_count: usize,
+        length: usize,
+        mutate: bool,
+    ) -> Result<Value, JsError> {
+        if !mutate {
+            let mut result = values.to_vec();
+            result.resize(length, Value::UNDEFINED);
+            return Ok(self.new_array(result));
+        }
+        let sorted_count = values.len();
+        // Each Set of a dense array's present element writes an own writable data element.
+        if sorted_count == length
+            && self.dense_array_length(object) == Some(length)
+            && self.present_dense_elements(object, 0..length).is_some()
+        {
+            let Some(array) = self.heap.array_mut(object) else {
+                unreachable!("matched an array above");
+            };
+            super::index::mutable_array_elements(array.elements_mut()).copy_from_slice(values);
+            return Ok(object);
+        }
+        for (index, value) in values.iter().enumerate() {
+            self.set_index_mode(p, object, Value::number(index as f64), *value, true)?;
+        }
+        for index in sorted_count..sorted_count + undefined_count {
+            self.set_index_mode(p, object, Value::number(index as f64), Value::UNDEFINED, true)?;
+        }
+        for index in sorted_count + undefined_count..length {
+            let deleted = self.object_delete_property(p, &[object, Value::number(index as f64)])?;
+            if !self.truthy(deleted) {
+                return Err(self.type_error(p, "cannot delete array-like element".into()));
+            }
+        }
+        Ok(object)
+    }
+
     fn sort_compare(
         &mut self,
         p: &ResidualProgram,
-        comparator: Option<RootId>,
-        left: RootId,
-        right: RootId,
+        comparator: Option<Value>,
+        left: Value,
+        right: Value,
     ) -> Result<std::cmp::Ordering, JsError> {
         if let Some(comparator) = comparator {
             return self.compare_sort_callback(p, comparator, left, right);
         }
-        let left = self.heap.root_value(left).unwrap();
         let left = self.to_string(p, left)?;
-        let right = self.heap.root_value(right).unwrap();
         let right = self.to_string(p, right)?;
         Ok(left.cmp(&right))
     }

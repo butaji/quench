@@ -463,6 +463,7 @@ fn spawn_child_with_stdio(
             let wait_owner = std::sync::Arc::new(std::sync::Mutex::new(Some(child)));
             let thread_owner = wait_owner.clone();
             let (cancel, cancellation) = Cancellation::new(pid);
+            let (reap, reaping) = mpsc::channel::<()>();
             let wait_thread = std::thread::Builder::new()
                 .name("quench-child-wait".into())
                 .spawn(move || {
@@ -490,13 +491,21 @@ fn spawn_child_with_stdio(
                             Err(mpsc::RecvTimeoutError::Timeout) => {}
                         }
                     }
-                    } else { child.wait().ok() };
-                    let (code, signal) = status.map(|status|
-                        (status.code(), signal_name(&status).map(str::to_owned)))
-                        .unwrap_or((None, None));
-                    let _ = sender.send(crate::host::node_host::ChildProcessEvent::Exit(
-                        code, signal,
-                    ));
+                    } else {
+                        // Observe the exit leaving the child unreaped: as under Node, a
+                        // signal still reaches it until the loop delivers its exit, which
+                        // drops `reap` and lets this waiter reap it.
+                        match unreaped_exit_status(pid) {
+                            Some(status) => {
+                                send_exit(&sender, Some(status));
+                                let _ = reaping.recv();
+                                let _ = child.wait();
+                                return;
+                            }
+                            None => child.wait().ok(),
+                        }
+                    };
+                    send_exit(&sender, status);
                 })
                 ;
             if let Err(error) = wait_thread {
@@ -530,6 +539,7 @@ fn spawn_child_with_stdio(
                         ipc,
                         ipc_pipe: None,
                         events: receiver,
+                        reap: Some(reap),
                         stdout_terminal: !stdio[1].piped(),
                         stderr_terminal: !stdio[2].piped(),
                         exit: None,
@@ -1001,13 +1011,17 @@ pub(crate) fn poll(
                 process.handle_phase = crate::host::node_host::ChildHandlePhase::Closed;
             }
             let input_progress = process.stdin.progress();
-            let mut events = Vec::new();
+            // The waiter's events are taken before the pipes are read, so output written
+            // before an observed exit is read too, and reaches its streams first, as the pipes'
+            // readiness precedes the exit notification in Node.
+            let mut observed = Vec::new();
             loop {
                 match process.events.try_recv() {
-                    Ok(event) => events.push(event),
+                    Ok(event) => observed.push(event),
                     Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => break,
                 }
             }
+            let mut events = Vec::new();
             #[cfg(unix)]
             for (pipe, stdout) in [
                 (&mut process.stdout_pipe, true),
@@ -1028,6 +1042,7 @@ pub(crate) fn poll(
                     }),
                 }
             }
+            events.append(&mut observed);
             let mut exit = None;
             for event in &events {
                 match event {
@@ -1082,6 +1097,10 @@ pub(crate) fn poll(
                     dispatch(runtime, program, child, "stderrEnd", None, None)?;
                 }
                 ChildProcessEvent::Exit(_, _) => {
+                    // The loop delivers the exit: the waiter may reap the child now.
+                    if let Some(process) = shared_state.borrow_mut().child_processes.get_mut(&id) {
+                        process.reap = None;
+                    }
                     if let Some((code, signal)) = exit.as_ref() {
                         dispatch_exit(runtime, program, child, "exit", *code, signal.as_deref())?;
                     }
@@ -1539,7 +1558,7 @@ fn project_sync_output(
     Ok(())
 }
 
-fn string_array(
+pub(crate) fn string_array(
     context: &mut NativeContext<'_, NodeHost>,
     array: RootId,
 ) -> Result<Vec<String>, RootedError> {
@@ -1698,6 +1717,57 @@ fn set(
 }
 
 #[cfg(unix)]
+/// Sends a waiter's observed exit `status` (`None`: the wait failed) to the loop.
+fn send_exit(
+    sender: &mpsc::Sender<crate::host::node_host::ChildProcessEvent>,
+    status: Option<std::process::ExitStatus>,
+) {
+    let (code, signal) = status
+        .map(|status| (status.code(), signal_name(&status).map(str::to_owned)))
+        .unwrap_or((None, None));
+    let _ = sender.send(crate::host::node_host::ChildProcessEvent::Exit(code, signal));
+}
+
+/// The bit position of an exit code in a wait status (`WEXITSTATUS`); a signal's wait status
+/// is its number (`WTERMSIG`), with `WAIT_CORE_DUMPED` for a dump.
+#[cfg(target_os = "linux")]
+const WAIT_EXIT_CODE_SHIFT: u32 = 8;
+#[cfg(target_os = "linux")]
+const WAIT_CORE_DUMPED: i32 = 0x80;
+
+/// Blocks until child `pid`, which the caller owns unreaped, exits, and returns its status
+/// without reaping it (`waitid` with `WNOWAIT`). `None` when the wait fails.
+#[cfg(target_os = "linux")]
+fn unreaped_exit_status(pid: u32) -> Option<std::process::ExitStatus> {
+    use std::os::unix::process::ExitStatusExt;
+    loop {
+        // SAFETY: `waitid` only writes the zeroed `siginfo_t` it is given.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let result = unsafe {
+            libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, libc::WEXITED | libc::WNOWAIT)
+        };
+        if result < 0 {
+            if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return None;
+        }
+        // SAFETY: a successful `waitid` for an exited child fills the child fields.
+        let status = unsafe { info.si_status() };
+        let raw = match info.si_code {
+            libc::CLD_EXITED => status << WAIT_EXIT_CODE_SHIFT,
+            libc::CLD_DUMPED => status | WAIT_CORE_DUMPED,
+            _ => status,
+        };
+        return Some(std::process::ExitStatus::from_raw(raw));
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn unreaped_exit_status(_: u32) -> Option<std::process::ExitStatus> {
+    None
+}
+
 fn signal_name(status: &std::process::ExitStatus) -> Option<&'static str> {
     use std::os::unix::process::ExitStatusExt;
     let signal = status.signal()?;

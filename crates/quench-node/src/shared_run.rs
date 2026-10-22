@@ -1,7 +1,7 @@
 //! Shared-VM entry execution used by the development CLI and inventory worker.
 
 use crate::host::NodeHost;
-use quench_runtime::{Engine, ExecutionRequest, Runtime, SourceKind};
+use quench_runtime::{ExecutionRequest, MemoryPolicy, Runtime, SourceKind};
 use std::{path::PathBuf, process::ExitCode};
 
 /// Initialize signal policy only at an executable's process boundary. Embedders
@@ -16,6 +16,76 @@ const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
 pub const CHILD_RUNNER_ENV: &str = "QUENCH_CHILD_RUNNER";
 /// Optional installation root containing Node's lib/ and deps/ source assets.
 pub const NODE_LIBRARY_ROOT_ENV: &str = "QUENCH_NODE_LIBRARY_ROOT";
+/// Names the process's memory policy (`MemoryPolicy::name`); unset, it is the default
+/// (throughput). Child processes inherit it with the environment.
+pub const MEMORY_POLICY_ENV: &str = "QUENCH_MEMORY_POLICY";
+/// The CLI's form of `MEMORY_POLICY_ENV`, which takes precedence over it.
+const MEMORY_POLICY_FLAG: &str = "--memory-policy";
+
+/// Under the throughput policy (`MemoryPolicy::Throughput`), glibc's trim threshold is raised
+/// from its 128 KiB default, which pinning the mmap threshold (quench-node's `main`) also pins:
+/// once that much is free at the top of an arena it is returned (`MADV_DONTNEED` in a thread's
+/// arena) and faulted back in by the next allocations. A server freeing and reallocating
+/// stream chunks then spent its time in page faults (video route, 10 connections, 2026-10-22:
+/// ~600K minor faults per 6 s; express 38 -> 58 and fastify 36 -> 67 requests/s with this
+/// threshold, peak VmHWM within 1-4 MB). Freed memory below it stays in the arena for reuse.
+/// The memory-first policy keeps the default, which returns it.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+const TRIM_THRESHOLD_BYTES: libc::c_int = 16 * 1024 * 1024;
+/// The glibc variable that sets the trim threshold instead.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+const TRIM_THRESHOLD_VARIABLE: &str = "MALLOC_TRIM_THRESHOLD_";
+
+/// The allocator setting the process's `policy` takes, applied once when it is selected
+/// (`select_memory_policy`); an explicit `TRIM_THRESHOLD_VARIABLE` wins.
+fn apply_allocator_policy(policy: MemoryPolicy) {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    if policy == MemoryPolicy::Throughput && std::env::var_os(TRIM_THRESHOLD_VARIABLE).is_none() {
+        // SAFETY: mallopt only adjusts allocator parameters.
+        unsafe {
+            libc::mallopt(libc::M_TRIM_THRESHOLD, TRIM_THRESHOLD_BYTES);
+        }
+    }
+    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+    let _ = policy;
+}
+
+/// The process's memory policy. Every runtime the process starts (its entry's, a restore's
+/// replacement, its Workers') uses it: the pages a policy returns at collections
+/// (`resident_pages`) are the process's, not one runtime's. The first selection holds.
+static PROCESS_MEMORY_POLICY: std::sync::OnceLock<MemoryPolicy> = std::sync::OnceLock::new();
+
+/// Selects the process's memory policy once: the CLI's `chosen` name, else
+/// `MEMORY_POLICY_ENV`, else the default. An unknown name is an error.
+fn select_memory_policy(chosen: Option<&str>) -> Result<MemoryPolicy, String> {
+    if let Some(policy) = PROCESS_MEMORY_POLICY.get() {
+        return Ok(*policy);
+    }
+    let environment = std::env::var_os(MEMORY_POLICY_ENV);
+    let (source, name) = match (chosen, &environment) {
+        (Some(name), _) => (MEMORY_POLICY_FLAG, name),
+        (None, Some(name)) => (
+            MEMORY_POLICY_ENV,
+            name.to_str().ok_or_else(|| format!("{MEMORY_POLICY_ENV} is not valid Unicode"))?,
+        ),
+        (None, None) => return Ok(*PROCESS_MEMORY_POLICY.get_or_init(|| {
+            let policy = MemoryPolicy::default();
+            apply_allocator_policy(policy);
+            policy
+        })),
+    };
+    let policy = MemoryPolicy::from_name(name).ok_or_else(|| {
+        format!("{source}: unknown memory policy '{name}' (expected {})", memory_policy_names())
+    })?;
+    Ok(*PROCESS_MEMORY_POLICY.get_or_init(|| {
+        apply_allocator_policy(policy);
+        policy
+    }))
+}
+
+fn memory_policy_names() -> String {
+    MemoryPolicy::ALL.map(MemoryPolicy::name).join("|")
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryGoal {
@@ -73,6 +143,55 @@ pub fn execute_shared_with_execution_mode(
     argv: Vec<String>,
     mode: quench_runtime::ExecutionMode,
 ) -> Result<SharedCompletion, String> {
+    execute_shared_with_teardown(input, argv, mode, Teardown::Free)
+}
+
+/// What becomes of an entry's runtime once the entry finishes.
+#[derive(Clone, Copy)]
+enum Teardown {
+    /// Dropped: an embedding or a Worker's thread goes on after the entry.
+    Free,
+    /// Ended for the exit that follows (`Runtime::end_for_process_exit`): the CLI's process
+    /// exits once its entry finishes.
+    ProcessExit,
+}
+
+/// An entry's runtime, ended by its `Teardown` on every path out of the entry.
+struct EntryRuntime {
+    runtime: std::mem::ManuallyDrop<Runtime<NodeHost>>,
+    teardown: Teardown,
+}
+
+impl std::ops::Deref for EntryRuntime {
+    type Target = Runtime<NodeHost>;
+    fn deref(&self) -> &Self::Target {
+        &self.runtime
+    }
+}
+
+impl std::ops::DerefMut for EntryRuntime {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.runtime
+    }
+}
+
+impl Drop for EntryRuntime {
+    fn drop(&mut self) {
+        // SAFETY: `runtime` is taken once, here, and never used again.
+        let runtime = unsafe { std::mem::ManuallyDrop::take(&mut self.runtime) };
+        match self.teardown {
+            Teardown::Free => drop(runtime),
+            Teardown::ProcessExit => runtime.end_for_process_exit(),
+        }
+    }
+}
+
+fn execute_shared_with_teardown(
+    input: SharedInput,
+    argv: Vec<String>,
+    mode: quench_runtime::ExecutionMode,
+    teardown: Teardown,
+) -> Result<SharedCompletion, String> {
     #[cfg(target_os = "linux")]
     let (_parent_mask, worker_mask) =
         crate::modules::process_signals_state::ParentSignalMask::block_for_worker()
@@ -85,7 +204,7 @@ pub fn execute_shared_with_execution_mode(
             worker_mask
                 .restore()
                 .map_err(|error| format!("runtime execution signal mask: {error}"))?;
-            execute_shared_on_worker(input, argv, None, mode)
+            execute_shared_on_worker(input, argv, None, mode, teardown)
         })
         .map_err(|error| format!("runtime worker thread: {error}"))?
         .join()
@@ -103,6 +222,7 @@ pub(crate) fn execute_worker(
         argv,
         Some(worker),
         quench_runtime::ExecutionMode::Interpreted,
+        Teardown::Free,
     )
 }
 
@@ -111,6 +231,7 @@ fn execute_shared_on_worker(
     argv: Vec<String>,
     worker: Option<crate::modules::worker_shared_vm::WorkerContext>,
     mode: quench_runtime::ExecutionMode,
+    teardown: Teardown,
 ) -> Result<SharedCompletion, String> {
     let eval_builtin_globals = matches!(&input, SharedInput::Eval { .. });
     let eval_source_nonempty = matches!(&input, SharedInput::Eval { source, .. } if !source.is_empty());
@@ -118,7 +239,7 @@ fn execute_shared_on_worker(
         SharedInput::Stdin { .. } => crate::host::node_host::InlineSource::Stdin,
         _ => crate::host::node_host::InlineSource::Eval,
     };
-    let (source, name, kind, commonjs_entry, exec_argv, entry_goal) = match input {
+    let (source, name, kind, commonjs_entry, exec_argv, entry_goal, entry_file) = match input {
         SharedInput::Eval {
             source,
             goal,
@@ -139,6 +260,7 @@ fn execute_shared_on_worker(
             None,
             exec_argv,
             goal,
+            None,
         ),
         SharedInput::Eval { source, exec_argv, print: true, .. } => {
             let literal = serde_json::to_string(&source).map_err(|error| error.to_string())?;
@@ -149,6 +271,7 @@ fn execute_shared_on_worker(
                 None,
                 exec_argv,
                 EntryGoal::Node,
+                None,
             )
         }
         SharedInput::File {
@@ -163,45 +286,78 @@ fn execute_shared_on_worker(
                 EntryGoal::Module => SourceKind::Module,
             };
             let is_module = kind == SourceKind::Module;
-            let source = if is_module {
+            let wasm = path.extension().is_some_and(|extension| extension == "wasm");
+            let source = if is_module && wasm {
+                crate::host::shared_vm::esm_wasm::entry_facade(&path)?
+            } else if is_module {
                 std::fs::read_to_string(&path).map_err(|error| error.to_string())?
             } else {
                 String::new()
             };
             let name = path.to_string_lossy().into_owned();
-            let commonjs_entry = if is_module { None } else { Some(path) };
-            (source, name, kind, commonjs_entry, exec_argv, goal)
+            let commonjs_entry = if is_module { None } else { Some(path.clone()) };
+            (source, name, kind, commonjs_entry, exec_argv, goal, Some(path))
         }
     };
 
-    let mut host = NodeHost::new(argv).with_exec_argv(exec_argv)?;
-    host.inline_source = inline_source;
-    host.eval_builtin_globals = eval_builtin_globals;
-    host.eval_source_nonempty = eval_source_nonempty;
-    let host = match commonjs_entry {
-        Some(path) => host.with_commonjs_entry_goal(path, entry_goal),
-        None => host,
-    };
-    let shared_state = host.shared_state();
-    shared_state.borrow_mut().messaging.context = worker;
-    {
+    let memory_policy = select_memory_policy(None)?;
+    let new_host = |worker: Option<crate::modules::worker_shared_vm::WorkerContext>| -> Result<NodeHost, String> {
+        let mut host = NodeHost::new(argv.clone()).with_exec_argv(exec_argv.clone())?;
+        host.inline_source = inline_source;
+        host.eval_builtin_globals = eval_builtin_globals;
+        host.eval_source_nonempty = eval_source_nonempty;
+        let host = match commonjs_entry.clone() {
+            Some(path) => host.with_commonjs_entry_goal(path, entry_goal),
+            None => host,
+        };
+        let shared_state = host.shared_state();
+        shared_state.borrow_mut().messaging.context = worker;
         let mut state = shared_state.borrow_mut();
         let argv = state.process_argv.clone();
         let exec_argv = state.exec_argv.clone();
         state.trace.open_environment(argv.as_slice(), &exec_argv);
-    }
-    let mut runtime = Runtime::new(host);
+        drop(state);
+        Ok(host)
+    };
+    let request = ExecutionRequest { source: &source, name: &name, kind };
+    let in_worker = worker.is_some();
+    let host = new_host(worker)?;
+    let snapshot_path = crate::host::startup_snapshot::snapshot_path(&host, entry_file.as_deref(), in_worker);
+    let snapshot = snapshot_path.as_deref().and_then(crate::host::startup_snapshot::load_or_schedule);
+    let mut runtime = EntryRuntime {
+        runtime: std::mem::ManuallyDrop::new(Runtime::new(host)),
+        teardown,
+    };
     runtime.set_execution_mode(mode);
-    let program = Engine::compile(ExecutionRequest {
-        source: &source,
-        name: &name,
-        kind,
-    })
-    .map_err(|error| format!("{error:?}"))?;
+    runtime.set_memory_policy(memory_policy);
+    let mut program = runtime.compile_entry(request).map_err(|error| format!("{error:?}"))?;
+    let mut restored = false;
+    if let Some(snapshot) = snapshot {
+        match runtime.restore_snapshot(snapshot, &program, |host, reader| host.read_snapshot(reader)) {
+            Ok(entry) => {
+                crate::host::startup_snapshot::report(snapshot_path.as_deref(), Ok(()));
+                program = entry;
+                restored = true;
+            }
+            Err(error) => {
+                crate::host::startup_snapshot::report(snapshot_path.as_deref(), Err(&error));
+                // The restore may have left the runtime half replaced: boot a fresh one.
+                *runtime = Runtime::new(new_host(None)?);
+                runtime.set_execution_mode(mode);
+                runtime.set_memory_policy(memory_policy);
+                program = runtime.compile_entry(request).map_err(|error| format!("{error:?}"))?;
+            }
+        }
+    }
+    let shared_state = runtime.host_mut().shared_state();
     if let Some(worker) = &shared_state.borrow().messaging.context {
         worker.control.set_online();
     }
-    let execution = runtime.execute_deferred_jobs(&program);
+    let execution = if restored {
+        runtime.execute_restored(&program)
+    } else {
+        runtime.execute_deferred_jobs(&program)
+    };
     let completion = match execution {
         Ok(()) => crate::modules::process_shared_vm::finish_execution(&mut runtime, &program),
         Err(error) => {
@@ -260,6 +416,9 @@ fn execute_shared_on_worker(
         return Err(error);
     }
     reporting?;
+    // Teardown's drops run code the program never touched; the run's code pages are no
+    // longer needed, so only teardown's own become resident beside its memory.
+    crate::host::resident_pages::release_read_only_pages();
     if let Some(code) = shared_state.borrow().process_control.exit_code() {
         return Ok(SharedCompletion::GuestExit { code });
     }
@@ -289,13 +448,19 @@ pub fn executable_path() -> std::io::Result<PathBuf> {
         .unwrap_or(executable))
 }
 
-/// Parse the development CLI's entry form and route it through `execute_shared`.
+/// Parse the development CLI's entry form and route it through `execute_shared`. The
+/// caller's process exits once this returns, so the entry's runtime is ended for that exit.
 pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<ExitCode, String> {
+    // A process started to build a startup snapshot builds it instead (`startup_snapshot`);
+    // its bootstrap cannot read the environment, so the variable stays out of the snapshot.
+    if let Some(path) = std::env::var_os(crate::host::startup_snapshot::BUILD_ENV) {
+        return crate::host::startup_snapshot::build(std::path::Path::new(&path)).map(|()| ExitCode::SUCCESS);
+    }
     crate::host::resident_pages::map_touched_pages_only();
     let args = arguments.into_iter().collect::<Vec<_>>();
     match args.first().map(String::as_str) {
         Some("--help") | Some("-h") => {
-            println!("quench-node [--jit] [-e CODE|SCRIPT]");
+            println!("quench-node [--jit] [{MEMORY_POLICY_FLAG}={}] [-e CODE|SCRIPT]", memory_policy_names());
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
@@ -306,11 +471,15 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut eval_source = None;
     let mut print = false;
     let mut jit = false;
+    let mut memory_policy = None;
     let mut guest_arguments = Vec::new();
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
             "--jit" => jit = true,
+            option if option.split_once('=').is_some_and(|(name, _)| name == MEMORY_POLICY_FLAG) => {
+                memory_policy = option.split_once('=').map(|(_, value)| value.to_owned());
+            }
             "--version" | "-v" => {
                 println!("v{}", crate::modules::process_state::NODE_VERSION);
                 return Ok(ExitCode::SUCCESS);
@@ -442,6 +611,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         }
         index += 1;
     }
+    select_memory_policy(memory_policy.as_deref())?;
     if let Some(source) = eval_source {
         input = Some(SharedInput::Eval {
             source,
@@ -474,7 +644,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let executable = executable_path().map_err(|error| error.to_string())?;
     let mut argv = vec![executable.to_string_lossy().into_owned()];
     argv.extend(guest_arguments);
-    execute_shared_with_execution_mode(
+    execute_shared_with_teardown(
         input,
         argv,
         if jit {
@@ -482,6 +652,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         } else {
             quench_runtime::ExecutionMode::Interpreted
         },
+        Teardown::ProcessExit,
     )
     .map(SharedCompletion::exit_code)
 }

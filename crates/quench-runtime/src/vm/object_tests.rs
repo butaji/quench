@@ -83,6 +83,7 @@ fn field_cache_entries<H: Host>(
 // Exercise the supported residual CallMethod opcode directly. Optional-call
 // lowering now resolves the callee before arguments through GetField + Call.
 fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
+    program.compile_released();
     let atom = program
         .atoms
         .iter()
@@ -114,7 +115,7 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
         crate::bytecode::Instr::new(Op::CallMethod, 1, 0, 0, site),
         crate::bytecode::Instr::new(Op::Return, 1, 0, 0, 0),
     ];
-    function.local_registers.clear();
+    function.local_registers = Default::default();
     function.parameter_end_pc = 0;
     function.source_positions = Default::default();
     let methods = program
@@ -122,9 +123,9 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
         .iter()
         .map(|site| (site.atom, site.cache, Vec::new(), site.receiver_path))
         .collect::<Vec<_>>();
-    program.register_roots = crate::compile::liveness::derive(
-        &mut program.functions,
-        &methods,
+    crate::compile::liveness::mark_register_roots(
+        program.functions.iter_mut().map(|function| &mut **function),
+        methods.as_slice(),
         &program.field_sites,
         &program.superinstructions,
     );
@@ -183,6 +184,7 @@ fn cached_field_reads_follow_in_place_writes() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "field-cache-write.js").unwrap();
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["1", "1", "2"], "{mode}");
 
@@ -205,6 +207,7 @@ fn spread_sources_stay_rooted_through_the_loop_that_reuses_them() {
     // feeds included: a collection inside that call must not free it.
     let source = "function parse(texts, next) { let token; while (token = next(...texts)) {} return token; }";
     let program = Engine::specialize(source, "spread-roots.js").unwrap();
+    program.compile_released();
     let function = program
         .functions
         .iter()
@@ -231,8 +234,13 @@ fn spread_sources_stay_rooted_through_the_loop_that_reuses_them() {
                 .then(|| (pc, instruction.jump_target() as usize))
         })
         .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|candidate| std::ptr::eq(candidate, function))
+        .unwrap();
     for pc in head..=back_edge {
-        let root_map = program.register_roots.mask(function.register_root_offset, function.registers, pc).unwrap();
+        let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
         assert_ne!(root_map & (1u64 << register), 0, "pc {pc} drops register {register}");
     }
 }
@@ -255,10 +263,12 @@ fn static_three_field_object_literals_share_the_shape_site() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let program = compile(source, "static-object-literal.js").unwrap();
-        let function = program
+        program.compile_released();
+        let (function_id, function) = program
             .functions
             .iter()
-            .find(|function| {
+            .enumerate()
+            .find(|(_, function)| {
                 function
                     .name
                     .is_some_and(|name| &program.atoms[name as usize] == "make")
@@ -273,7 +283,7 @@ fn static_three_field_object_literals_share_the_shape_site() {
             .unwrap_or_else(|| panic!("{mode} compiler did not select the literal site"));
         let window = instruction.register_window();
         assert_eq!(window.count, 3, "{mode}");
-        let root_map = program.register_roots.mask(function.register_root_offset, function.registers, pc).unwrap();
+        let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
         for register in window.base..window.base + window.count {
             assert_ne!(
                 root_map & (1u64 << register),
@@ -340,6 +350,7 @@ fn inherited_field_cache_reads_live_object_prototype_data() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
     let program = Engine::specialize(source, "inherited-field-cache-live.js").unwrap();
+    program.compile_released();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["1", "1", "2"]);
     let value = vm.intern_atom("cacheValue");
@@ -371,6 +382,7 @@ fn direct_object_field_cache_probes_nonordinary_prototype_holder() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "direct-object-holder-cache.js").unwrap();
+        program.compile_released();
         #[cfg(feature = "profile-aggregate")]
         let depth_one_hits_before = vm.profile.field_cache_depths[1];
         vm.execute(&program).unwrap();
@@ -421,6 +433,7 @@ fn direct_object_field_cache_probes_megamorphic_prototype_holders() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
     let program = Engine::specialize(source, "direct-object-megamorphic-holder-cache.js").unwrap();
+    program.compile_released();
     #[cfg(feature = "profile-aggregate")]
     let tier_two_hits_before = vm.profile.field_cache_tiers[2];
     vm.execute(&program).unwrap();
@@ -516,6 +529,7 @@ fn inherited_builtin_fields_cache_array_and_object_prototypes() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "inherited-builtin-fields.js").unwrap();
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(
             output.borrow().as_slice(),
@@ -553,6 +567,7 @@ fn optional_method_call_field_cache_observes_callable_replacement() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "optional-method-cache-write.js").unwrap();
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["1", "2"], "{mode}");
 
@@ -587,6 +602,7 @@ fn optional_method_cache_observes_callable_replacement_without_shape_change() {
         let program = method_cache_program(
             compile(source, "optional-method-cache-callable-replacement.js").unwrap(),
         );
+        program.compile_released();
         assert!(
             !program.method_sites.is_empty(),
             "test must exercise CallMethod"
@@ -633,6 +649,7 @@ fn optional_method_cache_invalidates_when_inherited_callable_changes() {
         let program = method_cache_program(
             compile(source, "optional-method-cache-inherited-replacement.js").unwrap(),
         );
+        program.compile_released();
         assert!(
             !program.method_sites.is_empty(),
             "test must exercise CallMethod"
@@ -671,6 +688,7 @@ fn optional_method_cache_executes_megamorphic_receiver_shapes() {
         let program =
             method_cache_program(compile(source, "optional-method-cache-megamorphic.js").unwrap());
         assert_eq!(program.method_sites.len(), 1, "test needs one method site");
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(
             output.borrow().as_slice(),
@@ -726,6 +744,7 @@ fn field_cache_fallback_preserves_accessor_reentry() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "field-cache-accessor-reentry.js").unwrap();
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["1", "2", "2"], "{mode}");
 
@@ -764,6 +783,7 @@ fn field_cache_fallback_preserves_proxy_get_trap_reentry() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "field-cache-proxy-get.js").unwrap();
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["1", "2", "2"], "{mode}");
 
@@ -802,6 +822,7 @@ fn inherited_field_cache_preserves_proxy_prototype_traps() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "inherited-proxy-field-cache.js").unwrap();
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["1", "2", "2"], "{mode}");
         if vm.specialized {
@@ -840,6 +861,7 @@ fn method_cache_fallback_preserves_proxy_get_trap_and_receiver() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = method_cache_program(compile(source, "method-cache-proxy-get.js").unwrap());
+        program.compile_released();
         assert!(
             !program.method_sites.is_empty(),
             "test must exercise CallMethod"
@@ -895,6 +917,7 @@ fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = method_cache_program(compile(source, "optional-method-accessor.js").unwrap());
+        program.compile_released();
         assert!(
             !program.method_sites.is_empty(),
             "test must exercise CallMethod"
@@ -945,6 +968,7 @@ fn static_index_field_cache_admits_only_shape_backed_storage() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "static-index-cache.js").unwrap();
+        program.compile_released();
         vm.execute(&program).unwrap();
         assert_eq!(
             output.borrow().as_slice(),
@@ -1013,5 +1037,168 @@ fn exhausted_field_cache_preserves_generic_reads() {
                     .all(|set| set.len() <= FIELD_MEGAMORPHIC_LIMIT)
             );
         }
+    }
+}
+
+#[test]
+fn getter_only_accessors_keep_their_getters_in_slots_and_share_shapes() {
+    let source = r#"
+      function say() { print(Array.prototype.join.call(arguments, " ")); }
+      function bind(target, source, key) {
+        Object.defineProperty(target, key, {
+          enumerable: true, configurable: true, get: function () { return source[key]; },
+        });
+      }
+      var objects = [];
+      for (var i = 0; i < 64; i++) {
+        var o = {};
+        var source = { a: i, b: i * 2, c: i * 3 };
+        for (var key in source) bind(o, source, key);
+        objects.push(o);
+      }
+      // Only the slots keep the getters alive across these collections.
+      for (var g = 0; g < 200000; g++) [g, g];
+      function readC(o) { return o.c; }
+      var inherited = 0;
+      for (var round = 0; round < 4; round++)
+        for (var j = 0; j < 64; j++) inherited += readC(Object.create(objects[j]));
+      say(objects[0].b + objects[63].b, inherited);
+      var first = Object.getOwnPropertyDescriptor(objects[0], "a").get;
+      var last = Object.getOwnPropertyDescriptor(objects[63], "a").get;
+      say(first !== last, first() === 0, last() === 63, Object.keys(objects[5]).join());
+      say(JSON.stringify(objects[3]), JSON.stringify(Object.assign({}, objects[4])));
+      Object.defineProperty(objects[1], "a", { writable: true });
+      say(String(objects[1].a), JSON.stringify(Object.getOwnPropertyDescriptor(objects[1], "a")), objects[2].a);
+      var setTo;
+      Object.defineProperty(objects[6], "b", { set: function (v) { setTo = v; } });
+      objects[6].b = 5;
+      say(objects[6].b, setTo, objects[7].b);
+      var data = { x: 5 };
+      Object.defineProperty(data, "x", { get: function () { return 7; }, configurable: true });
+      var whileGetter = data.x;
+      Object.defineProperty(data, "x", { value: 9 });
+      say(whileGetter, data.x, Object.getOwnPropertyDescriptor(data, "x").writable);
+      // A data property made from an accessor without a value starts as undefined, not as
+      // the value the slot held before the accessor.
+      var stale = { y: 5 };
+      Object.defineProperty(stale, "y", { get: function () { return 1; }, set: function () {}, configurable: true });
+      Object.defineProperty(stale, "y", { writable: true });
+      say(String(stale.y));
+      Object.freeze(objects[8]);
+      say(Object.isFrozen(objects[8]), objects[8].c, typeof Object.getOwnPropertyDescriptor(objects[8], "c").get);
+      delete objects[9].a;
+      objects[9].a = "data";
+      say(objects[9].a, objects[9].b, Object.keys(objects[9]).join());
+      var symbol = Symbol("s"), symbolic = {};
+      Object.defineProperty(symbolic, symbol, { get: function () { return "sym"; }, configurable: true });
+      say(symbolic[symbol]);
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "slot-getters.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                "126 24192",
+                "true true true a,b,c",
+                r#"{"a":3,"b":6,"c":9} {"a":4,"b":8,"c":12}"#,
+                r#"undefined {"writable":true,"enumerable":true,"configurable":true} 2"#,
+                "12 5 14",
+                "7 9 false",
+                "undefined",
+                "true 24 function",
+                "data 18 b,c,a",
+                "sym",
+            ],
+            "{mode}"
+        );
+        // 64 objects of three getters each share one chain instead of owning one each: the
+        // same layout built for one object costs as many shapes.
+        let layout_shapes = |count: usize| {
+            let source = format!(
+                "for (var i = 0; i < {count}; i++) {{ var o = {{}}; for (var key of ['a', 'b', 'c']) \
+                 Object.defineProperty(o, key, {{ get: function () {{ return i; }} }}); }}"
+            );
+            let mut vm = Vm::new(SilentHost);
+            vm.execute(&compile(&source, "slot-getter-shapes.js").unwrap()).unwrap();
+            vm.shapes.len()
+        };
+        assert_eq!(layout_shapes(64), layout_shapes(1), "{mode}");
+    }
+}
+
+#[test]
+fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
+    let source = r#"
+      function plain(m, k) { return function () { return m[k]; }; }
+      function arrow() { return () => this; }
+      var made = plain({ x: 1 }, "x");
+      var lexical = arrow.call("outer");
+      function nested() { return function () { return () => () => this; }.call("inner")()(); }
+      function viaEval() { return function () { return eval("this"); }.call("evaluated"); }
+      function target() { var g = function () { return () => new.target; }; return [typeof g()(), new.target === target]; }
+      print([made(), String(lexical()), String(nested.call("outer")), String(viaEval.call({})),
+        target().join(), new target().join()].join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "implicit-bindings.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["1 outer inner evaluated undefined,false undefined,true"]
+    );
+    let environment_bindings = |vm: &mut Vm<RecordingHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        let closure = vm.own_property(vm.realm.globals, atom).unwrap();
+        let Some(crate::heap::FunctionRecord { env, .. }) = vm.heap.function(closure) else {
+            panic!("{name} is a closure");
+        };
+        let Some(Cell::Environment { scope, .. }) = vm.heap.get(*env) else {
+            panic!("{name} captured its creator's environment");
+        };
+        match scope.dynamic_bindings() {
+            crate::heap::EnvironmentBindings::Owned(bindings) => bindings.len(),
+            crate::heap::EnvironmentBindings::Shared(_) => usize::MAX,
+        }
+    };
+    // A non-arrow closure has its own `this` and `new.target`, so its creator records none;
+    // an arrow inherits them from the bindings its creator keeps.
+    assert_eq!(environment_bindings(&mut vm, "made"), 0);
+    assert_ne!(environment_bindings(&mut vm, "lexical"), 0);
+}
+
+#[test]
+fn field_cache_invalidation_resets_every_written_site() {
+    const SITES: usize = 64;
+    let mut vm = Vm::new(SilentHost);
+    vm.field_caches = vec![EMPTY_CACHE; SITES];
+    vm.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; SITES];
+    vm.field_add_indices = vec![NO_FIELD_ADD_SET; SITES];
+    vm.inherited_field_indices = vec![NO_INHERITED_FIELD; SITES];
+    vm.field_cache_writes = Some(Vec::new());
+    let record = |vm: &mut Vm<SilentHost>, site: usize| {
+        for receiver in 1..=3 {
+            vm.record_field_cache(site, FieldCache { receiver, holder: NO_FIELD_HOLDER, slot: 0 });
+        }
+    };
+    let all_empty = |vm: &Vm<SilentHost>| {
+        vm.field_caches.iter().all(|cache| cache.receiver == EMPTY_CACHE.receiver)
+            && vm.megamorphic_field_indices.iter().all(|&index| index == NO_MEGAMORPHIC_FIELD)
+    };
+    // Few writes reset one by one; more than the sparse share overflow to a full reset.
+    for written in [vec![3, 40], (0..SITES).collect::<Vec<_>>()] {
+        for &site in &written {
+            record(&mut vm, site);
+        }
+        assert!(!all_empty(&vm));
+        assert_eq!(vm.field_cache_writes.is_none(), written.len() > SITES / super::FIELD_CACHE_SPARSE_RESET_SHARE);
+        vm.invalidate_field_caches();
+        assert!(all_empty(&vm), "{} written sites reset", written.len());
+        assert_eq!(vm.field_cache_writes.as_deref(), Some(&[][..]));
     }
 }

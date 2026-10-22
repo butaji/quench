@@ -255,7 +255,7 @@ impl<H: Host> Vm<H> {
                     Err(error) => return Err(error),
                 };
                 let iterator_root = self.heap.root(iterator);
-                let next_atom = self.intern_atom("next");
+                let next_atom = self.runtime_atoms.next;
                 let next_method = match self.get_property(p, iterator, next_atom) {
                     Ok(method) if self.is_function(method) => method,
                     Ok(_) => {
@@ -268,8 +268,8 @@ impl<H: Host> Vm<H> {
                     }
                 };
                 let next_root = self.heap.root(next_method);
-                let done_atom = self.intern_atom("done");
-                let value_atom = self.intern_atom("value");
+                let done_atom = self.runtime_atoms.done;
+                let value_atom = self.runtime_atoms.value;
                 let mut acc = initialize(self)?;
                 loop {
                     let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);

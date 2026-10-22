@@ -22,8 +22,8 @@ impl<H: Host> Vm<H> {
         }
     }
     pub(super) fn install_typed_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        self.intern_atom("value");
-        self.intern_atom("done");
+        self.runtime_atoms.value;
+        self.runtime_atoms.done;
         let uint8_array = self.native_value(Native::Uint8Array);
         let typed_array = self.native_value(Native::TypedArray);
         self.uint8_array_proto = self.object();
@@ -37,7 +37,7 @@ impl<H: Host> Vm<H> {
             .set_proto(function_proto);
         self.set_named(program, typed_array, "prototype", self.typed_array_proto)?;
         self.set_builtin_value_named(self.typed_array_proto, "constructor", typed_array)?;
-        let typed_name = self.heap.alloc(Cell::String("TypedArray".into()));
+        let typed_name = self.heap.alloc_string("TypedArray".into());
         self.set_named(program, typed_array, "name", typed_name)?;
         for (name, configurable) in [("length", true), ("name", true), ("prototype", false)] {
             let atom = self.intern_atom(name);
@@ -163,7 +163,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
     ) -> Result<(), JsError> {
-        let iterator = self.well_known_symbols["iterator"];
+        let iterator = self.well_known_symbols[WellKnownSymbol::Iterator];
         let values_atom = self.intern_atom("values");
         let values = self.get_property(p, self.typed_array_proto, values_atom)?;
         self.set_symbol_property(self.typed_array_proto, iterator, values)?;
@@ -347,16 +347,14 @@ impl<H: Host> Vm<H> {
                         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
                             unreachable!("validated typed array backing buffer");
                         };
-                        let source_bytes = bytes.to_vec();
+                        let source_bytes = bytes.read()[source_offset..source_offset + byte_count].to_vec();
                         let Some(Cell::ArrayBuffer { bytes, .. }) =
                             self.heap.get_mut(target_buffer)
                         else {
                             unreachable!("validated species backing buffer");
                         };
                         bytes.make_mut()[target_offset..target_offset + byte_count]
-                            .copy_from_slice(
-                                &source_bytes[source_offset..source_offset + byte_count],
-                            );
+                            .copy_from_slice(&source_bytes);
                     }
                 } else {
                     for index in 0..copy_count {
@@ -433,7 +431,7 @@ impl<H: Host> Vm<H> {
                     }
                     result.push_str(&self.to_string(p, value)?);
                 }
-                Ok(self.heap.alloc(Cell::String(result.into())))
+                Ok(self.heap.alloc_string(result.into()))
             }
             _ => unreachable!(),
         }
@@ -700,7 +698,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         super::sort::try_stable_sort_by(values, |left, right| {
             if let Some(comparator) = comparator {
-                self.compare_sort_callback(p, comparator, *left, *right)
+                let comparator = self.heap.root_value(comparator).unwrap();
+                let left = self.heap.root_value(*left).unwrap();
+                let right = self.heap.root_value(*right).unwrap();
+                self.compare_sort_callback(p, comparator, left, right)
             } else {
                 let left = self.heap.root_value(*left).unwrap();
                 let right = self.heap.root_value(*right).unwrap();
@@ -746,7 +747,7 @@ impl<H: Host> Vm<H> {
             let converted = if matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64)
             {
                 let value = self.to_bigint(p, value)?;
-                self.heap.alloc(Cell::BigInt(value.to_string()))
+                self.heap.alloc(Cell::bigint(value))
             } else {
                 Value::number(self.to_number(p, value)?)
             };
@@ -839,9 +840,7 @@ impl<H: Host> Vm<H> {
         if let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
             (self.heap.get(left), self.heap.get(right))
         {
-            let left = left.parse::<i128>().unwrap_or_default();
-            let right = right.parse::<i128>().unwrap_or_default();
-            return left.cmp(&right);
+            return left.cmp(right);
         }
         let left = left.as_number().unwrap_or(f64::NAN);
         let right = right.as_number().unwrap_or(f64::NAN);
@@ -872,7 +871,7 @@ impl<H: Host> Vm<H> {
             .iter()
             .find_map(|(candidate, _, name)| (*candidate == kind).then_some(*name))
             .unwrap_or("Uint8Array");
-        self.heap.alloc(Cell::String(name.into()))
+        self.heap.alloc_string(name.into())
     }
 
     pub(super) fn validate_typed_array_method(
@@ -929,10 +928,7 @@ impl<H: Host> Vm<H> {
             "undefined".to_owned()
         } else if self.is_function(this) {
             self.function_source_value(this)
-                .and_then(|source| match self.heap.get(source) {
-                    Some(Cell::String(s)) => Some(s.host_string().to_owned()),
-                    _ => None,
-                })
+                .and_then(|source| self.heap.string(source).map(|s| s.host_string().to_owned()))
                 .unwrap_or_else(|| "function () { [native code] }".to_owned())
         } else if this.direct_array_index().is_some() {
             "[object Array]".to_owned()
@@ -943,7 +939,8 @@ impl<H: Host> Vm<H> {
                 Some(Cell::Symbol(description)) => {
                     format!("Symbol({})", description.as_deref().unwrap_or(""))
                 }
-                Some(Cell::String(_) | Cell::BigInt(_)) => self.to_string(p, this)?,
+                Some(Cell::BigInt(_)) => self.to_string(p, this)?,
+                _ if self.heap.is_string(this) => self.to_string(p, this)?,
                 _ if this.as_number().is_some() || this.as_bool().is_some() => {
                     self.to_string(p, this)?
                 }
@@ -959,6 +956,25 @@ impl<H: Host> Vm<H> {
         native: Native,
         this: Value,
     ) -> Result<Value, JsError> {
+        if let Some(value) = self.typed_array_getter_value(native, this) {
+            return Ok(value);
+        }
+        {
+            let property = match native {
+                Native::TypedArrayBufferGetter => "buffer",
+                Native::TypedArrayByteLengthGetter => "byteLength",
+                Native::TypedArrayByteOffsetGetter => "byteOffset",
+                Native::TypedArrayLengthGetter => "length",
+                _ => unreachable!(),
+            };
+            let receiver = self.typed_array_receiver_diagnostic(p, this)?;
+            Err(self.type_error(p, format!("Method get TypedArray.prototype.{property} called on incompatible receiver {receiver}")))
+        }
+    }
+
+    /// A `%TypedArray%.prototype` accessor's value for a typed array `this`; `None` for any
+    /// other receiver, which the getter rejects.
+    pub(super) fn typed_array_getter_value(&self, native: Native, this: Value) -> Option<Value> {
         let Some(Cell::TypedArray {
             buffer,
             object,
@@ -968,15 +984,7 @@ impl<H: Host> Vm<H> {
             ..
         }) = self.heap.get(this)
         else {
-            let property = match native {
-                Native::TypedArrayBufferGetter => "buffer",
-                Native::TypedArrayByteLengthGetter => "byteLength",
-                Native::TypedArrayByteOffsetGetter => "byteOffset",
-                Native::TypedArrayLengthGetter => "length",
-                _ => unreachable!(),
-            };
-            let receiver = self.typed_array_receiver_diagnostic(p, this)?;
-            return Err(self.type_error(p, format!("Method get TypedArray.prototype.{property} called on incompatible receiver {receiver}")));
+            return None;
         };
         let (buffer, offset, length, length_tracking, kind) =
             (*buffer, object.offset, *length, *length_tracking, *kind);
@@ -999,7 +1007,7 @@ impl<H: Host> Vm<H> {
         } else {
             length
         };
-        Ok(match native {
+        Some(match native {
             Native::TypedArrayBufferGetter => buffer,
             Native::TypedArrayByteOffsetGetter if !out_of_bounds => {
                 Value::number(self.typed_array_byte_offset(this).unwrap_or_default() as f64)

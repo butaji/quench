@@ -6,6 +6,7 @@ mod destructure;
 mod disposal;
 mod expression;
 mod iteration;
+mod literal_template;
 mod object;
 mod optional;
 mod statement;
@@ -119,8 +120,11 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     shared_undefined: SharedUndefined,
     function_scope: FxHashSet<Atom>,
     annex_b_collisions: FxHashSet<u32>,
-    pub(super) scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
+    pub(super) scopes: super::capture_scope::ScopeChain,
     pub(super) function_id: u32,
+    /// `Compiler::private_name_references` when this function began, so a later count
+    /// shows that it or a function it encloses names a private member.
+    private_name_references: u64,
     pub(super) handlers: Vec<crate::bytecode::Handler>,
     pub(super) binding_sites: Vec<crate::bytecode::BindingSite>,
     pub(super) environment_clones: Vec<Vec<u16>>,
@@ -147,6 +151,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     inherited_with_depth: u16,
     pub(super) strict: bool,
     pub(super) dynamic_eval: bool,
+    /// The `var x = arguments;` alias whose reads read the `arguments` binding
+    /// (`early::arguments_alias`); its declaration then stores nothing.
+    pub(super) arguments_alias: Option<String>,
     parameter_context: bool,
     pub(super) parameter_eval_arguments_error: bool,
     pub(super) parameter_arguments_slot: Option<u16>,
@@ -158,7 +165,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     /// The current function's capture scope for one lexical state: closures created in the
     /// same state (hoisted declarations, sibling callbacks) share it instead of re-copying
     /// every local binding.
-    capture_scope_memo: Option<(CaptureScopeState, Rc<FxHashMap<Atom, u16>>)>,
+    capture_scope_memo: Option<(CaptureScopeState, Rc<super::capture_scope::CaptureScope>)>,
+    /// The capture base as of a local count and parameter context (`capture_base`).
+    capture_base_memo: Option<((usize, bool), Rc<FxHashMap<Atom, u16>>)>,
     disposal_scopes: Vec<DisposalScope>,
 }
 
@@ -174,7 +183,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         locals: Vec<Atom>,
         function_scope: FxHashSet<Atom>,
         annex_b_collisions: FxHashSet<u32>,
-        scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
+        scopes: super::capture_scope::ScopeChain,
         function_id: u32,
         super_flags: (bool, bool),
         async_function: bool,
@@ -216,6 +225,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         // The register after the promoted locals holds `undefined` for plain-call receivers.
         let shared_undefined = promoted_local_slots.len() as Register;
         let local_register_count = shared_undefined + 1;
+        let private_name_references = owner.private_name_references;
         Self {
             owner,
             locals,
@@ -238,6 +248,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             annex_b_collisions,
             scopes,
             function_id,
+            private_name_references,
             handlers: vec![],
             binding_sites: vec![],
             environment_clones: vec![],
@@ -261,6 +272,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             inherited_with_depth: with_depth,
             strict: false,
             dynamic_eval: false,
+            arguments_alias: None,
             parameter_context: false,
             parameter_eval_arguments_error: false,
             parameter_arguments_slot,
@@ -270,6 +282,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             lexical_scopes: Vec::new(),
             lexical_scope_pushes: 0,
             capture_scope_memo: None,
+            capture_base_memo: None,
             disposal_scopes: vec![DisposalScope::default()],
         }
     }
@@ -501,47 +514,18 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 _ => (None, false),
             };
             if let Some(function) = function {
-                let name = function
-                    .id
-                    .as_ref()
-                    .map(|name| name.name.as_str())
-                    .or(default_export.then_some("default"));
-                let Some(name) = name else { continue };
-                let params = Self::params(function, self.owner);
-                let Some(body) = &function.body else { continue };
-                let scopes = self.capture_scopes();
-                let id = self.owner.compile_function(
-                    Some(name),
-                    &params,
-                    FunctionBody::Statements(&body.statements),
-                    &scopes,
-                    Some(self.function_id),
-                    FunctionOptions {
-                        directive_completion: None,
-                        defaults: Some(&function.params),
-                        source_span: self.owner.source_span(function.span),
-                        name_binding: None,
-                        async_function: function.r#async,
-                        generator: function.generator,
-                        class_constructor: false,
-                        derived_constructor: false,
-                        non_constructible: false,
-                        class_initializer: false,
-                        instance_fields: None,
-                        instance_private_methods: None,
-                        super_static: false,
-                        super_home: false,
-                        super_home_atom: None,
-                        rest_override: false,
-                        implicit_super: false,
-                        with_depth: self.with_depth,
-                        strict: self.strict
-                            || body
-                                .directives
-                                .iter()
-                                .any(|directive| directive.directive == "use strict"),
-                    },
-                );
+                if function.id.is_none() && !default_export || function.body.is_none() {
+                    continue;
+                }
+                let context = super::replay::PlainFunctionContext {
+                    expression: false,
+                    default_export,
+                    scopes: self.capture_scopes(),
+                    parent: self.function_id,
+                    with_depth: self.with_depth,
+                    inherited_strict: self.strict,
+                };
+                let id = self.owner.compile_plain_function(function, context);
                 let dst = self.reg();
                 self.emit(Op::MakeClosure, dst, 0, 0, id);
                 if default_export {
@@ -569,13 +553,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.release_temporaries();
             }
         }
-    }
-
-    fn params<'c>(
-        function: &'c oxc_ast::ast::Function<'c>,
-        owner: &mut Compiler<'_>,
-    ) -> Vec<String> {
-        Self::params_from_formals(&function.params, owner)
     }
 
     pub(super) fn params_from_formals<'c>(
@@ -681,12 +658,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         if let Some(made) = self.code.last()
             && made.op() == Op::MakeClosure
             && made.result_register() == value
-            && let Some(Some(function)) = self.owner.functions.get_mut(made.closure_function_index() as usize)
-            && function.name.is_none()
-            && function.inferred_name.is_none()
-            && !function.is_class_constructor
+            && self.owner.name_made_function(made.closure_function_index(), name)
         {
-            function.inferred_name = Some(name);
             return;
         }
         self.emit(Op::SetFunctionName, value, 0, 0, name);
@@ -735,6 +708,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn emit_parameter_bindings(&mut self, params: &oxc_ast::ast::FormalParameters<'_>) {
         let non_simple = Self::has_non_simple_parameters(params);
+        // A simple parameter list binds each name to the slot its argument already fills,
+        // so there is nothing to initialize.
+        if !non_simple {
+            return;
+        }
         let parameter_names = Self::parameter_local_names(params);
         if non_simple {
             for name in Self::parameter_bound_names(params) {
@@ -745,6 +723,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
         }
         for (index, item) in params.items.iter().enumerate() {
+            // A simple parameter's binding is the local its argument arrives in, already
+            // initialized: binding it again would store the value it holds.
+            if !non_simple {
+                continue;
+            }
             let atom = self.owner.atom(&parameter_names[index]);
             let current = self.load_atom(atom);
             if let Some(initializer) = &item.initializer {
@@ -826,7 +809,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
         let binding = self.resolve_lexical(atom);
         !self.local_slots.contains_key(&binding)
-            && !self.scopes.iter().any(|scope| scope.contains_key(&binding))
+            && !self.scopes.contains(binding)
             && !self.has_immutable_capture(binding)
     }
 
@@ -1111,7 +1094,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
     }
 
-    pub(super) fn capture_scopes(&mut self) -> Vec<Rc<FxHashMap<Atom, u16>>> {
+    pub(super) fn capture_scopes(&mut self) -> super::capture_scope::ScopeChain {
         let state = CaptureScopeState {
             local_count: self.local_slots.len(),
             lexical_depth: self.lexical_scopes.len(),
@@ -1130,11 +1113,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         // Eval can introduce vars that shadow inherited bindings. Current lexical
         // bindings cannot be replaced by those declarations and remain capturable.
         if !self.dynamic_eval {
-            scopes.extend(self.scopes.iter().cloned());
+            scopes.extend(self.scopes.levels().iter().cloned());
         } else {
             // Source eval cannot introduce compiler bindings. Keep their scope
             // depths while dropping source-name projections and capture markers.
-            scopes.extend(self.scopes.iter().map(|scope| {
+            scopes.extend(self.scopes.levels().iter().map(|scope| {
                 Rc::new(
                     scope
                         .iter()
@@ -1144,39 +1127,64 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                                 && !LexicalBindingKind::ALL
                                     .into_iter()
                                     .any(|kind| kind != LexicalBindingKind::PrivateName && name.starts_with(kind.capture_prefix()))
-                                && !name.starts_with("\0quench:catch-capture:"))
+                                && !name.starts_with(super::CATCH_CAPTURE_PREFIX))
                             .then_some((*atom, *slot))
                         })
                         .collect(),
                 )
             }));
         }
-        scopes
+        super::capture_scope::ScopeChain::new(scopes)
+    }
+
+    /// The current function's bindings any closure created inside it sees before lexical
+    /// scopes apply: its declared names and compiler bindings with local slots. Locals are
+    /// only appended (`hidden_local`), so a later base is an earlier one plus the locals added
+    /// since, under the same parameter context.
+    fn capture_base(&mut self) -> Rc<FxHashMap<Atom, u16>> {
+        let key = (self.locals.len(), self.parameter_context);
+        let (mut base, first_new) = match self.capture_base_memo.take() {
+            Some(((count, parameter_context), base))
+                if parameter_context == key.1 && count <= key.0 =>
+            {
+                if count == key.0 {
+                    self.capture_base_memo = Some((key, Rc::clone(&base)));
+                    return base;
+                }
+                (Rc::unwrap_or_clone(base), count)
+            }
+            _ => (FxHashMap::default(), 0),
+        };
+        let arguments = self
+            .parameter_arguments_slot
+            .filter(|_| self.parameter_context)
+            .map(|slot| (self.owner.atom("arguments"), slot));
+        for &atom in &self.locals[first_new..] {
+            let Some(&slot) = self.local_slots.get(&atom) else {
+                continue;
+            };
+            let declared = !self.dynamic_eval && self.function_scope.contains(&atom);
+            let visible = !self.parameter_context
+                || usize::from(slot) < self.parameter_local_count
+                || Some(slot) == self.parameter_arguments_slot;
+            // The parameter context's `arguments` binding is its own, whatever local shares
+            // the name.
+            let shadowed = arguments.is_some_and(|(name, _)| name == atom);
+            if (declared || self.is_compiler_binding(atom)) && visible && !shadowed {
+                base.insert(atom, slot);
+            }
+        }
+        if let Some((name, slot)) = arguments {
+            base.insert(name, slot);
+        }
+        let base = Rc::new(base);
+        self.capture_base_memo = Some((key, Rc::clone(&base)));
+        base
     }
 
     /// The current function's bindings visible to a closure created at this position.
-    fn current_capture_scope(&mut self) -> FxHashMap<Atom, u16> {
-        let mut scope: FxHashMap<Atom, u16> = self
-            .function_scope
-            .iter()
-            .filter(|_| !self.dynamic_eval)
-            .filter_map(|atom| self.local_slots.get(atom).map(|slot| (*atom, *slot)))
-            .collect();
-        scope.extend(
-            self.local_slots
-                .iter()
-                .filter(|(atom, _)| self.is_compiler_binding(**atom))
-                .map(|(atom, slot)| (*atom, *slot)),
-        );
-        if self.parameter_context {
-            scope.retain(|_, slot| {
-                usize::from(*slot) < self.parameter_local_count
-                    || Some(*slot) == self.parameter_arguments_slot
-            });
-            if let Some(slot) = self.parameter_arguments_slot {
-                scope.insert(self.owner.atom("arguments"), slot);
-            }
-        }
+    fn current_capture_scope(&mut self) -> super::capture_scope::CaptureScope {
+        let mut scope = super::capture_scope::CaptureScope::new(self.capture_base());
         for lexical in &self.lexical_scopes {
             for (source, target) in &lexical.bindings {
                 if let Some(slot) = self.local_slots.get(target).copied() {
@@ -1186,8 +1194,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         .get(source)
                         .copied()
                         .unwrap_or(LexicalBindingKind::Mutable);
-                    let name = self.owner.atoms[*source as usize].to_owned();
                     if kind == LexicalBindingKind::PrivateName {
+                        let name = self.owner.atoms[*source as usize].to_owned();
                         let label = crate::bytecode::private_identity_label(&name);
                         let stale = scope.keys().copied().filter(|atom| {
                             let text: &str = self.owner.atoms[*atom as usize].as_ref();
@@ -1197,20 +1205,20 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         for atom in stale { scope.remove(&atom); }
                         scope.insert(*source, slot);
                     }
-                    for kind in LexicalBindingKind::ALL {
-                        let marker = format!("{}{name}", kind.capture_prefix());
-                        if let Some(marker) = self.owner.atoms.find(&marker).as_ref() {
-                            scope.remove(marker);
-                        }
+                    // Only markers this loop inserted can be in `scope`, and each was made
+                    // through `capture_marker`, which records it.
+                    for marker in LexicalBindingKind::ALL
+                        .map(Some)
+                        .into_iter()
+                        .chain([None])
+                        .filter_map(|kind| self.owner.capture_markers.get(&(kind, *source)).copied())
+                    {
+                        scope.remove(&marker);
                     }
-                    let catch_name = format!("\0quench:catch-capture:{name}");
-                    if let Some(marker) = self.owner.atoms.find(&catch_name).as_ref() {
-                        scope.remove(marker);
-                    }
-                    let marker = self.owner.atom(&format!("{}{name}", kind.capture_prefix()));
+                    let marker = self.owner.capture_marker(Some(kind), *source);
                     scope.insert(marker, slot);
                     if lexical.catch_parameter {
-                        let marker = self.owner.atom(&catch_name);
+                        let marker = self.owner.capture_marker(None, *source);
                         scope.insert(marker, slot);
                     }
                 }

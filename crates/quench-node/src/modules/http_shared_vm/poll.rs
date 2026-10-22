@@ -130,6 +130,7 @@ pub(crate) fn poll(
     let mut progressed = false;
     progressed |= emit_listening(runtime, program, shared_state)?;
     progressed |= emit_net_server_events(runtime, shared_state)?;
+    progressed |= emit_response_drains(runtime, shared_state)?;
     for event in events {
         match event {
             net_shared_vm::TransportEvent::Accepted {
@@ -348,6 +349,7 @@ pub(crate) fn poll(
                             continue;
                         }
                         let body_invalid = message.body.is_err();
+                        prune_collected_responses(runtime, shared_state);
                         let request_async_id =
                             crate::modules::async_hooks_shared_vm::create_context(shared_state);
                         let (server_root, response_id, response_factory, incoming_factory) = {
@@ -393,13 +395,14 @@ pub(crate) fn poll(
                                     http10,
                                     use_chunked_encoding_by_default: !http10 || message.headers.iter().any(|(name, value)| name.eq_ignore_ascii_case("te") && value.split(',').any(|token| token.trim().eq_ignore_ascii_case("chunked"))),
                                     lifecycle: super::state::ResponseLifecycle::Open,
+                                    owner: None,
                                 },
                             );
                             (server_root, response_id, response_factory, incoming_factory)
                         };
                         let socket_object =
                             runtime.object_rooted().map_err(|error| error.to_string())?;
-                        let request = match request_object(
+                        let head = match request_head(
                             runtime,
                             message.method,
                             message.target,
@@ -408,7 +411,7 @@ pub(crate) fn poll(
                             message.raw_headers,
                             socket_object,
                         ) {
-                            Ok(request) => request,
+                            Ok(head) => head,
                             Err(error) => {
                                 runtime.release_root(socket_object);
                                 return Err(error);
@@ -427,7 +430,7 @@ pub(crate) fn poll(
                         let readable = match runtime.call_rooted(
                             incoming_factory,
                             undefined,
-                            &[request, body, open, transport, server_side],
+                            &[head.as_slice(), &[body, open, transport, server_side]].concat(),
                         ) {
                             Ok(readable) => readable,
                             Err(error) => {
@@ -435,7 +438,7 @@ pub(crate) fn poll(
                                 if let Some(exception) = error.exception {
                                     runtime.release_root(exception);
                                 }
-                                runtime.release_root(request);
+                                release_roots(runtime, &head);
                                 runtime.release_root(body);
                                 runtime.release_root(open);
                                 runtime.release_root(transport);
@@ -445,7 +448,7 @@ pub(crate) fn poll(
                                 return Err(message);
                             }
                         };
-                        runtime.release_root(request);
+                        release_roots(runtime, &head);
                         runtime.release_root(body);
                         runtime.release_root(open);
                         runtime.release_root(transport);
@@ -454,9 +457,9 @@ pub(crate) fn poll(
                         let id = runtime.root(Value::number(response_id as f64));
                         let status = runtime.root(Value::number(200.0));
                         let undefined = runtime.root(Value::UNDEFINED);
-                        let response = match runtime.call_rooted(
+                        let response = match runtime.construct_rooted(
                             response_factory,
-                            undefined,
+                            response_factory,
                             &[id, status, readable, server_root, socket_object],
                         ) {
                             Ok(response) => response,
@@ -473,13 +476,16 @@ pub(crate) fn poll(
                                 return Err(message);
                             }
                         };
-                        let diagnostic_message = match diagnostics_message(
-                            runtime,
-                            readable,
-                            response,
-                            server_root,
-                            socket_object,
-                        ) {
+                        // The start message is made only for a channel with subscribers, as
+                        // Node's server publishes it only then (`hasSubscribers`).
+                        let subscribed = crate::modules::diagnostics_channel_shared_vm::channel_has_subscribers(
+                            &shared_state.borrow(),
+                            REQUEST_START_CHANNEL,
+                        );
+                        let diagnostic_message = match subscribed
+                            .then(|| diagnostics_message(runtime, readable, response, server_root, socket_object))
+                            .transpose()
+                        {
                             Ok(message) => message,
                             Err(error) => {
                                 runtime.release_root(readable);
@@ -496,12 +502,15 @@ pub(crate) fn poll(
                                 shared_state,
                                 request_async_id,
                             );
-                            let diagnostic_result = crate::modules::diagnostics_channel_shared_vm::publish_named_runtime(
-                                runtime,
-                                program,
-                                "http.server.request.start",
-                                diagnostic_message,
-                            );
+                            let diagnostic_result = match diagnostic_message {
+                                Some(message) => crate::modules::diagnostics_channel_shared_vm::publish_named_runtime(
+                                    runtime,
+                                    program,
+                                    REQUEST_START_CHANNEL,
+                                    message,
+                                ),
+                                None => Ok(()),
+                            };
                             match diagnostic_result {
                                 Ok(()) => emit_event(
                                     runtime,
@@ -513,7 +522,9 @@ pub(crate) fn poll(
                                 Err(error) => Err(error),
                             }
                         };
-                        runtime.release_root(diagnostic_message);
+                        if let Some(message) = diagnostic_message {
+                            runtime.release_root(message);
+                        }
                         runtime.release_root(readable);
                         runtime.release_root(response);
                         runtime.release_root(id);
@@ -680,17 +691,7 @@ pub(crate) fn poll(
                         .connections
                         .remove(&socket)
                         .map(|connection| connection.server);
-                    let contexts = host
-                        .http
-                        .responses
-                        .iter()
-                        .filter_map(|(id, response)| {
-                            (response.socket == socket).then_some((*id, response.async_id))
-                        })
-                        .collect::<Vec<_>>();
-                    for (id, _) in &contexts {
-                        host.http.responses.remove(id);
-                    }
+                    let contexts = host.http.take_socket_responses(socket);
                     if let Some(server_id) = server_id {
                         if let Some(server) = host.http.servers.get_mut(&server_id) {
                             server.connections.remove(&socket);
@@ -698,12 +699,8 @@ pub(crate) fn poll(
                     }
                     (server_id, contexts)
                 };
-                for (_, async_id) in contexts {
-                    crate::modules::async_hooks_shared_vm::clear_context(
-                        runtime,
-                        shared_state,
-                        async_id,
-                    );
+                for response in contexts {
+                    retire_response(runtime, shared_state, response);
                 }
                 if server_id.is_some() {
                     net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
@@ -810,17 +807,7 @@ pub(crate) fn poll(
                         .remove(&socket)
                         .map(|connection| connection.server);
                     let client = host.http.clients.remove(&socket);
-                    let contexts = host
-                        .http
-                        .responses
-                        .iter()
-                        .filter_map(|(id, response)| {
-                            (response.socket == socket).then_some((*id, response.async_id))
-                        })
-                        .collect::<Vec<_>>();
-                    for (id, _) in &contexts {
-                        host.http.responses.remove(id);
-                    }
+                    let contexts = host.http.take_socket_responses(socket);
                     if let Some(server_id) = server_id {
                         if let Some(server) = host.http.servers.get_mut(&server_id) {
                             server.connections.remove(&socket);
@@ -832,12 +819,8 @@ pub(crate) fn poll(
                 if let Some(client) = client {
                     fail_client_exchange(runtime, program, client, &message)?;
                 }
-                for (_, async_id) in contexts {
-                    crate::modules::async_hooks_shared_vm::clear_context(
-                        runtime,
-                        shared_state,
-                        async_id,
-                    );
+                for response in contexts {
+                    retire_response(runtime, shared_state, response);
                 }
                 if server_id.is_some() {
                     progressed = true;
@@ -861,7 +844,7 @@ fn deliver_client_response_head(
     request_root: RootId,
     message: super::protocol::ResponseMessage,
 ) -> Result<RootId, String> {
-    let response = response_object(
+    let head = response_head(
         runtime,
         message.status,
         message.message,
@@ -881,7 +864,7 @@ fn deliver_client_response_head(
     let readable = match runtime.call_rooted(
         incoming_factory,
         undefined,
-        &[response, body, open, exchange_id],
+        &[head.as_slice(), &[body, open, exchange_id]].concat(),
     ) {
         Ok(readable) => readable,
         Err(error) => {
@@ -889,7 +872,7 @@ fn deliver_client_response_head(
             if let Some(exception) = error.exception {
                 runtime.release_root(exception);
             }
-            runtime.release_root(response);
+            release_roots(runtime, &head);
             runtime.release_root(body);
             runtime.release_root(open);
             runtime.release_root(exchange_id);
@@ -898,7 +881,7 @@ fn deliver_client_response_head(
         }
     };
     let emitted = emit_event(runtime, program, request_root, "response", &[readable]);
-    runtime.release_root(response);
+    release_roots(runtime, &head);
     runtime.release_root(body);
     runtime.release_root(open);
     runtime.release_root(exchange_id);
@@ -1122,7 +1105,7 @@ pub(crate) fn cleanup(
     runtime: &mut Runtime<NodeHost>,
     shared_state: &Rc<RefCell<SharedNodeState>>,
 ) {
-    let (roots, async_ids) =
+    let (roots, responses) =
         {
             let mut host = shared_state.borrow_mut();
             let shared = std::mem::take(&mut host.http);
@@ -1131,11 +1114,7 @@ pub(crate) fn cleanup(
             roots.extend(shared.clients.into_values().flat_map(|client| {
                 std::iter::once(client.request_root).chain(client.response_root)
             }));
-            let async_ids = shared
-                .responses
-                .into_values()
-                .map(|response| response.async_id)
-                .collect::<Vec<_>>();
+            let responses = shared.responses.into_values().collect::<Vec<_>>();
             roots.extend(shared.response_factory);
             roots.extend(shared.incoming_factory);
             for socket in host.net_sockets.values_mut() {
@@ -1143,13 +1122,58 @@ pub(crate) fn cleanup(
             }
             roots.extend(host.net_closing_sockets.drain().map(|(_, root)| root));
             net_shared_vm::cleanup(&mut host.tcp);
-            (roots, async_ids)
+            (roots, responses)
         };
     for root in roots {
         runtime.release_root(root);
     }
-    for async_id in async_ids {
-        crate::modules::async_hooks_shared_vm::clear_context(runtime, shared_state, async_id);
+    for response in responses {
+        retire_response(runtime, shared_state, response);
+    }
+}
+
+/// Forget a response record: its owner reference and its request context.
+fn retire_response(
+    runtime: &mut Runtime<NodeHost>,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+    response: super::state::Response,
+) {
+    if let Some(owner) = response.owner {
+        runtime.release_host_weak_root(owner);
+    }
+    crate::modules::async_hooks_shared_vm::clear_context(runtime, shared_state, response.async_id);
+}
+
+/// Retire the records of ended responses whose guest objects were collected: no operation can
+/// name them again. A keep-alive connection otherwise keeps every response it served until it
+/// closes. Owners can only die in a collection, so this runs once per collection epoch.
+fn prune_collected_responses(
+    runtime: &mut Runtime<NodeHost>,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+) {
+    let epoch = runtime.collection_epoch();
+    let collected = {
+        let mut host = shared_state.borrow_mut();
+        if host.http.responses_pruned_epoch == epoch {
+            return;
+        }
+        host.http.responses_pruned_epoch = epoch;
+        let ids = host
+            .http
+            .responses
+            .iter()
+            .filter(|(_, response)| {
+                response.lifecycle.is_terminal()
+                    && response.owner.is_some_and(|owner| !runtime.host_weak_root_is_live(owner))
+            })
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
+        ids.into_iter()
+            .filter_map(|id| host.http.responses.remove(&id))
+            .collect::<Vec<_>>()
+    };
+    for response in collected {
+        retire_response(runtime, shared_state, response);
     }
 }
 
@@ -1328,6 +1352,43 @@ fn emit_event(
     result
 }
 
+/// Settle responses waiting on socket backpressure: a socket that flushed
+/// below the high-water mark owes its response `drain`; a closed socket owes
+/// nothing, as Node never drains a destroyed stream.
+fn emit_response_drains(
+    runtime: &mut Runtime<NodeHost>,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+) -> Result<bool, String> {
+    let settled = {
+        let mut guard = shared_state.borrow_mut();
+        let host = &mut *guard;
+        if host.http.drain_waiters.is_empty() {
+            return Ok(false);
+        }
+        let tcp = &host.tcp;
+        let mut settled = Vec::new();
+        host.http.drain_waiters.retain(|socket, waiter| {
+            let queued = net_shared_vm::queued_bytes(tcp, *socket);
+            let waiting = queued.is_some_and(|queued| {
+                queued >= super::operations::RESPONSE_HIGH_WATER_MARK
+            });
+            if !waiting {
+                settled.push((*waiter, queued.is_some()));
+            }
+            waiting
+        });
+        settled
+    };
+    let progressed = !settled.is_empty();
+    for (response, open) in settled {
+        if open {
+            queue_net_event(runtime, shared_state, response, "drain", &[])?;
+        }
+        runtime.release_root(response);
+    }
+    Ok(progressed)
+}
+
 fn queue_net_event(
     runtime: &mut Runtime<NodeHost>,
     shared_state: &Rc<RefCell<SharedNodeState>>,
@@ -1504,7 +1565,10 @@ fn emit(
     }
 }
 
-fn request_object(
+/// A server request's head as the incoming-message factory's leading arguments
+/// (`incoming::MessageHead`), after marking the connection's socket object readable and
+/// writable.
+fn request_head(
     runtime: &mut Runtime<NodeHost>,
     method: String,
     path: String,
@@ -1512,31 +1576,26 @@ fn request_object(
     _headers: Vec<(String, String)>,
     raw_headers: Vec<(String, String)>,
     socket: RootId,
-) -> Result<RootId, String> {
-    let request = runtime.object_rooted().map_err(|error| error.to_string())?;
-    set_text(runtime, request, "method", &method)?;
-    set_text(runtime, request, "url", &path)?;
-    set_text(runtime, request, "httpVersion", &version)?;
-    let (major, minor) = version
-        .split_once('.')
-        .map(|(major, minor)| (major.parse().unwrap_or(1), minor.parse().unwrap_or(1)))
-        .unwrap_or((1, 1));
-    set_number(runtime, request, "httpVersionMajor", major as f64)?;
-    set_number(runtime, request, "httpVersionMinor", minor as f64)?;
-    let raw_headers = raw_header_array(runtime, raw_headers)?;
-    set_named(runtime, request, "rawHeaders", raw_headers)?;
+) -> Result<Vec<RootId>, String> {
     // IncomingMessage consumers use socket.readable to distinguish a fully
     // received message from a finished socket. This connection remains
     // readable after the request framing has completed, just as Node's
     // keep-alive socket does.
     set_bool(runtime, socket, "readable", true)?;
     set_bool(runtime, socket, "writable", true)?;
-    let socket = duplicate_root(runtime, socket)?;
-    set_named(runtime, request, "socket", socket)?;
-    set_bool(runtime, request, "complete", true)?;
-    set_bool(runtime, request, "readable", true)?;
-    Ok(request)
+    super::incoming::MessageHead {
+        request: Some((method, path)),
+        status: None,
+        version,
+        raw_headers,
+        socket: Some(socket),
+        complete: true,
+    }
+    .arguments(runtime)
 }
+
+/// The diagnostics channel a server's request start publishes to.
+const REQUEST_START_CHANNEL: &str = "http.server.request.start";
 
 fn diagnostics_message(
     runtime: &mut Runtime<NodeHost>,
@@ -1574,25 +1633,37 @@ fn duplicate_root(runtime: &mut Runtime<NodeHost>, root: RootId) -> Result<RootI
     Ok(runtime.root(value))
 }
 
-fn response_object(
+/// A client response's head as the incoming-message factory's leading arguments
+/// (`incoming::MessageHead`).
+fn response_head(
     runtime: &mut Runtime<NodeHost>,
     status: u16,
     message: String,
     _headers: Vec<(String, String)>,
     raw_headers: Vec<(String, String)>,
     complete: bool,
-) -> Result<RootId, String> {
-    let response = runtime.object_rooted().map_err(|error| error.to_string())?;
-    set_number(runtime, response, "statusCode", status as f64)?;
-    set_text(runtime, response, "statusMessage", &message)?;
-    set_text(runtime, response, "httpVersion", "1.1")?;
-    let raw_headers = raw_header_array(runtime, raw_headers)?;
-    set_named(runtime, response, "rawHeaders", raw_headers)?;
-    set_bool(runtime, response, "complete", complete)?;
-    Ok(response)
+) -> Result<Vec<RootId>, String> {
+    super::incoming::MessageHead {
+        request: None,
+        status: Some((status, message)),
+        version: CLIENT_RESPONSE_VERSION.to_owned(),
+        raw_headers,
+        socket: None,
+        complete,
+    }
+    .arguments(runtime)
 }
 
-fn raw_header_array(
+/// The HTTP version a client response reports.
+const CLIENT_RESPONSE_VERSION: &str = "1.1";
+
+fn release_roots(runtime: &mut Runtime<NodeHost>, roots: &[RootId]) {
+    for root in roots {
+        runtime.release_root(*root);
+    }
+}
+
+pub(super) fn raw_header_array(
     runtime: &mut Runtime<NodeHost>,
     raw_headers: Vec<(String, String)>,
 ) -> Result<RootId, String> {
@@ -1648,21 +1719,14 @@ fn set_named(
     name: &str,
     value: RootId,
 ) -> Result<(), String> {
-    let key = runtime.string_rooted(name);
-    set(runtime, object, key, value)
+    let result = runtime.set_named_property_rooted(object, name, value);
+    runtime.release_root(value);
+    accepted(result.map_err(|error| error.to_string())?)
 }
 
-fn set(
-    runtime: &mut Runtime<NodeHost>,
-    object: RootId,
-    key: RootId,
-    value: RootId,
-) -> Result<(), String> {
-    let result = runtime.set_property_rooted(object, key, value, object);
-    runtime.release_root(key);
-    runtime.release_root(value);
-    let result = result.map_err(|error| error.to_string())?;
-    if result {
+/// A required property write's outcome: a refusal is an error.
+fn accepted(written: bool) -> Result<(), String> {
+    if written {
         Ok(())
     } else {
         Err("shared HTTP object rejected a required property".into())

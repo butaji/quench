@@ -31,35 +31,19 @@ pub struct LinearBytes {
 #[derive(Debug)]
 enum LinearRepr {
     Heap(Vec<u8>),
-    /// `alias`, where the host has one, is the descriptor of the shared
-    /// pages the reservation maps twice: at its base and again
-    /// `WRAP_ALIAS` bytes above, so an i32 sum formed in 64 bits that
-    /// passed 2^32 reads the bytes its wrapped value names.
-    Reserved {
-        base: *mut u8,
-        len: usize,
-        alias: Option<std::os::fd::OwnedFd>,
-    },
+    Reserved { base: *mut u8, len: usize },
 }
 
-/// Where the reservation repeats the memory: the i32 address space, so a
-/// sum of two i32 operands formed in 64 bits addresses its wrapped value.
-pub(crate) const WRAP_ALIAS: usize = u32::MAX as usize + 1;
-
-/// The largest accessible prefix of a reservation: one Wasm page below the
-/// alias, so an access that crosses 2^32 without wrapping meets the gap
-/// and faults (`memory.grow` may refuse growth beyond it).
-pub(crate) const RESERVED_LIMIT: usize = WRAP_ALIAS - WASM_PAGE;
-
-/// A Wasm page.
-pub(crate) const WASM_PAGE: usize = 1 << 16;
+/// The largest memory32: the whole i32 address space, the largest accessible prefix of a
+/// reservation.
+pub(crate) const MEMORY32_LIMIT: usize = u32::MAX as usize + 1;
 
 /// The page granularity of the reservation's accessible prefix.
 pub(crate) const HOST_PAGE: usize = 4096;
 
 /// The reservation a guarded memory32 needs: every index plus offset plus
 /// the widest scalar access, rounded up to a host page.
-pub(crate) const GUARDED_RESERVATION: usize = (u32::MAX as usize + 1) * 2 + HOST_PAGE;
+pub(crate) const GUARDED_RESERVATION: usize = MEMORY32_LIMIT * 2 + HOST_PAGE;
 
 /// Where a guarded reservation is asked to start: low enough that its base
 /// fits a signed 32-bit displacement, so compiled code can address the
@@ -76,10 +60,8 @@ impl LinearBytes {
 
     /// `len` zero bytes in a guarded reservation; `None` when the host
     /// cannot reserve the address space.
-    /// With `wraps`, the reservation also repeats the memory above 2^32
-    /// where the host can (see `LinearRepr::Reserved`).
-    pub(crate) fn reserved(len: usize, wraps: bool) -> Option<Self> {
-        if len > RESERVED_LIMIT {
+    pub(crate) fn reserved(len: usize) -> Option<Self> {
+        if len > MEMORY32_LIMIT {
             return None;
         }
         // SAFETY: an inaccessible, unbacked private reservation; checked.
@@ -100,15 +82,9 @@ impl LinearBytes {
             repr: LinearRepr::Reserved {
                 base: base.cast(),
                 len: 0,
-                alias: wraps.then(wrap_alias_pages).flatten(),
             },
         };
         bytes.grow_to(len).then_some(bytes)
-    }
-
-    /// Whether the reservation repeats the memory at `WRAP_ALIAS`.
-    pub(crate) fn wraps(&self) -> bool {
-        matches!(self.repr, LinearRepr::Reserved { alias: Some(_), .. })
     }
 
     /// The reservation's base and size when the memory is guarded.
@@ -131,31 +107,24 @@ impl LinearBytes {
                 bytes.resize(new_len, 0);
                 true
             }
-            LinearRepr::Reserved { base, len, alias } => {
-                if new_len > RESERVED_LIMIT {
+            LinearRepr::Reserved { base, len } => {
+                if new_len > MEMORY32_LIMIT {
                     return false;
                 }
                 let committed = len.next_multiple_of(HOST_PAGE);
                 let wanted = new_len.next_multiple_of(HOST_PAGE);
-                if wanted > committed {
-                    let committed_ok = match alias {
-                        // SAFETY: page-aligned ranges inside the reservation,
-                        // at the base and at the alias, of one descriptor
-                        // whose new pages read as zero.
-                        Some(fd) => unsafe { commit_aliased(*base, fd, committed, wanted) },
-                        // SAFETY: a page-aligned range inside the
-                        // reservation; fresh anonymous pages read as zero.
-                        None => unsafe {
-                            libc::mprotect(
-                                base.add(committed).cast(),
-                                wanted - committed,
-                                libc::PROT_READ | libc::PROT_WRITE,
-                            ) == 0
-                        },
-                    };
-                    if !committed_ok {
-                        return false;
-                    }
+                // SAFETY: a page-aligned range inside the reservation; fresh
+                // anonymous pages read as zero.
+                if wanted > committed
+                    && unsafe {
+                        libc::mprotect(
+                            base.add(committed).cast(),
+                            wanted - committed,
+                            libc::PROT_READ | libc::PROT_WRITE,
+                        )
+                    } != 0
+                {
+                    return false;
                 }
                 *len = new_len.max(*len);
                 true
@@ -179,60 +148,6 @@ impl Drop for LinearBytes {
             unsafe { libc::munmap(base.cast(), GUARDED_RESERVATION) };
         }
     }
-}
-
-/// The descriptor of the shared pages a wrapping reservation maps twice;
-/// `None` where the host has no anonymous shared files, leaving the
-/// reservation unaliased.
-#[cfg(target_os = "linux")]
-fn wrap_alias_pages() -> Option<std::os::fd::OwnedFd> {
-    use std::os::fd::FromRawFd;
-    // SAFETY: a fresh descriptor this function owns on success.
-    let fd = unsafe { libc::memfd_create(c"quench-linear-memory".as_ptr(), libc::MFD_CLOEXEC) };
-    // SAFETY: as above.
-    (fd >= 0).then(|| unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) })
-}
-
-#[cfg(not(target_os = "linux"))]
-fn wrap_alias_pages() -> Option<std::os::fd::OwnedFd> {
-    None
-}
-
-/// Extend the shared pages behind `fd` to `wanted` bytes and map
-/// `committed..wanted` of them at `base` and at `base + WRAP_ALIAS`.
-///
-/// # Safety
-/// `base` must start a `GUARDED_RESERVATION` this memory owns, and both
-/// offsets must be page aligned.
-unsafe fn commit_aliased(
-    base: *mut u8,
-    fd: &std::os::fd::OwnedFd,
-    committed: usize,
-    wanted: usize,
-) -> bool {
-    use std::os::fd::AsRawFd;
-    let Ok(size) = libc::off_t::try_from(wanted) else {
-        return false;
-    };
-    // SAFETY: the descriptor this memory owns.
-    if unsafe { libc::ftruncate(fd.as_raw_fd(), size) } != 0 {
-        return false;
-    }
-    [0, WRAP_ALIAS].into_iter().all(|at| {
-        // SAFETY: a page-aligned range inside the reservation, replaced by
-        // the descriptor's pages at the same offset.
-        let mapped = unsafe {
-            libc::mmap(
-                base.add(at + committed).cast(),
-                wanted - committed,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_SHARED | libc::MAP_FIXED,
-                fd.as_raw_fd(),
-                committed as libc::off_t,
-            )
-        };
-        mapped != libc::MAP_FAILED
-    })
 }
 
 impl std::ops::Deref for LinearBytes {
@@ -691,29 +606,24 @@ lane_accesses! {
     V128Store64Lane, WasmMemoryStore, MemoryStore::I64Store, I64x2ExtractLane;
 }
 
-/// Memory32 bindings shared by direct accesses, `memory.size`, and
-/// `memory.fill` within this function body.
-pub(super) fn direct_access_memories(
+/// The Memory32 binding `operator` shares with the body's other direct accesses,
+/// `memory.size` and `memory.fill`, by memory index.
+pub(super) fn direct_access_memory(
     memories: &[WasmMemory],
-    operators: &[wasmparser::Operator<'_>],
-) -> Vec<bool> {
-    let mut used = vec![false; memories.len()];
-    for operator in operators {
-        let index = direct_access(operator)
-            .map(|(_, memarg)| memarg.memory)
-            .or_else(|| match operator {
-                wasmparser::Operator::MemorySize { mem }
-                | wasmparser::Operator::MemoryFill { mem } => Some(*mem),
-                _ => None,
-            });
-        if let Some(memory_index) = index
-            && let Some(memory) = memories.get(memory_index as usize)
-            && !memory.ty.memory64
-        {
-            used[memory_index as usize] = true;
-        }
-    }
-    used
+    operator: &wasmparser::Operator<'_>,
+) -> Option<usize> {
+    let index = direct_access(operator)
+        .map(|(_, memarg)| memarg.memory)
+        .or_else(|| match operator {
+            wasmparser::Operator::MemorySize { mem } | wasmparser::Operator::MemoryFill { mem } => {
+                Some(*mem)
+            }
+            _ => None,
+        })? as usize;
+    memories
+        .get(index)
+        .is_some_and(|memory| !memory.ty.memory64)
+        .then_some(index)
 }
 
 impl super::Lowering<'_> {

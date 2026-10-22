@@ -23,7 +23,7 @@ impl<H: Host> Vm<H> {
             parent: Value::NULL,
             function: NATIVE_ENVIRONMENT_FUNCTION,
             slots: slots.into(),
-            scope: Box::new(crate::heap::EnvironmentScope {
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: None,
                 root_eval_scope: false,
                 binding_site_pc: None,
@@ -126,24 +126,23 @@ impl<H: Host> Vm<H> {
             }
         };
         let function = self.native_with_env(Native::HostFunction, environment);
-        let atom = self.intern_atom("length");
-        self.set_property_with_attributes(
+        // A fresh function holds neither key and no cache can name it yet, so its `length`
+        // and `name` are plain shape additions.
+        let length_key = PropertyKey::string(self.length_atom);
+        self.create_shape_data_property(
             function,
-            atom,
+            length_key,
             Value::number(f64::from(length)),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
+            FUNCTION_INFO_ATTRIBUTES,
         )?;
-        self.set_builtin_function_name(function, name)?;
+        let name_key = PropertyKey::string(self.intern_atom("name"));
+        let name_atom = self.intern_atom(name);
+        let name_value = self.heap.alloc_string(self.atom_value(name_atom));
+        self.create_shape_data_property(function, name_key, name_value, FUNCTION_INFO_ATTRIBUTES)?;
+        self.capture_function_name_for_atom(function, name_atom);
         if constructible {
             let prototype = self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)));
-            let constructor_atom = self.intern_atom("constructor");
+            let constructor_atom = self.runtime_atoms.constructor;
             self.set_property_with_attributes(
                 prototype,
                 constructor_atom,
@@ -191,6 +190,9 @@ impl<H: Host> Vm<H> {
         before: bool,
     ) -> Result<(), JsError> {
         let Some(resource) = resource else { return Ok(()); };
+        if !self.host.observes_promise_job_boundaries() {
+            return Ok(());
+        }
         let mut context = NativeContext::new(self);
         H::promise_job_boundary(&mut context, resource, before)
             .map_err(|error| context.finish_error(error))
@@ -210,6 +212,12 @@ impl<H: Host> Vm<H> {
         H::initialize(&mut context).map_err(|error| context.finish_error(error))
     }
 
+    /// The rest of the host's installation in a restored VM (`Host::resume`).
+    pub(super) fn resume_host(&mut self) -> Result<(), JsError> {
+        let mut context = NativeContext::new(self);
+        H::resume(&mut context).map_err(|error| context.finish_error(error))
+    }
+
     pub(super) fn initialize_host_shadow_realm(
         &mut self,
         global: crate::RootId,
@@ -227,6 +235,13 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let result = self.run_host_function(receiver, args);
+        // Host operations read strings as text, which they may make on demand.
+        self.heap.charge_materialized_text();
+        result
+    }
+
+    fn run_host_function(&mut self, receiver: Value, args: &[Value]) -> Result<Value, JsError> {
         let index = self
             .active_native_env()
             .and_then(|environment| {

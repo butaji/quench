@@ -22,7 +22,7 @@ impl<H: Host> Vm<H> {
                 return Some(name);
             }
         }
-        let tag = self.well_known_symbols.get("toStringTag").copied();
+        let tag = self.well_known_symbols.get(WellKnownSymbol::ToStringTag);
         let constructor = self.lookup_atom("constructor");
         let mut current = value;
         while let Some(data) = self.object_data(current) {
@@ -33,7 +33,7 @@ impl<H: Host> Vm<H> {
                 if let DiagnosticProperty::Data(tag) =
                     self.diagnostic_own_property(current, PropertyKey::symbol(tag))
                 {
-                    if let Some(Cell::String(name)) = self.heap.get(tag) {
+                    if let Some(name) = self.heap.string(tag) {
                         return Some(name.clone());
                     }
                 }
@@ -43,7 +43,7 @@ impl<H: Host> Vm<H> {
                     if let DiagnosticProperty::Data(constructor) =
                         self.diagnostic_own_property(current, PropertyKey::string(key))
                     {
-                        if matches!(self.heap.get(constructor), Some(Cell::Function { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
+                        if matches!(self.heap.function(constructor), Some(FunctionRecord { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
                         {
                             if let Some(name) = self
                                 .original_debug_name(constructor)
@@ -90,11 +90,25 @@ impl<H: Host> Vm<H> {
             && super::provenance::shape_names(&self.shapes, object.shape())
                 .1
                 .is_none();
-        if self.realm.promise.records.contains_key(&value) {
+        if self.is_promise(value) {
             return if uncaptured_factory {
                 "Promise"
             } else {
                 "Object"
+            };
+        }
+        if self.heap.is_function_value(value) {
+            return "Function";
+        }
+        if let Some(iterator) = self.heap.iterator(value) {
+            return match iterator.kind {
+                kind if kind.is_array_iterator() => "Array Iterator",
+                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries => {
+                    "Map Iterator"
+                }
+                IteratorKind::SetValues | IteratorKind::SetEntries => "Set Iterator",
+                IteratorKind::Generator | IteratorKind::AsyncGenerator => "Generator",
+                _ => "Object",
             };
         }
         match self.heap.get(value) {
@@ -117,16 +131,6 @@ impl<H: Host> Vm<H> {
             Some(Cell::WeakSet { .. }) => "WeakSet",
             Some(Cell::Date { .. }) => "Date",
             Some(Cell::RegExp { .. }) => "RegExp",
-            Some(Cell::Function { .. }) => "Function",
-            Some(Cell::Iterator { kind, .. }) => match kind {
-                kind if kind.is_array_iterator() => "Array Iterator",
-                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries => {
-                    "Map Iterator"
-                }
-                IteratorKind::SetValues | IteratorKind::SetEntries => "Set Iterator",
-                IteratorKind::Generator | IteratorKind::AsyncGenerator => "Generator",
-                _ => "Object",
-            },
             Some(Cell::Error(_)) => "Error",
             _ => "Object",
         }

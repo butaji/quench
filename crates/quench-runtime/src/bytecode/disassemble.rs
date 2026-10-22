@@ -6,6 +6,7 @@ use std::fmt::{self, Write};
 impl ResidualProgram {
     pub fn disassemble(&self) -> String {
         let mut output = String::new();
+        self.compile_released();
         for (id, function) in self.functions.iter().enumerate() {
             let name = function
                 .name
@@ -234,6 +235,7 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::LocalSlot
         | ImmediateRole::TemplateSiteIndex
         | ImmediateRole::RegExpLiteralSiteIndex
+        | ImmediateRole::LiteralTemplateIndex
         | ImmediateRole::MethodSiteIndex
         | ImmediateRole::ObjectSiteIndex
         | ImmediateRole::SuperinstructionIndex => write_index_immediate(output, instruction),
@@ -304,6 +306,9 @@ fn write_index_immediate(output: &mut String, instruction: WideInstruction) -> f
                 " regexp-literal-site={}",
                 instruction.regexp_literal_site_index()
             )
+        }
+        ImmediateRole::LiteralTemplateIndex => {
+            write!(output, " literal-template={}", instruction.literal_template_index())
         }
         ImmediateRole::MethodSiteIndex => {
             write!(output, " method-site={}", instruction.method_site_index())

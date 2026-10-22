@@ -554,7 +554,7 @@ mod tests {
         vm.collect_now(module.residual());
         assert!(vm.heap.is_live(first_env));
         assert!(
-            matches!(vm.heap.get(function), Some(Cell::Function { env, .. }) if *env == first_env)
+            matches!(vm.heap.function(function), Some(FunctionRecord { env, .. }) if *env == first_env)
         );
         assert_eq!(vm.wasm_table_get(table, 0).unwrap(), function);
         assert!(vm.release_root(second.environment));
@@ -612,7 +612,7 @@ mod reference_boundary_tests {
         let instance = vm.instantiate_wasm_module(&module).unwrap();
         let host_value = vm
             .heap
-            .alloc(Cell::String("host-owned external identity".into()));
+            .alloc_string("host-owned external identity".into());
         let reference = WasmValue::ExternRef(host_value);
         assert_eq!(
             vm.invoke_wasm(&instance, 0, &[reference]).unwrap(),
@@ -624,7 +624,7 @@ mod reference_boundary_tests {
                 .is_err()
         );
         vm.collect_now(module.residual());
-        assert!(matches!(vm.heap.get(host_value), Some(Cell::String(_))));
+        assert!(vm.heap.is_string(host_value));
         let env = vm.root_value(instance.environment).unwrap();
         let table = vm.heap.environment_slot(env, 0).unwrap();
         assert_eq!(vm.wasm_table_get(table, 0).unwrap(), host_value);

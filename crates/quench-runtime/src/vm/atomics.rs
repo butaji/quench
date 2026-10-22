@@ -154,7 +154,7 @@ impl<H: Host> Vm<H> {
             if has_waiter || self.agent_spin_escape() {
                 return Ok(
                     if matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64) {
-                        self.heap.alloc(Cell::BigInt("1".into()))
+                        self.heap.alloc(Cell::bigint(1_u8.into()))
                     } else {
                         Value::number(1.0)
                     },
@@ -349,12 +349,10 @@ impl<H: Host> Vm<H> {
         old: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(Cell::BigInt(old_text)) = self.heap.get(old).cloned() else {
+        let Some(Cell::BigInt(old_number)) = self.heap.get(old).cloned() else {
             return Err(self.type_error(p, "Atomics BigInt element is invalid".into()));
         };
-        let old_number = old_text
-            .parse::<num_bigint::BigInt>()
-            .map_err(|_| self.type_error(p, "Atomics BigInt element is invalid".into()))?;
+        let old_number = *old_number;
         let first = self.to_bigint(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
         let replacement = if native == Native::AtomicsCompareExchange {
             self.to_bigint(p, args.get(3).copied().unwrap_or(Value::UNDEFINED))?
@@ -371,9 +369,9 @@ impl<H: Host> Vm<H> {
             && self.test262_agent.active_callback
             && self.agent_spin_escape()
         {
-            let value = self.heap.alloc(Cell::BigInt(replacement.to_string()));
+            let value = self.heap.alloc(Cell::bigint(replacement));
             self.typed_array_set(p, view, index, value)?;
-            return Ok(self.heap.alloc(Cell::BigInt("0".into())));
+            return Ok(self.heap.alloc(Cell::bigint(num_bigint::BigInt::ZERO)));
         }
         if native != Native::AtomicsCompareExchange || compare {
             let mut next = match native {
@@ -393,11 +391,11 @@ impl<H: Host> Vm<H> {
             {
                 next = num_bigint::BigInt::from(1_u8);
             }
-            let value = self.heap.alloc(Cell::BigInt(next.to_string()));
+            let value = self.heap.alloc(Cell::bigint(next));
             self.typed_array_set(p, view, index, value)?;
         }
         if native == Native::AtomicsStore {
-            Ok(self.heap.alloc(Cell::BigInt(first.to_string())))
+            Ok(self.heap.alloc(Cell::bigint(first)))
         } else {
             Ok(old)
         }
@@ -447,9 +445,8 @@ impl<H: Host> Vm<H> {
             Value::number(self.atomic_number_value(kind, number))
         } else {
             let value = self.to_bigint(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
-            self.heap.alloc(Cell::BigInt(
-                self.normalize_atomic_bigint(value).to_string(),
-            ))
+            let normalized = self.normalize_atomic_bigint(value);
+            self.heap.alloc(Cell::bigint(normalized))
         };
         let current = self
             .typed_array_get(view, index)
@@ -474,12 +471,12 @@ impl<H: Host> Vm<H> {
                 if equal && timeout.is_none_or(|value| !value.is_finite()) {
                     return Err(self.type_error(p, "Atomics.wait cannot block indefinitely".into()));
                 }
-                return Ok(self.heap.alloc(Cell::String(state.into())));
+                return Ok(self.heap.alloc_string(state.into()));
             }
             if !equal
                 || timeout.is_some_and(|value| value.is_finite() && value <= AGENT_YIELD_TIMEOUT_MS)
             {
-                return Ok(self.heap.alloc(Cell::String(state.into())));
+                return Ok(self.heap.alloc_string(state.into()));
             }
             let buffer = self.typed_array_buffer(view).unwrap_or(Value::UNDEFINED);
             let id = self.test262_agent.next_waiter;
@@ -501,13 +498,13 @@ impl<H: Host> Vm<H> {
                 async_promise: None,
             });
             self.test262_agent.current_waiter = Some(id);
-            return Ok(self.heap.alloc(Cell::String("ok".into())));
+            return Ok(self.heap.alloc_string("ok".into()));
         }
         let is_async = equal && timeout.is_none_or(|value| value.is_nan() || value > 0.0);
         let value = if is_async {
             let promise = self.promise_object()?;
             if timeout.is_some_and(|value| value.is_finite() && value <= AGENT_YIELD_TIMEOUT_MS) {
-                let timeout_result = self.heap.alloc(Cell::String("timed-out".into()));
+                let timeout_result = self.heap.alloc_string("timed-out".into());
                 self.promise_settle(p, promise, PromiseState::Fulfilled, timeout_result)?;
             } else {
                 let buffer = self.typed_array_buffer(view).unwrap_or(Value::UNDEFINED);
@@ -532,7 +529,7 @@ impl<H: Host> Vm<H> {
             }
             promise
         } else {
-            self.heap.alloc(Cell::String(state.into()))
+            self.heap.alloc_string(state.into())
         };
         let result = self.object();
         self.set_named(
@@ -586,7 +583,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        let ok = self.heap.alloc(Cell::String("ok".into()));
+        let ok = self.heap.alloc_string("ok".into());
         for promise in promises {
             self.promise_settle(p, promise, PromiseState::Fulfilled, ok)?;
         }
@@ -603,7 +600,7 @@ impl<H: Host> Vm<H> {
     fn atomic_is_zero(&self, kind: TypedArrayKind, value: Value) -> bool {
         match kind {
             TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
-                matches!(self.heap.get(value), Some(Cell::BigInt(value)) if value == "0")
+                matches!(self.heap.get(value), Some(Cell::BigInt(value)) if value.sign() == num_bigint::Sign::NoSign)
             }
             _ => value.as_number() == Some(0.0),
         }
@@ -684,10 +681,8 @@ impl<H: Host> Vm<H> {
         let mut convert = |vm: &mut Self, value: Value| -> Result<u64, JsError> {
             if big {
                 let n = vm.to_bigint(p, value)?;
-                store_result = Some(vm.heap.alloc(Cell::BigInt(n.to_string())));
-                vm.normalize_atomic_bigint(n)
-                    .to_string()
-                    .parse::<u64>()
+                store_result = Some(vm.heap.alloc(Cell::bigint(n.clone())));
+                u64::try_from(vm.normalize_atomic_bigint(n))
                     .map_err(|_| vm.type_error(p, "Invalid atomic BigInt".into()))
             } else {
                 let n = vm.to_number(p, value)?;
@@ -772,7 +767,7 @@ impl<H: Host> Vm<H> {
                     "Cancelled wait without interrupt".into(),
                 ));
             }
-            return Ok(self.heap.alloc(Cell::String(
+            return Ok(self.heap.alloc_string(
                 match result {
                     WaitResult::Cancelled => unreachable!("checked above"),
                     WaitResult::Ok => "ok",
@@ -780,7 +775,7 @@ impl<H: Host> Vm<H> {
                     WaitResult::TimedOut => "timed-out",
                 }
                 .into(),
-            )));
+            ));
         } else {
             match native {
                 Native::AtomicsLoad => None,
@@ -813,8 +808,8 @@ impl<H: Host> Vm<H> {
             return Ok(store_result.unwrap());
         }
         Ok(match kind {
-            TypedArrayKind::BigInt64 => self.heap.alloc(Cell::BigInt((old as i64).to_string())),
-            TypedArrayKind::BigUint64 => self.heap.alloc(Cell::BigInt(old.to_string())),
+            TypedArrayKind::BigInt64 => self.heap.alloc(Cell::bigint((old as i64).into())),
+            TypedArrayKind::BigUint64 => self.heap.alloc(Cell::bigint(old.into())),
             TypedArrayKind::Int8 => Value::number(old as i8 as f64),
             TypedArrayKind::Int16 => Value::number(old as i16 as f64),
             TypedArrayKind::Int32 => Value::number(old as i32 as f64),
@@ -844,13 +839,13 @@ impl<H: Host> Vm<H> {
         let (is_async, value) = match start {
             AsyncStart::Ready(result) => (
                 false,
-                self.heap.alloc(Cell::String(
+                self.heap.alloc_string(
                     match result {
                         WaitResult::NotEqual => "not-equal",
                         _ => "timed-out",
                     }
                     .into(),
-                )),
+                ),
             ),
             AsyncStart::Pending(token) => {
                 let promise = self.promise_object()?;
@@ -867,7 +862,7 @@ impl<H: Host> Vm<H> {
                 ("async", if is_async { Value::TRUE } else { Value::FALSE }),
                 ("value", self.heap.root_value(value_root).unwrap()),
             ] {
-                let key = self.heap.alloc(Cell::String(name.into()));
+                let key = self.heap.alloc_string(name.into());
                 let target = self.heap.root_value(result_root).unwrap();
                 if !self.define_own_property_record(
                     p,
@@ -907,7 +902,7 @@ impl<H: Host> Vm<H> {
                         return Err(JsError::validation("Unexpected async cancellation".into()));
                     }
                 };
-                let value = self.heap.alloc(Cell::String(text.into()));
+                let value = self.heap.alloc_string(text.into());
                 let promise = self.heap.root_value(*promise).unwrap();
                 self.promise_settle(p, promise, PromiseState::Fulfilled, value)?
             }

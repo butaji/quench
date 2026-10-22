@@ -85,6 +85,17 @@ const NUMERIC_BINARY_OPERATORS: [BinaryOperator; NUMERIC_BINARY_OPERATOR_COUNT] 
     BinaryOperator::BitwiseAnd,
 ];
 
+/// `number_relation` of two integers alone: `None` for any other pair. Few values stay live,
+/// so a lane handler inlining it saves no registers.
+#[inline(always)]
+pub(super) fn integer_relation(op: u32, left: Value, right: Value) -> Option<bool> {
+    if op > LAST_COMPARISON_OPERATOR {
+        return None;
+    }
+    let (a, b) = Value::int_pair(left, right)?;
+    Some(number_comparison(op, a, b))
+}
+
 /// A comparison operator on two Numbers, comparing integers as integers; `None` for any
 /// other operator or value.
 #[inline(always)]
@@ -388,12 +399,18 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
-        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+        let result = self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
             let receiver = vm.string_method_receiver(p, native, this)?;
+            if receiver == this {
+                return vm.call_native_dispatch(p, native, receiver, args);
+            }
             vm.with_call_roots([receiver], |vm| {
                 vm.call_native_dispatch(p, native, receiver, args)
             })
-        })
+        });
+        // String natives make text on demand; charge it before the caller's next safepoint.
+        self.heap.charge_materialized_text();
+        result
     }
 
     fn call_native_dispatch(
@@ -403,6 +420,10 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        // The string and RegExp methods belong to none of the families below.
+        if native.is_string_regexp_or_math() {
+            return self.call_native_table(p, native, this, args);
+        }
         if let Some(result) = self.string_html_method(p, native, this, args) {
             return result;
         }
@@ -494,6 +515,17 @@ impl<H: Host> Vm<H> {
         if native.is_data_view_native() {
             return self.data_view_native(p, native, this, args);
         }
+        self.call_native_table(p, native, this, args)
+    }
+
+    /// The natives no family above claims, by kind.
+    fn call_native_table(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         match native {
             Native::IsHTMLDDA => Ok(Value::NULL),
             Native::Proxy => Err(self.type_error(p, "Proxy must be called with new".into())),
@@ -520,11 +552,6 @@ impl<H: Host> Vm<H> {
             Native::CollectGarbage => {
                 self.collect_now(p);
                 Ok(Value::UNDEFINED)
-            }
-            Native::ToString => {
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let value = self.coerce_js_string(p, value)?;
-                Ok(self.heap.alloc(Cell::String(value)))
             }
             Native::ProxyRevocable => self.proxy_revocable(p, args),
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
@@ -978,7 +1005,7 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(self
                     .heap
-                    .alloc(Cell::String("function () { [native code] }".into())))
+                    .alloc_string("function () { [native code] }".into()))
             }
             Native::Number
             | Native::NumberIsNaN
@@ -994,7 +1021,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     self.coerce_js_string(p, argument)?
                 };
-                Ok(self.heap.alloc(Cell::String(text)))
+                Ok(self.heap.alloc_string(text))
             }
             Native::Symbol => self.call_symbol_constructor(p, args),
             Native::SymbolToString
@@ -1398,8 +1425,8 @@ impl<H: Host> Vm<H> {
                 );
                 // ToPrimitive of a string is the string itself and concatenation never
                 // collects, so string + string needs neither coercion nor extra roots.
-                if matches!(self.heap.get(left), Some(Cell::String(_)))
-                    && matches!(self.heap.get(right), Some(Cell::String(_)))
+                if self.heap.is_string(left)
+                    && self.heap.is_string(right)
                 {
                     return self.concatenate(p, left, right);
                 }
@@ -1545,49 +1572,19 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
-        let Some(Cell::BigInt(left)) = self.heap.get(left) else {
-            return Err(self.type_error(p, MIXED_BIGINT_TYPES.into()));
-        };
-        let Some(Cell::BigInt(right)) = self.heap.get(right) else {
-            return Err(self.type_error(p, MIXED_BIGINT_TYPES.into()));
-        };
-        let result = match op {
-            8 => crate::bigint::binary(left, right, |a, b| Ok(a + b)),
-            9 => crate::bigint::binary(left, right, |a, b| Ok(a - b)),
-            10 => crate::bigint::binary(left, right, |a, b| Ok(a * b)),
-            11 => crate::bigint::binary(left, right, |a, b| {
-                if b == 0.into() {
-                    Err(crate::bigint::Error::DivisionByZero)
+        let Some(result) = self.bigint_operation(op, left, right) else {
+            return Err(self.type_error(
+                p,
+                if self.is_bigint(left) && self.is_bigint(right) {
+                    "BigInt operation is not supported"
                 } else {
-                    Ok(a / b)
+                    MIXED_BIGINT_TYPES
                 }
-            }),
-            12 => crate::bigint::binary(left, right, |a, b| {
-                if b == 0.into() {
-                    Err(crate::bigint::Error::DivisionByZero)
-                } else {
-                    Ok(a % b)
-                }
-            }),
-            13 => crate::bigint::binary(left, right, |a, b| {
-                if b.sign() == num_bigint::Sign::Minus {
-                    return Err(crate::bigint::Error::NegativeExponent);
-                }
-                let exponent = b
-                    .to_str_radix(10)
-                    .parse::<u32>()
-                    .map_err(|_| crate::bigint::Error::ExponentTooLarge)?;
-                Ok(a.pow(exponent))
-            }),
-            14 => crate::bigint::shift(left, right, true),
-            15 => crate::bigint::shift(left, right, false),
-            17 => crate::bigint::binary(left, right, |a, b| Ok(a | b)),
-            18 => crate::bigint::binary(left, right, |a, b| Ok(a ^ b)),
-            19 => crate::bigint::binary(left, right, |a, b| Ok(a & b)),
-            _ => return Err(self.type_error(p, "BigInt operation is not supported".into())),
+                .into(),
+            ));
         };
         match result {
-            Ok(value) => Ok(self.heap.alloc(Cell::BigInt(value))),
+            Ok(value) => Ok(self.heap.alloc(Cell::bigint(value))),
             Err(crate::bigint::Error::DivisionByZero) => {
                 Err(self.range_error(p, "Division by zero".into()))
             }
@@ -1597,11 +1594,97 @@ impl<H: Host> Vm<H> {
             Err(crate::bigint::Error::ExponentTooLarge) => {
                 Err(self.range_error(p, "Maximum BigInt size exceeded".into()))
             }
-            Err(crate::bigint::Error::InvalidDecimal) => {
-                Err(self.type_error(p, "Invalid BigInt value".into()))
-            }
         }
     }
+
+    fn is_bigint(&self, value: Value) -> bool {
+        matches!(self.heap.get(value), Some(Cell::BigInt(_)))
+    }
+
+    /// BigInt operator `op` of two BigInt values: the result, or the error it raises. `None`
+    /// when an operand is not a BigInt or the operator has no BigInt meaning.
+    fn bigint_operation(
+        &self,
+        op: u32,
+        left: Value,
+        right: Value,
+    ) -> Option<Result<num_bigint::BigInt, crate::bigint::Error>> {
+        const EXPONENTIAL: u32 = BinaryOperator::Exponential as u32;
+        let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
+            (self.heap.get(left), self.heap.get(right))
+        else {
+            return None;
+        };
+        let (left, right): (&num_bigint::BigInt, &num_bigint::BigInt) = (left, right);
+        let nonzero_divisor = || {
+            if right.sign() == num_bigint::Sign::NoSign {
+                Err(crate::bigint::Error::DivisionByZero)
+            } else {
+                Ok(right)
+            }
+        };
+        Some(match op {
+            ADDITION => Ok(left + right),
+            SUBTRACTION => Ok(left - right),
+            MULTIPLICATION => Ok(left * right),
+            DIVISION => nonzero_divisor().map(|right| left / right),
+            REMAINDER => nonzero_divisor().map(|right| left % right),
+            EXPONENTIAL => {
+                if right.sign() == num_bigint::Sign::Minus {
+                    Err(crate::bigint::Error::NegativeExponent)
+                } else {
+                    u32::try_from(right.magnitude())
+                        .map(|exponent| left.pow(exponent))
+                        .map_err(|_| crate::bigint::Error::ExponentTooLarge)
+                }
+            }
+            SHIFT_LEFT => crate::bigint::shift(left, right, true),
+            SHIFT_RIGHT => crate::bigint::shift(left, right, false),
+            BITWISE_OR => Ok(left | right),
+            BITWISE_XOR => Ok(left ^ right),
+            BITWISE_AND => Ok(left & right),
+            _ => return None,
+        })
+    }
+
+    /// `binary_bigint` where it succeeds, for callers that leave failures to it: the result
+    /// allocated, or `None`.
+    pub(super) fn bigint_binary_value(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
+        let value = self.bigint_operation(op, left, right)?.ok()?;
+        Some(self.heap.alloc(Cell::bigint(value)))
+    }
+
+    /// A relational operator (`<`, `<=`, `>`, `>=`) of two strings: IsLessThan orders them by
+    /// code units, which runs no guest code.
+    pub(super) fn string_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
+        let (left, right) = (self.heap.string(left)?, self.heap.string(right)?);
+        let ordering = left.units().cmp(&right.units());
+        Some(match NumberRelation::from_operator(op)? {
+            NumberRelation::LessThan => ordering.is_lt(),
+            NumberRelation::LessEqual => ordering.is_le(),
+            NumberRelation::GreaterThan => ordering.is_gt(),
+            NumberRelation::GreaterEqual => ordering.is_ge(),
+            NumberRelation::Equal | NumberRelation::NotEqual => return None,
+        })
+    }
+
+    /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.
+    pub(super) fn bigint_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
+        let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
+            (self.heap.get(left), self.heap.get(right))
+        else {
+            return None;
+        };
+        let ordering = left.cmp(right);
+        Some(match NumberRelation::from_operator(op)? {
+            NumberRelation::LessThan => ordering.is_lt(),
+            NumberRelation::LessEqual => ordering.is_le(),
+            NumberRelation::GreaterThan => ordering.is_gt(),
+            NumberRelation::GreaterEqual => ordering.is_ge(),
+            NumberRelation::Equal | NumberRelation::NotEqual => return None,
+        })
+    }
+
     #[cold]
     #[inline(never)]
     /// String concatenation for `+` once at least one operand is a string: an interned
@@ -1623,6 +1706,23 @@ impl<H: Host> Vm<H> {
         let mut text = self.coerce_js_string(p, left)?;
         text.push_js_string(&self.coerce_js_string(p, right)?);
         Ok(self.intern_dynamic_value(text))
+    }
+
+    /// `+` of two operands that become strings without guest code, Numbers and strings,
+    /// at least one a string: `concatenate`'s result. `None` for any other pair, or a result
+    /// `concatenate` refuses, which leaves the operation to `binary_slow`.
+    pub(super) fn primitive_concatenation(
+        &mut self,
+        p: &ResidualProgram,
+        left: Value,
+        right: Value,
+    ) -> Option<Value> {
+        let (left_string, right_string) = (self.is_string(left), self.is_string(right));
+        let converts = |string: bool, value: Value| string || value.as_number().is_some();
+        if !(left_string || right_string) || !converts(left_string, left) || !converts(right_string, right) {
+            return None;
+        }
+        self.concatenate(p, left, right).ok()
     }
 
     pub(super) fn binary_slow(
@@ -1712,14 +1812,10 @@ impl<H: Host> Vm<H> {
         decrement: bool,
     ) -> Result<Value, JsError> {
         let delta = if decrement { -1.0 } else { 1.0 };
-        if matches!(self.heap.get(input), Some(Cell::BigInt(_))) {
-            let one = self.heap.alloc(Cell::BigInt("1".into()));
-            let operator = if decrement {
-                BinaryOperator::Subtraction
-            } else {
-                BinaryOperator::Addition
-            };
-            self.binary(p, operator as u32, input, one)
+        if let Some(Cell::BigInt(integer)) = self.heap.get(input) {
+            let integer: &num_bigint::BigInt = integer;
+            let next = if decrement { integer - 1_u8 } else { integer + 1_u8 };
+            Ok(self.heap.alloc(Cell::bigint(next)))
         } else if let Some(integer) = input.as_int() {
             let next = if decrement {
                 integer.checked_sub(1)
@@ -1753,17 +1849,22 @@ impl<H: Host> Vm<H> {
             .then_some(negated)
     }
 
-    /// `==`, `!=`, `===` or `!==` of non-number operands when no conversion can decide it:
-    /// equal bits are the same value; distinct strict operands are equal only as strings or
-    /// BigInts of equal contents, as are loose operands of one of those types; a loose null or
-    /// undefined equals only null, undefined and [[IsHTMLDDA]] objects; two distinct objects
-    /// are loosely unequal. `None` leaves numbers and every comparison that may coerce to the
-    /// full algorithm.
+    /// `==`, `!=`, `===` or `!==` when no conversion can decide it: a Number is strictly
+    /// equal only to a Number; equal bits are the same value; distinct strict operands are
+    /// equal only as strings or BigInts of equal contents, as are loose operands of one of
+    /// those types; a loose null or undefined equals only null, undefined and [[IsHTMLDDA]]
+    /// objects; two distinct objects are loosely unequal. `None` leaves two Numbers, which
+    /// Number comparison decides, and every comparison that may coerce to the full algorithm.
     #[inline(always)]
     pub(super) fn identity_equality(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         let (strict, negated) = equality_operator(op)?;
-        if left.as_number().is_some() || right.as_number().is_some() {
-            return None;
+        match (left.as_number().is_some(), right.as_number().is_some()) {
+            // Number comparison decides two Numbers (NaN, signed zeros).
+            (true, true) => return None,
+            // A Number is strictly equal only to a Number; loose equality converts the other
+            // operand, which can run guest code.
+            (true, false) | (false, true) => return strict.then_some(negated),
+            (false, false) => {}
         }
         let equal = if left == right {
             true
@@ -1778,7 +1879,7 @@ impl<H: Host> Vm<H> {
                 (false, true) => self.is_html_dda(left),
                 (false, false) => match (self.heap.get(left), self.heap.get(right)) {
                     // Operands of one type compare as `===` does.
-                    (Some(Cell::String(left)), Some(Cell::String(right))) => left == right,
+                    _ if let (Some(l), Some(r)) = (self.heap.string(left), self.heap.string(right)) => l == r,
                     (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) => left == right,
                     _ if self.is_object_like(left) && self.is_object_like(right) => false,
                     _ => return None,
@@ -1823,10 +1924,20 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(list) {
             return Err(self.type_error(p, "array-like list must be an object".into()));
         }
+        // A hole-free array or arguments object answers every read below from its own data,
+        // which no guest code observes.
+        if let Some(values) = self.dense_apply_arguments(list)
+            && (matches!(element_kind, ArrayLikeElementKind::Any)
+                || values.iter().all(|value| {
+                    self.heap.is_string(*value) || matches!(self.heap.get(*value), Some(Cell::Symbol(_)))
+                }))
+        {
+            return Ok(values);
+        }
         let object = self.heap.root(list);
         let mut elements = Vec::new();
         let outcome = (|| {
-            let length_atom = self.intern_atom("length");
+            let length_atom = self.length_atom;
             let length_value =
                 self.get_property(p, self.heap.root_value(object).unwrap(), length_atom)?;
             let length_value = self.heap.root(length_value);
@@ -1845,10 +1956,8 @@ impl<H: Host> Vm<H> {
                 let atom = self.intern_atom(&index.to_string());
                 let element = self.get_property(p, self.heap.root_value(object).unwrap(), atom)?;
                 if matches!(element_kind, ArrayLikeElementKind::PropertyKey)
-                    && !matches!(
-                        self.heap.get(element),
-                        Some(Cell::String(_) | Cell::Symbol(_))
-                    )
+                    && !self.heap.is_string(element)
+                    && !matches!(self.heap.get(element), Some(Cell::Symbol(_)))
                 {
                     return Err(self
                         .type_error(p, "array-like list contains an invalid property key".into()));

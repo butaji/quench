@@ -306,13 +306,13 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.heap.array_mut(this) else {
             unreachable!("matched an array above");
         };
-        let taken = super::index::mutable_array_elements(object.elements_mut())
-            .splice(start..start + delete_count, items.iter().copied())
-            .collect::<Vec<_>>();
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        let taken = elements[start..start + delete_count].to_vec();
+        elements.splice(start..start + delete_count, &items);
         let Some(removed_object) = self.heap.array_mut(removed) else {
             unreachable!("matched an array above");
         };
-        *super::index::mutable_array_elements(removed_object.elements_mut()) = taken;
+        *removed_object.elements_mut() = taken.into();
         true
     }
 
@@ -374,8 +374,7 @@ impl<H: Host> Vm<H> {
         self.with_call_roots([target], |vm| {
             let spreadable_atom = vm
                 .well_known_symbols
-                .get("isConcatSpreadable")
-                .copied()
+                .get(WellKnownSymbol::IsConcatSpreadable)
                 .ok_or_else(|| JsError("Symbol.isConcatSpreadable is not initialized".into()))?;
             let mut next = 0usize;
             for item in std::iter::once(source).chain(args.iter().copied()) {
@@ -433,7 +432,7 @@ impl<H: Host> Vm<H> {
     /// removing from its element vector: it is extensible, unfrozen, holds no indexed
     /// descriptors or sparse elements, is no arguments object and has a writable `length`.
     /// `None` leaves every other receiver to the generic algorithms.
-    fn dense_array_length(&self, this: Value) -> Option<usize> {
+    pub(super) fn dense_array_length(&self, this: Value) -> Option<usize> {
         let object = self.heap.array(this)?;
         if object.has_indexed_descriptors()
             || object.is_frozen()
@@ -444,13 +443,53 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let length = object.elements().len();
-        if self
-            .property_attributes(this, PropertyKey::string(self.length_atom))
-            .is_some_and(|attributes| !attributes.writable)
+        // An array's `length` keeps non-default attributes only as a recorded descriptor.
+        if object.has_length_descriptor()
+            && self
+                .property_attributes(this, PropertyKey::string(self.length_atom))
+                .is_some_and(|attributes| !attributes.writable)
         {
             return None;
         }
         Some(length)
+    }
+
+    /// The elements `range` of an array whose indices there are present own data elements:
+    /// it holds no indexed descriptors, sparse storage or arguments mapping, and no hole in
+    /// `range`. HasProperty and Get of each such index read the element and observe nothing.
+    pub(super) fn present_dense_elements(
+        &self,
+        this: Value,
+        range: std::ops::Range<usize>,
+    ) -> Option<&[Value]> {
+        let object = self.heap.array(this)?;
+        if object.has_indexed_descriptors()
+            || object.is_arguments_object()
+            || self.heap.sparse_length(this).is_some()
+        {
+            return None;
+        }
+        let elements = object.elements().get(range)?;
+        elements.iter().all(|value| !value.is_deleted()).then_some(elements)
+    }
+
+    /// CreateDataPropertyOrThrow of `values` at indices `0..` of `array`, a dense array
+    /// (`dense_array_length`) of exactly their count holding only holes, as ArrayCreate
+    /// makes one: each definition fills its hole. `false` leaves `array` untouched.
+    pub(super) fn fill_dense_holes(&mut self, array: Value, values: &[Value]) -> bool {
+        if self.dense_array_length(array) != Some(values.len())
+            || !self
+                .heap
+                .array(array)
+                .is_some_and(|object| object.elements().iter().all(|value| value.is_deleted()))
+        {
+            return false;
+        }
+        let Some(object) = self.heap.array_mut(array) else {
+            unreachable!("matched an array above");
+        };
+        super::index::mutable_array_elements(object.elements_mut()).copy_from_slice(values);
+        true
     }
 
     /// `push` onto a dense array (`dense_array_length`) as one append, when each appended
@@ -488,6 +527,72 @@ impl<H: Host> Vm<H> {
             unreachable!("matched an array above");
         };
         super::index::mutable_array_elements(object.elements_mut()).push(value);
+        true
+    }
+
+    /// `define_array_literal_element` into a literal's dense storage: the hole `MakeArray`
+    /// left at `index` (`Vm::hole_array`), or the next element at the literal's length. A
+    /// literal is unreachable from guest code until it is complete, so no prototype observes
+    /// the index, and CreateDataProperty stores the value as its own element. `false` leaves
+    /// any other definition to `define_array_literal_element`.
+    pub(super) fn define_literal_element(&mut self, array: Value, index: usize, value: Value) -> bool {
+        let Some(length) = self.dense_array_length(array) else {
+            return false;
+        };
+        if index > length || index >= MAX_ARRAY_LENGTH {
+            return false;
+        }
+        let Some(object) = self.heap.array_store_mut(array, value) else {
+            return false;
+        };
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        if index == length {
+            elements.push(value);
+        } else {
+            elements[index] = value;
+        }
+        true
+    }
+
+    /// ArrayAccumulation's CreateDataPropertyOrThrow of `values` at a dense literal's next
+    /// indices (`define_literal_element` of each at the literal's length) as one append.
+    /// `false` leaves the literal untouched.
+    pub(super) fn append_literal_elements(&mut self, array: Value, values: &[Value]) -> bool {
+        let Some(length) = self.dense_array_length(array) else {
+            return false;
+        };
+        if length.checked_add(values.len()).is_none_or(|end| end > MAX_ARRAY_LENGTH) {
+            return false;
+        }
+        let Some(object) = self.heap.array_mut(array) else {
+            unreachable!("matched an array above");
+        };
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        let capacity = elements.capacity();
+        elements.extend_from_slice(values);
+        let grown = elements.capacity() - capacity;
+        self.heap.charge_payload_growth(grown * size_of::<Value>());
+        true
+    }
+
+    /// `this[index] = value` into a hole below a dense array's length (`dense_array_length`):
+    /// OrdinarySet finds no own element there and, while no prototype claims the index
+    /// (`inherited_index_unclaimed`), defines a writable, enumerable, configurable data
+    /// element, which the hole's slot then holds.
+    pub(super) fn fill_dense_hole(&mut self, this: Value, index: usize, value: Value) -> bool {
+        if self.dense_array_length(this).is_none_or(|length| index >= length)
+            || !self
+                .heap
+                .array(this)
+                .is_some_and(|object| object.elements()[index].is_deleted())
+            || !self.inherited_index_unclaimed(this, index)
+        {
+            return false;
+        }
+        let Some(object) = self.heap.array_mut(this) else {
+            unreachable!("matched an array above");
+        };
+        super::index::mutable_array_elements(object.elements_mut())[index] = value;
         true
     }
 
@@ -569,7 +674,11 @@ impl<H: Host> Vm<H> {
         object: Value,
         length: usize,
     ) -> Result<(), JsError> {
-        let atom = self.intern_atom("length");
+        // A dense array's writable `length` already holding `length` stays as it is.
+        if self.dense_array_length(object) == Some(length) {
+            return Ok(());
+        }
+        let atom = self.length_atom;
         if self.heap.array(object).is_some()
             && !self
                 .object_data(object)
@@ -619,6 +728,13 @@ impl<H: Host> Vm<H> {
             .unwrap_or(length);
         let count = end.saturating_sub(start);
         let result = self.array_species_create(p, object, count)?;
+        if let Some(values) = self.present_dense_elements(object, start..end).map(<[Value]>::to_vec)
+            && self.fill_dense_holes(result, &values)
+        {
+            // Each CreateDataPropertyOrThrow filled a hole; the final `length` Set still runs.
+            self.set_array_like_length(p, result, count)?;
+            return Ok(result);
+        }
         // `result` is held only here while guest code (getters, traps) can collect.
         self.with_call_roots([result], |vm| {
             for (destination, source) in (start..end).enumerate() {
@@ -640,18 +756,17 @@ impl<H: Host> Vm<H> {
         length: usize,
     ) -> Result<Value, JsError> {
         let mut constructor = if self.is_array(p, source)? {
-            let atom = self.intern_atom("constructor");
-            self.get_property(p, source, atom)?
+            self.get_property(p, source, self.runtime_atoms.constructor)?
         } else {
             Value::UNDEFINED
         };
         let constructor_is_foreign_intrinsic_array = matches!(
-            self.heap.get(constructor),
-            Some(Cell::Function {
+            self.heap.function(constructor),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::Array),
-                object,
+                realm,
                 ..
-            }) if object.realm != self.realm.globals
+            }) if *realm != self.realm.globals
         );
         if constructor_is_foreign_intrinsic_array {
             constructor = Value::UNDEFINED;
@@ -664,12 +779,12 @@ impl<H: Host> Vm<H> {
         }
         // `new Array(length)` of this realm is ArrayCreate: Array.prototype is fixed.
         let constructor_is_intrinsic_array = matches!(
-            self.heap.get(constructor),
-            Some(Cell::Function {
+            self.heap.function(constructor),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::Array),
-                object,
+                realm,
                 ..
-            }) if object.realm == self.realm.globals
+            }) if *realm == self.realm.globals
         );
         if constructor.is_undefined() || constructor_is_intrinsic_array {
             return self.array_create(p, length);
@@ -681,8 +796,8 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn is_array(&mut self, p: &ResidualProgram, value: Value) -> Result<bool, JsError> {
-        if let Some(object) = self.heap.array(value) {
-            return Ok(!object.is_arguments_object());
+        if let Some(answer) = self.steady_is_array(value) {
+            return Ok(answer);
         }
         match self.heap.get(value) {
             Some(Cell::Proxy { handler, .. }) if handler.is_null() => {
@@ -691,6 +806,15 @@ impl<H: Host> Vm<H> {
             Some(Cell::Proxy { target, .. }) => self.is_array(p, *target),
             _ => Ok(false),
         }
+    }
+
+    /// IsArray of any value but a Proxy, which reads no state beyond the value's kind; `None`
+    /// for a Proxy, whose target (or revocation) `is_array` follows.
+    pub(super) fn steady_is_array(&self, value: Value) -> Option<bool> {
+        if let Some(object) = self.heap.array(value) {
+            return Some(!object.is_arguments_object());
+        }
+        (!matches!(self.heap.get(value), Some(Cell::Proxy { .. }))).then_some(false)
     }
 
     pub(super) fn array_relative_index(
@@ -779,7 +903,7 @@ impl<H: Host> Vm<H> {
                     output.append(&vm.coerce_js_string(p, value)?);
                 }
                 let output = vm.string_build_result(p, output.finish())?;
-                Ok(vm.heap.alloc(Cell::String(output)))
+                Ok(vm.heap.alloc_string(output))
             })
         })
     }

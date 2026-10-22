@@ -178,6 +178,10 @@ fn promoted_locals_preserve_order_and_survive_collection() {
       function keyed(x, i) { x[i] = x[++i] * 10; return x.join() + ":" + i; }
       function window(i) { var a = [i, ++i, i++, i]; return a.join() + ":" + i; }
       function compound(i) { i += i++ + ++i; return i; }
+      // A `var` read before its first write is undefined, whatever an earlier frame left
+      // in the register it moved to.
+      function dirty() { var a = "stale", b = "stale"; return a + b; }
+      function unset(o) { var n; (function (e) { e.k = 1; })(n || (o.x = n = {})); return typeof o.x + ":" + n.k; }
       print(read({ answer: 42 }));
       print(ordered(5));
       print(destructured(9));
@@ -185,6 +189,8 @@ fn promoted_locals_preserve_order_and_survive_collection() {
       print(keyed([1, 2, 3, 4], 0));
       print(window(0));
       print(compound(2));
+      dirty();
+      print(unset({}));
     "#;
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
@@ -192,13 +198,13 @@ fn promoted_locals_preserve_order_and_survive_collection() {
     vm.execute(&program).unwrap();
     assert_eq!(
         output.borrow().as_slice(),
-        ["42", "3", "3", "602", "20,2,3,4:1", "0,1,1,2:2", "8"]
+        ["42", "3", "3", "602", "20,2,3,4:1", "0,1,1,2:2", "8", "object:1"]
     );
 
     // Every binding here stays in a register, including those written inside expressions.
-    assert_eq!(program.functions[1].local_registers.len(), 3);
-    assert_eq!(program.functions[2].local_registers.len(), 1);
-    assert_eq!(program.functions[3].local_registers.len(), 1);
+    assert_eq!(program.function(1).local_registers.len(), 3);
+    assert_eq!(program.function(2).local_registers.len(), 1);
+    assert_eq!(program.function(3).local_registers.len(), 1);
 }
 
 #[test]
@@ -210,7 +216,7 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     let owner = vm.heap.alloc(Cell::Array {
         object: crate::heap::ArrayObject::new(
             Vm::<SilentHost>::empty_object(Value::NULL),
-            Rc::new(Vec::new()),
+            Vec::new(),
         ),
     });
     let setter = vm.native_with_env(Native::Object, owner);
@@ -255,7 +261,6 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
 #[test]
 fn minor_collection_roots_external_edges_of_old_owners() {
     use super::{DEFAULT_PROPERTY_ATTRIBUTES, PropertyAttributes, property_key::PropertyKey};
-    use crate::heap::Cell;
 
     let program = Engine::specialize("", "minor-external-roots.js").unwrap();
     let mut vm = Vm::new(SilentHost);
@@ -263,7 +268,7 @@ fn minor_collection_roots_external_edges_of_old_owners() {
     let owner_root = vm.heap.root(owner);
     vm.collect_slow(&program, true);
 
-    let getter = vm.heap.alloc(Cell::String("young getter".into()));
+    let getter = vm.heap.alloc_string("young getter".into());
     let getter_weak = vm.heap.weak_handle(getter).unwrap();
     let key = PropertyKey::string(vm.intern_atom("field"));
     vm.set_property_attributes(
@@ -290,7 +295,7 @@ fn rootless_shapes_survive_collection_and_shape_compaction() {
     let mut vm = Vm::new(SilentHost);
     let atom = vm.intern_atom("survivor");
     let live_shape = vm.transition_shape(0, atom);
-    assert!(!vm.shapes[live_shape as usize].may_have_gc_roots);
+    assert!(!vm.shapes[live_shape as usize].facts.may_have_gc_roots());
     let owner =
         vm.heap
             .alloc_object_with_properties(Value::NULL, live_shape, &[Value::integer(42)]);
@@ -350,7 +355,7 @@ fn shape_roots_keep_symbols_and_active_accessors_alive() {
     let owner = vm
         .heap
         .alloc_object_with_properties(Value::NULL, data_shape, &[Value::UNDEFINED]);
-    let getter = vm.heap.alloc(Cell::String("getter".into()));
+    let getter = vm.heap.alloc_string("getter".into());
     let getter_weak = vm.heap.weak_handle(getter).unwrap();
     vm.set_property_attributes(
         owner,
@@ -416,6 +421,7 @@ fn repeated_normal_closures_reuse_function_descriptor_shapes() {
         "closure-shape-transition.js",
     )
     .unwrap();
+    program.compile_released();
     let closure_id = program
         .functions
         .iter()
@@ -452,6 +458,7 @@ fn closures_share_on_demand_function_source_and_program_roots_it() {
         "closure-source-cache.js",
     )
     .unwrap();
+    program.compile_released();
     let inner = program
         .functions
         .iter()
@@ -470,9 +477,7 @@ fn closures_share_on_demand_function_source_and_program_roots_it() {
     // Creating a closure records no source; the text is made on first request.
     assert_eq!(vm.own_property(first, source_atom), None);
     let source = vm.function_source_value(first).unwrap();
-    assert!(matches!(
-        vm.heap.get(source),
-        Some(super::Cell::String(text)) if text.host_string() == "function inner() { return 1; }"
+    assert!(vm.heap.string(source).is_some_and(|text| text.host_string() == "function inner() { return 1; }"
     ));
     let source_weak = vm.heap.weak_handle(source).unwrap();
     let second = vm.closure(&program, inner, Value::NULL).unwrap();
@@ -494,36 +499,42 @@ fn accessor_descriptor_transitions_do_not_root_values_in_the_cache() {
     let atom = vm.intern_atom("field");
     let first_getter = vm.native_value(Native::Object);
     let second_getter = vm.native_value(Native::Array);
-    let first = vm.object();
-    let second = vm.object();
-    for (object, getter) in [(first, first_getter), (second, second_getter)] {
-        vm.set_property(object, atom, Value::UNDEFINED).unwrap();
-        vm.set_property_attributes(
-            object,
-            PropertyKey::string(atom),
-            super::PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(getter),
-                setter: None,
-            },
+    let setter = vm.native_value(Native::Function);
+    // A lone getter lives in its object's slot, so the two objects share one shape; a getter
+    // with a setter lives in the shape's accessor table, so each object keeps its own.
+    for (setter, shared) in [(None, true), (Some(setter), false)] {
+        let first = vm.object();
+        let second = vm.object();
+        for (object, getter) in [(first, first_getter), (second, second_getter)] {
+            vm.set_property(object, atom, Value::UNDEFINED).unwrap();
+            vm.set_property_attributes(
+                object,
+                PropertyKey::string(atom),
+                super::PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: true,
+                    getter: Some(getter),
+                    setter,
+                },
+            );
+        }
+
+        let first_attributes = vm
+            .property_attributes(first, PropertyKey::string(atom))
+            .unwrap();
+        let second_attributes = vm
+            .property_attributes(second, PropertyKey::string(atom))
+            .unwrap();
+        assert_eq!(first_attributes.getter, Some(first_getter));
+        assert_eq!(second_attributes.getter, Some(second_getter));
+        assert_eq!((first_attributes.setter, second_attributes.setter), (setter, setter));
+        assert_eq!(
+            vm.object_data(first).unwrap().shape() == vm.object_data(second).unwrap().shape(),
+            shared
         );
     }
-
-    let first_attributes = vm
-        .property_attributes(first, PropertyKey::string(atom))
-        .unwrap();
-    let second_attributes = vm
-        .property_attributes(second, PropertyKey::string(atom))
-        .unwrap();
-    assert_eq!(first_attributes.getter, Some(first_getter));
-    assert_eq!(second_attributes.getter, Some(second_getter));
-    assert_ne!(
-        vm.object_data(first).unwrap().shape(),
-        vm.object_data(second).unwrap().shape()
-    );
 }
 
 #[test]
@@ -737,11 +748,17 @@ fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
     let values = vm
         .call_value(&program, factory, Value::UNDEFINED, &[])
         .unwrap();
-    let owners: Vec<_> = vm
-        .realm
-        .promise
-        .records
-        .keys()
+    let promises: Vec<_> = vm
+        .heap
+        .array_elements(values)
+        .unwrap()
+        .iter()
+        .copied()
+        .filter(|value| vm.is_promise(*value))
+        .collect();
+    assert_eq!(promises.len(), 6);
+    let owners: Vec<_> = promises
+        .iter()
         .chain(vm.realm.promise.finally_handler_callbacks.keys())
         .chain(vm.realm.promise.aggregates.keys())
         .chain(vm.realm.promise.aggregate_jobs.keys())
@@ -768,7 +785,6 @@ fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
         weak.iter()
             .all(|handle| vm.heap.weak_value(*handle).is_none())
     );
-    assert!(vm.realm.promise.records.is_empty());
     assert!(vm.realm.promise.finally_handler_callbacks.is_empty());
     assert!(vm.realm.promise.aggregates.is_empty());
     assert!(vm.realm.promise.aggregate_jobs.is_empty());
@@ -782,6 +798,7 @@ fn loop_clones_reset_bindings_of_scopes_out_of_reach() {
         "loop-clone-reset.js",
     )
     .unwrap();
+    program.compile_released();
     let plans: Vec<_> = program
         .functions
         .iter()
@@ -874,8 +891,13 @@ fn for_of_iterator_cleanup_survives_body_temporaries() {
 }
 
 fn global_text(source: &str, name: &str) -> String {
+    global_text_under(crate::MemoryPolicy::default(), source, name)
+}
+
+fn global_text_under(policy: crate::MemoryPolicy, source: &str, name: &str) -> String {
     let program = Engine::specialize(source, "global-text.js").unwrap();
     let mut vm = Vm::new(SilentHost);
+    vm.set_memory_policy(policy);
     vm.execute(&program).unwrap();
     let name = vm.intern_atom(name);
     let value = vm.own_property(vm.realm.globals, name).unwrap();
@@ -1122,8 +1144,10 @@ fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
     // A job leaves the queue before it runs, so a value only its arguments held is
     // collectable while later jobs of the same drain still run: its cleanup is observed
     // inside the await loop instead of never. Each iteration allocates at least one cell,
-    // so the bound lets the drain pass the collection headroom several times.
-    let iterations = 4 * crate::heap::MINIMUM_GC_ALLOCATION_HEADROOM;
+    // so the bound lets the drain pass the collection headroom several times. Memory-first
+    // pacing collects soonest, which keeps the drain short.
+    let policy = crate::MemoryPolicy::MemoryFirst;
+    let iterations = 4 * crate::heap::full_collection_allocation_bound(policy);
     let source = format!(
         "var finalized = false, registry = new FinalizationRegistry(function () {{ finalized = true; }});\n\
          function make() {{ var o = {{}}; registry.register(o, 0); return o; }}\n\
@@ -1134,7 +1158,7 @@ fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
            result = String(finalized);\n\
          }})();"
     );
-    assert_eq!(global_text(&source, "result"), "true");
+    assert_eq!(global_text_under(policy, &source, "result"), "true");
 }
 
 #[test]
@@ -1174,10 +1198,7 @@ fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     assert!(vm.heap.is_live(promise));
     assert!(vm.heap.is_live(result));
     assert_eq!(
-        vm.realm
-            .promise
-            .records
-            .get(&promise)
+        vm.promise_record(promise)
             .map(|record| record.result),
         Some(result)
     );
@@ -1191,7 +1212,7 @@ fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     vm.collect_now(&program);
     assert!(vm.heap.weak_value(promise_weak).is_none());
     assert!(vm.heap.weak_value(result_weak).is_none());
-    assert!(!vm.realm.promise.records.contains_key(&promise));
+    assert!(!vm.heap.is_live(promise));
 }
 
 #[test]
@@ -1532,6 +1553,37 @@ fn prototype_change_on_a_non_prototype_keeps_shape_and_caches_sound() {
 }
 
 #[test]
+fn moved_shape_lookup_index_matches_the_derived_index() {
+    // A wide object built key by key, with non-default attributes and redefinitions, keeps
+    // its lookup index moving to each new shape; every index must match the one derived
+    // from that shape's whole chain.
+    let source = r#"
+      var wide = {};
+      for (var i = 0; i < 300; i++) {
+        wide["k" + i] = i;
+        if (i % 7 === 0) wide["k" + i];
+        if (i % 5 === 0) Object.defineProperty(wide, "k" + i, { enumerable: false });
+        if (i % 11 === 0) Object.defineProperty(wide, "g" + i, { get() { return i; } });
+      }
+      var keys = Object.keys(wide).length;
+    "#;
+    let mut vm = Vm::new(SilentHost);
+    let program = Engine::specialize(source, "wide.js").unwrap();
+    vm.execute(&program).unwrap();
+    let mut compared = 0;
+    for shape in 0..vm.shapes.len() {
+        let Some(index) = vm.shapes[shape].lookup_index.get() else {
+            continue;
+        };
+        let derived = super::object::derive_shape_lookup_index(&vm.shapes, shape as u32);
+        assert!(index.entries == derived.entries, "shape {shape} entries");
+        assert!(index.attributes == derived.attributes, "shape {shape} attributes");
+        compared += 1;
+    }
+    assert!(compared > 0, "the wide object's shapes keep an index");
+}
+
+#[test]
 fn dictionary_shape_starts_when_property_slots_exceed_cache_encoding() {
     let mut vm = Vm::new(SilentHost);
     vm.shapes[0].storage_len = super::object::FIELD_CACHE_SLOT_CAPACITY as u32;
@@ -1588,7 +1640,7 @@ fn object_method_home_survives_collection_with_precise_register_roots() {
 fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
     let mut program = Engine::specialize("print(0);", "wide-roots.js").unwrap();
     program.functions[0].registers = 65;
-    program.functions[0].register_root_offset = u32::MAX;
+    program.functions[0].register_roots = crate::bytecode::RegisterRoots::new(false);
 
     let mut vm = Vm::new(SilentHost);
     vm.initialize(&program).unwrap();
@@ -1700,7 +1752,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         parent: crate::Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -1712,7 +1764,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         parent: crate::Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -1758,7 +1810,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         parent: crate::Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -2489,9 +2541,9 @@ fn json_revival_roots_release_after_each_completion() {
                 let atom = vm.intern_atom(name);
                 vm.own_property(vm.realm.globals, atom).unwrap()
             });
-            let text = vm.heap.alloc(super::Cell::String(
+            let text = vm.heap.alloc_string(
                 r#"{"first":0,"target":{"entry":1}}"#.into(),
-            ));
+            );
             let roots = vm.heap.root_count_for_test();
             let calls = vm.active_call_roots.len();
             let result = vm.json_parse(&program, &[text, values[0]]);
@@ -2621,7 +2673,7 @@ fn definition_record_stack_exhaustion_preserves_root_scopes() {
     vm.execute(&program).unwrap();
     let atom = vm.intern_atom("target");
     let target = vm.own_property(vm.realm.globals, atom).unwrap();
-    let key = vm.heap.alloc(super::Cell::String("entry".into()));
+    let key = vm.heap.alloc_string("entry".into());
     let record = super::object_descriptors::PropertyDescriptorRecord::data(Value::number(42.0));
     let roots = vm.heap.root_count_for_test();
     let calls = vm.active_call_roots.len();
@@ -2874,7 +2926,7 @@ fn error_stack_setter_roots_release_after_each_completion() {
                 Value::number(1.0)
             } else {
                 vm.heap
-                    .alloc(crate::heap::Cell::String("fresh-stack".into()))
+                    .alloc_string("fresh-stack".into())
             };
             let target = vm.heap.root_value(hold).unwrap();
             let target_weak = vm.heap.weak_handle(target);
@@ -2925,7 +2977,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
             let namespace = vm.object();
             let atom = vm.intern_atom("answer");
             vm.set_property(namespace, atom, Value::UNDEFINED).unwrap();
-            let slot = program.functions[0]
+            let slot = program.function(0)
                 .local_atoms
                 .iter()
                 .position(|candidate| *candidate == atom)
@@ -2933,10 +2985,10 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
             let environment = vm.heap.alloc(crate::heap::Cell::Environment {
                 parent: Value::NULL,
                 function: super::ROOT_FUNCTION_ID,
-                slots: vec![Value::DELETED; program.functions[0].local_atoms.len()]
+                slots: vec![Value::DELETED; program.function(0).local_atoms.len()]
                     .into_boxed_slice()
                     .into(),
-                scope: Box::new(crate::heap::EnvironmentScope {
+                scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                     program: Some(super::program_store::ProgramId::MAIN.raw()),
                     root_eval_scope: false,
                     binding_site_pc: None,
@@ -2964,7 +3016,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 u16::try_from(slot).unwrap(),
             )]);
             object.set_extensible(false);
-            let key = vm.heap.alloc(crate::heap::Cell::String("answer".into()));
+            let key = vm.heap.alloc_string("answer".into());
             let roots = vm.heap.root_count_for_test();
             let calls = vm.active_call_roots.len();
             let outcome = match operation {
@@ -3387,7 +3439,7 @@ fn dynamic_constructor_roots_release_after_prototype_completion() {
                 } else {
                     vm.own_property(vm.realm.globals, prototype_atom).unwrap()
                 };
-                let argument = vm.heap.alloc(super::Cell::String("return 42".into()));
+                let argument = vm.heap.alloc_string("return 42".into());
                 let weak_argument = vm.heap.weak_handle(argument).unwrap();
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
@@ -4337,11 +4389,9 @@ fn closure_identity_cache_rejects_reused_function_slots() {
     assert!(!vm.function_values.contains_key(&key));
     let mut reused = false;
     for _ in 0..allocation_bound {
-        let replacement = vm.heap.alloc(crate::heap::Cell::Function {
-            object: Box::new(crate::heap::FunctionObject {
-                object: Vm::<SilentHost>::empty_object(Value::NULL),
-                realm: Value::NULL,
-            }),
+        let replacement = vm.heap.alloc_function(crate::heap::FunctionRecord {
+            object: Vm::<SilentHost>::empty_object(Value::NULL),
+            realm: Value::NULL,
             kind: crate::heap::FunctionKind::User(key.0, key.1),
             env: Value::NULL,
         });
@@ -4479,11 +4529,7 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
             let source = "$262.gc(); export const value = 57;".to_owned();
             vm.realm.promise.dynamic_import_jobs.push(DynamicImportJob {
                 cache_key: format!("{name}:javascript"),
-                module: crate::ModuleSource {
-                    name,
-                    bytes: source.as_bytes().to_vec(),
-                    source,
-                },
+                module: crate::ModuleSource::text(name, source),
                 promise,
             });
         }
@@ -4500,14 +4546,14 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
         for (promise, weak) in &promises {
             assert_eq!(vm.heap.weak_value(*weak), Some(*promise));
             assert_eq!(
-                vm.realm.promise.records[promise].state,
+                vm.promise_record(*promise).expect("promise record").state,
                 PromiseState::Fulfilled
             );
         }
         vm.collect_now(&program);
         for (promise, weak) in promises {
             assert!(vm.heap.weak_value(weak).is_none());
-            assert!(!vm.realm.promise.records.contains_key(&promise));
+            assert!(!vm.heap.is_live(promise));
         }
     }
 }
@@ -4529,14 +4575,7 @@ fn async_continuation_lifetime_follows_reachable_callbacks_and_jobs() {
         let held_atom = vm.intern_atom("held");
         let held = vm.own_property(values, held_atom).unwrap();
         let held_weak = vm.heap.weak_handle(held).unwrap();
-        let token = vm
-            .realm
-            .promise
-            .async_resume_jobs
-            .values()
-            .next()
-            .unwrap()
-            .continuation;
+        assert_eq!(pending_await_continuations(&mut vm), 1);
         let root = vm.heap.root(values);
         vm.collect_now(&program);
         assert_eq!(vm.heap.weak_value(held_weak), Some(held));
@@ -4557,17 +4596,19 @@ fn async_continuation_lifetime_follows_reachable_callbacks_and_jobs() {
             vm.collect_now(&program);
         }
         assert!(vm.heap.weak_value(held_weak).is_none(), "queued={queued}");
-        assert!(
-            vm.suspended
-                .iter()
-                .all(|entry| entry.continuation.is_none())
-        );
-        assert!(vm.resume_continuation(token).is_none());
+        assert_eq!(pending_await_continuations(&mut vm), 0, "queued={queued}");
     }
 }
 
+fn pending_await_continuations(vm: &mut Vm<SilentHost>) -> usize {
+    let mut pending = 0;
+    vm.heap
+        .for_each_await_state(|state| pending += usize::from(state.continuation.is_some()));
+    pending
+}
+
 #[test]
-fn suspended_continuations_are_rooted_until_generation_checked_resume() {
+fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     let mut vm = Vm::new(SilentHost);
     let program = Engine::specialize("print(0);", "continuation.js").unwrap();
     vm.initialize(&program).unwrap();
@@ -4575,7 +4616,7 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         parent: Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -4593,7 +4634,7 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         .heap
         .alloc(crate::heap::Cell::Error("suspended scope".into()));
     let held_atom = vm.intern_atom("held");
-    let id = vm.suspend_continuation(Continuation {
+    let continuation = Continuation {
         context: super::activation::CallContext::Internal,
         reflected_parameters: 0,
         original_arguments: vec![original],
@@ -4611,60 +4652,35 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         captured: false,
         resume_register: None,
         promise: Value::UNDEFINED,
-    });
+    };
+    let state = vm.heap.alloc(crate::heap::Cell::AwaitState(Box::new(
+        crate::heap::AwaitState {
+            continuation: Some(Box::new(continuation)),
+            realm: Value::UNDEFINED,
+            promise: Value::UNDEFINED,
+            generator: None,
+            yielded: false,
+        },
+    )));
+    let root = vm.heap.root(state);
     vm.collect_now(&program);
     assert!(vm.heap.is_live(live));
     assert!(vm.heap.is_live(held));
     assert!(vm.heap.is_live(original));
     assert!(vm.heap.is_live(scope));
-    assert_eq!(
-        vm.resume_continuation(id).unwrap().original_arguments,
-        [original]
-    );
-    assert!(vm.resume_continuation(id).is_none());
+    let take = |vm: &mut Vm<SilentHost>| match vm.heap.await_state_mut(state) {
+        Some(state) => state.continuation.take(),
+        _ => panic!("await state"),
+    };
+    assert_eq!(take(&mut vm).unwrap().original_arguments, [original]);
+    assert!(take(&mut vm).is_none());
     vm.collect_now(&program);
     assert!(!vm.heap.is_live(live));
     assert!(!vm.heap.is_live(held));
     assert!(!vm.heap.is_live(original));
     assert!(!vm.heap.is_live(scope));
-}
-
-#[test]
-fn exhausted_continuation_generations_retire_slots_without_resumer_aliasing() {
-    let mut vm = Vm::new(SilentHost);
-    let program = Engine::specialize("print(0);", "continuation-generation.js").unwrap();
-    vm.initialize(&program).unwrap();
-    let continuation = || Continuation {
-        context: CallContext::Internal,
-        reflected_parameters: 0,
-        original_arguments: vec![],
-        program: super::program_store::ProgramId::MAIN,
-        function: 0,
-        pc: 0,
-        env: Value::NULL,
-        this: Value::UNDEFINED,
-        locals: vec![],
-        dynamic_bindings: vec![],
-        registers: vec![],
-        active_iterators: vec![],
-        with_objects: Vec::new(),
-        completion: Completion::Yield(Value::UNDEFINED),
-        captured: false,
-        resume_register: None,
-        promise: Value::UNDEFINED,
-    };
-    let initial = vm.suspend_continuation(continuation());
-    vm.suspended[initial.slot as usize].generation = u32::MAX;
-    let final_generation = super::activation::ContinuationId {
-        slot: initial.slot,
-        generation: u32::MAX,
-    };
-    assert!(vm.resume_continuation(final_generation).is_some());
-
-    let replacement = vm.suspend_continuation(continuation());
-    assert_ne!(replacement.slot, final_generation.slot);
-    assert!(vm.resume_continuation(final_generation).is_none());
-    assert!(vm.resume_continuation(replacement).is_some());
+    assert!(vm.heap.is_live(state));
+    assert!(vm.heap.release_root(root));
 }
 
 #[test]
@@ -4734,9 +4750,10 @@ fn wasm_retirement_invalidates_register_reuse_after_shrinking() {
     // initialize the retired buffer, rather than set its length past capacity.
     let mut program =
         Engine::specialize("function identity(x) { return x; }", "retired-frame.js").unwrap();
+    program.compile_released();
     let function = &mut program.functions[1];
     function.registers = u16::MAX;
-    function.register_root_offset = 0;
+    function.register_roots = crate::bytecode::RegisterRoots::new(true);
     frame.prepare_registers_for(function);
     assert_eq!(frame.registers.len(), usize::from(u16::MAX));
     assert!(frame.registers.capacity() >= frame.registers.len());
@@ -5127,14 +5144,14 @@ fn property_copy_roots_release_after_callback_completion() {
                 let args = vm
                     .heap
                     .array_elements(operands)
-                    .map(|elements| elements.as_ref().clone())
+                    .map(|elements| elements.to_vec())
                     .expect("operands");
                 let handles = args
                     .iter()
                     .map(|v| vm.heap.weak_handle(*v).unwrap())
                     .collect::<Vec<_>>();
                 let excluded = if phase == "excluded" {
-                    vec![vm.heap.alloc(super::Cell::String("first".into()))]
+                    vec![vm.heap.alloc_string("first".into())]
                 } else {
                     vec![]
                 };
@@ -5220,7 +5237,7 @@ fn descriptor_snapshot_and_assign_root_fresh_native_arguments() {
                 let args = vm
                     .heap
                     .array_elements(operands)
-                    .map(|elements| elements.as_ref().clone())
+                    .map(|elements| elements.to_vec())
                     .expect("operands");
                 let source_handle = vm.heap.weak_handle(args[1]).unwrap();
                 let later_handle = vm.heap.weak_handle(args[2]).unwrap();
@@ -5335,14 +5352,14 @@ fn for_in_roots_release_after_prototype_and_key_callbacks() {
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
                 let source_handle = vm.heap.weak_handle(source).unwrap();
-                let key = vm.heap.alloc(super::Cell::String(
+                let key = vm.heap.alloc_string(
                     match phase {
                         "shadow" => "hidden",
                         "missing" => "absent",
                         _ => "inherited",
                     }
                     .into(),
-                ));
+                );
                 let key_handle = vm.heap.weak_handle(key).unwrap();
                 // Snapshot collection has no key input to keep alive.
                 let key_root = (!query).then(|| vm.heap.root(key));
@@ -5370,7 +5387,7 @@ fn for_in_roots_release_after_prototype_and_key_callbacks() {
                         let elements = vm
                             .heap
                             .array_elements(result)
-                            .map(|elements| elements.as_ref().clone())
+                            .map(|elements| elements.to_vec())
                             .expect("key snapshot");
                         let names = elements
                             .into_iter()
@@ -5501,7 +5518,7 @@ fn proxy_introspection_roots_release_after_nested_validation() {
                 let args = vm
                     .heap
                     .array_elements(operands)
-                    .map(|elements| elements.as_ref().clone())
+                    .map(|elements| elements.to_vec())
                     .expect("operands");
                 let handles = args
                     .iter()
@@ -5649,7 +5666,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                 let args = vm
                     .heap
                     .array_elements(operands)
-                    .map(|elements| elements.as_ref().clone())
+                    .map(|elements| elements.to_vec())
                     .expect("operands");
                 let handles = args
                     .iter()
@@ -5666,7 +5683,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                 let key = if symbol {
                     property.symbol_value().unwrap()
                 } else {
-                    vm.heap.alloc(super::Cell::String("entry".into()))
+                    vm.heap.alloc_string("entry".into())
                 };
                 let key_handle = vm.heap.weak_handle(key).unwrap();
                 if phase.starts_with("frozen-")
@@ -5775,7 +5792,13 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                         "symbol={symbol} {phase}"
                     );
                 }
-                assert!(vm.heap.weak_value(key_handle).is_none());
+                // A raw handle names a record id, which a string allocated after the collection may
+                // reuse: the key is gone when its record no longer holds it.
+                assert!(
+                    vm.heap.weak_value(key_handle).is_none()
+                        || vm.heap.string(key).is_some_and(|text| text.host_string() != "entry"),
+                    "symbol={symbol} {phase}"
+                );
                 if let Some(handle) = result_handle {
                     assert!(vm.heap.weak_value(handle).is_none());
                 }
@@ -6128,7 +6151,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                         vm.call_value(&program, factory, Value::UNDEFINED, &[])
                             .unwrap()
                     } else {
-                        vm.heap.alloc(super::Cell::String("entry".into()))
+                        vm.heap.alloc_string("entry".into())
                     };
                     if symbol {
                         if phase == "nonext" {
@@ -6190,7 +6213,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                             assert!(if symbol {
                                 matches!(vm.heap.get(key),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="entry")
                             } else {
-                                matches!(vm.heap.get(key),Some(super::Cell::String(name)) if name.host_string()=="entry")
+                                vm.heap.string(key).is_some_and(|name| name.host_string()=="entry")
                             });
                         }
                         Err(error) => {
@@ -6263,7 +6286,7 @@ fn proxy_revocation_consumes_captured_ownership_and_preserves_kind() {
                         _ => None,
                     };
                     if owner == "record" {
-                        let key = vm.heap.alloc(super::Cell::String("proxy".into()));
+                        let key = vm.heap.alloc_string("proxy".into());
                         assert_eq!(
                             vm.object_delete_property(&program, &[record, key]).unwrap(),
                             Value::TRUE
@@ -6328,7 +6351,7 @@ fn proxy_revocation_consumes_captured_ownership_and_preserves_kind() {
                     );
                     if owner != "proxy" {
                         assert!(
-                            matches!(vm.heap.get(revoke),Some(super::Cell::Function {env,..}) if env.is_null())
+                            matches!(vm.heap.function(revoke),Some(crate::heap::FunctionRecord {env,..}) if env.is_null())
                         );
                         assert_eq!(
                             vm.call_value(&program, revoke, Value::UNDEFINED, &[])
@@ -6610,11 +6633,11 @@ fn equality_roots_the_opposite_primitive_during_object_coercion() {
                     let object = vm
                         .call_value(&program, factory, Value::UNDEFINED, &[])
                         .unwrap();
-                    let primitive = vm.heap.alloc(if bigint {
-                        super::Cell::BigInt("42".into())
+                    let primitive = if bigint {
+                        vm.heap.alloc(super::Cell::bigint(42.into()))
                     } else {
-                        super::Cell::String("ab".into())
-                    });
+                        vm.heap.alloc_string("ab".into())
+                    };
                     let handles =
                         [object, primitive].map(|value| vm.heap.weak_handle(value).unwrap());
                     let roots = vm.heap.root_count_for_test();
@@ -6976,16 +6999,14 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     && frame.active_iterators.is_empty()
             );
             let roots = vm.heap.root_count_for_test();
-            let mut owner = None;
-            let mut token = None;
-            if generator {
-                let value = vm.heap.alloc(super::Cell::Iterator {
-                    object: Box::new(Vm::<SilentHost>::empty_object(Value::NULL)),
+            let owner = if generator {
+                let value = vm.heap.alloc_iterator(crate::heap::IteratorRecord {
+                    object: Vm::<SilentHost>::empty_object(Value::NULL),
                     source: Value::NULL,
                     kind: super::IteratorKind::AsyncGenerator,
                     index: 0,
                     done: false,
-                    ext: Box::new(crate::heap::IteratorExt {
+                    ext: crate::heap::IteratorExt {
                         position_high: 0,
                         next_method: None,
                         helper: None,
@@ -7003,12 +7024,21 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                             }]
                             .into(),
                         })),
-                    }),
+                    },
                 });
-                owner = Some(vm.heap.root(value));
+                vm.heap.root(value)
             } else {
-                token = Some(vm.suspend_continuation(continuation));
-            }
+                let value = vm.heap.alloc(super::Cell::AwaitState(Box::new(
+                    crate::heap::AwaitState {
+                        continuation: Some(Box::new(continuation)),
+                        realm: Value::UNDEFINED,
+                        promise,
+                        generator: None,
+                        yielded: false,
+                    },
+                )));
+                vm.heap.root(value)
+            };
             vm.collect_now(&program);
             for (handle, value) in handles.iter().zip(&owned) {
                 assert_eq!(
@@ -7018,21 +7048,19 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     completion(completion_value)
                 );
             }
-            let resumed = if let Some(token) = token {
-                let continuation = vm.resume_continuation(token).unwrap();
-                assert!(vm.resume_continuation(token).is_none());
-                continuation
+            let value = vm.heap.root_value(owner).unwrap();
+            let resumed = if let Some(state) = vm.heap.await_state_mut(value) {
+                *state.continuation.take().unwrap()
             } else {
-                let value = vm.heap.root_value(owner.unwrap()).unwrap();
-                match vm.heap.get_mut(value) {
-                    Some(super::Cell::Iterator { ext, .. }) => ext
-                        .generator
-                        .as_mut()
-                        .expect("generator owner")
-                        .continuation
-                        .take()
-                        .unwrap(),
-                    _ => panic!("generator owner"),
+                match vm.heap.iterator_mut(value) {
+                Some(crate::heap::IteratorRecord { ext, .. }) => ext
+                    .generator
+                    .as_mut()
+                    .expect("generator owner")
+                    .continuation
+                    .take()
+                    .unwrap(),
+                _ => panic!("suspended owner"),
                 }
             };
             assert_eq!(resumed.completion, completion(completion_value));
@@ -7048,9 +7076,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     done: 2
                 }]
             );
-            if let Some(owner) = owner {
-                vm.heap.release_root(owner);
-            }
+            vm.heap.release_root(owner);
             assert_eq!(vm.heap.root_count_for_test(), roots);
             vm.collect_now(&program);
             for handle in handles {
@@ -7139,8 +7165,8 @@ fn array_iterator_advance_roots_owner_and_applies_index_transition() {
                         assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
                     }
                 }
-                match vm.heap.get(iterator) {
-                    Some(super::Cell::Iterator {
+                match vm.heap.iterator(iterator) {
+                    Some(crate::heap::IteratorRecord {
                         index,
                         done,
                         source: owner,
@@ -7223,7 +7249,7 @@ fn array_iterator_retains_captured_source_after_reentrant_completion() {
         assert_eq!(vm.heap.root_count_for_test(), roots);
         assert_eq!(vm.active_call_roots.len(), calls);
         assert!(
-            matches!(vm.heap.get(iterator),Some(super::Cell::Iterator {source,index:1,done:true,..}) if source.is_undefined())
+            matches!(vm.heap.iterator(iterator),Some(crate::heap::IteratorRecord {source,index:1,done:true,..}) if source.is_undefined())
         );
         vm.collect_now(&program);
         assert!(vm.heap.weak_value(handles[0]).is_none());
@@ -7325,22 +7351,22 @@ fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
                 let iterator = match wrapper {
                     "raw" => source,
                     "protocol" => vm.iterator_from(&program, &[source]).unwrap(),
-                    _ => vm.heap.alloc(super::Cell::Iterator {
-                        object: Box::new(Vm::<Test262Host>::empty_object(
+                    _ => vm.heap.alloc_iterator(crate::heap::IteratorRecord {
+                        object: Vm::<Test262Host>::empty_object(
                             vm.async_from_sync_iterator_proto,
-                        )),
+                        ),
                         source,
                         kind: super::IteratorKind::AsyncFromSync,
                         index: 0,
                         done: false,
-                        ext: Box::new(crate::heap::IteratorExt {
+                        ext: crate::heap::IteratorExt {
                             position_high: 0,
                             next_method: None,
                             helper: None,
                             helper_running: false,
                             helper_started: false,
                             generator: None,
-                        }),
+                        },
                     }),
                 };
                 let handles = [source, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
@@ -7449,7 +7475,7 @@ fn regexp_match_all_creation_roots_fresh_species_matcher_and_inputs() {
             let receiver = vm
                 .call_value(&program, factory, Value::UNDEFINED, &[])
                 .unwrap();
-            let input = vm.heap.alloc(super::Cell::String("a".into()));
+            let input = vm.heap.alloc_string("a".into());
             let handles = [receiver, input].map(|v| vm.heap.weak_handle(v).unwrap());
             let roots = vm.heap.root_count_for_test();
             let calls = vm.active_call_roots.len();
@@ -7462,8 +7488,8 @@ fn regexp_match_all_creation_roots_fresh_species_matcher_and_inputs() {
             }
             match result {
                 Ok(iterator) => {
-                    let matcher = match vm.heap.get(iterator) {
-                        Some(super::Cell::Iterator { source, .. }) => *source,
+                    let matcher = match vm.heap.iterator(iterator) {
+                        Some(crate::heap::IteratorRecord { source, .. }) => *source,
                         _ => panic!("regexp iterator"),
                     };
                     assert!(vm.is_object_like(matcher));
@@ -7533,15 +7559,15 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                 let matcher = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let iterator = vm.heap.alloc(super::Cell::Iterator {
-                    object: Box::new(Vm::<Test262Host>::empty_object(
+                let iterator = vm.heap.alloc_iterator(crate::heap::IteratorRecord {
+                    object: Vm::<Test262Host>::empty_object(
                         vm.regexp_string_iterator_proto,
-                    )),
+                    ),
                     source: matcher,
                     kind: super::IteratorKind::RegExpStringMatchAll,
                     index: 0,
                     done: false,
-                    ext: Box::new(crate::heap::IteratorExt {
+                    ext: crate::heap::IteratorExt {
                         position_high: 0,
                         next_method: None,
                         helper: Some(Box::new(
@@ -7558,7 +7584,7 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                         helper_running: false,
                         helper_started: false,
                         generator: None,
-                    }),
+                    },
                 });
                 let handles = [matcher, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
                 let roots = vm.heap.root_count_for_test();
@@ -7606,7 +7632,7 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                     assert_eq!(vm.heap.weak_value(*handle), Some(value));
                 }
                 assert!(
-                    matches!(vm.heap.get(iterator),Some(super::Cell::Iterator {done,..}) if *done==(phase=="done"))
+                    matches!(vm.heap.iterator(iterator),Some(crate::heap::IteratorRecord {done,..}) if *done==(phase=="done"))
                 );
                 vm.collect_now(&program);
                 for handle in handles.into_iter().chain(result_handle) {
@@ -7663,7 +7689,7 @@ fn regexp_split_roots_inputs_matcher_results_and_accumulated_captures() {
                 let receiver = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let input = vm.heap.alloc(super::Cell::String("a,b,c".into()));
+                let input = vm.heap.alloc_string("a,b,c".into());
                 let receiver_root = vm.heap.root(receiver);
                 let input_root = vm.heap.root(input);
                 let factory = vm.intern_atom("limit");
@@ -8015,7 +8041,7 @@ fn string_match_search_fallback_roots_converted_input_and_fresh_matcher() {
                             let atom = vm.intern_atom("input");
                             let input = vm.own_property(value, atom).unwrap();
                             assert!(
-                                matches!(vm.heap.get(input),Some(super::Cell::String(text))if text.units()==[0xd800,97])
+                                vm.heap.string(input).is_some_and(|text| text.units()==[0xd800,97])
                             );
                             vm.heap.release_root(owner);
                         }
@@ -8145,7 +8171,7 @@ fn string_match_all_fallback_roots_input_and_intrinsic_matcher() {
                         vm.call_value(&program, factory, Value::UNDEFINED, &[])
                             .unwrap()
                     } else {
-                        vm.heap.alloc(super::Cell::String("a".into()))
+                        vm.heap.alloc_string("a".into())
                     };
                     vm.heap.release_root(root);
                     let handles = [receiver, pattern].map(|v| vm.heap.weak_handle(v).unwrap());
@@ -8165,12 +8191,12 @@ fn string_match_all_fallback_roots_input_and_intrinsic_matcher() {
                             let atom = vm.intern_atom("matcher");
                             let matcher = vm.own_property(value, atom).unwrap();
                             assert!(
-                                matches!(vm.heap.get(matcher),Some(super::Cell::RegExp{meta,..})if meta.source.host_string()=="a"&&meta.flags=="g")
+                                matches!(vm.heap.get(matcher),Some(super::Cell::RegExp{meta,..})if meta.source.host_string()=="a"&&meta.flags.text()=="g")
                             );
                             let atom = vm.intern_atom("input");
                             let input = vm.own_property(value, atom).unwrap();
                             assert!(
-                                matches!(vm.heap.get(input),Some(super::Cell::String(text))if text.units()==[0xd800,97])
+                                vm.heap.string(input).is_some_and(|text| text.units()==[0xd800,97])
                             );
                             vm.heap.release_root(root);
                         }
@@ -8666,7 +8692,7 @@ fn regexp_construction_roots_protocol_inputs_and_initialization_projections() {
                             else {
                                 panic!("constructor returns RegExp");
                             };
-                            let (source, flags) = (&meta.source, &meta.flags);
+                            let (source, flags) = (&meta.source, meta.flags.text());
                             assert_eq!(source.units(), &[u16::from(b'a')]);
                             assert_eq!(flags, "i");
                             if construct {
@@ -8798,7 +8824,7 @@ fn regexp_entrypoints_root_receivers_and_arguments_through_callbacks() {
                                     else {
                                         panic!("compiled receiver retained");
                                     };
-                                    let (source, flags) = (&meta.source, &meta.flags);
+                                    let (source, flags) = (&meta.source, meta.flags.text());
                                     assert_eq!(source.units(), &[u16::from(b'a')]);
                                     assert_eq!(flags, "g");
                                 }
@@ -9110,7 +9136,6 @@ fn string_raw_roots_fresh_raw_views_and_original_substitutions() {
 
 #[test]
 fn collator_construction_roots_boxed_locale_and_option_views() {
-    use super::Cell;
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
         Engine::specialize_unspecialized,
@@ -9156,7 +9181,7 @@ fn collator_construction_roots_boxed_locale_and_option_views() {
                 let locales = if matches!(phase, "length" | "index" | "locale") {
                     Value::number(42.0)
                 } else {
-                    vm.heap.alloc(Cell::String("en".into()))
+                    vm.heap.alloc_string("en".into())
                 };
                 let result = vm.intl_collator_construct(
                     &program,
@@ -9170,8 +9195,8 @@ fn collator_construction_roots_boxed_locale_and_option_views() {
                     Ok(collator) => {
                         let owner = vm.heap.root(collator);
                         vm.collect_now(&program);
-                        let left = vm.heap.alloc(Cell::String("a".into()));
-                        let right = vm.heap.alloc(Cell::String("b".into()));
+                        let left = vm.heap.alloc_string("a".into());
+                        let right = vm.heap.alloc_string("b".into());
                         let result = vm
                             .intl_collator_native(
                                 &program,
@@ -9216,7 +9241,6 @@ fn collator_construction_roots_boxed_locale_and_option_views() {
 
 #[test]
 fn intl_coerced_option_views_survive_fresh_conversion_callbacks() {
-    use super::Cell;
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
         Engine::specialize_unspecialized,
@@ -9246,7 +9270,7 @@ fn intl_coerced_option_views_survive_fresh_conversion_callbacks() {
                     let intl = vm.own_property(vm.realm.globals, intl).unwrap();
                     let name = vm.intern_atom(kind);
                     let constructor = vm.own_property(intl, name).unwrap();
-                    let locale = vm.heap.alloc(Cell::String("en".into()));
+                    let locale = vm.heap.alloc_string("en".into());
                     let weak = vm.heap.weak_handle(locale).unwrap();
                     let locale_owner = vm.heap.root(locale);
                     let roots = vm.heap.root_count_for_test();
@@ -10055,14 +10079,14 @@ fn script_directive_completion_survives_declarations_and_preserves_string_units(
             vm.execute(&program).unwrap();
             let value = vm.eval_global_script_named(&program, source, false, "directive-completion.js").unwrap();
             match expected {
-                Some(expected) => assert!(matches!(vm.heap.get(value), Some(super::Cell::String(text)) if text.host_string() == expected), "{source}"),
+                Some(expected) => assert!(vm.heap.string(value).is_some_and(|text| text.host_string() == expected), "{source}"),
                 None => assert!(value.is_undefined(), "{source}"),
             }
         }
         let mut vm = Vm::new(SilentHost);
         vm.execute(&program).unwrap();
         let value = vm.eval_global_script_named(&program, r"'\ud800'; var x;", false, "directive-completion.js").unwrap();
-        assert!(matches!(vm.heap.get(value), Some(super::Cell::String(text)) if text.units().wide().as_ref() == [0xd800]));
+        assert!(vm.heap.string(value).is_some_and(|text| text.units().wide().as_ref() == [0xd800]));
     }
 }
 
@@ -10370,8 +10394,9 @@ fn js_jit_enters_compiled_known_callees_without_pushing_a_frame() {
         .iter()
         .position(|function| {
             function
+                .header()
                 .name
-                .or(function.inferred_name)
+                .or(function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "add")
         })
         .unwrap() as u32;
@@ -10424,8 +10449,9 @@ fn js_jit_compiles_number_capture_returns_and_observes_mutation() {
         .iter()
         .position(|function| {
             function
+                .header()
                 .name
-                .or(function.inferred_name)
+                .or(function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "read")
         })
         .unwrap() as u32;
@@ -10472,8 +10498,9 @@ fn js_jit_compiles_numeric_capture_arithmetic_and_guards_mutation() {
         .iter()
         .position(|function| {
             function
+                .header()
                 .name
-                .or(function.inferred_name)
+                .or(function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "add")
         })
         .unwrap() as u32;
@@ -10519,8 +10546,9 @@ fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
         .iter()
         .position(|function| {
             function
+                .header()
                 .name
-                .or(function.inferred_name)
+                .or(function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "mask")
         })
         .unwrap() as u32;
@@ -10570,15 +10598,16 @@ fn js_jit_compiles_guarded_int32_identity_arm_and_falls_back_for_other_types() {
         .iter()
         .position(|function| {
             function
+                .header()
                 .name
-                .or(function.inferred_name)
+                .or(function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "hashKey")
         })
         .unwrap() as u32;
     assert!(
         super::js_compiled::int32_identity_return_candidate(
             &program,
-            &program.functions[function_id as usize]
+            program.function_get(function_id as usize).unwrap()
         )
         .is_some(),
         "{}",
@@ -10652,7 +10681,7 @@ fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
         program.disassemble()
     );
     assert!(
-        super::js_compiled::function_candidate(&program.functions[2], &program.atoms),
+        super::js_compiled::function_candidate(program.function_get(2).expect("capacity function"), &program),
         "capacity function candidate rejected"
     );
     assert!(
@@ -10711,11 +10740,15 @@ fn js_jit_compiles_guarded_string_hash_loop_and_falls_back_after_intrinsic_chang
     let mut vm = Vm::new(SilentHost);
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
-    assert!(matches!(
-        vm.programs
-            .js_tier(super::program_store::ProgramId::MAIN, 1),
-        Some(super::program_store::JsTierState::Compiled(_))
-    ));
+    assert!(
+        matches!(
+            vm.programs
+                .js_tier(super::program_store::ProgramId::MAIN, 1),
+            Some(super::program_store::JsTierState::Compiled(_))
+        ),
+        "string hash loop should compile\n{}",
+        program.disassemble()
+    );
 }
 
 #[test]
@@ -10761,11 +10794,15 @@ fn js_jit_compiles_leading_underscore_string_helpers_and_guards_intrinsic_change
             .js_tier(super::program_store::ProgramId::MAIN, 1),
         Some(super::program_store::JsTierState::Compiled(_))
     ));
-    assert!(matches!(
-        vm.programs
-            .js_tier(super::program_store::ProgramId::MAIN, 2),
-        Some(super::program_store::JsTierState::Compiled(_))
-    ));
+    assert!(
+        matches!(
+            vm.programs
+                .js_tier(super::program_store::ProgramId::MAIN, 2),
+            Some(super::program_store::JsTierState::Compiled(_))
+        ),
+        "unescape helper should compile\n{}",
+        program.disassemble()
+    );
 }
 
 #[test]
@@ -10829,7 +10866,7 @@ fn js_jit_merges_boolean_branch_states_for_numeric_equality_chains() {
     assert!(
         super::js_compiled::compile(&program, 3).is_some(),
         "constant logical not should compile; candidate={} function={:?}\n{}",
-        super::js_compiled::function_candidate(&program.functions[3], &program.atoms),
+        super::js_compiled::function_candidate(program.function(3), &program),
         program.functions[3],
         program.disassemble()
     );
@@ -10936,8 +10973,9 @@ fn js_jit_field_reject_resumes_interpreter_on_match_and_accessor() {
         .iter()
         .position(|function| {
             function
+                .header()
                 .name
-                .or(function.inferred_name)
+                .or(function.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "isBlockStatement")
         })
         .unwrap() as u32;
@@ -11321,4 +11359,918 @@ fn spread_of_a_branch_built_array_survives_collection() {
     let name = vm.intern_atom("total");
     let total = vm.own_property(vm.realm.globals, name).unwrap();
     assert_eq!(total.as_number(), Some(20_042_000.0));
+}
+
+#[test]
+fn lexical_slots_read_only_after_initialization_become_plain_and_keep_their_dead_zone() {
+    let source = r#"
+      'use strict';
+      const out = [];
+      function t(f) { try { out.push(String(f())); } catch (e) { out.push(e.constructor.name + ':' + e.message); } }
+      function proven() { let s = 0; for (let i = 0; i < 3; i++) { const y = i * 2; s += y; } return s; }
+      t(proven);
+      t(() => { const r = x; let x = 1; return r; });
+      t(() => { switch (1) { case 0: let x = 1; break; case 1: return x; } });
+      t(() => { const s = []; for (let i = 0; i < 2; i++) { if (i) s.push(z); let z = i; } return s; });
+      t(() => { let r; try { r = w; } catch (e) { r = e.name; } let w = 3; return r + w; });
+      t(() => { k = 2; let k; return k; });
+      t(() => { let v; try { v = 1; } finally { v += 1; } return v; });
+      t(() => { for (let x of [x]) {} });
+      print(out.join('|'));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "lexical-initialization.js").unwrap();
+    program.compile_released();
+    let proven = program
+        .functions
+        .iter()
+        .find(|function| function.name.is_some_and(|atom| program.atoms[atom as usize] == *"proven"))
+        .unwrap();
+    assert!(
+        proven
+            .instructions()
+            .all(|instruction| !matches!(instruction.op(), crate::bytecode::Op::LoadLocal | crate::bytecode::Op::StoreLocal)),
+        "every lexical slot of `proven` is read after its initialization"
+    );
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["6|ReferenceError:Cannot access 'x' before initialization|\
+          ReferenceError:Cannot access 'x' before initialization|\
+          ReferenceError:Cannot access 'z' before initialization|ReferenceError3|\
+          ReferenceError:Cannot access 'k' before initialization|2|\
+          ReferenceError:Cannot access 'x' before initialization"]
+    );
+}
+
+#[test]
+fn anonymous_function_definitions_are_named_by_their_plan() {
+    let source = r#"
+      const arrow = () => 1;
+      let expression = function () {};
+      const { fallback = () => 2 } = {};
+      const object = { method: () => 3, ['computed']: () => 4 };
+      class Named { static field = () => 5; }
+      const klass = class {};
+      print([arrow.name, expression.name, fallback.name, object.method.name,
+        object.computed.name, Named.field.name, klass.name].join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "named-definitions.js").unwrap();
+    program.compile_released();
+    // Closures made straight into the named value are created with the name
+    // (`inferred_name`); classes, computed keys and static field values are named at run time.
+    for name in ["arrow", "expression", "fallback", "method"] {
+        assert!(
+            program.functions.iter().any(|function| {
+                function.inferred_name.is_some_and(|atom| program.atoms[atom as usize] == *name)
+            }),
+            "{name} is named at closure creation"
+        );
+    }
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["arrow,expression,fallback,method,computed,field,klass"]
+    );
+}
+
+#[test]
+fn lane_closures_share_and_update_their_promoted_environment() {
+    // Closures a lane makes promote their frame's environment once: siblings share it,
+    // later writes are seen, and per-iteration bindings stay distinct.
+    let source = r#"
+      const out = [];
+      function counter() { let n = 0; const inc = () => ++n; const get = () => n; return [inc, get]; }
+      function outer(a) { let b = a * 2; function mid(c) { const f = () => a + b + c; b++; return f; } return mid; }
+      for (let i = 0; i < 3; i++) {
+        const [inc, get] = counter(); inc(); inc(); out.push(get());
+        const m = outer(i); const f1 = m(1); const f2 = m(10); out.push(f1(), f2(), f1.name, typeof f2);
+        const fs = []; for (let j = 0; j < 3; j++) fs.push(() => j); out.push(fs.map(f => f()).join(''));
+        const o = {}; out.push(Object.keys(o).length, Object.getPrototypeOf(o) === Object.prototype);
+      }
+      print(out.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-closures.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["2,3,12,f,function,012,0,true,2,6,15,f,function,012,0,true,2,9,18,f,function,012,0,true"]
+    );
+}
+
+#[test]
+fn unary_operators_on_literals_fold_to_their_constants() {
+    // `void` of a literal, `!` of a literal and the sign of a number fold at compile time;
+    // signed zero, NaN, BigInt operands and string coercions keep their run-time results.
+    let source = r#"
+      const out = [];
+      const z = -0, m = -(1), p = +2.5, n = -NaN;
+      out.push(Object.is(z, -0), Object.is(-0, 0), m, p, Number.isNaN(n), 1 / -0);
+      out.push(void 0, void "x", void (0), typeof void 0, void 0 === undefined);
+      out.push(!0, !1, !"", !"a", !null, !(0), !NaN, !-0, !!1, !void 0);
+      let x; out.push(x === void 0, x == void 0, x !== void 0);
+      const o = { a: void 0, b: !0, c: !1 }; out.push(JSON.stringify(o), "a" in o, o.a);
+      function f(a = void 0, b = !0) { return [a, b]; } out.push(f().join());
+      out.push([void 0, !0, -1, +3].map(String).join());
+      switch (!0) { case true: out.push("sw"); }
+      out.push(-(-1), !!!0, !(!0), -"3", +"4", !1n, !0n, -(2 ** 2));
+      out.push(typeof -0, (-0).toString(), 1 / (+(-0)));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "unary-folding.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["true|false|-1|2.5|true|-Infinity||||undefined|true|true|false|true|false|true|true|true|true|true|true|true|true|false|{\"b\":true,\"c\":false}|true||,true|undefined,true,-1,3|sw|1|true|false|-3|4|false|true|-4|number|0|-Infinity"]
+    );
+}
+
+#[test]
+fn lane_char_code_at_keeps_its_coercions_and_patched_methods() {
+    // `charCodeAt` of a string at an integer index runs in the lane; other receivers and
+    // indexes, out-of-range positions and a replaced method keep their semantics.
+    let source = r#"
+      const out = [];
+      function scan(s) { let t = 0; for (let i = -1; i <= s.length; i++) { const c = s.charCodeAt(i); t += Number.isNaN(c) ? 1000 : c; } return t; }
+      for (let k = 0; k < 3; k++) {
+        out.push(scan("abc"), scan(""), scan("é\u{1F600}"), "abc".charCodeAt(), "abc".charCodeAt(1.7), "abc".charCodeAt("2"), "abc".charCodeAt(NaN));
+        out.push(new String("xyz").charCodeAt(1), String.prototype.charCodeAt.call(12, 0), "a".charCodeAt(2 ** 31));
+        try { String.prototype.charCodeAt.call(null, 0); } catch (e) { out.push(e.constructor.name); }
+        const o = { valueOf() { out.push("vo"); return 1; } }; out.push("abc".charCodeAt(o));
+      }
+      const saved = String.prototype.charCodeAt;
+      String.prototype.charCodeAt = function (i) { return "patched" + i; };
+      out.push("abc".charCodeAt(1));
+      String.prototype.charCodeAt = saved;
+      out.push("abc".charCodeAt(1));
+      print(out.join(","));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-char-code-at.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["2294,2000,114422,97,98,99,97,121,49,NaN,TypeError,vo,98,2294,2000,114422,97,98,99,97,121,49,NaN,TypeError,vo,98,2294,2000,114422,97,98,99,97,121,49,NaN,TypeError,vo,98,patched1,98"]
+    );
+}
+
+#[test]
+fn constant_field_initializers_evaluate_in_the_constructor() {
+    // Literal and literal-container initializers evaluate inline: order, signed zero, fresh
+    // containers per instance, `__proto__` keys, setters on the prototype and derived classes.
+    let source = r#"
+      const out = [];
+      let order = [];
+      const key = (k) => (order.push(k), k);
+      class Base { constructor() { out.push(Object.keys(this).join("+")); } }
+      class A extends Base {
+        n = -0; s = "str"; b = !0; u = void 0; arr = [1, "two", null]; obj = { a: 1, "b-c": 2, __proto__: null };
+        [key("computed")] = 5; later = this.n; #p = 7; e = [];
+        constructor(x) { super(); this.x = x; }
+        get p() { return this.#p; }
+      }
+      class B { set s(v) { out.push("setter"); } }
+      class C extends B { s = 1; }
+      class D { y = 1; constructor(y) { out.push(this.y); } }
+      for (let i = 0; i < 3; i++) {
+        const a = new A(i), a2 = new A(i);
+        out.push(Object.is(a.n, -0), a.s, a.b, a.u, a.arr.join("/"), a.arr !== a2.arr, a.e !== a2.e, Object.getPrototypeOf(a.obj) === null, a.obj["b-c"]);
+        out.push(Object.keys(a).join(","), a.computed, Object.is(a.later, -0), a.p, Object.getOwnPropertyDescriptor(a, "s").writable);
+        const c = new C(); out.push(c.s, Object.getOwnPropertyNames(c).join());
+        out.push(new D(5).y);
+      }
+      out.push(order.join());
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "class-field-constants.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["||true|str|true||1/two/|true|true|true|2|n,s,b,u,arr,obj,computed,later,e,x|5|true|7|true|1|s|1|1|||true|str|true||1/two/|true|true|true|2|n,s,b,u,arr,obj,computed,later,e,x|5|true|7|true|1|s|1|1|||true|str|true||1/two/|true|true|true|2|n,s,b,u,arr,obj,computed,later,e,x|5|true|7|true|1|s|1|1|computed"]
+    );
+}
+
+#[test]
+fn function_field_initializers_keep_their_scope_and_activation() {
+    // Arrow and function initializers evaluate inline unless the constructor binds a name
+    // they read (their own parameters aside), or they read `new.target` or call `eval`.
+    let source = r#"
+      const out = [];
+      const tag = "outer";
+      class Base { hello() { return "base-hello"; } }
+      class A extends Base {
+        get = () => this.v;
+        shadow = () => tag;
+        nt = () => typeof new.target;
+        ev = () => eval("typeof tag");
+        sup = () => super.hello();
+        fn = function () { return this === undefined ? "u" : typeof this; };
+        named = () => 1;
+        constructor(v) { super(); this.v = v; }
+      }
+      class B {
+        shadow = () => tag;
+        self = () => this;
+        constructor(tag) { this.p = tag; }
+      }
+      class C { inc = () => ++this.n; n = 0; }
+      const e = "outer-e", x = "outer-x";
+      class M { own = (e, ...rest) => e + rest.length; reads = (y) => x + y; constructor(e, x) { this.e = e; } }
+      for (let i = 0; i < 3; i++) {
+        const a = new A(i), a2 = new A(i + 10);
+        out.push(a.get(), a2.get(), a.shadow(), a.nt(), a.ev(), a.sup(), a.fn(), a.fn.call(5), a.named.name, a.get.name, a.get !== a2.get);
+        const b = new B("ctor-param");
+        out.push(b.shadow(), b.self() === b, b.p, Object.keys(b).join());
+        const c = new C(); c.inc(); out.push(c.inc(), c.n);
+        const m = new M("ctor-e", "ctor-x"); out.push(m.own("arg", 1, 2), m.reads("!"), m.e);
+      }
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "class-field-functions.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["0|10|outer|undefined|string|base-hello|object|number|named|get|true|outer|true|ctor-param|shadow,self,p|2|2|arg2|outer-x!|ctor-e|1|11|outer|undefined|string|base-hello|object|number|named|get|true|outer|true|ctor-param|shadow,self,p|2|2|arg2|outer-x!|ctor-e|2|12|outer|undefined|string|base-hello|object|number|named|get|true|outer|true|ctor-param|shadow,self,p|2|2|arg2|outer-x!|ctor-e"]
+    );
+}
+
+#[test]
+fn lane_collection_methods_keep_receivers_keys_and_patched_methods() {
+    // Map and Set methods run in the lane; `get`/`has` look up in place. SameValueZero keys,
+    // subclasses, wrong receivers, mutation during a run and a replaced method stay exact.
+    let source = r#"
+      const out = [];
+      const m = new Map([["a", 1], [NaN, "nan"], [0, "zero"], [{}, "obj"]]);
+      const s = new Set(["x", -0, NaN]);
+      const ws = new WeakSet(); const wm = new WeakMap(); const key = {}; ws.add(key); wm.set(key, 5);
+      class M2 extends Map {}
+      const m2 = new M2([["k", "v"]]);
+      function run() {
+        for (let i = 0; i < 3; i++) {
+          out.push(m.get("a"), m.get(NaN), m.get(-0), m.get("missing"), m.get(), m.has("a"), m.has({}), s.has(0), s.has(NaN), s.has("y"), s.has());
+          out.push(m2.get("k"), m2.has("k"), ws.has(key), wm.get(key));
+          try { Map.prototype.get.call(s, "x"); } catch (e) { out.push(e.constructor.name); }
+          try { Set.prototype.has.call(m, "a"); } catch (e) { out.push(e.constructor.name); }
+          m.set("i" + i, i); out.push(m.get("i" + i), m.size); s.add(i); out.push(s.has(i), s.size);
+          m.forEach((v, k) => { if (k === "a") out.push("fe" + v); });
+          out.push([...m.keys()].length, [...s.values()].join("/"));
+          m.delete("i" + i); s.delete(i);
+        }
+      }
+      run();
+      const saved = Map.prototype.get; Map.prototype.get = function (k) { return "patched:" + k; }; out.push(m.get("a")); Map.prototype.get = saved;
+      print(out.join(","));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-collections.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["1,nan,zero,,,true,false,true,true,false,false,v,true,true,5,TypeError,TypeError,0,5,true,3,fe1,5,x/0/NaN,1,nan,zero,,,true,false,false,true,false,false,v,true,true,5,TypeError,TypeError,1,5,true,3,fe1,5,x/NaN/1,1,nan,zero,,,true,false,false,true,false,false,v,true,true,5,TypeError,TypeError,2,5,true,3,fe1,5,x/NaN/2,patched:a"]
+    );
+}
+
+#[test]
+fn ascii_string_building_keeps_text_across_the_inline_length() {
+    // ASCII concatenation builds short results inline and longer ones in one buffer.
+    let source = r#"
+      const out = [];
+      for (let n = 18; n <= 26; n++) {
+        const a = "x".repeat(n - 4), s = `${a}${n}`;
+        out.push(s.length, s.slice(-3), s === "x".repeat(n - 4) + String(n), (a + "é").length, `${a}é${n}`.charCodeAt(n - 4));
+      }
+      const parts = ["ab", "", "cd", "efghijklmnopqrstuvwxyz0123"]; let joined = "";
+      for (const p of parts) joined = `${joined}${p}`;
+      out.push(joined, joined.length, `${1}${2}${3}`, `${""}`, `${"a".repeat(22)}`.length, `${"a".repeat(23)}`.length);
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "string-building.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["16|x18|true|15|233|17|x19|true|16|233|18|x20|true|17|233|19|x21|true|18|233|20|x22|true|19|233|21|x23|true|20|233|22|x24|true|21|233|23|x25|true|22|233|24|x26|true|23|233|abcdefghijklmnopqrstuvwxyz0123|30|123||22|23"]
+    );
+}
+
+#[test]
+fn closure_names_keep_their_shapes_across_collections() {
+    // Closures of one site take their named shape from a memo, which collections that
+    // renumber shapes clear; names, descriptors and a later rename stay exact.
+    let source = r#"
+      const out = [];
+      function make(i) {
+        const named = () => i;
+        const other = function inner() {};
+        const method = { meth() {} }.meth;
+        const anon = [() => 0][0];
+        return [named, other, method, anon];
+      }
+      function churn() { let keep = null; for (let i = 0; i < 300000; i++) keep = { i, next: keep && i % 7 ? null : keep }; return keep; }
+      for (let round = 0; round < 3; round++) {
+        const fns = make(round);
+        out.push(fns.map((f) => f.name).join("/"), Object.getOwnPropertyNames(fns[0]).join(), JSON.stringify(Object.getOwnPropertyDescriptor(fns[1], "name")));
+        churn();
+        const again = make(round + 10);
+        out.push(again.map((f) => f.name).join("/"), again[0] !== fns[0]);
+        Object.defineProperty(again[0], "name", { value: "renamed" });
+        out.push(again[0].name, make(0)[0].name);
+      }
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "closure-names.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["named/inner/meth/|length,name|{\"value\":\"inner\",\"writable\":false,\"enumerable\":false,\"configurable\":true}|named/inner/meth/|true|renamed|named|named/inner/meth/|length,name|{\"value\":\"inner\",\"writable\":false,\"enumerable\":false,\"configurable\":true}|named/inner/meth/|true|renamed|named|named/inner/meth/|length,name|{\"value\":\"inner\",\"writable\":false,\"enumerable\":false,\"configurable\":true}|named/inner/meth/|true|renamed|named"]
+    );
+}
+
+#[test]
+fn lane_in_place_steps_keep_iterator_closing_and_throws() {
+    // Iterator steps run in place in a frame's lane run: break, return and throw close
+    // iterators, next() throws and non-object results raise, destructuring and spread stay exact.
+    let source = r#"
+      const out = [];
+      function userIter(n, log, opts = {}) {
+        return { [Symbol.iterator]() { let i = 0; return { next() { if (opts.badResult && i === 1) return 5; if (opts.throwAt === i) throw new Error("next" + i); return { value: i, done: i++ >= n }; }, return() { log.push("ret"); return {}; } }; } };
+      }
+      function run(k) {
+        const log = [];
+        for (const v of [1, 2, 3]) { if (v === 2) break; log.push(v); }
+        for (const v of userIter(3, log)) { if (v === 1) break; log.push("u" + v); }
+        try { for (const v of userIter(3, log)) { if (v === 1) throw new Error("x"); } } catch (e) { log.push(e.message); }
+        try { for (const v of userIter(3, log, { throwAt: 1 })) log.push("t" + v); } catch (e) { log.push(e.message); }
+        try { for (const v of userIter(3, log, { badResult: true })) log.push("b" + v); } catch (e) { log.push(e.constructor.name); }
+        const f = () => { for (const v of userIter(5, log)) { if (v === 2) return v; } };
+        log.push(f());
+        const [a, b, ...rest] = userIter(4, log); log.push(a, b, rest.join("+"));
+        const [x] = userIter(4, log); log.push(x);
+        log.push([...new Set([3, 1, 3])].join(), [..."héllo"].length, Array.from(new Map([[1, 2]])).join());
+        function* gen() { try { yield 1; yield 2; } finally { log.push("fin"); } }
+        for (const g of gen()) { log.push("g" + g); break; }
+        try { for (const z of 5) {} } catch (e) { log.push(e.constructor.name); }
+        class C { #p = k; static sum(list) { let s = 0; for (const c of list) s += #p in c ? c.#p : 0; return s; } }
+        log.push(C.sum([new C(), {}, new C()]));
+        out.push(log.join(","));
+      }
+      for (let k = 0; k < 3; k++) run(k);
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-iterators.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["1,u0,ret,ret,x,t0,next1,b0,TypeError,ret,2,0,1,2+3,ret,0,3,1,5,1,2,g1,fin,TypeError,0|1,u0,ret,ret,x,t0,next1,b0,TypeError,ret,2,0,1,2+3,ret,0,3,1,5,1,2,g1,fin,TypeError,2|1,u0,ret,ret,x,t0,next1,b0,TypeError,ret,2,0,1,2+3,ret,0,3,1,5,1,2,g1,fin,TypeError,4"]
+    );
+}
+
+#[test]
+fn lane_in_place_steps_keep_private_brands_and_field_definitions() {
+    // Private fields, brand checks and class field definitions run in place; Proxy and
+    // frozen receivers, double initialization and named field functions stay exact.
+    let source = r#"
+      const out = [];
+      class Base { constructor(o) { if (o) return o; } }
+      class Stamp extends Base { #s = 1; static has(o) { return #s in o; } static get(o) { return o.#s; } }
+      class P { #a = 1; #b; #m() { return this.#a; } constructor(x) { this.#b = x; } read() { return [this.#a, this.#b, this.#m()].join(":"); } static isP(o) { try { o.#a; return true; } catch (e) { return e.constructor.name; } } }
+      for (let i = 0; i < 3; i++) {
+        out.push(new P(i).read(), P.isP(new P(1)), P.isP({}));
+        const target = {}; new Stamp(target); out.push(Stamp.has(target), Stamp.get(target));
+        try { new Stamp(target); } catch (e) { out.push(e.constructor.name); }
+        const proxy = new Proxy({}, {}); new Stamp(proxy); out.push(Stamp.has(proxy));
+        class F extends Base { x = 1; y = 2; }
+        const frozen = Object.freeze({}); try { new F(frozen); } catch (e) { out.push(e.constructor.name); }
+        const seen = []; const prox = new Proxy({}, { defineProperty(t, k, d) { seen.push(k); return Reflect.defineProperty(t, k, d); } });
+        new F(prox); out.push(seen.join("+"), Object.keys(new F()).join());
+        class N { f = function () {}; g = () => {}; ["h"] = class {}; } const n = new N(); out.push(n.f.name, n.g.name, n.h.name);
+      }
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-private-fields.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["1:0:1|true|TypeError|true|1|TypeError|true|TypeError|x+y|x,y|f|g|h|1:1:1|true|TypeError|true|1|TypeError|true|TypeError|x+y|x,y|f|g|h|1:2:1|true|TypeError|true|1|TypeError|true|TypeError|x+y|x,y|f|g|h"]
+    );
+}
+
+#[test]
+fn lane_framed_calls_and_returns_keep_frames_and_their_semantics() {
+    // Calls of functions that need a frame are pushed and returned from the lane: closures,
+    // `arguments`, `this` modes, throws, recursion, tail returns, generators, async functions
+    // and `eval` keep the general loop's results.
+    let source = r#"
+      const out = [];
+      function counter() { let n = 0; return { inc: () => ++n, get: () => n }; }
+      function withArgs() { return arguments.length + ":" + [].join.call(arguments, "-"); }
+      function sloppyThis() { return typeof this; }
+      function strictThis() { "use strict"; return this === undefined ? "u" : typeof this; }
+      function thrower(x) { const f = () => x; if (x > 1) throw new Error("boom" + f()); return f(); }
+      function deep(n) { const g = () => n; return n === 0 ? g() : deep(n - 1) + g(); }
+      function tail(n) { const h = () => n; if (n === 0) return h(); return tail(n - 1); }
+      class K { constructor() { this.v = 1; } }
+      function callsCtor() { try { return K(); } catch (e) { return e.constructor.name; } }
+      function* gen() { yield 1; }
+      async function af() { return 2; }
+      function usesEval(s) { const local = 5; return eval(s); }
+      function run() {
+        const c = counter(); c.inc(); c.inc();
+        for (let i = 0; i < 4; i++) {
+          out.push(c.inc(), c.get(), withArgs(i, "a"), sloppyThis(), strictThis(), deep(3), tail(4), callsCtor());
+          try { out.push(thrower(i)); } catch (e) { out.push(e.message); }
+          out.push([...gen()].join(), typeof af(), usesEval("local + 1"));
+          const o = { m() { const x = () => this; return x() === o; } }; out.push(o.m());
+          const err = (() => { try { null.x; } catch (e) { return e.constructor.name; } })(); out.push(err);
+        }
+      }
+      run();
+      print(out.join(","));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-framed-calls.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["3,3,2:0-a,object,u,6,0,TypeError,0,1,object,6,true,TypeError,4,4,2:1-a,object,u,6,0,TypeError,1,1,object,6,true,TypeError,5,5,2:2-a,object,u,6,0,TypeError,boom2,1,object,6,true,TypeError,6,6,2:3-a,object,u,6,0,TypeError,boom3,1,object,6,true,TypeError"]
+    );
+}
+
+#[test]
+fn lane_arrows_take_this_from_their_environment() {
+    // Arrows called as frameless activations read `this` from the environment they
+    // closed over: call/apply/bind receivers are ignored, a derived constructor's
+    // arrow throws before `super()` and sees the object after, and strict and
+    // sloppy outer functions keep their own `this`.
+    let source = r#"
+      const out = [];
+      const obj = { tag: 'o', m() { const a = () => this.tag; const b = (x) => x + (this ? this.tag : '-'); return [a(), b(1), a.call({ tag: 'X' }), b.apply({ tag: 'Y' }, [2])].join(); } };
+      class P { constructor() { this.v = 'p'; } }
+      class D extends P { constructor() { const early = () => { try { return this.v; } catch (e) { return e.constructor.name; } }; out.push(early()); super(); const late = () => this.v; out.push(late(), early()); } }
+      function sloppyOuter() { const a = () => typeof this; return a(); }
+      function strictOuter() { 'use strict'; const a = () => this; return a(); }
+      function args() { const a = () => arguments.length; return a(); }
+      const top = () => typeof this;
+      for (let i = 0; i < 3; i++) {
+        out.push(obj.m());
+        new D();
+        out.push(sloppyOuter(), String(strictOuter()), strictOuter.call(5), args(1, 2, 3), top());
+        const bound = (() => this).bind({ z: 1 }); out.push(typeof bound());
+        out.push([1, 2, 3].map((x) => x * 2).join(''));
+      }
+      print(out.join('|'));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-arrows.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["o,1o,o,2o|ReferenceError|p|p|object|undefined|5|3|object|object|246|o,1o,o,2o|ReferenceError|p|p|object|undefined|5|3|object|object|246|o,1o,o,2o|ReferenceError|p|p|object|undefined|5|3|object|object|246"]
+    );
+}
+
+#[test]
+fn bound_calls_and_base_class_constructions_pushed_in_place_keep_their_semantics() {
+    // Bound calls and base class constructions run as in-loop frames: bound `this` and
+    // argument order, nested binds, sloppy `this` coercion, `new.target`, fields, and a
+    // constructor's primitive or object return all stay as a nested call makes them.
+    let source = r#"
+      'use strict';
+      const out = [];
+      function show(a, b, c) { return [this === undefined ? 'u' : typeof this === 'object' ? this.tag : String(this), a, b, c].join(':'); }
+      const bound = show.bind({ tag: 'T' }, 1);
+      const twice = bound.bind({ tag: 'ignored' }, 2);
+      const loose = Function('return function(){ return this === globalThis ? "global" : typeof this; }')();
+      for (let i = 0; i < 3; i++) {
+        out.push(bound(i, 'x'), twice(i), show.bind(undefined)(i), loose.bind(null)(), loose.bind(5)());
+      }
+      class Base { x = 1; #p = 2; constructor(v) { this.v = v; this.nt = new.target === Base; } get p() { return this.#p; } }
+      class Prim { constructor() { this.a = 1; return 7; } }
+      class Obj { constructor() { return { other: true }; } }
+      for (let i = 0; i < 2; i++) {
+        const b = new Base(i);
+        out.push([b.x, b.p, b.v, b.nt, Object.getPrototypeOf(b) === Base.prototype].join(','));
+        out.push(new Prim().a, JSON.stringify(new Obj()));
+        try { Base(1); } catch (e) { out.push(e.constructor.name); }
+      }
+      print(out.join('|'));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "bound-and-class-in-place.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["T:1:0:x|T:1:2:0|u:0::|global|object|T:1:1:x|T:1:2:1|u:1::|global|object|T:1:2:x|T:1:2:2|u:2::|global|object|1,2,0,true,true|1|{\"other\":true}|TypeError|1,2,1,true,true|1|{\"other\":true}|TypeError"]
+    );
+}
+
+#[test]
+fn lane_forwarded_calls_run_callees_of_other_programs_in_their_program() {
+    // `f.call(...)` and a bound call of a callee compiled as another program, made from a
+    // lane function often enough that its cross-program target is cached: the callee reads
+    // its own program's names, constants and field sites (`globalThis`, a defined property,
+    // string keys), not the caller's.
+    let source = r#"
+      const loose = Function('return function(){ return this === globalThis ? "global" : typeof this; }')();
+      const definer = Function('o', 'k', 'Object.defineProperty(o, k, { value: k.length, enumerable: true }); o[k + "x"] = "v"; return Object.keys(o).join("+");');
+      function run(i) {
+        const bound = loose.bind(null);
+        return [bound(), loose.call(null), loose.call(i), definer.call(null, {}, 'key' + i)].join(",");
+      }
+      const out = [];
+      for (let i = 0; i < 24; i++) out.push(run(i % 2));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-cross-program-forwarded.js").unwrap()).unwrap();
+    let expected = (0..24)
+        .map(|i| format!("global,global,object,key{0}+key{0}x", i % 2))
+        .collect::<Vec<_>>()
+        .join("|");
+    assert_eq!(output.borrow().as_slice(), [expected]);
+}
+
+#[test]
+fn lane_regexp_exec_keeps_last_index_and_coercion_order() {
+    // Exec calls made from frameless activations: a global pattern advances `lastIndex`,
+    // an object `lastIndex` is still converted exactly once per call, and a frozen global
+    // pattern still throws when exec writes `lastIndex`.
+    let source = r#"
+      function step(re, text) { return re.exec(text); }
+      function match(layer, text) { return step(layer.re, text); }
+      const global = { re: /a/g };
+      const seen = [];
+      for (let i = 0; i < 3; i++) {
+        const found = match(global, 'aab');
+        seen.push(found ? found.index : 'null', global.re.lastIndex);
+      }
+      let conversions = 0;
+      const plain = { re: /b/ };
+      plain.re.lastIndex = { valueOf() { conversions++; return 0; } };
+      for (let i = 0; i < 2; i++) seen.push(match(plain, 'ab').index);
+      seen.push(conversions);
+      const frozen = { re: Object.freeze(/a/g) };
+      try { match(frozen, 'a'); seen.push('no throw'); } catch (error) { seen.push(error.constructor.name); }
+      print(seen.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-regexp-exec.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["0,1,1,2,null,0,1,1,2,TypeError"]);
+}
+
+#[test]
+fn catch_bindings_live_in_registers_and_keep_their_thrown_values() {
+    // A catch binding read only by its block moves into a register: the wrapper calls no
+    // frame of its own, and each catch still sees the value its own throw made.
+    let source = r#"
+      function wrap(layer, path) { try { return layer.match(path); } catch (err) { return err; } }
+      const ok = { match(path) { return 'ok:' + path; } };
+      const bad = { match(path) { throw new Error('bad:' + path); } };
+      const seen = [];
+      for (let i = 0; i < 3; i++) {
+        seen.push(wrap(ok, i));
+        seen.push(wrap(bad, i).message);
+      }
+      print(seen.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "catch-register.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["ok:0,bad:0,ok:1,bad:1,ok:2,bad:2"]);
+    let wrap = program.function(1);
+    assert!(wrap.handlers.iter().all(|handler| matches!(
+        handler.slot,
+        Some(crate::bytecode::ThrownValueSlot::Register(_))
+    )));
+    assert!(wrap.call_plan(&program).registers_only);
+}
+
+#[test]
+fn promoted_var_locals_read_undefined_before_their_first_store() {
+    // A frame's registers start stale from its pool, so a `var` promoted to a register that
+    // a read reaches before any store must still read undefined on every call.
+    let source = r#"
+      function H(m) { this.message = m; }
+      function f() { var err; var msg; msg = arguments[1]; if (!err) { err = new H(msg); } return err; }
+      const first = f(404, 'config');
+      const second = f(404, 'again');
+      print([first.message, second.message, first !== second].join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "promoted-var-entry.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["config,again,true"]);
+}
+
+#[test]
+fn symbol_keyed_reads_follow_shapes_prototypes_and_redefinitions() {
+    // Symbol-keyed reads answered from proofs (`symbol_load_proofs`) see deletes, shadows,
+    // prototype changes, accessors, proxies, many shapes and collections as the walk does.
+    let source = r#"
+const k = Symbol('k'), m = Symbol('m');
+const out = [];
+function read(o, key) { let r; for (let i = 0; i < 4; i++) r = o[key]; return r; }
+// own data, then delete and re-add
+const a = { [k]: 1 };
+out.push(read(a, k)); delete a[k]; out.push(read(a, k)); a[k] = 2; out.push(read(a, k));
+// inherited through two prototypes, then a holder change, a shadow, a delete
+const base = { [k]: 'base' }; const mid = Object.create(base); const obj = Object.create(mid);
+out.push(read(obj, k)); base[k] = 'base2'; out.push(read(obj, k));
+mid[k] = 'mid'; out.push(read(obj, k)); delete mid[k]; out.push(read(obj, k));
+// absent, then added on a prototype
+const p2 = {}; const o2 = Object.create(p2);
+out.push(String(read(o2, m))); p2[m] = 'added'; out.push(read(o2, m));
+Object.prototype[m] = 'top'; const o3 = {}; out.push(read(o3, m)); delete Object.prototype[m]; out.push(String(read(o3, m)));
+// holder turned accessor
+const h = { [k]: 'data' }; const o4 = Object.create(h); out.push(read(o4, k));
+let calls = 0; Object.defineProperty(h, k, { get() { calls++; return this === o4 ? 'getter-this' : 'bad'; }, configurable: true });
+out.push(read(o4, k), calls);
+// receiver's prototype replaced
+const pa = { [k]: 'pa' }, pb = { [k]: 'pb' }; const o5 = Object.create(pa); out.push(read(o5, k));
+Object.setPrototypeOf(o5, pb); out.push(read(o5, k));
+// two receivers of one shape with different prototypes
+const q1 = Object.create(pa), q2 = Object.create(pb); out.push(read(q1, k), read(q2, k), read(q1, k));
+// own accessor and non-writable own
+const o6 = { get [k]() { return 'own-get'; } }; out.push(read(o6, k));
+const o7 = {}; Object.defineProperty(o7, k, { value: 'ro', writable: false }); out.push(read(o7, k));
+// class instance fields and prototype methods
+class C { [k] = 'field'; [m]() { return 'method'; } }
+class D extends C {}
+const d = new D(); out.push(read(d, k), read(d, m).call(d));
+C.prototype[m] = function () { return 'replaced'; }; out.push(read(d, m).call(d));
+// symbol on a function, an array and a primitive wrapper
+function f() {} f[k] = 'fn'; out.push(read(f, k));
+const arr = [1]; arr[k] = 'arr'; out.push(read(arr, k), typeof read(arr, Symbol.iterator));
+out.push(typeof read('s', Symbol.iterator), read(Object('s'), Symbol.toStringTag) === undefined);
+// Proxy on the chain
+const px = new Proxy({}, { get(t, key, r) { return key === k ? 'proxy' : undefined; } });
+const o8 = Object.create(px); out.push(read(o8, k));
+// many shapes through one site
+const many = []; for (let i = 0; i < 40; i++) { const o = { ['x' + i]: i, [k]: i }; many.push(o); }
+let sum = 0; for (let j = 0; j < 3; j++) for (const o of many) sum += o[k]; out.push(sum);
+// collection in between
+const keep = { [k]: 'kept' }; out.push(read(keep, k)); for (let i = 0; i < 200000; i++) ({ i }); out.push(read(keep, k));
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "symbol-loads.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"[1,null,2,"base","base2","mid","base2","undefined","added","top","undefined","data","getter-this",4,"pa","pb","pa","pb","pa","own-get","ro","field","method","replaced","fn","arr","function","function",true,"proxy",2340,"kept","kept"]"#]);
+}
+
+#[test]
+fn inherited_getters_run_in_loop_and_follow_redefinitions() {
+    // Getters found prototypes above the receiver, by name or symbol, run as in-loop frames
+    // with the receiver as `this`; throws, shadowing, redefinition and deep chains keep the
+    // results of the ordinary [[Get]].
+    let source = r#"
+const k = Symbol('k');
+const out = [];
+function read(o) { let r; for (let i = 0; i < 4; i++) r = o.v; return r; }
+function readK(o) { let r; for (let i = 0; i < 4; i++) r = o[k]; return r; }
+let calls = 0;
+class Base { get v() { calls++; return 'base:' + this.tag; } get [k]() { calls++; return 'kbase:' + this.tag; } }
+class Mid extends Base {}
+class Leaf extends Mid { constructor() { super(); this.tag = 'leaf'; } }
+const l = new Leaf();
+out.push(read(l), readK(l), calls);
+// a getter that throws, observed by the caller
+class T { get v() { throw new Error('boom'); } get [k]() { throw new Error('kboom'); } }
+class T2 extends T {}
+const t = new T2();
+try { read(t); } catch (e) { out.push(e.message); }
+try { readK(t); } catch (e) { out.push(e.message); }
+// redefine on the middle of the chain: data shadows the getter
+Object.defineProperty(Mid.prototype, 'v', { value: 'mid-data', configurable: true, writable: true });
+Mid.prototype[k] = 'kmid-data';
+out.push(read(l), readK(l));
+delete Mid.prototype.v; delete Mid.prototype[k];
+out.push(read(l), readK(l));
+// replace the getter itself
+Object.defineProperty(Base.prototype, 'v', { get() { return 'new:' + this.tag; }, configurable: true });
+Object.defineProperty(Base.prototype, k, { get() { return 'knew:' + this.tag; }, configurable: true });
+out.push(read(l), readK(l));
+// own data on the receiver shadows
+l.v = 'own'; out.push(read(l));
+const l2 = new Leaf(); Object.defineProperty(l2, k, { value: 'kown' }); out.push(readK(l2));
+// getter returning arguments.length and this identity; native getters
+class A { get v() { return [arguments.length, this === a2]; } }
+class B extends A {}
+const a2 = new B(); out.push(JSON.stringify(read(a2)));
+const m = new (class extends Map {})([[1, 2]]); let s; for (let i = 0; i < 4; i++) s = m.size; out.push(s);
+// a bound getter and a generator-free async-free getter of another realm-like proto
+const bound = Object.create(Object.create({ get v() { return 'plain:' + (this === bound); } }));
+out.push(read(bound));
+// deep chain (six links)
+let proto = { get v() { return 'deep'; } };
+for (let i = 0; i < 6; i++) proto = Object.create(proto);
+out.push(read(proto));
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "inherited-getters.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"["base:leaf","kbase:leaf",8,"boom","kboom","mid-data","kbase:leaf","base:leaf","kbase:leaf","new:leaf","knew:leaf","new:leaf","kown","[0,true]",1,"plain:true","deep"]"#]);
+}
+
+#[test]
+fn call_apply_and_reflect_apply_push_callees_of_other_programs() {
+    // `call`, `apply` and `Reflect.apply` of user functions compiled as other programs run
+    // as in-loop frames in their program; receivers, argument lists, holes, getters on the
+    // list, throws, bound targets and forwarded `arguments` keep the natives' results.
+    let source = r#"
+const out = [];
+const other = new Function('a', 'b', '"use strict"; return [this === undefined ? "u" : typeof this, a, b, arguments.length].join(":");');
+const sloppy = new Function('a', 'return [typeof this, a, arguments.length].join(":");');
+const thrower = new Function('x', 'throw new RangeError("r" + x);');
+const recur = new Function('n', 'return n <= 0 ? 0 : n + Reflect.apply(arguments.callee, null, [n - 1]);');
+function local(a, b) { return [this && this.tag, a, b].join(":"); }
+function run(i) {
+  const o = { tag: 't' + i };
+  out.push(other.call(o, i, 'x'), other.call(undefined, i), other.apply(o, [i, 'y']), other.apply(null),
+    Reflect.apply(other, o, [i, 'z', 'extra']), sloppy.call(null, i), sloppy.apply(5, [i]),
+    Reflect.apply(sloppy, 'str', []), local.call(o, i, 1), Reflect.apply(local, o, [i, 2]), recur(3));
+  try { Reflect.apply(thrower, null, [i]); } catch (e) { out.push(e.name + e.message); }
+  try { thrower.apply(null, [i]); } catch (e) { out.push(e.name + e.message); }
+  try { Reflect.apply(other, null, undefined); } catch (e) { out.push(e.constructor.name); }
+  try { Reflect.apply({}, null, []); } catch (e) { out.push(e.constructor.name); }
+  out.push(Reflect.apply(other, o, { length: 2, 0: 'al', 1: 'b' }), other.apply(o, [, 'hole']));
+  const getterList = [1, 2]; Object.defineProperty(getterList, 0, { get() { out.push('g'); return 'got'; } });
+  out.push(Reflect.apply(other, o, getterList));
+  const bound = other.bind(o, 'B'); out.push(bound(i), bound.call(null, 'c'), Reflect.apply(bound, null, ['d']));
+  const args = (function () { return Reflect.apply(other, o, arguments); })('A1', 'A2'); out.push(args);
+}
+for (let i = 0; i < 3; i++) run(i);
+// EventEmitter-like dispatch through ReflectApply from another program
+const emit = new Function('handler', 'self', 'args', 'return Reflect.apply(handler, self, args);');
+const seen = []; for (let i = 0; i < 3; i++) emit(function (a, b) { seen.push(this.n + a + b); }, { n: i }, ['-', i]);
+out.push(seen.join());
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "cross-program-applies.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"["object:0:x:2","u:0::1","object:0:y:2","object:::0","object:0:z:3","object:0:1","object:0:1","object::0","t0:0:1","t0:0:2",6,"RangeErrorr0","RangeErrorr0","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:0:2","object:B:c:2","object:B:d:2","object:A1:A2:2","object:1:x:2","u:1::1","object:1:y:2","object:::0","object:1:z:3","object:1:1","object:1:1","object::0","t1:1:1","t1:1:2",6,"RangeErrorr1","RangeErrorr1","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:1:2","object:B:c:2","object:B:d:2","object:A1:A2:2","object:2:x:2","u:2::1","object:2:y:2","object:::0","object:2:z:3","object:2:1","object:2:1","object::0","t2:2:1","t2:2:2",6,"RangeErrorr2","RangeErrorr2","TypeError","TypeError","object:al:b:2","object::hole:2","g","object:got:2:2","object:B:2:2","object:B:c:2","object:B:d:2","object:A1:A2:2","0-0,1-1,2-2"]"#]);
+}
+
+#[test]
+fn json_stringify_fast_path_keeps_the_full_algorithms_results() {
+    // JSON.stringify of plain data takes the direct writer; replacers, gaps, toJSON on any link, accessors,
+    // holes, arguments objects, boxed primitives, BigInt, cycles and depth keep the full algorithm.
+    let source = r#"
+const out = [];
+const S = (v, ...a) => out.push(String(JSON.stringify(v, ...a)));
+S({ a: 1, b: 'two', c: [1, 2, 3], d: { e: true } }); S([]); S({}); S(null); S(undefined); S(() => 1); S(Symbol('x'));
+S({ u: undefined, f() {}, s: Symbol('s'), n: null, nan: NaN, inf: -Infinity, z: -0, big: 1e21, small: 1e-7 });
+S([undefined, () => 1, Symbol('y'), NaN]); S('quote " back \\ nl \n tab \t ctl \u0001 uni é 😀 lone \ud800');
+S({ 2: 'b', 1: 'a', x: 'x', 0: 'z' }); S({ 'ke"y': 1, 'k\u0002': 2, 'é': 3 });
+const o = { a: 1 }; Object.defineProperty(o, 'hidden', { value: 2, enumerable: false }); Object.defineProperty(o, 'g', { get() { return 'got'; }, enumerable: true }); S(o);
+S({ d: new Date(0) }); S({ t: { toJSON(k) { return 'tj:' + k; } } }); S([1, , 3]); const sp = [1]; sp[5] = 6; S(sp);
+(function () { S(arguments); })(1, 2); S(Object.create({ inherited: 1 })); S(new Map([[1, 2]])); S(new Number(5)); S(new String('s')); S(Object(true));
+try { S({ b: 10n }); } catch (e) { out.push(e.constructor.name); }
+const cyc = { a: {} }; cyc.a.self = cyc; try { S(cyc); } catch (e) { out.push(e.constructor.name); }
+let deep = {}; let cur = deep; for (let i = 0; i < 100; i++) { cur.n = {}; cur = cur.n; } out.push(JSON.stringify(deep).length);
+S({ a: [1, { b: 2 }] }, null, 2); S({ a: 1, b: 2 }, ['b']); S({ a: 1 }, (k, v) => (k === 'a' ? v + 1 : v));
+Object.prototype.toJSON = function () { return 'proto'; }; S({ a: 1 }); delete Object.prototype.toJSON;
+Array.prototype.toJSON = function () { return 'arr'; }; S([1]); delete Array.prototype.toJSON;
+class K { constructor() { this.x = 1; this.y = [true]; } } S(new K()); S([new K(), { z: 'w' }]);
+S({ __proto__: null, a: 1 }); const p = new Proxy({ a: 1 }, {}); S(p); S(new Uint8Array([1, 2]));
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "json_stringify_fast_path_keeps_the_full_algorithms_results.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"["{\"a\":1,\"b\":\"two\",\"c\":[1,2,3],\"d\":{\"e\":true}}","[]","{}","null","undefined","undefined","undefined","{\"n\":null,\"nan\":null,\"inf\":null,\"z\":0,\"big\":1e+21,\"small\":1e-7}","[null,null,null,null]","\"quote \\\" back \\\\ nl \\n tab \\t ctl \\u0001 uni é 😀 lone \\ud800\"","{\"0\":\"z\",\"1\":\"a\",\"2\":\"b\",\"x\":\"x\"}","{\"ke\\\"y\":1,\"k\\u0002\":2,\"é\":3}","{\"a\":1,\"g\":\"got\"}","{\"d\":\"1970-01-01T00:00:00.000Z\"}","{\"t\":\"tj:t\"}","[1,null,3]","[1,null,null,null,null,6]","{\"0\":1,\"1\":2}","{}","{}","5","\"s\"","true","TypeError","TypeError",602,"{\n  \"a\": [\n    1,\n    {\n      \"b\": 2\n    }\n  ]\n}","{\"b\":2}","{\"a\":2}","\"proto\"","\"arr\"","{\"x\":1,\"y\":[true]}","[{\"x\":1,\"y\":[true]},{\"z\":\"w\"}]","{\"a\":1}","{\"a\":1}","{\"0\":1,\"1\":2}"]"#]);
+}
+
+#[test]
+fn json_parse_literal_shapes_keep_create_data_property_semantics() {
+    // JSON.parse objects allocated with their literal shape keep duplicate-key, index-key, __proto__,
+    // wide-object, reviver and inherited-setter behavior.
+    let source = r#"
+const out = [];
+const P = (s, r) => { try { const v = JSON.parse(s, r); out.push(JSON.stringify(v), Object.keys(v ?? {}).join(','), typeof v); } catch (e) { out.push(e.constructor.name); } };
+P('{"a":1,"b":"two","c":[1,2,3],"d":{"e":true}}'); P('{"a":1,"a":2,"b":3}'); P('{"2":"b","1":"a","x":1}'); P('{"__proto__":{"p":1},"q":2}');
+const pr = JSON.parse('{"__proto__":{"p":1}}'); out.push(Object.getPrototypeOf(pr) === Object.prototype, Object.keys(pr).join(), pr.p === undefined);
+let wide = '{' + Array.from({ length: 40 }, (_, i) => `"k${i}":${i}`).join(',') + '}'; P(wide);
+P('[{"x":1},{"x":2,"y":3},{"y":4,"x":5}]'); P('{"":1,"é":2,"\\u0041":3}'); P('{"a":{"b":{"c":{"d":[null,true,false,-0,1e300]}}}}');
+P('{"a":1,"b":2}', (k, v) => (typeof v === 'number' ? v * 10 : v)); P('{bad}'); P('[1,]'); P('"\\ud800"'); P('  {"s":"x"}  ');
+Object.defineProperty(Object.prototype, 'trap', { set(v) { out.push('setter-called'); }, configurable: true });
+P('{"trap":1}'); delete Object.prototype.trap;
+const a = JSON.parse('{"m":1,"n":2}'), b = JSON.parse('{"m":3,"n":4}'); out.push(Object.keys(a).join() === Object.keys(b).join()); a.z = 1; out.push(JSON.stringify(a), JSON.stringify(b));
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "json_parse_literal_shapes_keep_create_data_property_semantics.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"["{\"a\":1,\"b\":\"two\",\"c\":[1,2,3],\"d\":{\"e\":true}}","a,b,c,d","object","{\"a\":2,\"b\":3}","a,b","object","{\"1\":\"a\",\"2\":\"b\",\"x\":1}","1,2,x","object","{\"__proto__\":{\"p\":1},\"q\":2}","__proto__,q","object",true,"__proto__",true,"{\"k0\":0,\"k1\":1,\"k2\":2,\"k3\":3,\"k4\":4,\"k5\":5,\"k6\":6,\"k7\":7,\"k8\":8,\"k9\":9,\"k10\":10,\"k11\":11,\"k12\":12,\"k13\":13,\"k14\":14,\"k15\":15,\"k16\":16,\"k17\":17,\"k18\":18,\"k19\":19,\"k20\":20,\"k21\":21,\"k22\":22,\"k23\":23,\"k24\":24,\"k25\":25,\"k26\":26,\"k27\":27,\"k28\":28,\"k29\":29,\"k30\":30,\"k31\":31,\"k32\":32,\"k33\":33,\"k34\":34,\"k35\":35,\"k36\":36,\"k37\":37,\"k38\":38,\"k39\":39}","k0,k1,k2,k3,k4,k5,k6,k7,k8,k9,k10,k11,k12,k13,k14,k15,k16,k17,k18,k19,k20,k21,k22,k23,k24,k25,k26,k27,k28,k29,k30,k31,k32,k33,k34,k35,k36,k37,k38,k39","object","[{\"x\":1},{\"x\":2,\"y\":3},{\"y\":4,\"x\":5}]","0,1,2","object","{\"\":1,\"é\":2,\"A\":3}",",é,A","object","{\"a\":{\"b\":{\"c\":{\"d\":[null,true,false,0,1e+300]}}}}","a","object","{\"a\":10,\"b\":20}","a,b","object","SyntaxError","SyntaxError","\"\\ud800\"","0","string","{\"s\":\"x\"}","s","object","{\"trap\":1}","trap","object",true,"{\"m\":1,\"n\":2,\"z\":1}","{\"m\":3,\"n\":4}"]"#]);
+}
+
+#[test]
+fn lane_closures_of_one_function_keep_their_own_lexical_this() {
+    // Arrows made by one function share its derived lane target; each keeps the `this` of
+    // the call that made it, and a closure-making method's arrows see that method's receiver.
+    let source = r#"
+      function make() { return () => this.tag; }
+      const a = { tag: 'a' }, b = { tag: 'b' };
+      const out = [];
+      for (let i = 0; i < 4; i++) {
+        const fa = make.call(a), fb = make.call(b);
+        out.push(fa() + fb());
+        const o = { tag: 'o' + i, m() { const x = () => this.tag; return x(); } };
+        out.push(o.m());
+      }
+      print(out.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-closure-this.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["ab,o0,ab,o1,ab,o2,ab,o3"]);
+}
+
+#[test]
+fn lane_activations_made_frames_by_a_native_call_read_their_own_registers() {
+    // A frameless activation that calls a native becomes a VM frame, in which the lane goes
+    // on: the general steps it then runs in place (computed keys, spreads, object literals)
+    // read and write that frame's registers, not its caller's.
+    let source = r#"
+      function ensure(obj, tag) {
+        for (var i = 0, keys = Object.keys(obj); i < keys.length; i++) {
+          var key = keys[i];
+          var fns = obj[key];
+          if (typeof fns === 'function') obj[key] = { enter: fns, [tag + i]: [i, ...keys] };
+        }
+        return obj;
+      }
+      function visit(n) {
+        var out = [], a = 'a', b = 1.5, c = null;
+        for (var j = 0; j < n; j++) {
+          var visitor = ensure({ x() {}, y: { enter: j } }, 'k');
+          out.push(typeof visitor.x.enter + visitor.x.k0.join('|') + visitor.y.enter + a + b + c);
+        }
+        return out.join(',');
+      }
+      print(visit(3));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-materialized-registers.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["function0|x|y0a1.5null,function0|x|y1a1.5null,function0|x|y2a1.5null"]
+    );
+}
+
+#[test]
+fn lane_raised_errors_unwind_through_callees_of_other_programs() {
+    // A lane step that throws in a callee of another program, pushed in the loop, unwinds to
+    // its caller's handler, which the caller's own program locates.
+    let source = r#"
+      function a() {} function b() {} function c() {} function d() {} function e() {}
+      const other = new Function('xs', 'let n = 0; for (let i = 0; i < xs.length; i++) { n += [...xs[i]].length; } return n;');
+      function run(xs) {
+        try { return other(xs); } catch (error) { return error.constructor.name; }
+      }
+      const out = [];
+      for (let k = 0; k < 4; k++) out.push(run([[1], [2, 3], k & 1 ? [4] : 5]));
+      print(out.join());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-raised-other-program.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["TypeError,4,TypeError,4"]);
+}
+
+#[test]
+fn promoted_move_coalescing_reads_liveness_of_the_code_it_rewrites() {
+    // Coalescing the copies frame-register promotion leaves runs in rounds that drop `Nop`s;
+    // a round after one must not judge producers by the earlier positions, or the callback
+    // copied into `filter`'s argument window is lost to an earlier call's result.
+    let source = r#"
+      function run(ex) {
+        var f = function (m) { return { d: m }; };
+        Object.defineProperty(ex, "e", { value: 1 });
+        const n = f({ SIGA: 1, b: 2, SIGC: 3 });
+        ex.x = Object.keys(n.d).filter(k => k.startsWith("SIG"));
+        return ex.x.join();
+      }
+      print(run({}));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "promoted-move-rounds.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["SIGA,SIGC"]);
 }

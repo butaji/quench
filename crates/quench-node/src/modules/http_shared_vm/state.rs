@@ -12,9 +12,27 @@ pub(crate) struct State {
     pub(crate) servers: HashMap<u64, Server>,
     pub(crate) connections: HashMap<u64, ServerConnection>,
     pub(crate) responses: HashMap<u64, Response>,
+    /// The collection epoch `responses` was last pruned at (`poll::prune_collected_responses`):
+    /// an ended response's owner can only have died when a collection ran since.
+    pub(crate) responses_pruned_epoch: u64,
+    /// Responses whose write returned false, keyed by socket, until their
+    /// queued bytes fall below the high-water mark and `drain` is due.
+    pub(crate) drain_waiters: HashMap<u64, RootId>,
     pub(crate) requests: HashMap<u64, OutgoingRequest>,
     pub(crate) clients: HashMap<u64, Client>,
     pub(crate) agents: HashMap<u64, HashSet<u64>>,
+}
+
+impl State {
+    /// Remove and return the response records of `socket`, which is closing.
+    pub(crate) fn take_socket_responses(&mut self, socket: u64) -> Vec<Response> {
+        let ids = self
+            .responses
+            .iter()
+            .filter_map(|(id, response)| (response.socket == socket).then_some(*id))
+            .collect::<Vec<_>>();
+        ids.into_iter().filter_map(|id| self.responses.remove(&id)).collect()
+    }
 }
 
 pub(crate) struct Server {
@@ -40,6 +58,9 @@ pub(crate) struct Response {
     pub(crate) http10: bool,
     pub(crate) use_chunked_encoding_by_default: bool,
     pub(crate) lifecycle: ResponseLifecycle,
+    /// The guest response object, held weakly: an ended response keeps its record, which
+    /// answers header reads and late writes, until that object is collected.
+    pub(crate) owner: Option<quench_runtime::HostWeakRoot>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -153,6 +174,8 @@ impl State {
             servers: HashMap::new(),
             connections: HashMap::new(),
             responses: HashMap::new(),
+            responses_pruned_epoch: 0,
+            drain_waiters: HashMap::new(),
             requests: HashMap::new(),
             clients: HashMap::new(),
             agents: HashMap::new(),
@@ -196,5 +219,70 @@ impl State {
 impl Default for State {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl State {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self {
+            next_server,
+            next_agent,
+            next_request,
+            next_response,
+            status_reasons,
+            response_factory,
+            incoming_factory,
+            servers,
+            connections,
+            responses,
+            // A collection epoch of this process's VM; a restored one counts its own.
+            responses_pruned_epoch: _,
+            drain_waiters,
+            requests,
+            clients,
+            agents,
+        } = self;
+        require_quiescent(
+            servers.is_empty()
+                && connections.is_empty()
+                && responses.is_empty()
+                && drain_waiters.is_empty()
+                && requests.is_empty()
+                && clients.is_empty()
+                && agents.values().all(|sockets| sockets.is_empty()),
+            "an HTTP connection",
+        )?;
+        for counter in [next_server, next_agent, next_request, next_response] {
+            counter.write(writer)?;
+        }
+        writer.len(status_reasons.len());
+        for (code, reason) in status_reasons {
+            writer.u32(u32::from(*code));
+            writer.bytes(reason);
+        }
+        response_factory.write(writer)?;
+        incoming_factory.write(writer)?;
+        // The agents the bootstrap made, which hold no socket yet.
+        writer.len(agents.len());
+        agents.keys().try_for_each(|agent| agent.write(writer))
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::HostSnap;
+        for counter in [&mut self.next_server, &mut self.next_agent, &mut self.next_request, &mut self.next_response] {
+            *counter = HostSnap::read(reader)?;
+        }
+        self.status_reasons.clear();
+        for _ in 0..reader.len()? {
+            let code = u16::try_from(reader.u32()?).map_err(|_| "invalid snapshot status code")?;
+            self.status_reasons.insert(code, reader.bytes()?);
+        }
+        self.response_factory = HostSnap::read(reader)?;
+        self.incoming_factory = HostSnap::read(reader)?;
+        self.agents.clear();
+        for _ in 0..reader.len()? {
+            self.agents.insert(HostSnap::read(reader)?, HashSet::new());
+        }
+        Ok(())
     }
 }

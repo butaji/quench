@@ -31,8 +31,7 @@ impl<H: Host> Vm<H> {
             return Some(result);
         }
         let text = {
-            let (Some(Cell::String(left)), Some(Cell::String(right))) =
-                (self.heap.get(left), self.heap.get(right))
+            let (Some(left), Some(right)) = (self.heap.string(left), self.heap.string(right))
             else {
                 return None;
             };
@@ -49,7 +48,7 @@ impl<H: Host> Vm<H> {
         // repeated `out += chunk` into quadratic work for a growing string.
         // Primitive string identity is not observable, so store this rope
         // directly in the heap.
-        let value = self.heap.alloc(Cell::String(text));
+        let value = self.heap.alloc_string(text);
         let cache = self.string_concats.get_or_insert_with(|| {
             vec![EMPTY_STRING_CONCAT_CACHE; STRING_CONCAT_CACHE_SIZE].into_boxed_slice()
         });
@@ -59,5 +58,29 @@ impl<H: Host> Vm<H> {
             result: value,
         };
         Some(value)
+    }
+
+    /// The atom of the string `key`, interned as `intern_js_atom` does. A string value names
+    /// one immutable text until a collection, which empties the cache, so a key used again
+    /// (a `for-in` key passed to `getOwnPropertyDescriptor`, `in` and `defineProperty`, as
+    /// TypeScript's `__createBinding` does for each re-exported name) is not hashed and
+    /// compared again. `None` when `key` is not a string.
+    pub(super) fn string_key_atom(&mut self, key: Value) -> Option<Atom> {
+        let slot = key.heap_index().map(|index| {
+            (index as usize).wrapping_mul(STRING_CONCAT_HASH_MULTIPLIER) & (STRING_ATOM_CACHE_SIZE - 1)
+        });
+        if let (Some(slot), Some(atoms)) = (slot, &self.string_atoms)
+            && atoms[slot].0 == key
+        {
+            return Some(atoms[slot].1);
+        }
+        let name = self.heap.string(key)?.clone();
+        let atom = self.intern_js_atom(&name);
+        if let Some(slot) = slot {
+            self.string_atoms
+                .get_or_insert_with(|| Box::new([(Value::UNDEFINED, 0); STRING_ATOM_CACHE_SIZE]))[slot] =
+                (key, atom);
+        }
+        Some(atom)
     }
 }
