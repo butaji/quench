@@ -1315,7 +1315,7 @@ mod tests {
 
     #[test]
     fn recipe_schema_generates_ordered_pattern_rows() {
-        assert_eq!(RULES.len(), 33);
+        assert_eq!(RULES.len(), 35);
         assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
         assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
         assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));
