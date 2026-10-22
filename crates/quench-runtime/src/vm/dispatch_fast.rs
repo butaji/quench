@@ -4190,6 +4190,25 @@ script_handler! {
 }
 
 script_handler! {
+    /// `PrivateIn` (`#x in object`) of an object with its own data (`Vm::object_data`): whether
+    /// it carries the name's brand at this record (`lane_private_brand`), a field's or a
+    /// method's. Any other operand, which may raise, takes `lane_general_step`.
+    #[inline(never)]
+    fn lane_private_in<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let carries = lane_private_brand(cx, ip, code, i.imm()).and_then(|brand| {
+            (unsafe { vm(cx) }).object_data(r.get(i.b)).map(|data| data.has_private_name(brand))
+        });
+        let Some(carries) = carries else {
+            sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, Value::boolean(carries));
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// `GetField` of a private name (`Vm::is_private_name`) from a register or `this`, which
     /// no field cache records (`lane_get_field_first`): the object's private element under
     /// the name's brand at this record (`lane_private_brand`). Any other read, a private
@@ -6698,6 +6717,18 @@ impl<H: Host> Vm<H> {
         } else {
             self.lane_view_any(program, function)
         };
+        #[cfg(feature = "profile-lane-exits")]
+        if view.is_none() {
+            let closures = body.code.iter().any(|packed| decoded_instruction(body, *packed).op() == Op::MakeClosure);
+            super::lane_exits::record_detail(format!(
+                "frame entry {} plain={} registers_only={} env_activation={} environment={} arrow={} rest={} closures={} arguments={} handlers={} class_ctor={} derived={} async={} generator={} locals_promoted={} simple_params={} selective={} cross={} numeric={}",
+                body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+                plan.plain, plan.registers_only, plan.environment_activation, environment, body.is_arrow, body.rest, closures,
+                body.arguments_slot.is_some(), !body.handlers.is_empty(), body.is_class_constructor, body.derived_constructor,
+                body.is_async, body.is_generator, body.local_registers.len(), body.simple_parameters,
+                body.selective_capture_slots.is_some(), cross, numeric,
+            ));
+        }
         let Some(view) = view else {
             // The function needs a frame, which the target records so its calls take one
             // without resolving it again.
@@ -10085,6 +10116,26 @@ fn lane_push_frame_call<H: Host>(
     {
         return exit(ip);
     }
+    #[cfg(feature = "profile-lane-exits")]
+    if let Some(body) = vm.programs.residual(target.0).and_then(|callee_code| {
+        let body = callee_code.function_get(target.1 as usize)?;
+        let plan = body.call_plan(callee_code);
+        let closures = body.code.iter().any(|packed| decoded_instruction(body, *packed).op() == Op::MakeClosure);
+        Some(format!(
+            "{} @{:?} registers_only={} env_activation={} arrow={} rest={} closures={} arguments={} handlers={} class_ctor={} async={} generator={} promoted={}/{} simple_params={} selective={} self={} unpromoted={:?}",
+            body.name.map(|atom| callee_code.atoms[atom as usize].to_string()).unwrap_or_default(),
+            body.source_span.map(|span| span.start), plan.registers_only, plan.environment_activation, body.is_arrow, body.rest,
+            closures, body.arguments_slot.is_some(), !body.handlers.is_empty(), body.is_class_constructor, body.is_async,
+            body.is_generator, body.local_registers.len(), body.locals, body.simple_parameters, body.selective_capture_slots.is_some(),
+            body.self_binding_slot.is_some(),
+            body.local_atoms.iter().enumerate()
+                .filter(|(slot, _)| !body.local_registers.iter().any(|entry| usize::from(entry.local) == *slot))
+                .map(|(_, atom)| callee_code.atoms[*atom as usize].replace('\0', "~"))
+                .collect::<Vec<_>>(),
+        ))
+    }) {
+        super::lane_exits::record_detail(format!("frame call {body}"));
+    }
     let window = ImmediateLayout::call_window_base(i.imm());
     let argc = ImmediateLayout::argument_count(i.imm());
     // A function the JavaScript tier promoted is entered directly, as the general loop's
@@ -10487,6 +10538,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::DefineField => Some(lane_define_field::<H>),
         Op::DefinePrivateField => Some(lane_define_private_field::<H>),
         Op::CheckPrivate => Some(lane_check_private::<H>),
+        Op::PrivateIn => Some(lane_private_in::<H>),
         op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => Some(lane_binary::<H>),

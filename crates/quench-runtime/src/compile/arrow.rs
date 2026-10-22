@@ -77,11 +77,13 @@ impl Compiler<'_> {
             oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => (&body.statements[..], None),
             body => (&[][..], body.as_expression()),
         };
+        // An arrow inside a field initializer or static block (`class_initializer`) still
+        // owns its parameters and locals: the initializer's restrictions (no `arguments`) are
+        // early errors, and direct eval is excluded below.
         let (promoted_local_slots, clobbered_local_slots) = self.promoted_local_plan(
             parent.is_some()
                 && simple_parameters
                 && !value.r#async
-                && !class_initializer
                 && with_depth == 0
                 && !dynamic_eval,
             body_statements,

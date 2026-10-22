@@ -1837,7 +1837,9 @@ impl Function {
             || self.is_generator
             || self.is_class_constructor
             || self.derived_constructor
-            || self.class_initializer
+            // A field initializer or static block keeps its instance's implicit bindings; an
+            // arrow inside one (also `class_initializer`) binds none of its own.
+            || (self.class_initializer && !self.is_arrow)
             || self.instance_initializer.is_some()
             || self.inherited_with_scope
             || !self.binding_sites.is_empty()
@@ -1944,9 +1946,9 @@ impl Function {
                 .count();
             // Plain but for an `arguments` binding.
             // An arrow's `this` is its environment's, which its activation binds
-            // (`Vm::lexical_activation_this`); one reaching `super` keeps its frame.
+            // (`Vm::lexical_activation_this`). One that reaches `super` reads a hidden name
+            // (`activation_binding_reads`) or its home as a capture, as any closure reads one.
             let ordinary = self.parent.is_some()
-                && !(self.is_arrow && self.super_home_atom.is_some())
                 && !self.derived_constructor
                 && !self.rest
                 && self.self_binding_slot.is_none()
