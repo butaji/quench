@@ -331,12 +331,10 @@ pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
 enum CompileRelease {
     CodeGeneration,
     FirstCall,
-    BeforeNativeCompilation,
-    AfterNativeCompilation,
 }
 
 impl CompileRelease {
-    const COUNT: usize = 4;
+    const COUNT: usize = 2;
 }
 
 /// When each compile-phase release last ran, indexed by `CompileRelease`.
@@ -368,25 +366,6 @@ fn release_once_per_interval(_: CompileRelease, _: fn()) {}
 /// held that boundary (V8-v7 max RSS, entry compiled with the bootstrap cached, bolted static
 /// x86_64, 2026-10-22: Crypto 3100-3276 -> 2704-3052 KiB, RayTrace 2996 -> 2764, Richards
 /// 2812 -> 2484).
-/// Releases the read-only pages before a native compilation, at most once per
-/// `LOAD_RELEASE_INTERVAL`: each release made the interpreter's code fault in again, and a
-/// program the JavaScript tier compiles several functions of paid that at each (the
-/// @babel/helper-module-transforms npm scenario under --jit took 28,157 page faults against
-/// 23,194 without it, x86_64 VM, 2026-10-22). A program's first compilation still releases,
-/// which is what a short numeric program's peak needs.
-pub fn before_native_compilation() {
-    release_once_per_interval(CompileRelease::BeforeNativeCompilation, release_read_only_pages);
-}
-
-/// Releases the read-only pages and the allocator's free pages after a native compilation,
-/// at most once per `LOAD_RELEASE_INTERVAL`, as `before_native_compilation` does.
-pub fn after_native_compilation() {
-    release_once_per_interval(CompileRelease::AfterNativeCompilation, || {
-        release_read_only_pages();
-        release_free_heap_pages();
-    });
-}
-
 pub fn release_before_entry_compile() {
     release_read_only_code_and_data();
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
