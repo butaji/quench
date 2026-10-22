@@ -10,7 +10,7 @@ const lanes = path.join(root, "tests/lanes");
 const quench = path.resolve(
   root,
   process.env.QUENCH_SCORE_BINARY ||
-    "target/bench-throughput/quench-node",
+    "target/production/quench-node",
 );
 const oracleSource = path.join(root, "tools/l0-oracles.rs");
 const oracle = path.join(root, "target/l0-oracles");

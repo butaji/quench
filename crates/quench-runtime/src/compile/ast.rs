@@ -397,6 +397,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         c: Register,
         imm: u32,
     ) -> usize {
+        let c = self.owner.emitted_cache_site(op, b, c, imm);
         let instruction = Instr::try_new(op, a, b, c, imm).unwrap_or_else(|| {
             self.store_wide_instruction(WideInstruction::new(op, a, b, c, imm))
                 .unwrap_or_else(|| {

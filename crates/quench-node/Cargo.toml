@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 autobins = false
 
+[lib]
+# No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
+doctest = false
+
 [[bin]]
 name = "quench-node"
 path = "src/bin/quench-node.rs"

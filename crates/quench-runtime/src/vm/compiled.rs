@@ -596,13 +596,18 @@ struct CallContext {
 
 impl CallContext {
     /// A nested native entry shares the caller's instance and callout state,
-    /// but needs its own stack budget, guard-resume stack pointer and raised
-    /// completion, as a nested `run_compiled` invocation would.
+    /// but needs its own guard-resume stack pointer and raised completion, as a
+    /// nested `run_compiled` invocation would. Its stack limit is never below
+    /// the caller's: recursion through the callout (a runaway `call_indirect`)
+    /// spends the outermost entry's budget and traps as exhausted, rather than
+    /// taking a fresh budget at each level until the native stack overflows.
     fn nested_entry(&self) -> Self {
         let marker = 0u8;
         let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
         Self {
-            stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
+            stack_limit: self
+                .stack_limit
+                .max(stack_pointer.saturating_sub(COMPILED_STACK_BUDGET)),
             interrupt: self.interrupt,
             table: self.table,
             vm: self.vm,
@@ -6932,9 +6937,12 @@ impl<H: Host> Vm<H> {
         } else if let Some(inputs) = &facts.numeric_field_inputs {
             numeric_field_inputs.extend_from_slice(inputs);
         }
-        let parameter_zero_is_field = numeric_field_inputs.iter().any(|input| {
-            input.receiver == super::js_compiled::JsJitFieldReceiver::ParameterZero
-        });
+        let is_field_receiver_parameter = |parameter: usize| {
+            numeric_field_inputs.iter().any(|input| {
+                input.receiver
+                    == super::js_compiled::JsJitFieldReceiver::Parameter(parameter as u16)
+            })
+        };
         let numeric_field_argument = match compiled_tier {
             Some(compiled) if compiled.uses_numeric_field_argument() => compiled.field_argument(),
             Some(_) => None,
@@ -6953,7 +6961,7 @@ impl<H: Host> Vm<H> {
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
         for (index, value) in registers.iter().copied().enumerate() {
-            if index == 0 && parameter_zero_is_field {
+            if is_field_receiver_parameter(index) {
                 arguments.push(0.0);
                 continue;
             }
@@ -6989,8 +6997,8 @@ impl<H: Host> Vm<H> {
                         }
                         self.frames[frame].this
                     }
-                    super::js_compiled::JsJitFieldReceiver::ParameterZero => {
-                        let Some(receiver) = first_argument else {
+                    super::js_compiled::JsJitFieldReceiver::Parameter(parameter) => {
+                        let Some(receiver) = registers.get(usize::from(parameter)).copied() else {
                             numeric = false;
                             break;
                         };
@@ -7195,7 +7203,9 @@ impl<H: Host> Vm<H> {
                     .programs
                     .js_jit_diagnostics_enabled()
                     .then(std::time::Instant::now);
+                self.host.before_native_compilation();
                 let artifact = super::js_compiled::compile(&residual, function_id);
+                self.host.after_native_compilation();
                 let artifact_failed = artifact.is_none();
                 let compile_rejection = artifact_failed.then(|| {
                     super::js_compiled::candidate_rejection_reason(&residual, function_id)
@@ -8074,7 +8084,7 @@ impl<H: Host> Vm<H> {
                     .residual(program)
                     .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
                 {
-                    self.host.before_wasm_native_compilation();
+                    self.host.before_native_compilation();
                 }
                 if wasm_root_only || wasm_root_first {
                     // This explicit diagnostic mode compiles only the
