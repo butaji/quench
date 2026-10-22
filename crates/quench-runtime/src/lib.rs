@@ -63,6 +63,8 @@ pub use api::{
 
 #[cfg(test)]
 mod host_stack_tests;
+#[cfg(test)]
+mod test_host;
 
 pub mod owned_clone;
 
