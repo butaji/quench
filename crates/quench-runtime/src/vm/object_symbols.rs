@@ -383,6 +383,67 @@ impl<H: Host> Vm<H> {
             && self.set_plain_symbol_property(object, key, value) == Some(true)
     }
 
+    /// `try_plain_symbol_set` at lane site `site` by the step the site recorded for the
+    /// receiver's shape (`record_site_symbol_set`): the same store, or the same add, that
+    /// `set_plain_symbol_property` makes for an extensible receiver of that shape and, for an
+    /// add, prototype. `false` for any other write.
+    #[inline(always)]
+    pub(super) fn site_symbol_set(&mut self, site: usize, object: Value, key: Value, value: Value) -> bool {
+        use super::symbol_write_proof::SymbolWriteStep;
+        let Some(data) = self.heap.ordinary_object(object) else {
+            return false;
+        };
+        if !data.is_extensible() {
+            return false;
+        }
+        let epoch = crate::heap::prototype_layout_epoch();
+        match self.symbol_write_proofs.site_step(site, data.shape(), key, epoch) {
+            Some(SymbolWriteStep::Replace(slot)) => self.heap.property_set(object, slot as usize, value),
+            Some(SymbolWriteStep::Add { prototype, target }) if data.proto() == prototype => {
+                self.heap.property_add(object, value, target);
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// `try_plain_symbol_set` at lane site `site`, recording the step it made for
+    /// `site_symbol_set`: a store to a writable own data slot, or the add a write proof
+    /// admitted, on an extensible receiver whose shapes are not dictionaries.
+    pub(super) fn try_site_symbol_set(&mut self, site: usize, object: Value, key: Value, value: Value) -> bool {
+        use super::symbol_write_proof::SymbolWriteStep;
+        let before = self.heap.ordinary_object(object).map(Object::shape);
+        if !self.try_plain_symbol_set(object, key, value) {
+            return false;
+        }
+        let (Some(before), Some(data)) = (before, self.heap.ordinary_object(object)) else {
+            return true;
+        };
+        let (after, prototype) = (data.shape(), data.proto());
+        if !data.is_extensible() || self.shape_is_dictionary(before) || self.shape_is_dictionary(after) {
+            return true;
+        }
+        let epoch = crate::heap::prototype_layout_epoch();
+        let step = if after == before {
+            let Some(slot) = self.property_shape_slot(before, PropertyKey::symbol(key)) else {
+                return true;
+            };
+            let writable = self
+                .slot_attributes(data, slot)
+                .is_some_and(|attributes| !attributes.accessor && attributes.writable);
+            if !writable {
+                return true;
+            }
+            SymbolWriteStep::Replace(slot as u32)
+        } else if self.symbol_write_proofs.holds(prototype, key, epoch) {
+            SymbolWriteStep::Add { prototype, target: after }
+        } else {
+            return true;
+        };
+        self.symbol_write_proofs.record_site_step(site, before, key, epoch, step);
+        true
+    }
+
     pub(super) fn set_symbol_property_with_receiver(
         &mut self,
         p: &ResidualProgram,

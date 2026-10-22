@@ -87,6 +87,16 @@ impl<H: Host> Runtime<H> {
         self.vm.set_execution_mode(mode);
     }
 
+    /// Choose how this runtime trades memory for speed; see [`crate::MemoryPolicy`]. Set it
+    /// at startup, before the program runs; a runtime that sets none uses the default.
+    pub fn set_memory_policy(&mut self, policy: crate::MemoryPolicy) {
+        self.vm.set_memory_policy(policy);
+    }
+
+    pub fn memory_policy(&self) -> crate::MemoryPolicy {
+        self.vm.memory_policy()
+    }
+
     /// Construct the Vm on this thread with an owned cancellation authority.
     pub fn new_with_execution_interrupt(host:H,interrupt:crate::ExecutionInterrupt)->Self { Self { vm:Vm::new_with_execution_interrupt(host,interrupt) } }
 
@@ -532,6 +542,15 @@ impl<H: Host> Runtime<H> {
     pub fn collect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         program.validate_unless_proven().map_err(JsError::validation)?;
         self.vm.collect_now(program);
+        Ok(())
+    }
+
+    /// The VM's GC safepoint between calls: a collection runs when the VM's own pacing
+    /// makes one due, as at a back edge. A host's event-loop turn, which may run no guest
+    /// loop, names it so a due collection does not wait for one.
+    pub fn collect_if_due(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        program.validate_unless_proven().map_err(JsError::validation)?;
+        self.vm.maybe_collect(program);
         Ok(())
     }
 

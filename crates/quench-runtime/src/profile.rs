@@ -665,6 +665,7 @@ impl Profile {
         let numeric_dispatches = program
             .functions
             .iter()
+            .filter_map(crate::bytecode::FunctionSlot::record)
             .filter(|function| function.dispatch == crate::bytecode::DispatchClass::Numeric)
             .count();
         let binary_dependencies = dependencies::binary_pairs(&self.pair_sites, program_id, program);

@@ -2465,6 +2465,11 @@ fn compile_numeric_with_captures(
     }
 
     let params = usize::from(function.params);
+    // A field read at entry is supplied by the VM's guarded monomorphic
+    // cache. The native region sees only its numeric data-property value;
+    // cache misses, accessors and non-numeric values stay in the interpreter.
+    let field_argument = cached_field_argument_candidate(function)
+        .filter(|candidate| candidate.entry_pc == 0);
     let isa = super::jit_backend::target_isa("speed", true)?;
 
     let mut signature = ir::Signature::new(isa.default_call_conv());
@@ -2485,6 +2490,11 @@ fn compile_numeric_with_captures(
     // promoted parameter locals in registers 0..params.
     let mut registers = vec![None; usize::from(function.registers)];
     for (index, register) in registers.iter_mut().take(params).enumerate() {
+        if field_argument.is_some() && index == 0 {
+            // Parameter zero is the object used by the guarded GetField, not
+            // a numeric value inside the native region.
+            continue;
+        }
         let offset = i32::try_from(index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
         *register = Some(builder.ins().load(
             types::F64,
@@ -2501,6 +2511,30 @@ fn compile_numeric_with_captures(
         }
         let instruction = packed.as_wide();
         let result = match instruction.op() {
+            Op::GetField => {
+                let candidate = field_argument?;
+                if pc != candidate.entry_pc
+                    || instruction.returns_from_frame()
+                    || instruction.result_flags() != 0
+                    || instruction.writes_current_this()
+                    || !matches!(
+                        instruction.field_lookup(),
+                        Some(FieldLookup::Atom {
+                            base: FieldBase(0),
+                            cache_site,
+                            ..
+                        }) if cache_site == candidate.cache_site
+                    )
+                {
+                    return None;
+                }
+                Some(builder.ins().load(
+                    types::F64,
+                    ir::MemFlagsData::trusted(),
+                    arguments,
+                    0,
+                ))
+            }
             Op::LoadConst => {
                 if instruction.returns_from_frame() || instruction.result_flags() != 0 {
                     return None;
@@ -2639,7 +2673,7 @@ fn compile_numeric_with_captures(
         code,
         params,
         result: JsJitResultKind::Number,
-        field_argument: None,
+        field_argument,
         capture_arguments: captures.to_vec(),
     })
 }
