@@ -1368,12 +1368,20 @@ impl<'a, 'b> Lowering<'a, 'b> {
             FloatOperator::Subtract => self.builder.ins().ssub_overflow(left, right),
             FloatOperator::Multiply => {
                 let (product, overflow) = self.builder.ins().smul_overflow(left, right);
+                self.guard_int32(pc, overflow, Widening::Register(register));
+                // A zero product is -0 when a factor is negative; the signs are tested only
+                // for a zero product, off the common path.
                 let zero = self.builder.ins().icmp_imm_u(IntCC::Equal, product, 0);
+                let signs_block = self.cold_block();
+                let done = self.builder.create_block();
+                self.builder.ins().brif(zero, signs_block, &[], done, &[]);
+                self.builder.switch_to_block(signs_block);
                 let signs = self.builder.ins().bor(left, right);
                 let negative = self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, signs, 0);
-                let negative_zero = self.builder.ins().band(zero, negative);
-                let failed = self.builder.ins().bor(overflow, negative_zero);
-                (product, failed)
+                self.guard_int32(pc, negative, Widening::Register(register));
+                self.builder.ins().jump(done, &[]);
+                self.builder.switch_to_block(done);
+                return product;
             }
             FloatOperator::Divide => unreachable!("division has a Float64 result"),
         };
