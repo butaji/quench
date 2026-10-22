@@ -12644,8 +12644,24 @@ fn install_loop_sites<H: Host>(
     records: &mut [LaneInstruction],
 ) -> Box<[LoopSite]> {
     let backward = lane_jump_always::<H, true> as Handler as *const ();
+    // A fused record ahead of a jump runs that jump itself, reading its offset from the jump's
+    // record (`JumpFusions::THEN`, a move pair with its jump): a site there would replace the
+    // offset those records read with the site (the eslint npm scenario under --jit jumped to
+    // a site address read as an offset).
+    let fused_into = |pc: usize| {
+        let then = pc >= 1
+            && JumpFusions::<H>::THEN
+                .iter()
+                .flatten()
+                .any(|&handler| records[pc - 1].handler == handler as *const ());
+        let pair = pc >= 2
+            && [lane_move_pair::<H, true, false> as Handler, lane_move_pair::<H, true, true>]
+                .iter()
+                .any(|&handler| records[pc - 2].handler == handler as *const ());
+        then || pair
+    };
     let sites: Vec<(usize, LoopSite)> = (0..records.len())
-        .filter(|pc| records[*pc].handler == backward && decoded[*pc].op() == Op::Jump)
+        .filter(|pc| records[*pc].handler == backward && decoded[*pc].op() == Op::Jump && !fused_into(*pc))
         .filter_map(|pc| {
             let header = decoded[pc].jump_target();
             let region = super::compiled::analyze_osr_region(
