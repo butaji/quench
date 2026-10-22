@@ -43,11 +43,33 @@ struct SymbolLoadProof {
 
 pub(super) struct SymbolLoadProofs {
     entries: Box<[Cell<Option<SymbolLoadProof>>]>,
+    /// Per read site: the own data slot a proof gave the site's last receiver shape and key
+    /// (`SiteOwnRead`), so the site's next read of that pair is one compare.
+    sites: Box<[Cell<Option<SiteOwnRead>>]>,
+}
+
+/// Direct-mapped site entries: a power of two. A request's symbol-keyed reads run at a few
+/// hundred lane records (Node's Readable state reads), most of them monomorphic.
+const SITE_OWN_READ_ENTRIES: usize = 1 << 9;
+
+/// A site's last own-slot answer: what `SymbolLoadAnswer::Own` said for `key` on a receiver
+/// of `shape` under `epoch`, recorded at the read site `site` (a lane record's address).
+/// The site only spreads the entries; the answer is a fact of the shape and key alone.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SiteOwnRead {
+    site: usize,
+    shape: u32,
+    key: Value,
+    epoch: u64,
+    slot: u32,
 }
 
 impl Default for SymbolLoadProofs {
     fn default() -> Self {
-        Self { entries: (0..SYMBOL_LOAD_PROOF_ENTRIES).map(|_| Cell::new(None)).collect() }
+        Self {
+            entries: (0..SYMBOL_LOAD_PROOF_ENTRIES).map(|_| Cell::new(None)).collect(),
+            sites: (0..SITE_OWN_READ_ENTRIES).map(|_| Cell::new(None)).collect(),
+        }
     }
 }
 
@@ -69,9 +91,39 @@ impl SymbolLoadProofs {
         self.entries[Self::index(shape, key)].set(Some(SymbolLoadProof { shape, key, epoch, answer }));
     }
 
+    /// The entry a read site maps to: its address past the alignment of a record.
+    fn site_index(site: usize) -> usize {
+        (site >> SITE_ADDRESS_SHIFT) & (SITE_OWN_READ_ENTRIES - 1)
+    }
+
+    /// The own data slot site `site` last read `key` from on a receiver of `shape`, while
+    /// `epoch` holds.
+    #[inline(always)]
+    pub(super) fn site_own_slot(&self, site: usize, shape: u32, key: Value, epoch: u64) -> Option<u32> {
+        self.sites[Self::site_index(site)]
+            .get()
+            .filter(|read| read.site == site && read.shape == shape && read.key == key && read.epoch == epoch)
+            .map(|read| read.slot)
+    }
+
+    /// Records at `site` the own slot a proof gives `key` on a receiver of `shape`, if it
+    /// gives one under `epoch`.
+    pub(super) fn record_site_own_slot(&self, site: usize, shape: u32, key: Value, epoch: u64) {
+        if let Some(SymbolLoadAnswer::Own(slot)) = self.answer(shape, PropertyKey::symbol(key), epoch) {
+            self.sites[Self::site_index(site)].set(Some(SiteOwnRead { site, shape, key, epoch, slot }));
+        }
+    }
+
     pub(super) fn clear(&self) {
         for entry in self.entries.iter() {
             entry.set(None);
         }
+        for entry in self.sites.iter() {
+            entry.set(None);
+        }
     }
 }
+
+/// Lane records are at least this many bytes apart (a handler pointer and an operand word),
+/// so a site's address shifted by it spreads neighbouring sites over the entries.
+const SITE_ADDRESS_SHIFT: u32 = std::mem::size_of::<usize>().trailing_zeros() + 1;

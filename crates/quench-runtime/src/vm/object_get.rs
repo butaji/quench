@@ -566,6 +566,29 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// A symbol-keyed read at lane site `site` (a record's address) of the own data slot its
+    /// site entry names for `object`'s shape (`SymbolLoadProofs::site_own_slot`).
+    #[inline(always)]
+    pub(super) fn site_symbol_own_read(&self, site: usize, object: Value, key: Value) -> Option<Value> {
+        let data = self.heap.ordinary_object(object)?;
+        let epoch = crate::heap::prototype_layout_epoch();
+        let slot = self.symbol_load_proofs.site_own_slot(site, data.shape(), key, epoch)?;
+        // SAFETY: the entry copies a proof's own data slot of this shape.
+        Some(unsafe { self.heap.property_get_unchecked(data, slot as usize) })
+    }
+
+    /// Records at lane site `site` the own slot a proof gives `key` on `object`'s shape, for
+    /// `site_symbol_own_read`; nothing for any other key or answer.
+    pub(super) fn record_site_symbol_read(&self, site: usize, object: Value, key: Value) {
+        if !matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            return;
+        }
+        if let Some(data) = self.heap.ordinary_object(object) {
+            let epoch = crate::heap::prototype_layout_epoch();
+            self.symbol_load_proofs.record_site_own_slot(site, data.shape(), key, epoch);
+        }
+    }
+
     /// `plain_named_get` with its walk proved (`plain_proved_get`), for callers that may record.
     #[inline]
     pub(super) fn plain_named_load(&mut self, object: Value, atom: Atom) -> Option<Value> {
