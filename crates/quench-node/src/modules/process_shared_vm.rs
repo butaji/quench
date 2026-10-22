@@ -380,7 +380,7 @@ fn install_config(
 
 /// Defines `name` as `Object.freeze` leaves a data property: enumerable, neither writable
 /// nor configurable. With `prevent_extensions_rooted` after the last one, the object is
-/// frozen without compiling a script to call `Object.freeze` (28 KiB of start-up malloc).
+/// frozen without compiling a script to call `Object.freeze` (6 KiB of start-up malloc).
 fn install_frozen(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,
