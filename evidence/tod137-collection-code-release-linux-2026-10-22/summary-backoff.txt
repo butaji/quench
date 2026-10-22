@@ -1,0 +1,11 @@
+-rwxr-xr-x 1 root root 55528304 Oct 22 15:40 /tmp/claude-0/-home-user-quench/7b48bd7e-c8b8-513f-8fda-df3008a36a8f/scratchpad/qback/quench-node
+earley-boyer throughput    score    4268 user  4.99s sys  0.05s minflt    13497 memory-first  score    3845 user  4.90s sys  0.13s minflt    41555 
+raytrace throughput    score    2548 user  2.01s sys  0.01s minflt     3454 memory-first  score    2637 user  2.01s sys  0.03s minflt     5213 
+config               score_geo  rss_geo  per-fixture maxRSS KiB
+throughput/old           1.000    1.000    4636   7008   9076   6876  12020  12556  33184   4832
+mf-backoff               0.966    0.648    3408   3532   4008   3596   7472   7452  32632   4816
+config               score_geo  rss_geo  per-fixture maxRSS KiB
+throughput/old           1.000    1.000    4960   8032  10872   7140  12532  12804  33452   9824
+mf-backoff               1.006    0.656    3428   4224   5720   3724   7604   7524  32772   9636
+
+[exited with code 0]

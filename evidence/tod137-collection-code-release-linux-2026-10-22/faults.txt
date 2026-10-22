@@ -1,0 +1,15 @@
+-rwxr-xr-x 1 root root 55528480 Oct 22 15:09 /tmp/claude-0/-home-user-quench/7b48bd7e-c8b8-513f-8fda-df3008a36a8f/scratchpad/qrel/quench-node
+== both
+earley-boyer memory-first  score    2705 user  5.72s sys  0.40s minflt   196637
+raytrace memory-first  score    2287 user  2.79s sys  0.14s minflt   108323
+== code
+earley-boyer memory-first  score    3036 user  4.68s sys  0.36s minflt   178449
+raytrace memory-first  score    2087 user  2.88s sys  0.16s minflt    92952
+== heap
+earley-boyer memory-first  score    3348 user  4.94s sys  0.13s minflt    37828
+raytrace memory-first  score    2155 user  2.99s sys  0.02s minflt     3907
+== none
+earley-boyer memory-first  score    3648 user  4.94s sys  0.10s minflt    39035
+raytrace memory-first  score    2249 user  2.99s sys  0.00s minflt     2792
+
+[exited with code 0]
