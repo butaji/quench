@@ -95,6 +95,15 @@ pub(super) struct LoopSite {
     taken: std::cell::Cell<u32>,
     /// Native runs that left at an instruction the general path executes.
     exits: std::cell::Cell<u32>,
+    /// Whether this VM requested OSR diagnostics when its lane view was derived.
+    diagnostics: bool,
+    native_entry_attempts: std::cell::Cell<u64>,
+    native_region_runs: std::cell::Cell<u64>,
+    entry_guard_misses: std::cell::Cell<u64>,
+    native_exits: std::cell::Cell<u64>,
+    widenings: std::cell::Cell<u64>,
+    compile_attempts: std::cell::Cell<u64>,
+    compile_successes: std::cell::Cell<u64>,
     tier: std::cell::RefCell<LoopTier>,
 }
 
@@ -147,8 +156,56 @@ pub(super) struct LaneView {
     environment_window: Option<EnvironmentWindow>,
     /// The loops whose backward jumps run `lane_loop_jump`. The view owns them for the
     /// records that point into them, which are their only readers.
-    #[allow(dead_code)]
     loops: Box<[LoopSite]>,
+    plain_backward_jump_sites: usize,
+}
+
+#[derive(Default)]
+pub(super) struct OsrDiagnostics {
+    pub(super) plain_backward_jump_sites: usize,
+    pub(super) admitted_sites: usize,
+    pub(super) compile_attempts: u64,
+    pub(super) compile_successes: u64,
+    pub(super) currently_compiled_sites: usize,
+    pub(super) native_entry_attempts: u64,
+    pub(super) native_region_runs: u64,
+    pub(super) entry_guard_misses: u64,
+    pub(super) exits: u64,
+    pub(super) widenings: u64,
+}
+
+impl LaneView {
+    /// OSR tier coverage and outcomes, for opt-in JIT diagnostics.
+    pub(super) fn osr_diagnostics(&self) -> OsrDiagnostics {
+        OsrDiagnostics {
+            plain_backward_jump_sites: self.plain_backward_jump_sites,
+            admitted_sites: self.loops.len(),
+            compile_attempts: self.loops.iter().map(|site| site.compile_attempts.get()).sum(),
+            compile_successes: self.loops.iter().map(|site| site.compile_successes.get()).sum(),
+            currently_compiled_sites: self
+                .loops
+                .iter()
+                .filter(|site| site.tier.borrow().code.is_some())
+                .count(),
+            native_entry_attempts: self
+                .loops
+                .iter()
+                .map(|site| site.native_entry_attempts.get())
+                .sum(),
+            native_region_runs: self
+                .loops
+                .iter()
+                .map(|site| site.native_region_runs.get())
+                .sum(),
+            entry_guard_misses: self
+                .loops
+                .iter()
+                .map(|site| site.entry_guard_misses.get())
+                .sum(),
+            exits: self.loops.iter().map(|site| site.native_exits.get()).sum(),
+            widenings: self.loops.iter().map(|site| site.widenings.get()).sum(),
+        }
+    }
 }
 
 /// An environment activation's window past its registers (`lane_activate_environment`):
@@ -4613,6 +4670,9 @@ fn lane_loop_run<H: Host>(
             return LoopContinuation::Jump;
         }
         tier.compilations += 1;
+        if site.diagnostics {
+            site.compile_attempts.set(site.compile_attempts.get().saturating_add(1));
+        }
         let captures = entry.captures(site.region.captures.len());
         let heap = &unsafe { vm(cx) }.heap;
         let int32_elements = |register| {
@@ -4627,6 +4687,10 @@ fn lane_loop_run<H: Host>(
             widened: &tier.widened,
         };
         tier.code = super::compiled::compile_osr_region(&site.region, &observation);
+        if site.diagnostics && tier.code.is_some() {
+            site.compile_successes
+                .set(site.compile_successes.get().saturating_add(1));
+        }
         if tier.code.is_none() {
             tier.compilations = LOOP_TIER_MAX_COMPILATIONS;
             return LoopContinuation::Jump;
@@ -4635,7 +4699,32 @@ fn lane_loop_run<H: Host>(
     let code = tier.code.as_ref().expect("compiled above");
     // SAFETY: `r` is the running activation's register file; the entry was read from it
     // and the context just now, and native code runs no guest code.
-    match unsafe { code.run(r.0, entry) } {
+    let outcome = unsafe { code.run(r.0, entry) };
+    if site.diagnostics {
+        site.native_entry_attempts
+            .set(site.native_entry_attempts.get().saturating_add(1));
+        match outcome {
+            LoopOutcome::NotEntered(_) => {
+                site.entry_guard_misses
+                    .set(site.entry_guard_misses.get().saturating_add(1));
+            }
+            LoopOutcome::Resume(_) => {
+                site.native_region_runs
+                    .set(site.native_region_runs.get().saturating_add(1));
+            }
+            LoopOutcome::Exit(_) => {
+                site.native_region_runs
+                    .set(site.native_region_runs.get().saturating_add(1));
+                site.native_exits.set(site.native_exits.get().saturating_add(1));
+            }
+            LoopOutcome::Widen(_) => {
+                site.native_region_runs
+                    .set(site.native_region_runs.get().saturating_add(1));
+                site.widenings.set(site.widenings.get().saturating_add(1));
+            }
+        }
+    }
+    match outcome {
         LoopOutcome::NotEntered(widening) => {
             if let Some(widening) = widening {
                 tier.widened.insert(widening);
@@ -6173,10 +6262,11 @@ fn lane_frame_state<H: Host>(
     let vm = unsafe { vm(cx) };
     let function = vm.frames[frame].function;
     let program = unsafe { (*cx).program };
+    let diagnostics = vm.programs.reports_on_drop();
     let Some(lane_view) = vm
         .programs
         .lane_view(program, function, |code, constants, kind, live| {
-            derive_lane_view::<H>(code, constants, kind, live, vm.js_tier_runs())
+            derive_lane_view::<H>(code, constants, kind, live, vm.js_tier_runs(), diagnostics)
         })
     else {
         unreachable!("an inline Wasm frame runs a function of its program");
@@ -6679,8 +6769,9 @@ impl<H: Host> Vm<H> {
 
     /// The lane view of `function`, derived on first use.
     fn lane_view_any(&self, program: ProgramId, function: u32) -> Option<*const LaneView> {
+        let diagnostics = self.programs.reports_on_drop();
         self.programs.lane_view(program, function, |code, constants, kind, live| {
-            derive_lane_view::<H>(code, constants, kind, live, self.js_tier_runs())
+            derive_lane_view::<H>(code, constants, kind, live, self.js_tier_runs(), diagnostics)
         })
     }
 }
@@ -10718,6 +10809,7 @@ fn derive_lane_view<H: Host>(
     kind: crate::bytecode::ProgramKind,
     live: Option<&[u64]>,
     loop_tier: bool,
+    diagnostics: bool,
 ) -> LaneView {
     // Each pass below reads instructions by PC; they are decoded once, here.
     let decoded: Vec<WideInstruction> = function.instructions().collect();
@@ -11352,7 +11444,7 @@ fn derive_lane_view<H: Host>(
     specialize_outer_captures::<H>(&mut records);
     let environment_window = specialize_environment_window::<H>(function, &mut records);
     let loops = if loop_tier && kind != crate::bytecode::ProgramKind::Wasm {
-        install_loop_sites::<H>(function, &decoded, constants, live, &mut records)
+        install_loop_sites::<H>(function, &decoded, constants, live, diagnostics, &mut records)
     } else {
         Box::default()
     };
@@ -11387,6 +11479,15 @@ fn derive_lane_view<H: Host>(
         target_body: std::cell::OnceCell::new(),
         environment_window,
         loops,
+        plain_backward_jump_sites: function
+            .code
+            .iter()
+            .enumerate()
+            .filter(|(pc, packed)| {
+                let instruction = decoded_instruction(function, **packed);
+                instruction.op() == Op::Jump && instruction.jump_target() <= *pc as u32
+            })
+            .count(),
     }
 }
 
@@ -11398,6 +11499,7 @@ fn install_loop_sites<H: Host>(
     decoded: &[WideInstruction],
     constants: &[Value],
     live: Option<&[u64]>,
+    diagnostics: bool,
     records: &mut [LaneInstruction],
 ) -> Box<[LoopSite]> {
     let backward = lane_jump_always::<H, true> as Handler as *const ();
@@ -11420,6 +11522,14 @@ fn install_loop_sites<H: Host>(
                     jump: records[pc].jump(),
                     taken: std::cell::Cell::new(0),
                     exits: std::cell::Cell::new(0),
+                    diagnostics,
+                    native_entry_attempts: std::cell::Cell::new(0),
+                    native_region_runs: std::cell::Cell::new(0),
+                    entry_guard_misses: std::cell::Cell::new(0),
+                    native_exits: std::cell::Cell::new(0),
+                    widenings: std::cell::Cell::new(0),
+                    compile_attempts: std::cell::Cell::new(0),
+                    compile_successes: std::cell::Cell::new(0),
                     tier: std::cell::RefCell::default(),
                 },
             ))
@@ -11953,9 +12063,10 @@ impl<H: Host> Vm<H> {
     /// The lane view a general-loop entry of `function` runs with, or null when it runs
     /// without one (`ProgramStore::entry_lane_view`).
     pub(super) fn entry_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
+        let diagnostics = self.programs.reports_on_drop();
         self.programs
             .entry_lane_view(program, function, may_loop, |code, constants, kind, live| {
-                derive_lane_view::<H>(code, constants, kind, live, self.js_tier_runs())
+                derive_lane_view::<H>(code, constants, kind, live, self.js_tier_runs(), diagnostics)
             })
             .unwrap_or(std::ptr::null())
     }
