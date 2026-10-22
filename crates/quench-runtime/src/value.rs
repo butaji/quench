@@ -240,6 +240,12 @@ impl Value {
     pub const NULL: Self = Self(TAG_NULL);
     pub const FALSE: Self = Self(TAG_BOOL);
     pub const TRUE: Self = Self(TAG_BOOL | 1);
+
+    /// The Boolean `value`.
+    #[inline(always)]
+    pub const fn boolean(value: bool) -> Self {
+        if value { Self::TRUE } else { Self::FALSE }
+    }
     pub(crate) const DELETED: Self = Self(TAG_DELETED);
     /// The canonical NaN `number` stores every NaN as.
     pub(crate) const NAN: Self = Self(CANONICAL_NAN);
