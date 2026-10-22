@@ -43,10 +43,10 @@ pub(super) struct JsJitNumericFieldInput {
     pub(super) receiver: JsJitFieldReceiver,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum JsJitFieldReceiver {
     This,
-    ParameterZero,
+    Parameter(u16),
 }
 
 /// A field getter that can return a cached data-property value without
@@ -783,11 +783,11 @@ pub(super) fn cached_numeric_field_inputs_candidate(
             };
             let receiver = if base == FieldBase::THIS {
                 JsJitFieldReceiver::This
-            } else if base == FieldBase(0) {
-                if function.params == 0 {
-                    return None;
-                }
-                JsJitFieldReceiver::ParameterZero
+            } else if let Some(parameter) = base
+                .register_index()
+                .filter(|parameter| *parameter < function.params)
+            {
+                JsJitFieldReceiver::Parameter(parameter)
             } else {
                 return None;
             };
@@ -2628,13 +2628,13 @@ fn compile_numeric_with_captures(
     let mut registers = vec![None; usize::from(function.registers)];
     for (index, register) in registers.iter_mut().take(params).enumerate() {
         if numeric_field_inputs.as_ref().is_some_and(|inputs| {
-            inputs
-                .iter()
-                .any(|input| input.receiver == JsJitFieldReceiver::ParameterZero)
-        }) && index == 0
+            inputs.iter().any(|input| {
+                input.receiver == JsJitFieldReceiver::Parameter(index as u16)
+            })
+        })
         {
-            // Parameter zero is the object used by the guarded GetField, not
-            // a numeric value inside the native region.
+            // The object receiver is supplied through its guarded field value,
+            // not interpreted as a numeric argument by native code.
             continue;
         }
         let offset = i32::try_from(index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
@@ -2667,7 +2667,7 @@ fn compile_numeric_with_captures(
                 }
                 let expected_base = match candidate.receiver {
                     JsJitFieldReceiver::This => FieldBase::THIS,
-                    JsJitFieldReceiver::ParameterZero => FieldBase(0),
+                    JsJitFieldReceiver::Parameter(parameter) => FieldBase(parameter),
                 };
                 if !matches!(
                     instruction.field_lookup(),
