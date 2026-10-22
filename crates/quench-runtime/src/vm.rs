@@ -1675,6 +1675,8 @@ pub(crate) struct Vm<H> {
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
     plain_copy_shapes: shape_memo::PlainCopyShapeMemo,
+    /// The geometry accessors typed array reads resolve to (`typed_array_geometry_read`).
+    typed_array_geometry: typed_array::TypedArrayGeometryProofs,
     function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
