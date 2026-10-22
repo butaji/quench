@@ -2575,6 +2575,15 @@ script_handler! {
     }
 }
 
+/// `plain_keyed_get` at lane site `ip`, recording the own slot a symbol key's proof gives
+/// for the site's next read (`Vm::site_symbol_own_read`). Out of line: the site's hits skip it.
+#[inline(never)]
+fn lane_site_keyed_get<H: Host>(vm: &mut Vm<H>, ip: Ip, base: Value, key: Value) -> Option<Value> {
+    let value = vm.plain_keyed_get(base, key)?;
+    vm.record_site_symbol_read(ip.addr(), base, key);
+    Some(value)
+}
+
 /// A string's element in the lane (`Vm::string_element`), which allocates its one-unit string.
 #[inline(never)]
 fn lane_string_element<H: Host>(vm: &mut Vm<H>, base: Value, key: Value) -> Option<Value> {
@@ -2626,10 +2635,15 @@ script_handler! {
     fn lane_get_index_slot<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let (base, key) = (r.get(i.b), r.get(i.c));
+        // A symbol-keyed read this site made of the same shape and key reads its own slot.
+        if let Some(value) = vm.site_symbol_own_read(ip.addr(), base, key) {
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
         let Some(value) = vm
             .dense_array_element(base, key)
             .or_else(|| vm.absent_array_element(base, key))
-            .or_else(|| vm.plain_keyed_get(base, key))
+            .or_else(|| lane_site_keyed_get(vm, ip, base, key))
             .or_else(|| vm.plain_typed_element(base, key))
             .or_else(|| lane_string_element(vm, base, key))
         else {
