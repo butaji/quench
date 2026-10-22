@@ -285,35 +285,6 @@ static COLLECTIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 static COLLECTIONS_AT_OUTPUT_RELEASE: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(u64::MAX);
 
-/// A collection releases pages only while the resident set is within this share of its
-/// high-water mark (numerator over denominator): below it, a release would lower no peak and
-/// only refault the run's code (V8-v7 RayTrace's Score halved with a release at every young
-/// collection of a small heap).
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const NEAR_PEAK: (usize, usize) = (15, 16);
-
-/// The highest resident set a collection boundary has seen, in pages.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-static RESIDENT_PEAK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// Whether the resident set is near its high-water mark (`NEAR_PEAK`), recording it.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub fn resident_near_peak() -> bool {
-    let Some(resident) = std::fs::read_to_string("/proc/self/statm")
-        .ok()
-        .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<usize>().ok())
-    else {
-        return true;
-    };
-    let peak = RESIDENT_PEAK.fetch_max(resident, std::sync::atomic::Ordering::Relaxed).max(resident);
-    resident * NEAR_PEAK.1 >= peak * NEAR_PEAK.0
-}
-
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-pub fn resident_near_peak() -> bool {
-    true
-}
-
 /// Records a collection boundary, after which the next output releases the read-only pages.
 pub fn note_collection() {
     COLLECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
