@@ -3437,6 +3437,10 @@ script_handler! {
     #[inline(never)]
     fn lane_get_field_first<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
+        if vm.is_private_name(i.imm()) && i.b != crate::bytecode::FieldBase::NESTED {
+            requicken(ip, lane_get_private_field::<H>);
+            sibling!(lane_get_private_field::<H>, r, ip, Carried::script(cx))
+        }
         if vm.reads_function_info(i.imm()) {
             // A register's `length` is most often an array's, which no function information
             // can answer.
@@ -4022,7 +4026,7 @@ fn lane_set_field<H: Host>(
     // `SetField` does, before any cache; the general loop's cached write otherwise: the store
     // inline, the add out of line.
     let stored = if vm.is_private_name(i.imm()) {
-        lane_private_field_store(cx, code, object, i.imm(), r.get(i.a))
+        lane_private_field_store(cx, ip, code, object, i.imm(), r.get(i.a))
     } else {
         vm.cached_field_write_hit(code, object, i.imm(), r.get(i.a), i.c)
     };
@@ -4034,29 +4038,65 @@ fn lane_set_field<H: Host>(
     next!(cx, r, following(ip), Carried::script(cx))
 }
 
-/// The store of private field `atom` of `object`, whose home follows the running function
-/// and the environment its frame would capture from, as `lane_cached_field_miss` reads one:
-/// the lane's frame, or a frameless activation's function and closure environment. `false`
-/// leaves the store, a private accessor's or method's included, to the general path.
+/// The brand of private name `atom` at the record `ip`, whose home follows the running
+/// function and the environment its frame would capture from: the lane's frame, or a
+/// frameless activation's function and closure environment (`Vm::site_private_brand`).
+#[inline(never)]
+fn lane_private_brand<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    code: &ResidualProgram,
+    atom: crate::bytecode::Atom,
+) -> Option<crate::heap::PrivateBrand> {
+    let vm = unsafe { vm(cx) };
+    let (environment, function, frame) = match vm.lane_stack.activations.last() {
+        None => {
+            // The running frame is the top one, whose home `Vm::private_name_home` finds.
+            let frame = vm.frames.len().checked_sub(1)?;
+            (vm.captured_parent_environment(frame), vm.frames[frame].function, true)
+        }
+        // SAFETY: the context outlives the lane run.
+        Some(activation) => (unsafe { (*cx).env }, activation.script().map(|_| activation.function)?, false),
+    };
+    vm.site_private_brand(code, ip.addr(), environment, function, frame, atom)
+}
+
+/// The store of private field `atom` of `object` at the record `ip`, under its brand there
+/// (`lane_private_brand`). `false` leaves the store, a private accessor's or method's
+/// included, to the general path.
 #[inline(never)]
 fn lane_private_field_store<H: Host>(
     cx: *mut LaneContext<H>,
+    ip: Ip,
     code: &ResidualProgram,
     object: Value,
     atom: crate::bytecode::Atom,
     value: Value,
 ) -> bool {
-    let vm = unsafe { vm(cx) };
-    match vm.lane_stack.activations.last() {
-        None => vm.set_private_field_value(code, object, atom, value),
-        Some(activation) => {
-            let Some(function) = activation.script().map(|_| activation.function) else {
-                return false;
-            };
-            // SAFETY: the context outlives the lane run.
-            let environment = unsafe { (*cx).env };
-            vm.memoized_set_private_field_value(code, environment, function, object, atom, value)
-        }
+    let Some(brand) = lane_private_brand(cx, ip, code, atom) else {
+        return false;
+    };
+    (unsafe { vm(cx) }).object_data_mut(object).is_some_and(|data| data.set_private_field(brand, value))
+}
+
+script_handler! {
+    /// `GetField` of a private name (`Vm::is_private_name`) from a register or `this`, which
+    /// no field cache records (`lane_get_field_first`): the object's private element under
+    /// the name's brand at this record (`lane_private_brand`). Any other read, a private
+    /// method's or accessor's included, takes `lane_get_field`.
+    #[inline(never)]
+    fn lane_get_private_field<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let value = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }.and_then(|object| {
+            let brand = lane_private_brand(cx, ip, code, i.imm())?;
+            (unsafe { vm(cx) }).object_data(object)?.private_field(brand)
+        });
+        let Some(value) = value else {
+            sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 

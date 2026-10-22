@@ -100,6 +100,7 @@ impl<H: Host> Vm<H> {
             function_name_shapes: Default::default(),
             symbol_write_proofs: Default::default(),
             symbol_load_proofs: Default::default(),
+            private_site_homes: Default::default(),
             array_iteration_proof: None,
             enumerable_keys: Default::default(),
             shape_attribute_memo: Default::default(),
