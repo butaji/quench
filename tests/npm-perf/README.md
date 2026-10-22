@@ -325,3 +325,13 @@ Quench's throughput 20.5% and RSS 8.6% against the clean binary, and its RSS is
 1,639.3 renders/s for Node and 1,509.2 for Bun. The paired report is
 `work/react-perf/react-pgo-vs-clean-paired-memory-first-max-young-32k-nojit-11.json`.
 Linux RSS sampling is diagnostic, not qualification.
+
+Combining general PGO with a 512-unit flat-prefix threshold improved React
+no-JIT throughput against the paired PGO control. In 11 rounds at 5,000 renders
+per sample, the 512-unit build measured 305.1 renders/s / 28.11 MB versus
+261.3 / 26.26 MB for the 2,048-unit build. Output matched (24,980,000 bytes,
+checksum 414318). The speed gain was 16.8%; the RSS increase was 7.1%. RSS
+remains 22.4% below Node and 24.9% below Bun, but throughput is still about 5x
+slower than either runtime. The paired report is
+`work/react-perf/react-pgo-prefix-512-vs-2048-memory-first-max-young-32k-nojit-11.json`.
+Linux RSS sampling is diagnostic, not qualification.
