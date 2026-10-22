@@ -162,6 +162,8 @@ pub(crate) struct ValueArena {
     free: [Vec<u32>; BUCKETS],
     /// Values held by the ranges on `free`.
     released_values: usize,
+    /// Values appended to the arena since the heap last charged them (measurement).
+    pub(crate) appended_values: usize,
     shape_lengths: Vec<u32>,
     dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
     free_dictionaries: Vec<u32>,
@@ -174,6 +176,7 @@ impl Default for ValueArena {
             values: vec![],
             free: Default::default(),
             released_values: 0,
+            appended_values: 0,
             shape_lengths: vec![0],
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
@@ -186,7 +189,7 @@ impl ValueArena {
     /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        let Self { values, free, released_values, shape_lengths, dictionaries, free_dictionaries, next_dictionary } = self;
+        let Self { values, free, released_values, appended_values: _, shape_lengths, dictionaries, free_dictionaries, next_dictionary } = self;
         writer.values(values);
         for bucket in free {
             writer.u32s(bucket);
@@ -225,6 +228,7 @@ impl ValueArena {
             values,
             free,
             released_values,
+            appended_values: 0,
             shape_lengths,
             dictionaries,
             free_dictionaries: reader.u32s()?,
@@ -633,6 +637,7 @@ impl ValueArena {
         if start >= max_start {
             return None;
         }
+        self.appended_values += capacity;
         let required = start.checked_add(capacity)?;
         // Vec's 2x policy leaves a large unused tail once long-lived heaps
         // cross into millions of property slots. Preserve that policy for
