@@ -255,3 +255,13 @@ throughput, despite its lower 40.91 MB sampled RSS. The candidate remains
 reverted. The next React JIT work needs to target the unsupported object-heavy
 render functions with a materially broader compiled path; small dispatch fusions
 have not closed the gap. Linux RSS sampling is diagnostic, not qualification.
+
+A guarded JIT entry path for direct parameter-zero data-field getters was
+screened against React SSR. The full 11-round JIT run matched output and measured
+298.1 renders/s / 42.63 MB sampled RSS, compared with the clean baseline's
+288.6 / 42.72 MB. A separate 500-render diagnostic found zero candidate and
+zero fast entries, so the small full-run difference is run-to-run noise rather
+than a path used by React. The code was reverted. The next JIT work must cover
+the central render function's repeated field, mutation, and guest-call sequence
+instead of leaf getters. Reports remain in `work/react-perf`; Linux RSS is
+diagnostic only.
