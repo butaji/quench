@@ -223,3 +223,22 @@ the small no-JIT signal did not compensate for the JIT regression. Screens
 remain at `work/react-perf/react-move-call-fusion-iteration-3.json`,
 `work/react-perf/react-move-call-fusion-jit-iteration-3.json`, and
 `work/react-perf/react-move-call-fusion-noinline-jit-iteration-3.json`.
+
+A lane-only `LoadConst → Return` fusion also preserved output. Its full 11-round
+no-JIT memory-first run measured 210.5 renders/s / 29.39 MB, below the existing
+228.1 / 29.30 MB baseline. The full 11-round JIT run measured 286.8 / 40.91
+MB, but its comparator baseline is only a one-round full-size pilot and the
+candidate increased Quench RSS. The candidate was reverted because it did not
+improve both modes and memory together. Reports are in
+`work/react-perf/react-const-return-full-nojit-memory-first-linux-11.json` and
+`work/react-perf/react-const-return-full-jit-linux-11.json`; Linux RSS is
+diagnostic only.
+
+A guarded miss path for `RegExp.prototype.exec` on non-global/non-sticky
+builtin regexps preserved the React SSR output. Its three-round iteration
+screens measured 185.4 renders/s / 36.97 MB no-JIT and 179.9 / 36.77 MB JIT.
+They did not provide a compelling signal for a production comparison, so the
+change was reverted. Reports remain at
+`work/react-perf/react-regexp-exec-miss-iteration-nojit-3.json` and
+`work/react-perf/react-regexp-exec-miss-iteration-jit-3.json`; Linux RSS is
+diagnostic only.
