@@ -541,7 +541,7 @@ impl<H: Host> Vm<H> {
     /// `set_plain_named_property` makes the named one; `false` leaves the write, and any key
     /// that function refuses, to the general path, which interns a new name.
     pub(super) fn try_plain_string_key_set(&mut self, object: Value, key: Value, value: Value) -> bool {
-        let Some(atom) = self.heap.string(key).and_then(|text| self.lookup_js_atom(text)) else {
+        let Some(atom) = self.lookup_string_atom(key) else {
             return false;
         };
         self.set_plain_named_property(object, atom, value).is_some()
@@ -554,8 +554,11 @@ impl<H: Host> Vm<H> {
         if let Some(index) = key.as_int() {
             return self.plain_index_get(object, usize::try_from(index).ok()?);
         }
-        if let Some(text) = self.heap.string(key) {
-            return self.plain_named_get(object, self.lookup_js_atom(text)?);
+        if let Some(atom) = self.lookup_string_atom(key) {
+            return self.plain_named_get(object, atom);
+        }
+        if self.heap.string(key).is_some() {
+            return None;
         }
         match self.heap.get(key)? {
             // A host-private symbol names only an own property, which the general path reads.
