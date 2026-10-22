@@ -11169,6 +11169,25 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
 }
 
 #[test]
+fn js_jit_rejected_functions_stop_claiming_lane_call_frames() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "function unsupported() { return this.value; }",
+        "js-jit-rejected-decline.js",
+    ))
+    .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+
+    assert!(!programs.js_tier_declined(id, 1));
+    programs.reject_js_function(id, 1, "unsupported-opcode-or-control-flow");
+    assert!(matches!(
+        programs.js_tier(id, 1),
+        Some(super::program_store::JsTierState::Rejected { .. })
+    ));
+    assert!(programs.js_tier_declined(id, 1));
+}
+
+#[test]
 fn js_jit_promotion_requires_a_confident_numeric_profile() {
     let program = Engine::compile(crate::ExecutionRequest::script("void 0", "js-jit-profile-gate.js"))
         .unwrap();

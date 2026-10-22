@@ -1160,7 +1160,9 @@ impl ProgramStore {
     pub(super) fn js_tier_declined(&self, id: ProgramId, function: u32) -> bool {
         self.entry(id)
             .and_then(|entry| entry.js_tiers.get(&function))
-            .is_some_and(|state| matches!(state, JsTierState::Unsupported))
+            .is_some_and(|state| {
+                matches!(state, JsTierState::Rejected { .. } | JsTierState::Unsupported)
+            })
     }
 
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {
