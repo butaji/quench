@@ -615,12 +615,39 @@ impl ValueArena {
         if vector.is_dictionary() {
             return self.dictionaries[&vector.dictionary_id()].capacity();
         }
-        let len = self.len(vector);
+        Self::flat_capacity(vector, self.len(vector))
+    }
+
+    /// The capacity of the arena range of `vector`, an arena vector outside dictionary
+    /// storage of `len` values: derived from its length, so it needs no stored word.
+    #[inline(always)]
+    fn flat_capacity(vector: ValueVec, len: usize) -> usize {
         match (len, vector.start() != EMPTY_START as usize) {
             (0, false) => 0,
             (0, true) => MIN_CAPACITY,
             (length, _) => length.next_power_of_two().max(MIN_CAPACITY),
         }
+    }
+
+    /// Whether `vector`, an arena vector outside dictionary storage of `len` values, has room
+    /// for one more value without moving its range (`push`'s `grow`).
+    #[inline(always)]
+    pub(crate) fn appends_in_place(vector: ValueVec, len: usize) -> bool {
+        len < Self::flat_capacity(vector, len)
+    }
+
+    /// `push` of `value` to `vector` of `len` values where `appends_in_place` holds: the
+    /// store alone.
+    ///
+    /// # Safety
+    /// `vector` is an arena vector outside dictionary storage of `len` values, whose range has
+    /// room for one more (`appends_in_place`).
+    #[inline(always)]
+    pub(crate) unsafe fn push_in_place(&mut self, vector: ValueVec, len: usize, value: Value) {
+        debug_assert!(!vector.has_inline_property_storage() && !vector.is_dictionary());
+        debug_assert!(len == self.len(vector) && Self::appends_in_place(vector, len));
+        // SAFETY: the range from `start` holds its capacity, past `len`, reserved in `values`.
+        unsafe { *self.values.get_unchecked_mut(vector.start() + len) = value };
     }
 
     fn allocate(&mut self, capacity: usize, max_start: usize) -> Option<usize> {
