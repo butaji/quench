@@ -7112,8 +7112,9 @@ fn lane_promise_native<H: Host>(
 /// allocates its string, and an array iterator's step over a plain array
 /// (`Vm::plain_array_iterator_next`), which allocates its result, an object's own
 /// property query by a string key (`Vm::plain_own_property_query`), and a dense array's
-/// `splice` (`Vm::plain_array_splice`, which allocates the removed array) and `unshift`
-/// (`Vm::plain_array_unshift`), and the Map and Set mutators on their own collections
+/// `splice` (`Vm::plain_array_splice`, which allocates the removed array), `unshift`
+/// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), `Object.hasOwn`,
+/// `Object.is` and `Number.isNaN`, and the Map and Set mutators on their own collections
 /// (`Vm::plain_collection_mutation`). `None` leaves any other
 /// call to `lane_call_native`.
 #[inline(never)]
@@ -7143,6 +7144,16 @@ fn lane_pure_native<H: Host>(
             Some(removed)
         }
         Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
+        Native::ArrayShift => vm.plain_array_shift(receiver),
+        Native::ObjectHasOwn => vm.plain_own_property_query(
+            code,
+            Native::ObjectPrototypeHasOwnProperty,
+            *args.first()?,
+            *args.get(1)?,
+        ),
+        // Pure of any arguments: SameValue and a Number test.
+        Native::ObjectIs => vm.call_object_native(code, Native::ObjectIs, args).ok(),
+        Native::NumberIsNaN => vm.call_number_native(code, Native::NumberIsNaN, args).ok(),
         native @ (Native::MapSet
         | Native::MapDelete
         | Native::MapClear
