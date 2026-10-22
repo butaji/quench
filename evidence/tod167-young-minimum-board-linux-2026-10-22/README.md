@@ -55,3 +55,27 @@ Make MemoryFirst with the 2^13 minimum the default, with Throughput as the opt-i
 Before the switch, measure web servers. The default's doc comment records HTTP servers at
 about half their throughput under the old memory-first table, and koa's max RSS rose by
 1.1 MB at a 1024 minimum. That setup is not in this container.
+
+## Follow-up sweep: v2-zod's React SSR values, and deltablue `--jit` (`sweep-zod*.json`)
+
+Same-binary sweep with a static + BOLT `gc-tuning` build of v2-gc `7ad78bf43f` (trunk
+`9f8b3ab7f` merged), 5 runs per configuration, against Throughput. Speed is the geomean of
+per-fixture median Scores; max RSS is the geomean of per-fixture worst samples.
+
+| Config | Speed, no JIT | Max RSS, no JIT | Speed, `--jit` | Max RSS, `--jit` | deltablue `--jit` |
+| -- | --: | --: | --: | --: | --: |
+| MemoryFirst, trunk table | 0.886 | 0.653 | 0.929 | 0.654 | 0.84 |
+| v2-zod: young 1/1, maximum 2^16 | 0.916 | 0.676 | 0.948 | 0.665 | 0.86 |
+| young 1/1 alone | 0.904 | 0.663 | 0.924 | 0.660 | 0.83 |
+| maximum 2^16 alone | 0.918 | 0.654 | 0.935 | 0.654 | 0.87 |
+| MemoryFirst with Throughput's pacing values | 0.936 | 0.941 | 0.996 | 0.935 | 0.98 |
+
+- **v2-zod's values:** at V8-v7's small heaps, young 1/1 raises max RSS (regexp 7.2 → 8.1 MB,
+  earley-boyer 7.3 → 7.9 MB) and gains about 3% speed. The 2^16 maximum alone gains the
+  same speed at trunk's RSS. Its effect here is likely noise, since no V8-v7 fixture's young
+  budget reaches 2^16 at a sixty-fourth of its live set.
+- **deltablue `--jit`:** the board's ×0.61 came from 3 samples spread by about 25%. Over 5
+  runs it is ×0.84, and with Throughput's pacing values it is ×0.98. So the gap is pacing (more
+  collections), not the JIT.
+- **Page release alone** (last row against Throughput) costs 6% without JIT and nothing
+  measurable with it.
