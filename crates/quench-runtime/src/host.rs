@@ -244,6 +244,10 @@ pub trait Host {
         Vec::new()
     }
 
+    /// Release the contexts `create_promise_context` gave promises that a collection freed.
+    /// No promise, reaction or job names them again.
+    fn release_promise_contexts(&mut self, _contexts: &[HostExecutionContext]) {}
+
     fn call_wasm(
         &mut self,
         _function: WasmHostFunctionId,

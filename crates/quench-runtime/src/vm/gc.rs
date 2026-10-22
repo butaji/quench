@@ -834,9 +834,12 @@ impl<H: Host> Vm<H> {
         );
         self.descriptors
             .retain(|(object, _), _| self.heap.is_live(*object));
-        let abandoned_job_contexts = self.heap.take_abandoned_job_contexts();
-        for context in abandoned_job_contexts {
+        let abandoned = self.heap.take_abandoned_contexts();
+        for context in abandoned.jobs {
             self.release_job_context(context);
+        }
+        if !abandoned.promises.is_empty() {
+            self.host.release_promise_contexts(&abandoned.promises);
         }
         self.realm
             .promise

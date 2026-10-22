@@ -1,0 +1,19 @@
+{
+  "round": 2,
+  "mode": "numeric-find-enabled",
+  "command": [
+    "/workspace/quench/target/production/quench-node",
+    "--jit",
+    "/tmp/jetstream3-prelude.js",
+    "quench-bench/jetstream",
+    "--no-prefetch",
+    "--test=hash-map"
+  ],
+  "source_head": "130642bc5ae33cf78c6e0769d39ea1410490ebbb",
+  "binary_sha256": "0aa131af9c23c31dd50e1811be31e7985daa0500b6440c5b5641c0d7a411bf3e",
+  "exit_code": 0,
+  "elapsed_ns": 159211471490,
+  "peak_rss_bytes_sampled": 77770752,
+  "stdout": "Starting JetStream3\nRunning hash-map:\nhash-map First-Score                             4.17 pts\nhash-map Worst-Score                             1.83 pts\nhash-map Average-Score                           3.79 pts\nhash-map Score                                   3.07 pts\nhash-map First-Time                           1198.84 ms \nhash-map Worst-Time                           2727.99 ms \nhash-map Average-Time                         1320.33 ms \nhash-map Total-Time                           5247.17 ms \nhash-map Wall-Time                            158395.91 ms \n\nOverall:\nOverall First-Score                              4.17 pts\nOverall Worst-Score                              1.83 pts\nOverall Average-Score                            3.79 pts\nOverall First-Time                            1198.84 ms \nOverall Worst-Time                            2727.99 ms \nOverall Average-Time                          1320.33 ms \n\nOverall Score                                    3.07 pts\nOverall Wall-Time                             158429.08 ms \n\n",
+  "stderr": ""
+}
