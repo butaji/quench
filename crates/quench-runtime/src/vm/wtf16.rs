@@ -56,7 +56,23 @@ pub(crate) enum FlatUnits {
     /// taking the rest of a scanned text costs one small record, not a copy of the rest.
     AsciiSlice(Rc<AsciiSlice>),
     Wide(Rc<[u16]>),
+    /// A run of longer `Wide` storage, shared instead of copied as `AsciiSlice` shares ASCII
+    /// storage. Its units may all be ASCII (the tail of a text whose only wide units lie
+    /// before it), so, like `Wide`, it is never taken to be ASCII.
+    WideSlice(Rc<WideSlice>),
 }
+
+/// The units `range` of shared `Wide` storage; never a slice of a slice.
+pub(crate) struct WideSlice {
+    units: Rc<[u16]>,
+    range: Range<usize>,
+}
+
+/// Units below which a run of wide storage is copied into its canonical form instead of
+/// shared (`FlatUnits::run`): a short run costs less to copy than a slice record and the
+/// storage it would keep alive, and copying narrows it when it is ASCII. V8's sliced
+/// strings start at 13 characters; a slice record here is two words past its count header.
+const WIDE_SLICE_MIN_UNITS: usize = 32;
 
 /// The bytes `range` of shared ASCII storage; never shorter than `SHORT_ASCII_CAPACITY`
 /// allows inline, and never a slice of a slice.
@@ -126,6 +142,7 @@ impl FlatUnits {
             Self::Ascii(text) => text.len(),
             Self::AsciiSlice(slice) => slice.range.len(),
             Self::Wide(units) => units.len(),
+            Self::WideSlice(slice) => slice.range.len(),
         }
     }
 
@@ -138,11 +155,13 @@ impl FlatUnits {
             Self::AsciiSlice(slice) => (index < slice.range.len())
                 .then(|| u16::from(slice.text.as_bytes()[slice.range.start + index])),
             Self::Wide(units) => units.get(index).copied(),
+            Self::WideSlice(slice) => (index < slice.range.len())
+                .then(|| slice.units[slice.range.start + index]),
         }
     }
 
     #[inline]
-    fn view(&self) -> Units<'_> {
+    pub(crate) fn view(&self) -> Units<'_> {
         match self {
             Self::Short(text) => Units::Ascii(text.as_str().as_bytes()),
             Self::Ascii(_) | Self::AsciiSlice(_) => {
@@ -150,11 +169,22 @@ impl FlatUnits {
                 Units::Ascii(&text.as_bytes()[range])
             }
             Self::Wide(units) => Units::Wide(units),
+            Self::WideSlice(slice) => Units::Wide(&slice.units[slice.range.clone()]),
         }
     }
 
+    /// Whether the units are known to be ASCII; a wide slice may be, but is not known to be.
     pub(crate) fn is_ascii(&self) -> bool {
-        !matches!(self, Self::Wide(_))
+        !matches!(self, Self::Wide(_) | Self::WideSlice(_))
+    }
+
+    /// The shared wide storage these units view and the units they cover.
+    fn shared_wide(&self) -> Option<(&Rc<[u16]>, Range<usize>)> {
+        match self {
+            Self::Wide(units) => Some((units, 0..units.len())),
+            Self::WideSlice(slice) => Some((&slice.units, slice.range.clone())),
+            Self::Short(_) | Self::Ascii(_) | Self::AsciiSlice(_) => None,
+        }
     }
 
     /// The shared ASCII storage these units view and the bytes they cover.
@@ -162,7 +192,7 @@ impl FlatUnits {
         match self {
             Self::Ascii(text) => Some((text, 0..text.len())),
             Self::AsciiSlice(slice) => Some((&slice.text, slice.range.clone())),
-            Self::Short(_) | Self::Wide(_) => None,
+            Self::Short(_) | Self::Wide(_) | Self::WideSlice(_) => None,
         }
     }
 
@@ -180,6 +210,17 @@ impl FlatUnits {
                 range: own.start + range.start..own.start + range.end,
             }));
         }
+        if range.len() >= WIDE_SLICE_MIN_UNITS
+            && let Some((units, own)) = self.shared_wide()
+        {
+            if range.len() == own.len() {
+                return self.clone();
+            }
+            return Self::WideSlice(Rc::new(WideSlice {
+                units: Rc::clone(units),
+                range: own.start + range.start..own.start + range.end,
+            }));
+        }
         match self.view().slice(range) {
             // SAFETY: ASCII units are UTF-8.
             Units::Ascii(bytes) => Self::ascii(unsafe { std::str::from_utf8_unchecked(bytes) }),
@@ -192,6 +233,7 @@ impl FlatUnits {
             (Self::Ascii(left), Self::Ascii(right)) => Rc::ptr_eq(left, right),
             (Self::AsciiSlice(left), Self::AsciiSlice(right)) => Rc::ptr_eq(left, right),
             (Self::Wide(left), Self::Wide(right)) => Rc::ptr_eq(left, right),
+            (Self::WideSlice(left), Self::WideSlice(right)) => Rc::ptr_eq(left, right),
             _ => false,
         }
     }
@@ -666,7 +708,9 @@ impl JsString {
             FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) => {
                 Repr::Flat(units)
             }
-            FlatUnits::Wide(_) => Repr::Shared(Rc::new(JsStringInner::flat(units))),
+            FlatUnits::Wide(_) | FlatUnits::WideSlice(_) => {
+                Repr::Shared(Rc::new(JsStringInner::flat(units)))
+            }
         };
         Self { repr }
     }
@@ -681,7 +725,7 @@ impl JsString {
             Some(units @ (FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_))) => Self {
                 repr: Repr::Flat(units.clone()),
             },
-            Some(FlatUnits::Wide(_)) | None => Self { repr: Repr::Shared(node) },
+            Some(FlatUnits::Wide(_) | FlatUnits::WideSlice(_)) | None => Self { repr: Repr::Shared(node) },
         }
     }
 
@@ -832,8 +876,11 @@ impl JsString {
             FlatUnits::Short(text) => text.as_str(),
             FlatUnits::Ascii(text) => text,
             FlatUnits::AsciiSlice(slice) => &slice.text[slice.range.clone()],
-            FlatUnits::Wide(units) => match &self.repr {
-                Repr::Shared(inner) => inner.host(|| Rc::<str>::from(String::from_utf16_lossy(units))),
+            wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_)) => match &self.repr {
+                Repr::Shared(inner) => inner.host(|| {
+                    let Units::Wide(units) = wide.view() else { unreachable!("wide units") };
+                    Rc::<str>::from(String::from_utf16_lossy(units))
+                }),
                 Repr::Flat(_) => unreachable!("a flat string held by value is ASCII"),
             },
         }
@@ -845,9 +892,14 @@ impl JsString {
             Repr::Flat(units) => Some(units),
             Repr::Shared(inner) => inner.flat.get(),
         };
-        match flat.map(FlatUnits::view) {
-            Some(Units::Ascii(bytes)) => bytes.len(),
-            Some(Units::Wide(units)) => std::mem::size_of_val(units),
+        match flat {
+            // A wide slice holds its record; the units belong to the storage it shares, which
+            // its root was charged for.
+            Some(FlatUnits::WideSlice(_)) => std::mem::size_of::<WideSlice>(),
+            Some(units) => match units.view() {
+                Units::Ascii(bytes) => bytes.len(),
+                Units::Wide(units) => std::mem::size_of_val(units),
+            },
             None => 0,
         }
     }
@@ -869,6 +921,10 @@ impl JsString {
                 std::mem::size_of_val(&**units)
                     + self.existing_host().map_or(0, |host| host.len())
             }
+            // As an ASCII slice: the storage belongs to the string sliced.
+            FlatUnits::WideSlice(_) => {
+                std::mem::size_of::<WideSlice>() + self.existing_host().map_or(0, |host| host.len())
+            }
         }
     }
 
@@ -889,6 +945,10 @@ impl JsString {
             FlatUnits::Wide(units) => (
                 Rc::as_ptr(units) as *const u16 as usize,
                 RC_HEADER_BYTES + std::mem::size_of_val(&**units),
+            ),
+            FlatUnits::WideSlice(slice) => (
+                Rc::as_ptr(&slice.units) as *const u16 as usize,
+                RC_HEADER_BYTES + std::mem::size_of_val(&*slice.units),
             ),
         };
         let host_storage = self.existing_host().map(|host| {
