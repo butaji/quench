@@ -1,10 +1,11 @@
-//! Score each wast directive: validator directives decide, execute-class fail.
+//! Shared directive parsing, validation and result scoring; execution is explicit.
 
 use crate::decode::{
     features_for_path, inspect_quote_with, invalid_branch_hint_target, ModuleStatus,
 };
 use crate::legacy_try::unfold_if_legacy;
-use crate::wast_exec::{self, Store};
+use crate::shared_wast::Store;
+use crate::wast_protocol;
 use wasmparser::WasmFeatures;
 use wast::lexer::Lexer;
 use wast::parser::{self, ParseBuffer};
@@ -48,6 +49,10 @@ impl WastReport {
 
 /// Parse `source` as wast and score every directive using features for `filename`.
 pub fn run_wast(filename: &str, source: &str) -> WastReport {
+    crate::Engine::new().run_wast(filename, source)
+}
+
+pub(crate) fn run_wast_using(filename: &str, source: &str, mut store: Store) -> WastReport {
     let source = unfold_if_legacy(filename, source);
     let source = source.as_ref();
     let features = features_for_path(filename);
@@ -63,7 +68,6 @@ pub fn run_wast(filename: &str, source: &str) -> WastReport {
     };
 
     let mut results = Vec::with_capacity(script.directives.len());
-    let mut store = Store::new();
     for directive in &mut script.directives {
         let line = line_of(directive.span(), source);
         results.push(score_directive(line, directive, features, &mut store));
@@ -117,44 +121,32 @@ fn score_directive(
         WastDirective::ModuleInstance {
             instance, module, ..
         } => {
-            store.instantiate_def(
+            let result = store.instantiate_def(
                 instance.map(|id| id.name()),
                 module.map(|id| id.name()),
                 features,
             );
-            DirectiveResult {
-                line,
-                kind: "module_instance".to_string(),
-                passed: true,
-                expected: "instance".to_string(),
-                got: "ok".to_string(),
-            }
+            transition_result(line, "module_instance", "instance", result)
         }
         WastDirective::AssertReturn { exec, results, .. } => {
-            wast_exec::score_return(line, exec, results, store, features)
+            wast_protocol::score_return(line, exec, results, store, features)
         }
         WastDirective::AssertTrap { exec, message, .. } => {
-            wast_exec::score_trap(line, exec, message, store, features)
+            wast_protocol::score_trap(line, exec, message, store, features)
         }
-        WastDirective::Invoke(invoke) => wast_exec::score_invoke(line, invoke, store),
+        WastDirective::Invoke(invoke) => wast_protocol::score_invoke(line, invoke, store),
         WastDirective::AssertExhaustion { call, message, .. } => {
-            wast_exec::score_exhaustion(line, call, message, store)
+            wast_protocol::score_exhaustion(line, call, message, store)
         }
         WastDirective::AssertException { exec, .. } => {
-            wast_exec::score_exception(line, exec, store, features)
+            wast_protocol::score_exception(line, exec, store, features)
         }
         WastDirective::AssertUnlinkable {
             module, message, ..
-        } => wast_exec::score_unlinkable(line, module, message, features, store),
+        } => wast_protocol::score_unlinkable(line, module, message, features, store),
         WastDirective::Register { name, module, .. } => {
-            store.register(name, module.map(|id| id.name()));
-            DirectiveResult {
-                line,
-                kind: "register".to_string(),
-                passed: true,
-                expected: "register".to_string(),
-                got: "ok".to_string(),
-            }
+            let result = store.register(name, module.map(|id| id.name()));
+            transition_result(line, "register", "register", result)
         }
         other => unimplemented_directive(line, other),
     }
@@ -240,7 +232,15 @@ fn score_valid_module(
     match inspect_quote_with(module, features) {
         ModuleStatus::Valid => {
             if instantiate {
-                store.instantiate_quote(module, features);
+                if let Err(got) = store.instantiate_quote(module, features) {
+                    return DirectiveResult {
+                        line,
+                        kind,
+                        passed: false,
+                        expected,
+                        got,
+                    };
+                }
             }
             DirectiveResult {
                 line,
@@ -264,6 +264,21 @@ fn score_valid_module(
             expected,
             got: format!("invalid: {got}"),
         },
+    }
+}
+
+fn transition_result(
+    line: usize,
+    kind: &str,
+    expected: &str,
+    result: Result<(), String>,
+) -> DirectiveResult {
+    DirectiveResult {
+        line,
+        kind: kind.into(),
+        passed: result.is_ok(),
+        expected: expected.into(),
+        got: result.map_or_else(|error| error, |()| "ok".into()),
     }
 }
 
@@ -344,79 +359,12 @@ mod tests {
     }
 
     #[test]
-    fn unlinkable_incompatible_func_type() {
-        let report = run_wast(
-            "unlink.wast",
-            r#"
-(module
-  (import "spectest" "print_i32" (func $f (param i32)))
-  (export "print" (func $f))
-)
-(register "reexport_f")
-(assert_unlinkable
-  (module (import "reexport_f" "print" (func (param i64))))
-  "incompatible import type")
-"#,
-        );
-        assert!(
-            report.results.iter().all(|r| r.passed),
-            "{:?}",
-            report.results
-        );
-    }
-
-    #[test]
-    fn global_get_and_extended_const_execute() {
-        let report = run_wast(
-            "global-init.wast",
-            r#"
-(module
-  (global (import "spectest" "global_i32") i32)
-  (global $z (export "z") i32 (i32.add (global.get 0) (i32.const 42)))
-  (func (export "get-z") (result i32) (global.get $z))
-)
-(assert_return (invoke "get-z") (i32.const 708))
-(assert_return (get "z") (i32.const 708))
-"#,
-        );
-        assert!(
-            report.results.iter().all(|r| r.passed),
-            "{:?}",
-            report.results
-        );
-    }
-
-    #[test]
     fn valid_module_accepted_without_running() {
         let source = r#"(module (func (export "answer") (result i32) i32.const 42))"#;
         let report = run_wast("module.wast", source);
         assert_eq!(report.results.len(), 1);
         assert!(report.results[0].passed, "{:?}", report.results[0]);
         assert_eq!(report.results[0].kind, "module");
-    }
-
-    #[test]
-    fn br_if_in_void_block() {
-        let report = run_wast(
-            "brif.wast",
-            r#"
-(module
-  (func (export "t")
-    (block (drop (i32.ctz (br_if 0 (i32.const 0) (i32.const 1)))))
-  )
-  (func (export "v") (result i32)
-    (block (result i32) (i32.ctz (br_if 0 (i32.const 1) (i32.const 1))))
-  )
-)
-(assert_return (invoke "t"))
-(assert_return (invoke "v") (i32.const 1))
-"#,
-        );
-        assert!(
-            report.results.iter().all(|r| r.passed),
-            "{:?}",
-            report.results
-        );
     }
 
     #[test]

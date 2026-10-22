@@ -4,7 +4,7 @@ These are the Stage A framework targets, using unmodified packages pinned by
 `package-lock.json`. Their minimum shared Node behavior is represented by the
 43 official upstream fixtures tagged `profile=framework-core` in the single
 [`parallel.txt` manifest](../../crates/quench-node-test/node-tests/parallel.txt).
-Run the selected fixtures with `run-parallel-next --profile framework-core` and
+Run the selected fixtures with `run-parallel --profile framework-core` and
 the package scenarios with local Node as their oracle. The broader proposals in
 tasks 88/89 are superseded.
 
@@ -42,6 +42,6 @@ cargo build --profile iteration -p quench-node --bin quench-node
 ../../target/iteration/quench-node driver.cjs scenarios/express.cjs
 ../../target/iteration/quench-node driver.cjs scenarios/koa.cjs
 ../../target/iteration/quench-node driver.cjs scenarios/fastify.cjs
-cargo run --profile iteration -p quench-node-test --bin run-parallel-next -- \
+cargo run --profile iteration -p quench-node-test --bin run-parallel -- \
   --profile framework-core
 ```

@@ -1,3 +1,24 @@
 [build]
 # Enforce clippy rules from .clippy.toml — never allow warnings.
-rustflags = ["-D", "warnings"]
+# 64-byte function alignment measured +3.4% on Linux CoreMark (Linear TOD-19)
+# and passed the M4 V8-v7 all-eight guard with the Splay speed-lane head.
+rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6"]
+
+# Cargo replaces build rustflags for targets with their own rustflags, so keep
+# the same alignment policy active on M4. Its deployment target comes from the
+# host's target configuration.
+[target.aarch64-apple-darwin]
+rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6"]
+
+# x86-64 Linux links OpenSSL statically: the shared libssl/libcrypto pair costs
+# about 1 MiB of resident set in every process at load (relocations and
+# fault-around), crypto used or not, while archive members cost nothing until
+# called. openssl-sys reads these target-prefixed names only for this target, and
+# a variable set in the environment takes precedence.
+[env]
+X86_64_UNKNOWN_LINUX_GNU_OPENSSL_STATIC = "1"
+X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR = "/usr/lib/x86_64-linux-gnu"
+X86_64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR = "/usr/include"
+# The system libcrypto archive includes zlib compression support. Declare its
+# archive dependency explicitly so static OpenSSL links resolve those symbols.
+X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIBS = "ssl:crypto:z"

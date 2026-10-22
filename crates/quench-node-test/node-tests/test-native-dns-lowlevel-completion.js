@@ -1,0 +1,11 @@
+'use strict';
+const {internalBinding}=require('internal/test/binding');
+const c=internalBinding('cares_wrap');
+let req=new c.GetAddrInfoReqWrap();
+req.tag='retained-request';
+req.oncomplete=()=>console.log('obsolete-callback');
+const status=c.getaddrinfo(req,'localhost',0,0,c.DNS_ORDER_IPV4_FIRST);
+req.oncomplete=function(status,addresses){console.log('native',status,this.tag,Array.isArray(addresses),addresses[0],addresses.includes('::1'));};
+req=null;
+if(typeof global.gc==='function')global.gc();
+console.log('submission',status);

@@ -1,14 +1,18 @@
 //! WebAssembly format: parse, validate, and wast scoring.
 //!
 //! This crate owns the binary/text format and the spec-suite harness.
-//! `quench-runtime` is the VM: load, instantiate, interpret.
+//! Quench's shared VM owns execution; this crate owns Wasm decoding and WAST scoring.
 
 use std::fmt;
 
 mod decode;
+mod interface;
+pub use interface::{interface, Export, ExternKind, Import, Interface};
 mod legacy_try;
 mod shared;
-mod wast_exec;
+mod shared_wast;
+pub use shared_wast::EXECUTION_MODE_VARIABLE;
+mod wast_protocol;
 mod wast_script;
 
 pub use decode::{
@@ -57,17 +61,29 @@ impl Engine {
     }
 
     pub fn compile_wat(&self, source: &str) -> Result<Module, Error> {
+        self.compile_wat_with_features(source, core_features())
+    }
+
+    pub fn compile_wat_with_features(
+        &self,
+        source: &str,
+        features: wasmparser::WasmFeatures,
+    ) -> Result<Module, Error> {
         let buf =
             wast::parser::ParseBuffer::new(source).map_err(|e| Error::Parse(e.to_string()))?;
         let mut wat: wast::Wat<'_> =
             wast::parser::parse(&buf).map_err(|e| Error::Parse(e.to_string()))?;
         let bytes = wat.encode().map_err(|e| Error::Parse(e.to_string()))?;
-        self.compile(&bytes)
+        match inspect_binary_with(&bytes, features) {
+            ModuleStatus::Valid => Ok(Module { bytes }),
+            ModuleStatus::ParseError(message) => Err(Error::Parse(message)),
+            ModuleStatus::ValidateError(message) => Err(Error::Validate(message)),
+        }
     }
 
     /// Score every directive in a wast script using features implied by `filename`.
     pub fn run_wast(&self, filename: &str, source: &str) -> WastReport {
-        run_wast(filename, source)
+        shared_wast::run_wast(filename, source)
     }
 }
 

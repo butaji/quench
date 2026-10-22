@@ -1,0 +1,727 @@
+use crate::host::NodeHost;
+use quench_runtime::{NativeContext, RootId, RootedError};
+use std::path::{Path, PathBuf};
+
+const REQUIRE_FACADES: &str = quench_js_check::checked_js!(
+    r#"(requireNative, pathsNative) => {
+      'use strict';
+      return [
+      function createRequire(filename) { return requireNative(filename); },
+      function(from) { return pathsNative(from); }
+    ]; }"#
+);
+
+pub(crate) const BUILTIN_MODULES: &[&str] = &[
+    "_http_agent",
+    "_http_client",
+    "_http_common",
+    "_http_incoming",
+    "_http_outgoing",
+    "_http_server",
+    "_tls_common",
+    "_tls_wrap",
+    "assert",
+    "assert/strict",
+    "async_hooks",
+    "buffer",
+    "child_process",
+    "cluster",
+    "console",
+    "constants",
+    "crypto",
+    "dgram",
+    "diagnostics_channel",
+    "dns",
+    "dns/promises",
+    "domain",
+    "events",
+    "fs",
+    "fs/promises",
+    "http",
+    "http2",
+    "https",
+    "inspector",
+    "inspector/promises",
+    "module",
+    "net",
+    "os",
+    "path",
+    "path/posix",
+    "path/win32",
+    "perf_hooks",
+    "process",
+    "punycode",
+    "querystring",
+    "readline",
+    "readline/promises",
+    "repl",
+    "stream",
+    "stream/consumers",
+    "stream/promises",
+    "stream/web",
+    "string_decoder",
+    "sys",
+    "timers",
+    "timers/promises",
+    "tls",
+    "trace_events",
+    "tty",
+    "url",
+    "util",
+    "util/types",
+    "v8",
+    "vm",
+    "wasi",
+    "worker_threads",
+    "zlib",
+    "node:sea",
+    "node:sqlite",
+    "node:test",
+    "node:test/reporters",
+];
+
+const NODE_ONLY_BUILTINS: &[&str] = &["sea", "sqlite", "test", "test/reporters"];
+
+pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let global = context.global_root()?;
+    let weak_map = get(context, global, "WeakMap")?;
+    let parents = context.construct_rooted(weak_map, weak_map, &[])?;
+    let module = context.host_constructor_with_data(
+        crate::host::shared_vm::operation("moduleConstruct"),
+        parents,
+    )?;
+    name_function(context, module, "Module")?;
+    crate::host::shared_vm::commonjs::attach_module_cache(context, module)?;
+    set(context, module, "Module", module)?;
+    let prototype = get(context, module, "prototype")?;
+    let constructor = context.host_function_with_data(
+        crate::host::shared_vm::operation("moduleConstructorGet"),
+        module,
+    )?;
+    name_function(context, constructor, "get")?;
+    accessor(context, prototype, "constructor", constructor, None)?;
+    let parent_get = context.host_function_with_data(
+        crate::host::shared_vm::operation("moduleParentGet"),
+        parents,
+    )?;
+    let parent_set = context.host_function_with_data(
+        crate::host::shared_vm::operation("moduleParentSet"),
+        parents,
+    )?;
+    name_function(context, parent_get, "deprecated")?;
+    name_function(context, parent_set, "deprecated")?;
+    accessor(context, prototype, "parent", parent_get, Some(parent_set))?;
+    for (name, operation) in [("require", "moduleRequire"), ("_compile", "moduleCompile")] {
+        let method = context.host_constructor(crate::host::shared_vm::operation(operation))?;
+        name_function(context, method, name)?;
+        set(context, prototype, name, method)?;
+    }
+    let stream_iter=context.host_mut().shared_state().borrow().cli_options.enabled("--experimental-stream-iter");
+    let mut names = BUILTIN_MODULES.iter().copied().filter(|name|!name.starts_with("node:"))
+        .chain(stream_iter.then_some("stream/iter"))
+        .chain(stream_iter.then_some("zlib/iter"))
+        .chain(BUILTIN_MODULES.iter().copied().filter(|name|name.starts_with("node:")))
+        .map(|name|context.string_rooted(name)).collect::<Vec<_>>();
+    if context.host_mut().vfs_enabled() {
+        names.push(context.string_rooted("node:vfs"));
+    }
+    let names = context.array_rooted(&names)?;
+    set(context, module, "builtinModules", names)?;
+    let is_builtin = context.host_function(crate::host::shared_vm::operation("isBuiltin"))?;
+    set(context, module, "isBuiltin", is_builtin)?;
+    let require_native =
+        context.host_function(crate::host::shared_vm::operation("createRequire"))?;
+    let paths_native =
+        context.host_function(crate::host::shared_vm::operation("moduleNodePaths"))?;
+    let factory =
+        context.evaluate_script_rooted(REQUIRE_FACADES, "node:module/require-facades.js")?;
+    let undefined = context.undefined();
+    let facades = context.call_rooted(factory, undefined, &[require_native, paths_native])?;
+    let create_require = get(context, facades, "0")?;
+    let paths = get(context, facades, "1")?;
+    set(context, module, "createRequire", create_require)?;
+    set(context, module, "_nodeModulePaths", paths)?;
+    let global_paths = global_paths()
+        .iter()
+        .map(|path| context.string_rooted(&path.to_string_lossy()))
+        .collect::<Vec<_>>();
+    let global_paths = context.array_rooted(&global_paths)?;
+    set(context, module, "globalPaths", global_paths)?;
+    let resolve_filename =
+        context.host_function(crate::host::shared_vm::operation("_resolveFilename"))?;
+    set(context, module, "_resolveFilename", resolve_filename)?;
+    let find_package_json =
+        context.host_function(crate::host::shared_vm::operation("findPackageJSON"))?;
+    set(context, module, "findPackageJSON", find_package_json)?;
+    Ok(module)
+}
+
+fn name_function(
+    context: &mut NativeContext<'_, NodeHost>,
+    function: RootId,
+    name: &str,
+) -> Result<(), RootedError> {
+    let key = context.string_rooted("name");
+    let name = context.string_rooted(name);
+    if context.define_data_property_rooted(function, key, name, false, false, true)? {
+        Ok(())
+    } else {
+        Err(RootedError::host("cannot name Module callable"))
+    }
+}
+
+fn accessor(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+    getter: RootId,
+    setter: Option<RootId>,
+) -> Result<(), RootedError> {
+    let descriptor = context.null_object_rooted()?;
+    set(context, descriptor, "get", getter)?;
+    if let Some(setter) = setter {
+        set(context, descriptor, "set", setter)?;
+    }
+    let flag = context.boolean(false);
+    set(context, descriptor, "configurable", flag)?;
+    set(context, descriptor, "enumerable", flag)?;
+    let key = context.string_rooted(name);
+    context.define_property_descriptor_rooted(object, key, descriptor)?;
+    Ok(())
+}
+
+pub(crate) fn construct(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = args
+        .first()
+        .copied()
+        .filter(|id| !context.rooted_value(*id).is_some_and(|v| v.is_undefined()))
+        .unwrap_or_else(|| context.string_rooted(""));
+    set(context, receiver, "id", id)?;
+    let path = crate::modules::path_shared_vm::host_dirname(context, id)?;
+    set(context, receiver, "path", path)?;
+    let exports = context.object_rooted()?;
+    // Exports is an own data property even when a derived prototype defines a setter.
+    let key = context.string_rooted("exports");
+    context.define_data_property_rooted(receiver, key, exports, true, true, true)?;
+    let parent = args.get(1).copied().unwrap_or_else(|| context.undefined());
+    let parents = context.host_function_data()?;
+    invoke(context, parents, "set", &[receiver, parent])?;
+    if context
+        .rooted_value(parent)
+        .is_some_and(|v| !v.is_null() && !v.is_undefined())
+    {
+        let children = get(context, parent, "children")?;
+        if context.truthy_rooted(children)? {
+            let global = context.global_root()?;
+            let array = get(context, global, "Array")?;
+            let prototype = get(context, array, "prototype")?;
+            let push = get(context, prototype, "push")?;
+            context.call_rooted(push, children, &[receiver])?;
+        }
+    }
+    let filename = context.null();
+    set(context, receiver, "filename", filename)?;
+    let loaded = context.boolean(false);
+    set(context, receiver, "loaded", loaded)?;
+    let children = context.array_rooted(&[])?;
+    set(context, receiver, "children", children)?;
+    Ok(context.undefined())
+}
+
+fn invoke(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    name: &str,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let function = get(context, receiver, name)?;
+    context.call_rooted(function, receiver, args)
+}
+
+pub(crate) fn constructor_get(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    context.host_function_data()
+}
+
+pub(crate) fn parent_get(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let parents = context.host_function_data()?;
+    invoke(context, parents, "get", &[receiver])
+}
+
+pub(crate) fn parent_set(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let parent = args.first().copied().unwrap_or_else(|| context.undefined());
+    let parents = context.host_function_data()?;
+    invoke(context, parents, "set", &[receiver, parent])?;
+    Ok(context.undefined())
+}
+
+pub(crate) fn require(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::require_for_module(context, receiver, args)
+}
+
+pub(crate) fn compile(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::compile_public(context, receiver, args)
+}
+
+pub(crate) fn find_package_json(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let specifier = args
+        .first()
+        .copied()
+        .map(|root| url_or_string_text(context, root))
+        .transpose()?
+        .flatten();
+    let Some(specifier) = specifier else {
+        return Err(invalid_url(context)?);
+    };
+    let base = args
+        .get(1)
+        .copied()
+        .map(|root| url_or_string_text(context, root))
+        .transpose()?
+        .flatten();
+
+    let base_path = match base.as_deref() {
+        Some(base) => match find_package_base(base) {
+            Ok(path) => Some(path),
+            Err(BasePathError::InvalidUrl) => return Err(invalid_url(context)?),
+            Err(BasePathError::InvalidScheme) => return Err(invalid_url_scheme(context)?),
+        },
+        None => None,
+    };
+    let package_json = if let Some(path) = file_url_path(&specifier) {
+        if !path.exists() {
+            return Err(module_not_found(
+                context,
+                &path,
+                base_path.as_ref().map(|base| base.path.as_path()),
+            )?);
+        }
+        package_scope(&path)
+    } else if has_url_scheme(&specifier) {
+        return if specifier.starts_with("file:") {
+            Err(invalid_url(context)?)
+        } else {
+            Err(invalid_url_scheme(context)?)
+        };
+    } else if PathBuf::from(&specifier).is_absolute() {
+        match base_path.as_ref() {
+            Some(base) => {
+                let path = PathBuf::from(specifier);
+                if !path.exists() {
+                    return Err(module_not_found(context, &path, Some(&base.path))?);
+                }
+                package_scope(&path)
+            }
+            None => return Err(unsupported_resolve_request(context, &specifier)?),
+        }
+    } else if is_bare_specifier(&specifier) {
+        let Some(base_path) = base_path else {
+            return Err(unsupported_resolve_request(context, &specifier)?);
+        };
+        match resolve_package_json(&base_path, &specifier) {
+            Some(path) => Some(path),
+            None => return Err(package_not_found(context, &specifier, &base_path.path)?),
+        }
+    } else {
+        let Some(base_path) = base_path else {
+            return Err(unsupported_resolve_request(context, &specifier)?);
+        };
+        let base_dir = if base_path.is_directory {
+            base_path.path.clone()
+        } else {
+            base_path
+                .path
+                .parent()
+                .unwrap_or(&base_path.path)
+                .to_path_buf()
+        };
+        let resolved = base_dir.join(&specifier);
+        if resolved.exists() {
+            package_scope(&resolved)
+        } else {
+            return Err(module_not_found(context, &resolved, Some(&base_path.path))?);
+        }
+    };
+
+    match package_json {
+        Some(path) => {
+            let path = std::fs::canonicalize(&path).unwrap_or(path);
+            Ok(context.string_rooted(&path.to_string_lossy()))
+        }
+        None => Ok(context.undefined()),
+    }
+}
+
+enum BasePathError {
+    InvalidUrl,
+    InvalidScheme,
+}
+
+struct PackageBase {
+    path: PathBuf,
+    is_directory: bool,
+}
+
+fn find_package_base(base: &str) -> Result<PackageBase, BasePathError> {
+    if has_url_scheme(base) {
+        let url = url::Url::parse(base).map_err(|_| BasePathError::InvalidUrl)?;
+        if url.scheme() != "file" {
+            return Err(BasePathError::InvalidScheme);
+        }
+        return Ok(PackageBase {
+            path: url.to_file_path().map_err(|_| BasePathError::InvalidUrl)?,
+            is_directory: url.path().ends_with('/'),
+        });
+    }
+    let path = PathBuf::from(base);
+    if !path.is_absolute() {
+        return Err(BasePathError::InvalidUrl);
+    }
+    Ok(PackageBase {
+        path,
+        is_directory: base.ends_with(std::path::MAIN_SEPARATOR),
+    })
+}
+
+fn url_or_string_text(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<Option<String>, RootedError> {
+    if let Some(text) = context.string_text(value)? {
+        return Ok(Some(text));
+    }
+    if !context.is_object_rooted(value)? {
+        return Ok(None);
+    }
+
+    let global = context.global_root()?;
+    let constructor = get(context, global, "URL")?;
+    let prototype = get(context, constructor, "prototype")?;
+    let to_string = get(context, prototype, "toString")?;
+    match context.call_rooted(to_string, value, &[]) {
+        Ok(url) => context.string_text(url),
+        Err(error) => {
+            if let Some(exception) = error.exception {
+                context.release_root(exception);
+            }
+            Ok(None)
+        }
+    }
+}
+
+fn file_url_path(value: &str) -> Option<PathBuf> {
+    let url = url::Url::parse(value).ok()?;
+    (url.scheme() == "file")
+        .then(|| url.to_file_path().ok())
+        .flatten()
+}
+
+fn has_url_scheme(value: &str) -> bool {
+    value.split_once(':').is_some_and(|(scheme, _)| {
+        !scheme.is_empty()
+            && scheme
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
+    })
+}
+
+fn is_bare_specifier(value: &str) -> bool {
+    !value.starts_with('.') && !value.starts_with('/') && !PathBuf::from(value).is_absolute()
+}
+
+fn resolve_package_json(base: &PackageBase, specifier: &str) -> Option<PathBuf> {
+    let package_name = if specifier.starts_with('@') {
+        let mut parts = specifier.split('/');
+        let scope = parts.next()?;
+        let name = parts.next()?;
+        format!("{scope}/{name}")
+    } else {
+        specifier.split('/').next()?.to_owned()
+    };
+    let mut directory = if base.is_directory {
+        base.path.clone()
+    } else {
+        base.path.parent()?.to_path_buf()
+    };
+    loop {
+        let package = directory.join("node_modules").join(&package_name);
+        let manifest = package.join("package.json");
+        if manifest.is_file() {
+            return Some(manifest);
+        }
+        if !directory.pop() {
+            return None;
+        }
+    }
+}
+
+fn package_scope(path: &std::path::Path) -> Option<PathBuf> {
+    let mut directory = if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent()?.to_path_buf()
+    };
+    loop {
+        let manifest = directory.join("package.json");
+        if manifest.is_file() {
+            return Some(manifest);
+        }
+        if !directory.pop() {
+            return None;
+        }
+    }
+}
+
+fn coded_module_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    type_error: bool,
+    code: &str,
+    message: &str,
+) -> Result<RootedError, RootedError> {
+    let error = if type_error {
+        context.type_error_rooted(message)?
+    } else {
+        context.error_rooted(message)?
+    };
+    let code = context.string_rooted(code);
+    set(context, error, "code", code)?;
+    Ok(context.throw(error))
+}
+
+fn invalid_url(context: &mut NativeContext<'_, NodeHost>) -> Result<RootedError, RootedError> {
+    coded_module_error(context, true, "ERR_INVALID_URL", "Invalid URL")
+}
+
+fn invalid_url_scheme(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<RootedError, RootedError> {
+    coded_module_error(
+        context,
+        true,
+        "ERR_INVALID_URL_SCHEME",
+        "The URL must be of scheme file",
+    )
+}
+
+fn unsupported_resolve_request(
+    context: &mut NativeContext<'_, NodeHost>,
+    specifier: &str,
+) -> Result<RootedError, RootedError> {
+    coded_module_error(
+        context,
+        true,
+        "ERR_UNSUPPORTED_RESOLVE_REQUEST",
+        &format!(
+            "Failed to resolve module specifier \"{specifier}\" from \"data:\": Invalid relative URL or base scheme is not hierarchical."
+        ),
+    )
+}
+
+fn module_not_found(
+    context: &mut NativeContext<'_, NodeHost>,
+    path: &std::path::Path,
+    base: Option<&Path>,
+) -> Result<RootedError, RootedError> {
+    let from = base
+        .map(|base| base.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "data:".to_owned());
+    coded_module_error(
+        context,
+        false,
+        "ERR_MODULE_NOT_FOUND",
+        &format!(
+            "Cannot find module '{}' imported from {from}",
+            path.display()
+        ),
+    )
+}
+
+fn package_not_found(
+    context: &mut NativeContext<'_, NodeHost>,
+    specifier: &str,
+    base: &Path,
+) -> Result<RootedError, RootedError> {
+    coded_module_error(
+        context,
+        false,
+        "ERR_MODULE_NOT_FOUND",
+        &format!(
+            "Cannot find package '{specifier}' imported from {}",
+            base.display()
+        ),
+    )
+}
+
+pub(crate) fn create_require(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let input = args.first().copied().unwrap_or_else(|| context.undefined());
+    // Node deliberately tests this URL-like shape before string coercion.
+    // Getter order and exceptions here are outside the conversion catch.
+    let url_like = super::url_shared_vm::is_url_like(context, input)?;
+    let text = context.string_text(input)?;
+    let filename = if url_like
+        || text
+            .as_ref()
+            .is_some_and(|text| !Path::new(text).is_absolute())
+    {
+        let conversion = (|| {
+            let text = context.to_string(input)?;
+            let text = context.string_rooted(&text);
+            let undefined = context.undefined();
+            let filename = super::url_shared_vm::file_url_to_path(context, undefined, &[text])?;
+            context.to_string(filename)
+        })();
+        match conversion {
+            Ok(filename) => filename,
+            Err(error) => {
+                if let Some(exception) = error.exception {
+                    context.release_root(exception);
+                }
+                return Err(super::util_shared_vm::argument_value_error(
+                    context,
+                    input,
+                    "filename",
+                    "must be a file URL object, file URL string, or absolute path string",
+                )?);
+            }
+        }
+    } else if let Some(text) = text {
+        text
+    } else {
+        return Err(super::util_shared_vm::argument_value_error(
+            context,
+            input,
+            "filename",
+            "must be a file URL object, file URL string, or absolute path string",
+        )?);
+    };
+    // A trailing separator gives the require a directory, rather than its parent.
+    let trailing_separator = filename.ends_with('/') || (cfg!(windows) && filename.ends_with('\\'));
+    let filename = if trailing_separator {
+        PathBuf::from(filename).join("noop.js")
+    } else {
+        PathBuf::from(filename)
+    };
+    crate::host::shared_vm::commonjs::create_require(context, &filename)
+}
+
+/// One projection of ancestor search directories, shared with CJS module records.
+pub(crate) fn node_search_paths(directory: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    directory
+        .ancestors()
+        .filter(|path| path.file_name().is_none_or(|name| name != "node_modules"))
+        .map(|path| path.join("node_modules"))
+}
+
+/// Node's `modulePaths` (lib/internal/modules/cjs/loader.js `initPaths`): `NODE_PATH`'s
+/// entries as given, then `$HOME/.node_modules`, `$HOME/.node_libraries` and
+/// `$PREFIX/lib/node`, the executable being `$PREFIX/bin/node`. Bare requires search them after
+/// the requester's `node_modules` chain; `Module.globalPaths` is a copy.
+pub(crate) fn global_paths() -> Vec<PathBuf> {
+    let node_path = std::env::var_os("NODE_PATH").unwrap_or_default();
+    let mut paths: Vec<PathBuf> =
+        std::env::split_paths(&node_path).filter(|path| !path.as_os_str().is_empty()).collect();
+    if let Some(home) = std::env::var_os("HOME").filter(|home| !home.is_empty()) {
+        let home = std::path::absolute(home).unwrap_or_default();
+        paths.extend([home.join(".node_modules"), home.join(".node_libraries")]);
+    }
+    let executable = crate::shared_run::executable_path().unwrap_or_default();
+    let prefix = executable.ancestors().nth(EXECUTABLE_PREFIX_DEPTH).unwrap_or(Path::new("/"));
+    paths.push(prefix.join("lib").join("node"));
+    paths
+}
+
+/// `$PREFIX/bin/node`: the prefix is the executable's second ancestor.
+const EXECUTABLE_PREFIX_DEPTH: usize = 2;
+
+pub(crate) fn node_module_paths(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let input = args.first().copied().unwrap_or_else(|| context.undefined());
+    let path = super::path_shared_vm::module(context)?;
+    let resolve = get(context, path, "resolve")?;
+    let resolved = context.call_rooted(resolve, path, &[input])?;
+    let resolved = context.to_string(resolved)?;
+    let roots = node_search_paths(Path::new(&resolved))
+        .map(|path| context.string_rooted(&path.to_string_lossy()))
+        .collect::<Vec<_>>();
+    context.array_rooted(&roots)
+}
+
+pub(crate) fn is_builtin(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let vfs_enabled = context.host_mut().vfs_enabled();
+    let stream_iter=context.host_mut().shared_state().borrow().cli_options.enabled("--experimental-stream-iter");
+    let result = args
+        .first()
+        .and_then(|argument| context.string_text(*argument).ok().flatten())
+        .is_some_and(|specifier| {
+            if specifier == "node:vfs" {
+                return vfs_enabled;
+            }
+            if matches!(specifier.as_str(),"stream/iter"|"node:stream/iter"|"zlib/iter"|"node:zlib/iter") { return stream_iter; }
+            if let Some(name) = specifier.strip_prefix("node:") {
+                BUILTIN_MODULES.contains(&name) || NODE_ONLY_BUILTINS.contains(&name)
+            } else {
+                BUILTIN_MODULES.contains(&specifier.as_str())
+            }
+        });
+    Ok(context.boolean(result))
+}
+
+fn set(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+    value: RootId,
+) -> Result<(), RootedError> {
+    let key = context.string_rooted(name);
+    if context.set_property_rooted(object, key, value, object)? {
+        Ok(())
+    } else {
+        Err(RootedError::host(format!("cannot install module.{name}")))
+    }
+}
+
+fn get(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+) -> Result<RootId, RootedError> {
+    context.get_named_property_rooted(object, name)
+}

@@ -1,4 +1,5 @@
 //! Durable outcome views and comparisons; case outcomes are the report authority.
+use crate::ratchet::RATCHET_ENGINE;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -69,19 +70,33 @@ pub fn classify_outcome(reason: &str) -> &'static str {
     }
 }
 
-pub fn case_outcome(path: String, stage: String, result: &Result<(), String>) -> Value {
-    match result {
+/// The raw case outcome; a waived failure keeps it and names its waiver group.
+pub fn case_outcome(
+    path: String,
+    stage: String,
+    result: &Result<(), String>,
+    waiver: Option<&str>,
+) -> Value {
+    let mut case = match result {
         Ok(()) => json!({"path":path,"stage":stage,"outcome":"pass"}),
         Err(reason) => {
             json!({"path":path,"stage":stage,"outcome":classify_outcome(reason),"reason":reason})
         }
+    };
+    if let Some(waiver) = waiver {
+        case["waiver"] = json!(waiver);
     }
+    case
 }
 
 pub fn outcome_report(outcomes: &[Value], provenance: Value) -> Value {
     let passed = outcomes
         .iter()
         .filter(|case| case["outcome"] == "pass")
+        .count();
+    let waived = outcomes
+        .iter()
+        .filter(|case| case["outcome"] != "pass" && case["waiver"].is_string())
         .count();
     let mut stages = BTreeMap::<String, (usize, usize)>::new();
     let mut families = BTreeMap::<String, usize>::new();
@@ -104,14 +119,17 @@ pub fn outcome_report(outcomes: &[Value], provenance: Value) -> Value {
             )
         })
         .collect::<BTreeMap<_, _>>();
-    json!({"schema":1,"engine":"next","provenance":provenance,
-        "total":outcomes.len(),"passed":passed,"failed":outcomes.len()-passed,
+    json!({"schema":1,"engine":RATCHET_ENGINE,"provenance":provenance,
+        "total":outcomes.len(),"passed":passed,"failed":outcomes.len()-passed,"waived":waived,
         "stages":stages,"families":families,"outcomes":outcomes})
 }
 
 fn case_outcomes(report: &Value) -> Result<BTreeMap<&str, &str>, String> {
-    if report["schema"] != 1 || report["engine"] != "next" || !report["provenance"].is_object() {
-        return Err("expected a next-core outcome report with provenance".into());
+    if report["schema"] != 1
+        || report["engine"] != RATCHET_ENGINE
+        || !report["provenance"].is_object()
+    {
+        return Err("expected a quench outcome report with provenance".into());
     }
     let outcomes = report["outcomes"]
         .as_array()

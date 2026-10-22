@@ -14,7 +14,7 @@ use std::{
 use serde_json::json;
 
 use quench_test262::{
-    discover_js_files, HarnessCache, RuntimeHost, Test262Runner, TestMetadata, TestOutcome,
+    discover_js_files, HarnessCache, Test262Runner, Test262RuntimeHost, TestMetadata, TestOutcome,
 };
 
 /// Per-thread outcomes for one contiguous chunk of files.
@@ -378,7 +378,7 @@ fn run_worker(
     next: Arc<AtomicUsize>,
     emit_outcomes: bool,
 ) -> RunReport {
-    let mut runner = Test262Runner::new(RuntimeHost);
+    let mut runner = Test262Runner::new(Test262RuntimeHost::default());
     let mut harness = HarnessCache::new(root.join("harness"));
     let mut report = RunReport::default();
     loop {
@@ -404,7 +404,7 @@ fn run_worker(
 }
 
 fn run_fixture_batch(
-    runner: &mut Test262Runner<RuntimeHost>,
+    runner: &mut Test262Runner<Test262RuntimeHost>,
     harness: &mut HarnessCache,
     batch: &[TestSource],
     limit: usize,
@@ -416,16 +416,12 @@ fn run_fixture_batch(
         if counter.load(Ordering::Relaxed) >= limit {
             break;
         }
-        let outcome = if fixture.metadata.is_module {
-            runner.run_test_with_cache_metadata_and_path(
-                &fixture.source,
-                &fixture.metadata,
-                &fixture.path,
-                harness,
-            )
-        } else {
-            runner.run_test_with_cache_and_metadata(&fixture.source, &fixture.metadata, harness)
-        };
+        let outcome = runner.run_test_with_cache_metadata_and_path(
+            &fixture.source,
+            &fixture.metadata,
+            &fixture.path,
+            harness,
+        );
         let (category, reason) = match outcome {
             Ok(TestOutcome::Pass) => (String::from("pass"), None),
             Ok(TestOutcome::Fail { reason }) | Err(reason) => {

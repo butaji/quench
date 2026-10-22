@@ -1,7 +1,7 @@
 # Bytecode addressing domains
 
 “One fact, one representation” applies only after the fact is named correctly.
-rqj's apparent addressing schemes encode three different facts, not three
+Quench's apparent addressing schemes encode three different facts, not three
 copies of one fact.
 
 ## The three domains

@@ -1,0 +1,810 @@
+use super::object_descriptors::PropertyDescriptorRecord;
+use super::property_key::PropertyKey;
+use super::*;
+impl<H: Host> Vm<H> {
+    pub(super) fn delete_name(
+        &mut self,
+        p: &ResidualProgram,
+        atom: Atom,
+    ) -> Result<Value, JsError> {
+        if self.atom_name(atom).starts_with('\0') {
+            return Ok(Value::TRUE);
+        }
+        let frame = self.frames.len().saturating_sub(1);
+        let key = self.heap.alloc_string(self.atom_name(atom).into());
+        let with_objects = self.with_objects_before_binding(frame, atom);
+        for object in with_objects.into_iter().rev() {
+            if self.with_binding(p, object, key, atom)? {
+                return self.object_delete_property(p, &[object, key]);
+            }
+        }
+        if let Some(deleted) = self.delete_environment_binding(p, frame, atom) {
+            return Ok(if deleted { Value::TRUE } else { Value::FALSE });
+        }
+        if self.realm.global_lexical_bindings.contains_key(&atom) {
+            return Ok(Value::FALSE);
+        }
+        self.object_delete_property(p, &[self.realm.globals, key])
+    }
+
+    pub(super) fn object_delete_property(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if !self.is_object_like(source) {
+            return Err(self.type_error(p, "delete target is not an object".into()));
+        }
+        let key = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        self.with_call_roots([source, key], |vm| {
+            let key = vm.to_property_key(p, key)?;
+            vm.delete_property_key(p, source, key)
+        })
+    }
+
+    fn delete_property_key(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        key: Value,
+    ) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
+        self.with_call_roots([target, key], |vm| {
+            if vm.is_host_private_symbol(key) && matches!(vm.heap.get(target), Some(Cell::Proxy { .. })) { return Ok(Value::TRUE); }
+            if let Some((target, handler)) = vm.proxy_parts(target) {
+                if handler.is_null() {
+                    return Err(vm.type_error(p, "cannot access a revoked proxy".into()));
+                }
+                return vm.with_call_roots([target, handler], |vm| {
+                    let trap_name = "deleteProperty";
+                    let trap_atom = vm.intern_atom(trap_name);
+                    let trap = vm.get_property(p, handler, trap_atom)?;
+                    if trap.is_null() || trap.is_undefined() {
+                        return vm.delete_property_key(p, target, key);
+                    }
+                    if !vm.is_function(trap) {
+                        return Err(
+                            vm.type_error(p, "proxy deleteProperty trap is not callable".into())
+                        );
+                    }
+                    let result = vm.call_value(p, trap, handler, &[target, key])?;
+                    if !vm.truthy(result) {
+                        return Ok(Value::FALSE);
+                    }
+                    vm.validate_proxy_property_absence(p, target, key, trap_name)?;
+                    Ok(Value::TRUE)
+                });
+            }
+            let property_key = if matches!(vm.heap.get(key), Some(Cell::Symbol(_))) {
+                vm.materialize_watched_lazy_member(p, target, PropertyKey::symbol(key))?;
+                PropertyKey::symbol(key)
+            } else {
+                let Some(key) = vm.heap.string(key).cloned() else {
+                    unreachable!("ToPropertyKey returns a string or symbol")
+                };
+                let atom = vm.intern_js_atom(&key);
+                vm.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
+                vm.materialize_watched_lazy_member(p, target, PropertyKey::string(atom))?;
+                if key.host_string() == "length"
+                    && vm.heap.array(target).is_some()
+                    && !vm
+                        .object_data(target)
+                        .is_some_and(Object::is_arguments_object)
+                {
+                    return Ok(Value::FALSE);
+                }
+                if matches!(vm.heap.get(target), Some(Cell::TypedArray { .. })) {
+                    match Self::typed_array_index_key(key.host_string()) {
+                        super::object_descriptors::TypedArrayIndexKey::Index(index) => {
+                            return Ok(
+                                if vm
+                                    .typed_array_length(target)
+                                    .is_some_and(|length| index < length)
+                                {
+                                    Value::FALSE
+                                } else {
+                                    Value::TRUE
+                                },
+                            );
+                        }
+                        super::object_descriptors::TypedArrayIndexKey::Invalid => {
+                            return Ok(Value::TRUE);
+                        }
+                        super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
+                    }
+                }
+                if let Some(index) =
+                    super::object_static::array_index(key.host_string()).map(|index| index as usize)
+                    && vm.heap.array(target).is_some()
+                {
+                    return Ok(vm.delete_array_index(target, index));
+                }
+                PropertyKey::string(atom)
+            };
+            let Some((_, slot)) =
+                vm.object_property_slot(target, property_key)
+                    .filter(|(_, slot)| {
+                        vm.object_data(target)
+                            .and_then(|object| vm.heap.property_get(object, *slot))
+                            .is_some()
+                    })
+            else {
+                return Ok(Value::TRUE);
+            };
+            if !vm
+                .property_attributes(target, property_key)
+                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
+                .configurable
+            {
+                return Ok(Value::FALSE);
+            }
+            vm.heap.property_set(target, slot, Value::DELETED);
+            vm.delete_shape_property(target, property_key);
+            Ok(Value::TRUE)
+        })
+    }
+
+    pub(super) fn validate_proxy_property_absence(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        key: Value,
+        trap_name: &str,
+    ) -> Result<(), JsError> {
+        let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
+        if descriptor.is_undefined() {
+            return Ok(());
+        }
+        let configurable = self.own_descriptor_record(descriptor).configurable;
+        if configurable == Some(false) {
+            return Err(self.type_error(
+                p,
+                format!("proxy {trap_name} trap cannot hide a non-configurable property"),
+            ));
+        }
+        let extensible = self.object_is_extensible(p, &[target])?;
+        if !self.truthy(extensible) {
+            return Err(self.type_error(
+                p,
+                format!("proxy {trap_name} trap cannot hide a property of a non-extensible target"),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn delete_reference_property(
+        &mut self,
+        p: &ResidualProgram,
+        base: Value,
+        key: Value,
+    ) -> Result<Value, JsError> {
+        if base.is_null() || base.is_undefined() {
+            return Err(self.type_error(p, "Cannot convert undefined or null to object".into()));
+        }
+        let target = self.box_object(base)?;
+        self.object_delete_property(p, &[target, key])
+    }
+
+    pub(super) fn object_get_prototype_of(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
+        if let Some((target, handler)) = self.proxy_parts(value) {
+            if handler.is_null() {
+                return Err(self.type_error(p, "cannot access a revoked proxy".into()));
+            }
+            let proxy = self.heap.root(value);
+            let target = self.heap.root(target);
+            let handler = self.heap.root(handler);
+            let mut result_root = None;
+            let outcome = (|| {
+                let atom = self.intern_atom("getPrototypeOf");
+                let trap = self.get_property(p, self.heap.root_value(handler).unwrap(), atom)?;
+                if trap.is_null() || trap.is_undefined() {
+                    return self.object_get_prototype_of(p, self.heap.root_value(target).unwrap());
+                }
+                if !self.is_function(trap) {
+                    return Err(
+                        self.type_error(p, "proxy getPrototypeOf trap is not callable".into())
+                    );
+                }
+                let result = self.call_value(
+                    p,
+                    trap,
+                    self.heap.root_value(handler).unwrap(),
+                    &[self.heap.root_value(target).unwrap()],
+                )?;
+                if !result.is_null() && !self.is_object_like(result) {
+                    return Err(self.type_error(
+                        p,
+                        "proxy getPrototypeOf trap must return an object or null".into(),
+                    ));
+                }
+                let result = self.heap.root(result);
+                result_root = Some(result);
+                let extensible =
+                    self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()])?;
+                if !self.truthy(extensible) {
+                    let target_prototype =
+                        self.object_get_prototype_of(p, self.heap.root_value(target).unwrap())?;
+                    if !self.same_value(target_prototype, self.heap.root_value(result).unwrap()) {
+                        return Err(self.type_error(
+                            p,
+                            "proxy getPrototypeOf trap changed a non-extensible target".into(),
+                        ));
+                    }
+                }
+                Ok(self.heap.root_value(result).unwrap())
+            })();
+            for root in [Some(proxy), Some(target), Some(handler), result_root]
+                .into_iter()
+                .flatten()
+            {
+                self.heap.release_root(root);
+            }
+            return outcome;
+        }
+        let value = self.box_object_or_type_error(p, value)?;
+        Ok(self
+            .object_data(value)
+            .map(|object| object.proto())
+            .unwrap_or(Value::NULL))
+    }
+
+    pub(super) fn object_set_prototype_of(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        proto: Value,
+    ) -> Result<Value, JsError> {
+        self.require_object_coercible(p, target)?;
+        if !proto.is_null() && !self.is_object_like(proto) {
+            return Err(self.type_error(p, "Object prototype is not an object".into()));
+        }
+        if !self.is_object_like(target) {
+            return Ok(target);
+        }
+        let target = self.heap.root(target);
+        let outcome = (|| {
+            if !self.set_prototype_of(p, self.heap.root_value(target).unwrap(), proto)? {
+                return Err(self.type_error(p, "cannot set object prototype".into()));
+            }
+            Ok(self.heap.root_value(target).unwrap())
+        })();
+        self.heap.release_root(target);
+        outcome
+    }
+
+    pub(super) fn set_prototype_of(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        proto: Value,
+    ) -> Result<bool, JsError> {
+        let _stack = self.enter_stack()?;
+        if let Some(Cell::Proxy {
+            target: underlying,
+            handler,
+            ..
+        }) = self.heap.get(target).cloned()
+        {
+            if handler.is_null() {
+                return Err(self.type_error(p, "cannot access a revoked proxy".into()));
+            }
+            let proxy = self.heap.root(target);
+            let underlying = self.heap.root(underlying);
+            let handler = self.heap.root(handler);
+            let proto = self.heap.root(proto);
+            let outcome = (|| {
+                let atom = self.intern_atom("setPrototypeOf");
+                let trap = self.get_property(p, self.heap.root_value(handler).unwrap(), atom)?;
+                if trap.is_null() || trap.is_undefined() {
+                    return self.set_prototype_of(
+                        p,
+                        self.heap.root_value(underlying).unwrap(),
+                        self.heap.root_value(proto).unwrap(),
+                    );
+                }
+                if !self.is_function(trap) {
+                    return Err(
+                        self.type_error(p, "proxy setPrototypeOf trap is not callable".into())
+                    );
+                }
+                let result = self.call_value(
+                    p,
+                    trap,
+                    self.heap.root_value(handler).unwrap(),
+                    &[
+                        self.heap.root_value(underlying).unwrap(),
+                        self.heap.root_value(proto).unwrap(),
+                    ],
+                )?;
+                if !self.truthy(result) {
+                    return Ok(false);
+                }
+                let extensible =
+                    self.object_is_extensible(p, &[self.heap.root_value(underlying).unwrap()])?;
+                if !self.truthy(extensible) {
+                    let current =
+                        self.object_get_prototype_of(p, self.heap.root_value(underlying).unwrap())?;
+                    if !self.same_value(current, self.heap.root_value(proto).unwrap()) {
+                        return Err(self.type_error(
+                            p,
+                            "proxy setPrototypeOf trap changed a non-extensible target".into(),
+                        ));
+                    }
+                }
+                Ok(true)
+            })();
+            for root in [proxy, underlying, handler, proto] {
+                self.heap.release_root(root);
+            }
+            return outcome;
+        }
+        let data = self
+            .object_data(target)
+            .expect("SetPrototypeOf target is an object");
+        if self.same_value(data.proto(), proto) {
+            return Ok(true);
+        }
+        if target == self.object_proto || !data.is_extensible() {
+            return Ok(false);
+        }
+        // An ordinary object answers every property from its shape, and so does a typed array
+        // for every key a field cache holds: its exotic own keys are integer indices, never
+        // cached, and `length` is an inherited accessor. A function's shape answers all but
+        // its restricted keys, which no cache records (`shape_property_lookup_function`).
+        // Other exotic receivers (an array's `length`, a String object's indices) share shapes
+        // with ordinary objects and rely on the dictionary transition below to keep their own
+        // cache entries apart. Node gives every new Buffer its prototype this way
+        // (`FastBuffer`), and its classes their parent constructors (`Readable` from `Stream`).
+        let keeps_shape = !data.was_used_as_prototype()
+            && (self.heap.ordinary_object(target).is_some()
+                || self.heap.function(target).is_some()
+                || matches!(self.heap.get(target), Some(Cell::TypedArray { .. })));
+        let mut cursor = proto;
+        while !cursor.is_null() {
+            if self.same_value(cursor, target) {
+                return Ok(false);
+            }
+            if matches!(self.heap.get(cursor), Some(Cell::Proxy { .. })) {
+                break;
+            }
+            cursor = self
+                .object_data(cursor)
+                .map(|object| object.proto())
+                .unwrap_or(Value::NULL);
+        }
+        self.heap.mark_prototype(proto);
+        self.object_data_mut(target)
+            .expect("object validated")
+            .set_proto(proto);
+        // Every cache tier keyed by a receiver shape re-reads the receiver's actual
+        // prototype chain and checks each holder's shape (own, holder, inherited, add and
+        // method caches), so a prototype change on an ordinary object that no other object
+        // inherits from leaves every entry sound and keeps the receiver's shape. An object
+        // already serving as a prototype changes the chain of its inheritors, and an exotic
+        // receiver must not share an ordinary shape: both keep the conservative dictionary
+        // transition and cache flush.
+        if !keeps_shape {
+            self.mark_object_dictionary(target, DictionaryTrigger::PrototypeUse);
+            self.invalidate_field_caches();
+            self.invalidate_method_caches();
+        }
+        Ok(true)
+    }
+
+    pub(super) fn integrity_bool(value: bool) -> Value {
+        if value { Value::TRUE } else { Value::FALSE }
+    }
+
+    pub(super) fn check_property_write(
+        &self,
+        object: Value,
+        atom: Atom,
+        exists: bool,
+    ) -> Result<(), JsError> {
+        self.check_property_key_write(object, PropertyKey::string(atom), exists)
+    }
+
+    pub(super) fn check_property_key_write(
+        &self,
+        object: Value,
+        key: PropertyKey,
+        exists: bool,
+    ) -> Result<(), JsError> {
+        if !exists
+            && !key.symbol_value().is_some_and(|symbol| self.is_host_private_symbol(symbol))
+            && self
+                .object_data(object)
+                .is_some_and(|object| !object.is_extensible())
+        {
+            return Err(JsError(
+                "cannot add property to non-extensible object".into(),
+            ));
+        }
+        if exists
+            && self
+                .property_attributes(object, key)
+                .is_some_and(|attributes| !attributes.writable)
+        {
+            return Err(JsError("cannot write non-writable property".into()));
+        }
+        Ok(())
+    }
+
+    pub(super) fn object_prevent_extensions(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if !self.is_object_like(source) {
+            return Ok(source);
+        }
+        let source = self.heap.root(source);
+        let outcome = (|| {
+            if !self.prevent_extensions(p, self.heap.root_value(source).unwrap())? {
+                return Err(self.type_error(p, "cannot prevent object extensions".into()));
+            }
+            Ok(self.heap.root_value(source).unwrap())
+        })();
+        self.heap.release_root(source);
+        outcome
+    }
+
+    pub(super) fn prevent_extensions(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+    ) -> Result<bool, JsError> {
+        let _stack = self.enter_stack()?;
+        if let Some((target, handler)) = self.proxy_parts(source) {
+            if handler.is_null() {
+                return Err(self.type_error(p, "cannot access a revoked proxy".into()));
+            }
+            let proxy = self.heap.root(source);
+            let target = self.heap.root(target);
+            let handler = self.heap.root(handler);
+            let outcome = (|| {
+                let atom = self.intern_atom("preventExtensions");
+                let trap = self.get_property(p, self.heap.root_value(handler).unwrap(), atom)?;
+                if trap.is_null() || trap.is_undefined() {
+                    return self.prevent_extensions(p, self.heap.root_value(target).unwrap());
+                }
+                if !self.is_function(trap) {
+                    return Err(
+                        self.type_error(p, "proxy preventExtensions trap is not callable".into())
+                    );
+                }
+                let result = self.call_value(
+                    p,
+                    trap,
+                    self.heap.root_value(handler).unwrap(),
+                    &[self.heap.root_value(target).unwrap()],
+                )?;
+                if !self.truthy(result) {
+                    return Ok(false);
+                }
+                let extensible =
+                    self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()])?;
+                if self.truthy(extensible) {
+                    return Err(self.type_error(
+                        p,
+                        "proxy preventExtensions trap did not make target non-extensible".into(),
+                    ));
+                }
+                Ok(true)
+            })();
+            for root in [proxy, target, handler] {
+                self.heap.release_root(root);
+            }
+            return outcome;
+        }
+        // An object that gains keys when its lazy members materialize gains them first.
+        self.complete_lazy_keys(p, source)?;
+        if self.typed_array_length_is_variable(source) {
+            return Ok(false);
+        }
+        self.object_data_mut(source)
+            .expect("PreventExtensions target is an object")
+            .set_extensible(false);
+        Ok(true)
+    }
+
+    pub(super) fn object_is_extensible(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if let Some((target, handler)) = self.proxy_parts(source) {
+            if handler.is_null() {
+                return Err(self.type_error(p, "cannot access a revoked proxy".into()));
+            }
+            let proxy = self.heap.root(source);
+            let target = self.heap.root(target);
+            let handler = self.heap.root(handler);
+            let outcome = (|| {
+                let atom = self.intern_atom("isExtensible");
+                let trap = self.get_property(p, self.heap.root_value(handler).unwrap(), atom)?;
+                if trap.is_null() || trap.is_undefined() {
+                    return self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()]);
+                }
+                if !self.is_function(trap) {
+                    return Err(
+                        self.type_error(p, "proxy isExtensible trap is not callable".into())
+                    );
+                }
+                let result = self.call_value(
+                    p,
+                    trap,
+                    self.heap.root_value(handler).unwrap(),
+                    &[self.heap.root_value(target).unwrap()],
+                )?;
+                let result = self.truthy(result);
+                let target_result =
+                    self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()])?;
+                if self.truthy(target_result) != result {
+                    return Err(
+                        self.type_error(p, "proxy isExtensible trap disagreed with target".into())
+                    );
+                }
+                Ok(Self::integrity_bool(result))
+            })();
+            for root in [proxy, target, handler] {
+                self.heap.release_root(root);
+            }
+            return outcome;
+        }
+        Ok(Self::integrity_bool(
+            self.object_data(source).is_some_and(Object::is_extensible),
+        ))
+    }
+
+    pub(super) fn set_integrity_level(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        freeze: bool,
+    ) -> Result<Value, JsError> {
+        let object = self.heap.root(object);
+        let mut keys = Vec::new();
+        let outcome = (|| {
+            let target = self.heap.root_value(object).unwrap();
+            self.object_prevent_extensions(p, &[target])?;
+            let target = self.heap.root_value(object).unwrap();
+            keys = self
+                .object_own_key_values(p, target)?
+                .into_iter()
+                .map(|key| self.heap.root(key))
+                .collect();
+            for &key in &keys {
+                let is_data = if freeze {
+                    let target = self.heap.root_value(object).unwrap();
+                    let property = self.heap.root_value(key).unwrap();
+                    let current =
+                        self.object_get_own_property_descriptor(p, &[target, property])?;
+                    if current.is_undefined() {
+                        continue;
+                    }
+                    self.own_descriptor_record(current).has_data_fields()
+                } else {
+                    false
+                };
+                let record = PropertyDescriptorRecord {
+                    value: None,
+                    writable: is_data.then_some(false),
+                    enumerable: None,
+                    configurable: Some(false),
+                    getter: None,
+                    setter: None,
+                };
+                let target = self.heap.root_value(object).unwrap();
+                let property = self.heap.root_value(key).unwrap();
+                self.define_property_or_throw(p, target, property, record)?;
+            }
+            Ok(self.heap.root_value(object).unwrap())
+        })();
+        for root in keys {
+            self.heap.release_root(root);
+        }
+        self.heap.release_root(object);
+        outcome
+    }
+
+    fn test_integrity_level(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        freeze: bool,
+    ) -> Result<Value, JsError> {
+        let object = self.heap.root(object);
+        let mut keys = Vec::new();
+        let outcome = (|| {
+            let target = self.heap.root_value(object).unwrap();
+            let extensible = self.object_is_extensible(p, &[target])?;
+            if self.truthy(extensible) {
+                return Ok(Value::FALSE);
+            }
+            let target = self.heap.root_value(object).unwrap();
+            keys = self
+                .object_own_key_values(p, target)?
+                .into_iter()
+                .map(|key| self.heap.root(key))
+                .collect();
+            for &key in &keys {
+                let target = self.heap.root_value(object).unwrap();
+                let property = self.heap.root_value(key).unwrap();
+                let current = self.object_get_own_property_descriptor(p, &[target, property])?;
+                if current.is_undefined() {
+                    continue;
+                }
+                let record = self.own_descriptor_record(current);
+                if record.configurable == Some(true)
+                    || (freeze && record.has_data_fields() && record.writable == Some(true))
+                {
+                    return Ok(Value::FALSE);
+                }
+            }
+            Ok(Value::TRUE)
+        })();
+        for root in keys {
+            self.heap.release_root(root);
+        }
+        self.heap.release_root(object);
+        outcome
+    }
+
+    pub(super) fn object_set_integrity(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+        freeze: bool,
+    ) -> Result<Value, JsError> {
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if matches!(
+            self.heap.get(source),
+            Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+        ) || self
+            .object_data(source)
+            .is_some_and(Object::is_module_namespace)
+            || self.has_lazy_data_properties(source)
+        {
+            return self.set_integrity_level(p, source, freeze);
+        }
+        let target = source;
+        if self.object_data(target).is_none() {
+            return Ok(target);
+        }
+        if let Some(object) = self.object_data_mut(target) {
+            object.set_extensible(false);
+            if freeze {
+                object.set_frozen(true);
+            }
+        }
+        let mut atoms = self.own_named_keys(target);
+        atoms.extend(self.array_integrity_atoms(target));
+        let mut keys = atoms.into_iter().map(PropertyKey::string).collect::<Vec<_>>();
+        keys.extend(
+            self.object_data(target)
+                .map(|data| self.shape_keys(data.shape()))
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|key| key.symbol_value().is_some_and(|symbol| !self.is_host_private_symbol(symbol))),
+        );
+        self.update_property_attributes(target, &keys, |attributes| PropertyAttributes {
+            configurable: false,
+            writable: attributes.writable && !freeze,
+            ..attributes
+        });
+        Ok(target)
+    }
+
+    pub(super) fn object_is_integrity_level(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+        freeze: bool,
+    ) -> Result<Value, JsError> {
+        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if self.heap.is_function_value(source)
+            || matches!(
+                self.heap.get(source),
+                Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+            )
+            || self
+            .object_data(source)
+            .is_some_and(Object::is_module_namespace)
+            || self.has_lazy_data_properties(source)
+        {
+            return self.test_integrity_level(p, source, freeze);
+        }
+        let target = source;
+        let Some(data) = self.object_data(target) else {
+            return Ok(Value::TRUE);
+        };
+        if data.is_extensible() {
+            return Ok(Value::FALSE);
+        }
+        let named_ok = self.own_named_keys(target).into_iter().all(|atom| {
+            let attributes = self
+                .property_attributes(target, PropertyKey::string(atom))
+                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+            !attributes.configurable && (!freeze || !attributes.writable)
+        });
+        let arrays_ok = self.array_is_integrity_level(target, freeze);
+        let shape_keys = self.shape_keys(data.shape());
+        let symbols_ok = shape_keys
+            .iter()
+            .filter(|key| key.symbol_value().is_some_and(|symbol| !self.is_host_private_symbol(symbol)))
+            .all(|symbol| {
+                let attributes = self
+                    .property_attributes(target, *symbol)
+                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+                !attributes.configurable && (!freeze || !attributes.writable)
+            });
+        Ok(Self::integrity_bool(named_ok && arrays_ok && symbols_ok))
+    }
+
+    pub(super) fn validate_proxy_define_property_record(
+        &mut self,
+        p: &ResidualProgram,
+        target: RootId,
+        key: RootId,
+        descriptor: &super::property_definition::RootedPropertyDescriptor,
+    ) -> Result<(), JsError> {
+        let object = self.heap.root_value(target).unwrap();
+        let property = self.heap.root_value(key).unwrap();
+        let current = self.object_get_own_property_descriptor(p, &[object, property])?;
+        let current = if current.is_undefined() {
+            None
+        } else {
+            let record = self.own_descriptor_record(current);
+            Some(super::property_definition::RootedPropertyDescriptor::new(
+                &mut self.heap,
+                record,
+            ))
+        };
+        let outcome = (|| {
+            let object = self.heap.root_value(target).unwrap();
+            let extensible = self.object_is_extensible(p, &[object])?;
+            let record = descriptor.resolve(&self.heap);
+            let current = current.as_ref().map(|r| r.resolve(&self.heap));
+            if !record.compatible_with(current, self.truthy(extensible), |a, b| {
+                self.same_value(a, b)
+            }) {
+                return Err(self.type_error(
+                    p,
+                    "proxy defineProperty trap returned an incompatible descriptor".into(),
+                ));
+            }
+            if record.configurable == Some(false)
+                && current.is_none_or(|r| r.configurable == Some(true))
+            {
+                return Err(self.type_error(
+                    p,
+                    "proxy defineProperty trap introduced a non-configurable property".into(),
+                ));
+            }
+            if current.is_some_and(|r| {
+                r.has_data_fields() && r.configurable == Some(false) && r.writable == Some(true)
+            }) && record.writable == Some(false)
+            {
+                return Err(self.type_error(
+                    p,
+                    "proxy defineProperty trap changed a non-writable target property".into(),
+                ));
+            }
+            Ok(())
+        })();
+        if let Some(current) = current {
+            current.release(&mut self.heap);
+        }
+        outcome
+    }
+}
