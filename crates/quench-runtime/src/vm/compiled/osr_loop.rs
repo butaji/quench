@@ -70,6 +70,9 @@ pub(crate) enum Widening {
     Capture(u16),
     /// The elements the region reads from the array in this register.
     Elements(Register),
+    /// A register the region never writes, held as exactly 1 so that multiplying or
+    /// dividing by it is the identity (`Lowering::units`), held something else at entry.
+    Unit(Register),
 }
 
 const OUTCOME_NOT_ENTERED: u64 = 0;
@@ -79,6 +82,8 @@ const OUTCOME_WIDEN: u64 = 3;
 /// A not-entered outcome's low word: zero, or a widening's kind bit over its payload.
 const WIDEN_REGISTER: u64 = 1 << u16::BITS;
 const WIDEN_CAPTURE: u64 = WIDEN_REGISTER << 1;
+const WIDEN_UNIT: u64 = WIDEN_CAPTURE << 1;
+const _: () = assert!(WIDEN_UNIT <= PC_MASK);
 const WIDEN_PAYLOAD: u64 = WIDEN_REGISTER - 1;
 
 impl Widening {
@@ -88,6 +93,7 @@ impl Widening {
         match self {
             Self::Register(register) => WIDEN_REGISTER | u64::from(register),
             Self::Capture(index) => WIDEN_CAPTURE | u64::from(index),
+            Self::Unit(register) => WIDEN_UNIT | u64::from(register),
             Self::Elements(_) => 0,
         }
     }
@@ -98,6 +104,8 @@ impl Widening {
             Some(Self::Register(payload))
         } else if word & WIDEN_CAPTURE != 0 {
             Some(Self::Capture(payload))
+        } else if word & WIDEN_UNIT != 0 {
+            Some(Self::Unit(payload))
         } else {
             None
         }
@@ -1252,6 +1260,11 @@ struct Lowering<'a, 'b> {
     variables: std::collections::BTreeMap<Definition, Variable>,
     /// The instruction being lowered, whose reads and result name webs.
     pc: u32,
+    /// The entry registers the region never writes that held exactly 1 when it compiled:
+    /// each is guarded at entry (`Widening::Unit`), and a product with or a quotient by one
+    /// is its other operand, exactly, for every double (signed zeros, infinities and NaN
+    /// alike).
+    units: std::collections::BTreeSet<Register>,
     /// Each capture's value, unboxed at entry, in region order.
     captures: Vec<Typed>,
     capture_representations: Vec<Representation>,
@@ -1307,6 +1320,18 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .iter()
             .map(|counted| (counted.header..=counted.backedge).map(|_| builder.create_block()).collect())
             .collect();
+        let written: std::collections::BTreeSet<Register> =
+            region.instructions.iter().filter_map(|instruction| number_definition(*instruction)).collect();
+        let one = Value::number(1.0);
+        let units = (0..region.numbers.len())
+            .filter(|entry| webs.entry_read[*entry])
+            .map(|entry| region.numbers[entry])
+            .filter(|register| {
+                !written.contains(register)
+                    && !observation.widened.contains(&Widening::Unit(*register))
+                    && (observation.register)(*register) == one
+            })
+            .collect();
         Self {
             builder,
             region,
@@ -1316,6 +1341,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             representations,
             variables: std::collections::BTreeMap::new(),
             pc: region.header,
+            units,
             captures: Vec::new(),
             capture_representations,
             blocks,
@@ -1575,6 +1601,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.registers,
                 i32::from(register) * WORD_BYTES,
             );
+            if self.units.contains(&register) {
+                let one = self.builder.ins().iconst(types::I64, Value::number(1.0).to_bits() as i64);
+                let other = self.builder.ins().icmp(IntCC::NotEqual, bits, one);
+                let otherwise = self.not_entered(Some(Widening::Unit(register)));
+                let pass = self.builder.create_block();
+                self.builder.ins().brif(other, otherwise, &[], pass, &[]);
+                self.builder.switch_to_block(pass);
+            }
             let otherwise = self.not_entered(Some(Widening::Register(register)));
             let value = self.unbox(bits, representation, otherwise);
             let variable = self.variable(web);
@@ -2031,7 +2065,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
                 let result = instruction.result_register();
-                let value = self.arithmetic(pc, operator, result, left, right);
+                let unit = |operand: Operand| operand.register_index().is_some_and(|register| self.units.contains(&register));
+                let value = match operator {
+                    // `x * 1`, `1 * x` and `x / 1` are `x` (`Lowering::units`).
+                    Arithmetic::Float(FloatOperator::Multiply) if unit(instruction.operand_c()) => left,
+                    Arithmetic::Float(FloatOperator::Multiply) if unit(instruction.operand_b()) => right,
+                    Arithmetic::Float(FloatOperator::Divide) if unit(instruction.operand_c()) => left,
+                    _ => self.arithmetic(pc, operator, result, left, right),
+                };
                 self.define(result, value);
                 self.fall_through(pc)
             }
