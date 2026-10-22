@@ -831,7 +831,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         frame: usize,
         callee: Value,
-    ) -> Option<(u32, Value, Value)> {
+    ) -> Option<(ProgramId, u32, Value, Value)> {
         let caller = &self.frames[frame];
         if frame + 1 != self.frames.len()
             || caller.function == super::ROOT_FUNCTION_ID
@@ -853,17 +853,24 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let (program_id, id, env) = (*program_id, *id, *env);
-        if *realm != self.realm.globals
-            || program_id != caller.program
-            || program_id != self.active_program
-            || id == super::ROOT_FUNCTION_ID
-        {
+        if *realm != self.realm.globals || id == super::ROOT_FUNCTION_ID {
             return None;
         }
-        if !Self::inline_constructible(p.function_get(id as usize)?) {
+        // A constructor of another program is pushed in its own, which the pushing loop
+        // makes active until the return restores the caller's (`StepResult::PushFrame`).
+        let body = if program_id == caller.program && program_id == self.active_program {
+            p.function_get(id as usize)?
+        } else {
+            let owner = self.programs.residual(program_id)?;
+            if owner.kind == crate::bytecode::ProgramKind::Wasm {
+                return None;
+            }
+            owner.function_get(id as usize)?
+        };
+        if !Self::inline_constructible(body) {
             return None;
         }
-        Some((id, env, self.inline_construct_receiver(callee)?))
+        Some((program_id, id, env, self.inline_construct_receiver(callee)?))
     }
 
     /// A body whose [[Construct]] the dispatch loop may push in place: a constructible
