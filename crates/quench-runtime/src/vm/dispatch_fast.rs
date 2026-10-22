@@ -13262,19 +13262,19 @@ fn derive_lane_view<H: Host>(
             }
         }
     }
-    specialize_register_operands::<H>(function, kind, constants, &mut records);
+    specialize_register_operands::<H>(&decoded, kind, constants, &mut records);
     specialize_updates::<H>(&mut records);
     specialize_updated_index_reads::<H>(&mut records);
     specialize_negated_instanceof::<H>(&mut records);
     specialize_frame_locals::<H>(function, &mut records);
     specialize_outer_captures::<H>(&mut records);
-    let environment_window = specialize_environment_window::<H>(function, &mut records);
+    let environment_window = specialize_environment_window::<H>(function, &decoded, &mut records);
     let loops = if loop_tier && kind != crate::bytecode::ProgramKind::Wasm {
         install_loop_sites::<H>(function, &decoded, constants, live, diagnostics, &mut records)
     } else {
         Box::default()
     };
-    let min_run = if closes_loop(function, &exits) {
+    let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
     } else {
         LANE_ENTRY_MIN_CALL_RUN
@@ -13305,14 +13305,10 @@ fn derive_lane_view<H: Host>(
         target_body: std::cell::OnceCell::new(),
         environment_window,
         loops,
-        plain_backward_jump_sites: function
-            .code
+        plain_backward_jump_sites: decoded
             .iter()
             .enumerate()
-            .filter(|(pc, packed)| {
-                let instruction = decoded_instruction(function, **packed);
-                instruction.op() == Op::Jump && instruction.jump_target() <= *pc as u32
-            })
+            .filter(|(pc, instruction)| instruction.op() == Op::Jump && instruction.jump_target() <= *pc as u32)
             .count(),
     }
 }
@@ -13392,7 +13388,7 @@ fn install_loop_sites<H: Host>(
 /// the record, `GetIndex` and `JumpBinaryFalse`, also with a small integer constant right
 /// operand carried in the record.
 fn specialize_register_operands<H: Host>(
-    function: &Function,
+    decoded: &[WideInstruction],
     kind: crate::bytecode::ProgramKind,
     constants: &[Value],
     records: &mut [LaneInstruction],
@@ -13407,8 +13403,7 @@ fn specialize_register_operands<H: Host>(
     };
     let forward_test = lane_jump_binary_false::<H, false> as Handler as *const ();
     let backward_test = lane_jump_binary_false::<H, true> as Handler as *const ();
-    for (pc, packed) in function.code.iter().enumerate() {
-        let instruction = decoded_instruction(function, *packed);
+    for (pc, &instruction) in decoded.iter().enumerate() {
         let record = &mut records[pc];
         if ![binary, get_index, forward_test, backward_test].contains(&record.handler) {
             continue;
@@ -13647,6 +13642,7 @@ fn environment_window_fields(i: &LaneInstruction) -> (usize, u16) {
 /// any record of which cannot keeps all of them.
 fn specialize_environment_window<H: Host>(
     function: &Function,
+    decoded: &[WideInstruction],
     records: &mut [LaneInstruction],
 ) -> Option<EnvironmentWindow> {
     if function.locals == 0
@@ -13674,8 +13670,7 @@ fn specialize_environment_window<H: Host>(
         lane_exit::<H>,
     ];
     let mut replacements = Vec::new();
-    for (pc, packed) in function.code.iter().enumerate() {
-        let instruction = decoded_instruction(function, *packed);
+    for (pc, &instruction) in decoded.iter().enumerate() {
         let op = instruction.op();
         let own = match op {
             Op::MakeClosure => instruction.imm(),
@@ -13869,9 +13864,8 @@ fn may_loop(function: &Function) -> bool {
     })
 }
 
-fn closes_loop(function: &Function, exits: &[bool]) -> bool {
-    function.code.iter().enumerate().any(|(pc, packed)| {
-        let instruction = decoded_instruction(function, *packed);
+fn closes_loop(decoded: &[WideInstruction], exits: &[bool]) -> bool {
+    decoded.iter().enumerate().any(|(pc, &instruction)| {
         let target = instruction.imm() as usize;
         instruction.op().immediate_role() == ImmediateRole::JumpTarget
             && target <= pc
