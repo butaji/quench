@@ -618,6 +618,8 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        // Guest code observes the frame stack.
+        self.materialize_deferred_lane();
         self.with_call_roots(
             std::iter::once(callee)
                 .chain(std::iter::once(new_target))

@@ -1169,6 +1169,15 @@ impl LaneStack {
     }
 }
 
+/// A lane native call made beside the lane's activations (`Vm::runs_beside_activations`):
+/// the lane's context and the call's record, whose frames the first observer of the frame
+/// stack makes (`Vm::materialize_deferred_lane`).
+pub(super) struct DeferredLaneCall {
+    /// The lane's `LaneContext`, of the VM's host.
+    cx: *mut (),
+    call_pc: usize,
+}
+
 /// Lane state that handlers read rarely; the hot state travels in handler
 /// arguments so it stays in machine registers across dispatches.
 struct LaneContext<H: Host> {
@@ -6418,10 +6427,53 @@ impl<H: Host> Vm<H> {
     /// Make the lane's activations VM frames, innermost last, each with the
     /// pending call its push would have recorded; the lane continues in the
     /// innermost one. The bottom caller is the lane run's VM frame.
+    /// Whether a lane may call `native` (the function `callee`) beside its activations
+    /// (`Native::runs_beside_activations`, `Host::host_function_runs_beside_activations`).
+    fn runs_beside_activations(&self, native: Native, callee: Value) -> bool {
+        if native != Native::HostFunction {
+            return native.runs_beside_activations();
+        }
+        let Some(index) = self.heap.function(callee).and_then(|function| self.host_operation_index(function.env)) else {
+            return false;
+        };
+        self.host_beside_activations
+            .get_or_init(|| (0..self.host.functions().len()).map(|index| self.host.host_function_runs_beside_activations(index)).collect())
+            .get(index as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Make a deferred lane native call's activations frames (`DeferredLaneCall`), as
+    /// `lane_call_native` would have before calling: at every point that observes the frame
+    /// stack while a native runs, which guest code, a stack capture and a collection do.
+    #[inline(always)]
+    pub(super) fn materialize_deferred_lane(&mut self) {
+        if self.lane_deferred.is_some() {
+            self.materialize_deferred_lane_now();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn materialize_deferred_lane_now(&mut self) {
+        let Some(DeferredLaneCall { cx, call_pc }) = self.lane_deferred.take() else {
+            return;
+        };
+        // SAFETY: the deferred call's lane runs, so its context lives.
+        let cx = cx.cast::<LaneContext<H>>();
+        self.materialize_lane_activations(cx);
+        // The call runs from the innermost activation's frame, resuming after it.
+        let frame = unsafe { (*cx).frame };
+        self.frames[frame].pc = call_pc + 1;
+        self.frames[frame].pc_is_resume = true;
+    }
+
     fn materialize_lane_activations(&mut self, cx: *mut LaneContext<H>) {
         if self.lane_stack.activations.is_empty() {
             return;
         }
+        #[cfg(feature = "profile-lane-exits")]
+        super::lane_exits::record_detail(format!("materialize depth {}", self.lane_stack.activations.len()));
         let mut activations = std::mem::take(&mut self.lane_stack.activations);
         let pending = unsafe { &mut *(*cx).pending };
         let mut caller = unsafe { (*cx).frame };
@@ -7811,6 +7863,28 @@ fn lane_call_native<H: Host>(
     // The values are copied before activations become frames, which moves the registers
     // they may lie in; the frames then root what the call passes.
     let arguments = super::call_arguments::CallArguments::from_slice(args);
+    // SAFETY: `ip` is a record of the active view, which is the running function's.
+    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    // A native that observes frames only through the points `materialize_deferred_lane`
+    // guards runs beside the activations; the first such point makes them frames.
+    if !vm.lane_stack.activations.is_empty() && vm.runs_beside_activations(native, callee) {
+        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc });
+        let result = vm.call_native_guarded(unsafe { &*(*cx).code }, native, receiver, arguments.as_slice(), callee);
+        note_allocation(vm);
+        let unobserved = vm.lane_deferred.take().is_some();
+        return match result {
+            Ok(value) => Some(value),
+            Err(error) => {
+                // The general path raises it from the frames its activations become.
+                if unobserved {
+                    vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc });
+                    vm.materialize_deferred_lane();
+                }
+                vm.lane_raised = Some(error);
+                None
+            }
+        };
+    }
     #[cfg(feature = "profile-lane-exits")]
     if !vm.lane_stack.activations.is_empty() {
         super::lane_exits::record_detail(match native {
@@ -7823,13 +7897,7 @@ fn lane_call_native<H: Host>(
     vm.materialize_lane_activations(cx);
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
     // active view, which is the running frame's.
-    let (code, frame, call_pc) = unsafe {
-        (
-            &*(*cx).code,
-            (*cx).frame,
-            ip.offset_from((*cx).base) as usize,
-        )
-    };
+    let (code, frame) = unsafe { (&*(*cx).code, (*cx).frame) };
     vm.frames[frame].pc = call_pc + 1;
     vm.frames[frame].pc_is_resume = true;
     // The native branch of `Vm::call_value_with_target_inner`, whose callee this is.
