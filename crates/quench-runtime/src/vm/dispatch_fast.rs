@@ -7610,6 +7610,8 @@ script_handler! {
             && i.a & crate::bytecode::RETURN_REGISTER == 0
             && let Some(this) = lane_planned_construction(vm, callee, r, i)
         {
+            // Later runs of the site try the plan first.
+            requicken(ip, lane_planned_construct::<H>);
             // Allocating the receiver can make a collection due.
             note_allocation(vm);
             r.set(i.a, this);
@@ -7658,6 +7660,29 @@ script_handler! {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
             Err(next) => next,
         }
+    }
+}
+
+script_handler! {
+    /// `lane_script_construct` at a site into a register whose construction was planned
+    /// (`lane_planned_construction`), which `lane_script_construct` moves it to: the plan of
+    /// the callee alone, without resolving its call target. A plan exists only for a callee
+    /// whose target constructs by its initializer stores, which its function fixes, and while
+    /// it holds the finished object is what the activation would make. Any other construction
+    /// moves the record back to `lane_script_construct`.
+    fn lane_planned_construct<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
+            return exit(ip);
+        }
+        let Some(this) = lane_planned_construction(vm, r.get(i.b), r, i) else {
+            requicken(ip, lane_script_construct::<H>);
+            sibling!(lane_script_construct::<H>, r, ip, Carried::script(cx))
+        };
+        // Allocating the receiver can make a collection due.
+        note_allocation(vm);
+        r.set(i.a, this);
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
@@ -8590,7 +8615,8 @@ fn lane_planned_construction<H: Host>(
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<Value> {
-    let plan = holding_construct_plan(vm, callee)?;
+    // The plan in place: the allocation borrows the heap beside it, not a copy.
+    let plan = &vm.lane_stack.construct_plans[holding_construct_plan_index(vm, callee)?];
     let argc = ImmediateLayout::argument_count(i.imm());
     // Parameter `k` is argument `k`, or undefined when not passed.
     Some(plan.allocate(&mut vm.heap, |parameter| {
@@ -8608,11 +8634,18 @@ fn construct_plan_index(callee: Value) -> Option<usize> {
 /// `prototype`, from which the receiver's template is derived.
 #[inline(always)]
 fn holding_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -> Option<ConstructPlan> {
-    let plan = vm.lane_stack.construct_plans[construct_plan_index(callee)?];
+    holding_construct_plan_index(vm, callee).map(|index| vm.lane_stack.construct_plans[index])
+}
+
+/// The construct plan cache index of `callee`'s plan while it holds (`holding_construct_plan`).
+#[inline(always)]
+fn holding_construct_plan_index<H: Host>(vm: &Vm<H>, callee: Value) -> Option<usize> {
+    let index = construct_plan_index(callee)?;
+    let plan = &vm.lane_stack.construct_plans[index];
     (plan.callee == callee
         && plan.epoch == crate::heap::prototype_layout_epoch()
         && vm.function_prototype_in_layout(callee, plan.callee_layout) == Some(plan.prototype))
-    .then_some(plan)
+    .then_some(index)
 }
 
 /// The receiver `Vm::inline_construct_receiver` allocates for a constructor that forwards its
