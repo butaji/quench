@@ -44,7 +44,16 @@ pub(super) struct LaneInstruction {
     a: u16,
     b: u16,
     c: u16,
+    /// A call record's hint of the script call target cache entry that answered it last
+    /// (`Vm::linked_script_call_entry`), which the record's next call tests first; `NO_CALL_LINK`
+    /// for none. It fills the record's padding, so every record keeps its size.
+    call_link: std::cell::Cell<u16>,
 }
+
+/// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
+const NO_CALL_LINK: u16 = u16::MAX;
+const _: () = assert!(SCRIPT_CALL_TARGETS <= NO_CALL_LINK as usize);
+const _: () = assert!(std::mem::size_of::<LaneInstruction>() == 3 * std::mem::size_of::<u64>());
 
 /// The immediate, resolved by its role: a jump target becomes the byte
 /// distance from the record, a constant index becomes the constant.
@@ -4305,9 +4314,9 @@ script_handler! {
     /// `lane_jump_binary_false` with register operands, decoded when the view was derived
     /// (`specialize_register_operands`): Number comparison of two integers
     /// (`integer_relation`); any other pair takes `lane_jump_binary_false_registers_other`.
-    fn lane_jump_binary_false_registers<BACKWARD: bool>(cx, r, ip, i, view) {
+    fn lane_jump_binary_false_registers<BACKWARD: bool, OP: u32>(cx, r, ip, i, view) {
         let (left, right) = (r.get(i.b), r.get(i.c));
-        let Some(holds) = super::operations::integer_relation(u32::from(i.a), left, right) else {
+        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(i), left, right) else {
             sibling!(lane_jump_binary_false_registers_other::<H, BACKWARD>, r, ip, Carried::script(cx))
         };
         if !holds {
@@ -4338,9 +4347,9 @@ script_handler! {
     /// record's `c` field, both decoded when the view was derived
     /// (`specialize_register_operands`): Number comparison of an integer register
     /// (`integer_relation`); any other takes `lane_jump_binary_false_small_other`.
-    fn lane_jump_binary_false_small<BACKWARD: bool>(cx, r, ip, i, view) {
+    fn lane_jump_binary_false_small<BACKWARD: bool, OP: u32>(cx, r, ip, i, view) {
         let right = Value::integer(i32::from(i.c as i16));
-        let Some(holds) = super::operations::integer_relation(u32::from(i.a), r.get(i.b), right) else {
+        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(i), r.get(i.b), right) else {
             sibling!(lane_jump_binary_false_small_other::<H, BACKWARD>, r, ip, view)
         };
         if !holds {
@@ -6407,17 +6416,44 @@ impl<H: Host> Vm<H> {
     /// replaces it, which no activation makes.
     #[inline(always)]
     fn script_call_entry(&self, callee: Value) -> Option<*const ScriptCallTarget> {
+        self.script_call_index(callee).map(|index| &self.lane_stack.script_targets[index] as *const ScriptCallTarget)
+    }
+
+    /// The index of `script_call_entry`'s entry in `LaneStack::script_targets`.
+    #[inline(always)]
+    fn script_call_index(&self, callee: Value) -> Option<usize> {
         let set = self.lane_stack.script_targets.set(callee)?;
-        let (generation, program) = (self.lane_stack.generation, self.active_program);
-        let holds = |cached: &ScriptCallTarget| {
-            cached.callee == callee && cached.generation == generation && cached.program == program
+        [set, set | 1].into_iter().find(|index| self.script_call_holds(*index, callee))
+    }
+
+    /// Whether `LaneStack::script_targets` entry `index` holds `callee`'s target for this
+    /// generation and the running program.
+    #[inline(always)]
+    fn script_call_holds(&self, index: usize, callee: Value) -> bool {
+        self.lane_stack.script_targets.entries.get(index).is_some_and(|cached| {
+            cached.callee == callee
+                && cached.generation == self.lane_stack.generation
+                && cached.program == self.active_program
+        })
+    }
+
+    /// `script_call_entry` for the call record whose hint is `link` (`LaneInstruction::call_link`):
+    /// the entry it names when that holds `callee`'s target, which skips the set's hash, else
+    /// the set's, which the hint names from then on. A cache that grew or another callee only
+    /// costs the hash again.
+    #[inline(always)]
+    fn linked_script_call_entry(&self, callee: Value, link: &std::cell::Cell<u16>) -> Option<*const ScriptCallTarget> {
+        let linked = usize::from(link.get());
+        let index = if self.script_call_holds(linked, callee) {
+            linked
+        } else {
+            let index = self.script_call_index(callee)?;
+            // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
+            link.set(index as u16);
+            index
         };
-        let first = &self.lane_stack.script_targets[set];
-        if holds(first) {
-            return Some(first as *const ScriptCallTarget);
-        }
-        let second = &self.lane_stack.script_targets[set | 1];
-        holds(second).then_some(second as *const ScriptCallTarget)
+        // SAFETY: `script_call_holds` found the entry within the cache.
+        Some(unsafe { self.lane_stack.script_targets.entries.get_unchecked(index) } as *const ScriptCallTarget)
     }
 
     /// `script_call_entry` of a callee of another program than the running one, whose
@@ -6701,7 +6737,7 @@ script_handler! {
         if lane_constructing(vm, callee) {
             sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
         }
-        let Some(target) = vm.script_call_entry(callee) else {
+        let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else {
             sibling!(lane_script_call_resolve::<H>, r, ip, Carried::script(cx))
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
@@ -6804,7 +6840,7 @@ script_handler! {
         if lane_constructing(vm, callee) {
             sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
         }
-        let Some(target) = vm.script_call_entry(callee) else {
+        let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else {
             sibling!(lane_script_call_resolve::<H>, r, ip, Carried::script(cx))
         };
         // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
@@ -10734,6 +10770,7 @@ fn derive_lane_view<H: Host>(
                 a: instruction.a(),
                 b: instruction.b(),
                 c: instruction.c(),
+                call_link: std::cell::Cell::new(NO_CALL_LINK),
             }
         })
         .collect();
@@ -10928,6 +10965,7 @@ fn derive_lane_view<H: Host>(
             a: absorbed.a(),
             b: absorbed.b(),
             c,
+            call_link: std::cell::Cell::new(NO_CALL_LINK),
         };
     }
     // Two plain moves in a row run as one record.
@@ -11463,11 +11501,7 @@ fn specialize_register_operands<H: Host>(
                 .and_then(|constant| constant.as_int())
                 .and_then(|value| i16::try_from(value).ok())
         {
-            let handler: Handler = if backward {
-                lane_jump_binary_false_small::<H, true>
-            } else {
-                lane_jump_binary_false_small::<H, false>
-            };
+            let handler = relation_jump_handler::<H, true>(u32::from(instruction.a()), backward);
             record.handler = handler as *const ();
             record.b = left.payload();
             record.c = small as u16;
@@ -11487,10 +11521,8 @@ fn specialize_register_operands<H: Host>(
             } else {
                 lane_jump_strict_equal_false::<H, false>
             }
-        } else if backward {
-            lane_jump_binary_false_registers::<H, true>
         } else {
-            lane_jump_binary_false_registers::<H, false>
+            relation_jump_handler::<H, false>(u32::from(instruction.a()), backward)
         };
         record.handler = handler as *const ();
         record.b = left.payload();
@@ -11530,6 +11562,7 @@ fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
             a: conversion.a,
             b: conversion.b,
             c: update.a,
+            call_link: std::cell::Cell::new(NO_CALL_LINK),
         };
     }
 }
@@ -11707,6 +11740,54 @@ fn specialize_negated_instanceof<H: Host>(records: &mut [LaneInstruction]) {
 
 /// The handler of a specialized `Binary` operator, with a register or (`CONSTANT`) a constant
 /// right operand.
+/// A `JumpBinaryFalse` integer test handler's operator parameter that names none: the
+/// handler reads the operator from the record's `a` field (`relation_operator`).
+const RECORD_RELATION: u32 = u32::MAX;
+
+/// The operator of an integer jump test (`lane_jump_binary_false_registers`,
+/// `lane_jump_binary_false_small`): `OP`, fixed when the view was derived
+/// (`relation_jump_handler`), else the record's.
+#[inline(always)]
+fn relation_operator<const OP: u32>(i: &LaneInstruction) -> u32 {
+    if OP == RECORD_RELATION { u32::from(i.a) } else { OP }
+}
+
+/// The integer jump test handler of `operator` (`SMALL`: against a small constant, else two
+/// registers) that branches `backward` or not: a comparison's own instantiation, which
+/// decides it with no dispatch on the operator, else the one reading the record's.
+fn relation_jump_handler<H: Host, const SMALL: bool>(operator: u32, backward: bool) -> Handler {
+    use oxc_ast::ast::BinaryOperator as B;
+    macro_rules! handler {
+        ($($operator:ident = $variant:ident),*) => {{
+            $(const $operator: u32 = B::$variant as u32;)*
+            macro_rules! pick {
+                ($op:expr) => {
+                    match (SMALL, backward) {
+                        (true, true) => lane_jump_binary_false_small::<H, true, { $op }> as Handler,
+                        (true, false) => lane_jump_binary_false_small::<H, false, { $op }> as Handler,
+                        (false, true) => lane_jump_binary_false_registers::<H, true, { $op }> as Handler,
+                        (false, false) => lane_jump_binary_false_registers::<H, false, { $op }> as Handler,
+                    }
+                };
+            }
+            match operator {
+                $($operator => pick!($operator),)*
+                _ => pick!(RECORD_RELATION),
+            }
+        }};
+    }
+    handler!(
+        EQUALITY = Equality,
+        INEQUALITY = Inequality,
+        STRICT_EQUALITY = StrictEquality,
+        STRICT_INEQUALITY = StrictInequality,
+        LESS_THAN = LessThan,
+        LESS_EQUAL = LessEqualThan,
+        GREATER_THAN = GreaterThan,
+        GREATER_EQUAL = GreaterEqualThan
+    )
+}
+
 fn operator_handler<H: Host, const CONSTANT: bool>(operator: u32) -> Option<Handler> {
     use super::operations::{
         ADDITION, BITWISE_AND, BITWISE_OR, BITWISE_XOR, DIVISION, MULTIPLICATION, REMAINDER,
