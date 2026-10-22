@@ -99,7 +99,7 @@ struct ProgramEntry {
     root_slots: std::cell::OnceCell<Box<[crate::bytecode::RootSlotRule]>>,
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
-    lane_views: Vec<std::cell::OnceCell<super::dispatch_fast::LaneView>>,
+    lane_views: LaneViews,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
     /// `lane_call_may_derive`), up to `LANE_VIEW_DEFERRED_RUNS`.
     lane_deferred: Vec<std::cell::Cell<u8>>,
@@ -608,11 +608,7 @@ impl ProgramStore {
         }
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
         let function_sources = vec![None; program.functions.len()];
-        let lane_views = program
-            .functions
-            .iter()
-            .map(|_| std::cell::OnceCell::new())
-            .collect();
+        let lane_views = LaneViews::default();
         let lane_deferred = vec![std::cell::Cell::new(0); program.functions.len()];
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.programs.push(Some(ProgramEntry {
@@ -905,10 +901,7 @@ impl ProgramStore {
             entry.const_arrays = vec![None; constants.len()];
             entry.constants = constants;
             // Lane views carry constants, so they derive from the new set.
-            entry
-                .lane_views
-                .iter_mut()
-                .for_each(|view| *view = Default::default());
+            entry.lane_views = LaneViews::default();
         }
     }
 
@@ -1619,7 +1612,8 @@ impl ProgramStore {
         &self,
         id: ProgramId,
     ) -> Option<&[std::cell::OnceCell<super::dispatch_fast::LaneView>]> {
-        Some(&self.entry(id)?.lane_views)
+        let entry = self.entry(id)?;
+        Some(entry.lane_views.of(&entry.residual))
     }
 
     /// The lane view a general-loop entry of `function` runs with. A function that may loop
@@ -1640,7 +1634,7 @@ impl ProgramStore {
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
-        let view = entry.lane_views.get(function as usize)?;
+        let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         if let Some(view) = view.get() {
             return Some(view);
         }
@@ -1662,10 +1656,7 @@ impl ProgramStore {
         let Some(entry) = self.entry(id) else {
             return false;
         };
-        let derived = entry
-            .lane_views
-            .get(function as usize)
-            .is_some_and(|view| view.get().is_some());
+        let derived = entry.lane_views.derived(function);
         derived
             || entry
                 .lane_deferred
@@ -1686,7 +1677,7 @@ impl ProgramStore {
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
         let code = entry.residual.function_get(function as usize)?;
-        let view = entry.lane_views.get(function as usize)?;
+        let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         Some(view.get_or_init(|| {
             let live = entry.residual.register_root_masks(function);
             derive(code, &entry.constants, entry.residual.kind, live)
@@ -1946,4 +1937,27 @@ fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
     }
     runs.set(done + 1);
     false
+}
+
+/// A program's lane views by function, derived on first use (`ProgramStore::entry_lane_view`).
+/// The table itself is made on the program's first lane use: most programs a process restores
+/// or loads never enter the lane, and a table zeroed for each of their functions cost a
+/// restored process about 54 fresh pages (2,493 functions at 88 bytes).
+#[derive(Default)]
+pub(super) struct LaneViews(std::cell::OnceCell<Box<[std::cell::OnceCell<super::dispatch_fast::LaneView>]>>);
+
+impl LaneViews {
+    /// The table, one cell per function of `residual`. Its address is fixed once made, as
+    /// the lane context's pointer to it requires.
+    fn of(&self, residual: &ResidualProgram) -> &[std::cell::OnceCell<super::dispatch_fast::LaneView>] {
+        self.0.get_or_init(|| residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect())
+    }
+
+    /// Whether `function` has its view, without making the table.
+    fn derived(&self, function: u32) -> bool {
+        self.0
+            .get()
+            .and_then(|views| views.get(function as usize))
+            .is_some_and(|view| view.get().is_some())
+    }
 }
