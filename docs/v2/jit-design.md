@@ -2,9 +2,21 @@
 
 ## Goal
 
-Make JIT mode in `quench-node` beat JIT-enabled Node and Bun on JetStream 3.0 Score while using less maximum RSS, first on the server-side JavaScript fixtures. Keep the interpreted mode as the default and preserve its results. Use one OXC frontend, one residual bytecode representation and the same `Vm`, heap and host APIs in both modes. TypeScript is erased by the existing frontend; Wasm keeps its current decoder and enters that same VM.
+Make `quench-node` score at least 20% above every measured peer on JetStream 3.0 in both no-JIT and JIT modes, while using less maximum RSS in JIT mode. These are separate performance goals: JIT tier work cannot improve no-JIT execution because no-JIT never enters compiled tiers. Keep the interpreted mode as the default and preserve its results. Use one OXC frontend, one residual bytecode representation and the same `Vm`, heap and host APIs in both modes. TypeScript is erased by the existing frontend; Wasm keeps its current decoder and enters that same VM.
 
-The pass condition is workload-specific and measured: stock JetStream validation, 11 or more matched rounds, and a paired 95% bootstrap interval showing Quench's score ratio above 1 and its maximum-RSS ratio below 1 against each available JIT-enabled bar. Qualify on Linux x86_64 and M4 separately. A single run is a screen, not a win. JetStream 3 contains both compute-heavy JavaScript and Wasm, so continue to its Wasm fixtures after the JavaScript tier has a useful measured path.
+The pass condition is measured on stock JetStream with 11 or more matched rounds: in each execution mode, the lower bound of the paired 95% bootstrap interval for Quench's suite score ratio must be at least 1.20 against every available peer. In JIT mode, the paired maximum-RSS ratio must also remain below 1 against each peer. Qualify on Linux x86_64 and M4 separately. A single run is a screen, not a win. JetStream 3 contains both compute-heavy JavaScript and Wasm, so continue to its Wasm fixtures after the JavaScript tier has a useful measured path.
+
+Track no-JIT independently through interpreter, allocation, garbage collection and host-call paths; compiled-tier coverage only contributes to the JIT objective. Existing historical screens are far from the new threshold (about 0.49× Bun's suite score in no-JIT and 0.058–0.085× the JIT peers in JIT), so architecture consolidation is enabling work rather than evidence of a near-term suite win. Rebaseline both modes on this branch before attributing any change, and rank follow-up work by hot execution coverage and paired score deltas.
+
+## Unified execution architecture (active contract)
+
+There is one JavaScript bytecode semantics authority. A Rust macro declaratively records each opcode's operands, effect class, lane behavior and compiled denotation; it generates the fast-lane handler wiring and the per-instruction lowering entry points in `vm/compiled.rs`. Both generated paths call the same semantic helpers for observable behavior. A new opcode implementation therefore has one semantic definition, and an optimization may specialize only behind explicit guards that retain the same helper or resume the lane on failure. This is the contract for replacing duplicated hand-maintained lane and compiler decision trees.
+
+`vm/compiled.rs` is the sole region compiler. A region mode distinguishes function entry from loop OSR; both use the same bytecode decoder, instruction denotations, abstract state, guard representation, code-memory publisher and resume-map format. The OSR entry supplies the current loop-header PC and live register state. Any failed speculative guard returns to the fast lane at that exact failing instruction with the interpreter-visible frame, registers, handlers and pending completion intact. Effects remain ordered through shared semantic helpers. No failure path restarts a region after effects or skips an instruction.
+
+One tier manager owns hotness counters, promotion decisions, compiled artifacts, cache lookup, byte accounting and exhaustion behavior for JS and Wasm on the existing `Vm`. Frontends continue to lower into the same residual bytecode and do not create frontend-specific VMs. Tier admission depends on measured execution feedback and named resource budgets, never benchmark identity, source markers, score, checksum or suite selection. The cache key names the bytecode artifact and region mode; cache eviction or exhaustion returns execution to the existing lane/interpreter.
+
+Migration order is: land and review this contract; merge the v2-cloud-c loop tier into `compiled.rs` as OSR mode while coordinating the competing loop-codegen work; add general guarded field, dense-element, inline-cache call and int32/f64 denotations before deleting their equivalent `js_compiled.rs` recognizers; then route JS through the shared tier manager and cache. Each step is a separate change with runtime library tests and the 116 Node-oracle scripts run in both interpreter and `--jit` modes. At measured milestones, `QUENCH_JS_JIT_STATS` must show native entries on hot V8-v7 code covering Richards, DeltaBlue, NavierStokes and Crypto; JetStream Score/RSS comparisons are reported against JIT-enabled Node and Bun without treating a diagnostic run as a win.
 
 ## What the repository already has
 
@@ -1122,3 +1134,23 @@ Candidate-first pairs were added to check run-order bias. Peer scores varied
 sharply, so this supports a local async-fs improvement only; it is not a
 JetStream peer win or qualification. Reports and methodology are in
 `evidence/jit-jetstream3-2026-10-22/async-fs-dataview-boolean-fast-path/`.
+
+A follow-up removed the unused body-pointer word from each Wasm
+indirect-call-site certificate in default mode, moving it to a separate array
+only for the opt-in body-cache experiment. The SQLite Wasm three-round screen
+validated both executables but did not show an RSS reduction (170,295,296 B
+control; 170,586,112 B candidate). The candidate patch was dropped because the
+8-byte-per-site saving was below useful peak-RSS resolution. Full reports are
+in `evidence/jit-jetstream3-2026-10-22/sqlite-reference-cache-compact/`.
+
+The async-fs native call dispatcher also previously read the same callee cell
+to check for `Function.prototype.call` and again to classify the native. A
+candidate now classifies the native once and reuses that value for all fast
+handlers, retaining generic fallback for other callees. Six interleaved
+one-round pairs all validated output. Median paired Quench Score ratio was
+1.073 (geometric mean 1.117), while Quench peak-RSS deltas had a median of
+zero. The same-run Bun/Node normalization had a 0.974 geometric mean due to
+large peer variation, so the sample does not establish a causal score or RSS
+win. Keep interpreting it as a low-risk local candidate while broader JIT
+coverage remains the larger opportunity. Reports are in
+`evidence/jit-jetstream3-2026-10-22/async-fs-native-dispatch-dedup/`.
