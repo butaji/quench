@@ -840,9 +840,9 @@ fn loop_iterations_release_their_environments_and_eval_programs() {
 }
 
 #[test]
-fn property_sites_past_the_site_space_share_an_uncached_site() {
-    // Two passes over a line of sites larger than the 16-bit site space: the sites past it
-    // share one site, which alternately reads `a` and `b` from the same shape.
+fn property_sites_past_the_site_space_share_a_site_per_name() {
+    // Two passes over a line of sites larger than the 16-bit site space: the reads past the
+    // unique sites share one site per name, alternately `a` and `b` of the same shape.
     let sites = usize::from(u16::MAX) + 64;
     let reads = (0..sites)
         .map(|index| {
@@ -867,6 +867,32 @@ fn property_sites_past_the_site_space_share_an_uncached_site() {
     let total = vm.own_property(vm.realm.globals, name).unwrap();
     let expected = 2 * (sites / 2 * 3 + sites % 2);
     assert_eq!(total.as_number(), Some(expected as f64));
+}
+
+#[test]
+fn name_shared_sites_keep_loads_apart_from_stores() {
+    // Past the unique sites, a load of `a` from a read-only field and an inherited getter
+    // records entries a store of `a` must not take: the store fails or runs the setter.
+    let filler = (0..usize::from(crate::bytecode::UNIQUE_CACHE_SITES))
+        .map(|_| "o.z;")
+        .collect::<String>();
+    let source = format!(
+        "var o = {{ z: 0 }}; function filler() {{ {filler} }}\n\
+         var ro = Object.defineProperty({{}}, 'a', {{ value: 5, writable: false }});\n\
+         var calls = 0; var proto = {{ get a() {{ return 7; }}, set a(v) {{ calls += v; }} }};\n\
+         var child = Object.create(proto);\n\
+         function read(x) {{ return x.a; }} function write(x, v) {{ x.a = v; }}\n\
+         var seen = '';\n\
+         for (var i = 0; i < 4; i++) {{ seen += read(ro) + ',' + read(child) + ';'; write(ro, 9); write(child, 1); }}\n\
+         var result = seen + calls + ':' + ro.a + ':' + Object.keys(child).length;"
+    );
+    let program = Engine::specialize(&source, "name-shared-sites.js").unwrap();
+    assert_eq!(program.cache_sites, crate::bytecode::SHARED_UNCACHED_SITE + 1);
+    let mut vm = Vm::new(SilentHost);
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("result");
+    let result = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(&*vm.to_string(&program, result).unwrap(), "5,7;5,7;5,7;5,7;4:5:0");
 }
 
 #[test]
