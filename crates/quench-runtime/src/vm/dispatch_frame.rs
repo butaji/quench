@@ -202,6 +202,16 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<FrameOutcome, JsError> {
+        #[cfg(feature = "profile-lane-exits")]
+        if let Some(caller) = self.frames.last() {
+            super::lane_exits::call_target(
+                self.active_program.raw(),
+                caller.function,
+                caller.pc as u32,
+                context.callee().unwrap_or(Value::UNDEFINED),
+                id,
+            );
+        }
         self.run_user_frame(p, id, parent, this, args, context, false)
     }
 
