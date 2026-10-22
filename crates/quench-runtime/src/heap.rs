@@ -1565,6 +1565,7 @@ impl Heap {
             || pacing().allocation_cap_reached(
                 self.live_after_full,
                 self.allocations_since_full,
+                self.pacing_state.cap_backoff,
             )
     }
     /// Every collection may be minor, so the legacy young list and barrier are always kept.

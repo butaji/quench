@@ -55,6 +55,11 @@ pub(super) struct GenerationalPacing {
     /// property-arena compaction run only on full collections.
     pub(super) allocation_cap: Ratio,
     pub(super) minimum_allocation_cap: usize,
+    /// The share of its expected live weight a full collection must reclaim to count as
+    /// productive. After an unproductive one the allocation cap doubles, up to
+    /// `maximum_cap_backoff` times; a productive one restores it (`PacingState::cap_backoff`).
+    pub(super) productive_full: Ratio,
+    pub(super) maximum_cap_backoff: u32,
     /// Smoothed young survival, in `SURVIVAL_SCALE` parts, above which minor collections
     /// stop paying: they would mark nearly everything they were meant to skip. The heap
     /// then collects fully, with `full_only_headroom` between collections.
@@ -87,6 +92,8 @@ pub(super) struct PacingState {
     survival: u32,
     /// Full collections left before a minor collection probes survival again.
     probe_in: u32,
+    /// Doublings of the allocation cap after full collections that reclaimed little.
+    pub(super) cap_backoff: u32,
 }
 
 impl PacingState {
@@ -128,6 +135,23 @@ pub(super) struct NextCollection {
 impl GenerationalPacing {
     /// The state transition after each collection, and the plan for the next one.
     pub(super) fn plan(&self, state: &mut PacingState, outcome: CollectionOutcome) -> NextCollection {
+        if outcome.full {
+            // What a minor collection would have kept: the previous live weight and this
+            // cycle's expected survivors. A full collection pays when it reclaims old garbage
+            // beyond that. Past the survival limit the estimate measures nothing minor
+            // collections could keep, and full collections are the only ones (`Regime`), so
+            // the cap stays as set.
+            let survivors = (outcome.allocated as u64 * u64::from(state.survival) / u64::from(SURVIVAL_SCALE)) as usize;
+            let expected = outcome.previous_live_weight.saturating_add(survivors);
+            let reclaimed = expected.saturating_sub(outcome.live_weight);
+            state.cap_backoff = if state.regime(self) == Regime::FullOnly
+                || reclaimed >= self.productive_full.of(expected)
+            {
+                0
+            } else {
+                (state.cap_backoff + 1).min(self.maximum_cap_backoff)
+            };
+        }
         if !outcome.full && outcome.allocated > 0 {
             let promoted = outcome.live_weight.saturating_sub(outcome.previous_live_weight);
             let survival = (promoted.min(outcome.allocated) as u64 * u64::from(SURVIVAL_SCALE)
@@ -136,7 +160,7 @@ impl GenerationalPacing {
         }
         let young = NextCollection {
             threshold: self.young_budget(outcome.live),
-            full: self.full_due(outcome.live_after_full, outcome.live, outcome.since_full)
+            full: self.full_due(outcome.live_after_full, outcome.live, outcome.since_full, state.cap_backoff)
                 || self.weight_growth_due(outcome.live_weight_after_full, outcome.live_weight),
         };
         match state.regime(self) {
@@ -171,10 +195,10 @@ impl GenerationalPacing {
             .max(self.minimum_young)
     }
 
-    pub(super) fn full_due(&self, live_after_full: usize, live: usize, since_full: usize) -> bool {
+    pub(super) fn full_due(&self, live_after_full: usize, live: usize, since_full: usize, cap_backoff: u32) -> bool {
         live.saturating_sub(live_after_full)
             >= self.old_growth.of(live_after_full).max(self.minimum_old_growth)
-            || self.allocation_cap_reached(live_after_full, since_full)
+            || self.allocation_cap_reached(live_after_full, since_full, cap_backoff)
     }
 
     pub(super) fn weight_growth_due(&self, after_full: usize, live_weight: usize) -> bool {
@@ -182,8 +206,9 @@ impl GenerationalPacing {
             && live_weight.saturating_sub(after_full) >= self.weight_growth.of(after_full)
     }
 
-    pub(super) fn allocation_cap_reached(&self, live_after_full: usize, since_full: usize) -> bool {
-        since_full >= self.allocation_cap.of(live_after_full).max(self.minimum_allocation_cap)
+    pub(super) fn allocation_cap_reached(&self, live_after_full: usize, since_full: usize, cap_backoff: u32) -> bool {
+        let cap = self.allocation_cap.of(live_after_full).max(self.minimum_allocation_cap);
+        since_full >= cap.checked_shl(cap_backoff).unwrap_or(usize::MAX)
     }
 
     /// Diagnostic builds may override each knob from the environment to measure a policy
@@ -210,6 +235,8 @@ impl GenerationalPacing {
             minimum_old_growth: read("QUENCH_GC_MIN_OLD_GROWTH", self.minimum_old_growth),
             allocation_cap: ratio("QUENCH_GC_ALLOCATION_CAP", self.allocation_cap),
             minimum_allocation_cap: read("QUENCH_GC_MIN_ALLOCATION_CAP", self.minimum_allocation_cap),
+            productive_full: ratio("QUENCH_GC_PRODUCTIVE_FULL", self.productive_full),
+            maximum_cap_backoff: read("QUENCH_GC_MAX_CAP_BACKOFF", self.maximum_cap_backoff as usize) as u32,
             survival_limit: read("QUENCH_GC_SURVIVAL_LIMIT", self.survival_limit as usize) as u32,
             full_only_headroom: ratio("QUENCH_GC_FULL_ONLY", self.full_only_headroom),
             probe_interval: read("QUENCH_GC_PROBE_INTERVAL", self.probe_interval as usize) as u32,
@@ -234,6 +261,14 @@ pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     minimum_old_growth: SCORE_MINIMUM_FULL_INTERVAL,
     allocation_cap: Ratio::new(1, 1),
     minimum_allocation_cap: SCORE_MINIMUM_FULL_INTERVAL,
+    // A full collection reclaiming under an eighth of its expected live weight doubles the
+    // cap, at most twice. x86_64 4 vCPU, 2026-10-22, median of 3-5 against no back-off:
+    // source-map-wtb 6.58 -> 7.46 (max RSS 56 -> 58 MB), typescript-lib 0.27 -> 0.30, chai-wtb
+    // 14.6 -> 15.8, doxbee-promise 29.6 -> 29.8, postcss-wtb 2.63 -> 2.55 (64 -> 73 MB, Bun
+    // 76), web-ssr 18.9 -> 19.6 (103 -> 110 MB, Bun 119.5); three doublings took web-ssr to
+    // 154 MB. A full collection reclaims a median 7% on source-map and 19% on web-ssr.
+    productive_full: Ratio::new(1, 8),
+    maximum_cap_backoff: 2,
     survival_limit: SURVIVAL_SCALE / 2,
     full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
@@ -284,9 +319,9 @@ mod tests {
         let pacing = PRODUCTION_PACING;
         let live = 1 << 20;
         let growth = pacing.old_growth.of(live);
-        assert!(!pacing.full_due(live, live + growth - 1, 0));
-        assert!(pacing.full_due(live, live + growth, 0));
-        assert!(pacing.full_due(live, live, pacing.allocation_cap.of(live)));
+        assert!(!pacing.full_due(live, live + growth - 1, 0, 0));
+        assert!(pacing.full_due(live, live + growth, 0, 0));
+        assert!(pacing.full_due(live, live, pacing.allocation_cap.of(live), 0));
         assert_eq!(pacing.young_budget(0), pacing.minimum_young);
         // A live set whose young share lies between the minimum and the maximum budget.
         let between = pacing.minimum_young * 2 * pacing.young.denominator / pacing.young.numerator;
