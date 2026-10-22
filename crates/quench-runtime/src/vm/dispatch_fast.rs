@@ -4854,6 +4854,8 @@ fn lane_loop_run<H: Host>(
         if site.diagnostics {
             site.compile_attempts.set(site.compile_attempts.get().saturating_add(1));
         }
+        // SAFETY: the lane's VM is live, and nothing borrows it across the call.
+        unsafe { vm(cx) }.host.before_native_compilation();
         let captures = entry.captures(site.region.captures.len());
         let heap = &unsafe { vm(cx) }.heap;
         let int32_elements = |register| {
@@ -4868,6 +4870,8 @@ fn lane_loop_run<H: Host>(
             widened: &tier.widened,
         };
         tier.code = super::compiled::compile_osr_region(&site.region, &observation);
+        // SAFETY: as above; the observation's borrow of the heap has ended.
+        unsafe { vm(cx) }.host.after_native_compilation();
         if site.diagnostics && tier.code.is_some() {
             site.compile_successes
                 .set(site.compile_successes.get().saturating_add(1));
