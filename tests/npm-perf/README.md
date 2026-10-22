@@ -387,3 +387,11 @@ Bun no-JIT at 1,496.6 / 37.44 MB. Output matched at 24,980,000 bytes and
 checksum 414318. RSS remains over 20% lower than both engines, but throughput
 is about five times slower, so React no-JIT is not won. Report:
 `work/react-perf/react-pgo512-restored-full-memoryfirst-32k-nojit-11.json`.
+
+A PGO build with `-Ctarget-cpu=native` looked 5.7% faster in a three-round
+screen, but the full 11-round interleaved comparison reversed that result:
+298.5 renders/s / 27.81 MB versus the generic PGO+512 control at 319.5 /
+28.63 MB. Output matched at 24,980,000 bytes / checksum 414318. Native codegen
+reduced sampled RSS by 2.9% while lowering speed by 6.6%, so it was rejected
+and the ordinary PGO binary restored. Report:
+`work/react-perf/react-pgo512-nativecpu-vs-generic-memoryfirst-32k-nojit-11.json`.
