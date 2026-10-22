@@ -1568,7 +1568,15 @@ impl Heap {
     }
 
     pub fn should_collect(&self) -> bool {
-        self.allocations >= self.threshold
+        self.allocations + self.appended_property_weight() >= self.threshold
+    }
+    /// Measurement only: the arena values appended since the last collection, as allocation
+    /// weight, when `QUENCH_MEASURE_CHARGE_ARENA` is set.
+    #[inline(always)]
+    fn appended_property_weight(&self) -> usize {
+        static ENABLED: std::sync::LazyLock<bool> =
+            std::sync::LazyLock::new(|| std::env::var_os("QUENCH_MEASURE_CHARGE_ARENA").is_some());
+        if *ENABLED { self.properties.appended_values * size_of::<Value>() / payload_unit() } else { 0 }
     }
     /// The host contexts of promises freed since the last call.
     pub(crate) fn take_abandoned_contexts(&mut self) -> AbandonedHostContexts {
@@ -1998,7 +2006,10 @@ impl Heap {
         // Live weight in the units allocation is charged in: one per cell or record plus
         // its payload.
         let live_weight = live + self.payload_bytes / payload_unit();
-        let allocated = std::mem::take(&mut self.allocations);
+        let appended = self.appended_property_weight();
+        self.properties.appended_values = 0;
+        self.allocations_since_full = self.allocations_since_full.saturating_add(appended);
+        let allocated = std::mem::take(&mut self.allocations) + appended;
         self.external_since_collection = 0;
         self.external_collection_budget = self.external_bytes.max(MINIMUM_EXTERNAL_COLLECTION_BUDGET);
         if full {
