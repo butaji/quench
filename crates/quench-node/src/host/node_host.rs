@@ -36,6 +36,9 @@ pub struct NodeHost {
     pub(crate) node_library_root: std::path::PathBuf,
     /// Compiled library modules kept across runs (`compile_cache`).
     pub(crate) compile_cache: crate::host::compile_cache::CompileCache,
+    /// Whether bootstrap has finished (`Host::initialize`, or `Host::resume` from a startup
+    /// snapshot): bootstrap's own programs decode back to back (`cached_program_decoded`).
+    pub(crate) bootstrapped: bool,
     pub(crate) shared_state: Rc<RefCell<SharedNodeState>>,
     pub(crate) commonjs_entry: Option<CommonJsEntry>,
     pub(crate) inline_source: InlineSource,
@@ -46,8 +49,8 @@ pub struct NodeHost {
     pub(crate) net_pending_writes: Vec<(u64, Vec<u8>)>,
     pub(crate) net_pending_ends: Vec<u64>,
     pub(crate) net_pending_destroys: Vec<(u64, bool)>,
-    /// Whether this host builds a startup snapshot, ending `initialize` at its point.
-    pub(crate) building_snapshot: bool,
+    /// The kind of startup snapshot this host builds, ending `initialize` at its point.
+    pub(crate) building_snapshot: Option<crate::host::startup_snapshot::SnapshotKind>,
     /// Module paths' real paths, as Node's ESM resolver keeps them for the process
     /// (lib/internal/modules/esm/resolve.js `realpathCache`): every import of a module
     /// resolves through one, and canonicalizing reads each path component's link. Keyed by
@@ -229,6 +232,9 @@ pub(crate) struct SharedChildProcess {
     pub(crate) ipc: Option<crate::modules::child_process_ipc_shared_vm::IpcChannel>,
     pub(crate) ipc_pipe: Option<u64>,
     pub(crate) events: std::sync::mpsc::Receiver<ChildProcessEvent>,
+    /// Held until the loop delivers the child's exit; dropping it lets the waiter reap the
+    /// child, which stays signalable as a zombie until then, as under Node.
+    pub(crate) reap: Option<std::sync::mpsc::Sender<()>>,
     pub(crate) stdout_terminal: bool,
     pub(crate) stderr_terminal: bool,
     pub(crate) exit: Option<(Option<i32>, Option<String>)>,
@@ -427,6 +433,7 @@ impl NodeHost {
         Self {
             node_library_root,
             compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
+            bootstrapped: false,
             shared_state: Rc::new(RefCell::new(SharedNodeState::new(
                 fs,
                 cwd,
@@ -444,7 +451,7 @@ impl NodeHost {
             net_pending_writes: Vec::new(),
             net_pending_ends: Vec::new(),
             net_pending_destroys: Vec::new(),
-            building_snapshot: false,
+            building_snapshot: None,
         }
     }
 

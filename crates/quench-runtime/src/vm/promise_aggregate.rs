@@ -12,7 +12,7 @@ impl<H: Host> Vm<H> {
             return Ok(self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
-                    std::rc::Rc::new(values),
+                    values,
                 ),
             }));
         };
@@ -37,7 +37,7 @@ impl<H: Host> Vm<H> {
         let errors = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(array_prototype),
-                std::rc::Rc::new(errors),
+                errors,
             ),
         });
         let errors = self.heap.root(errors);

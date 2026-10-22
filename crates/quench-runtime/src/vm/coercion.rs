@@ -41,9 +41,22 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn typeof_value(&mut self, value: Value) -> Value {
-        use crate::ValueType as T;
-        let kind = if self.is_html_dda(value) { T::Undefined } else { self.value_type(value) };
+        let kind = self.typeof_kind(value);
         self.typeof_name(kind)
+    }
+
+    /// The kind whose name `typeof value` yields: an `[[IsHTMLDDA]]` object reads as
+    /// undefined (ECMA-262 B.3.6.3).
+    #[inline]
+    fn typeof_kind(&self, value: Value) -> crate::ValueType {
+        if self.is_html_dda(value) { crate::ValueType::Undefined } else { self.value_type(value) }
+    }
+
+    /// The boolean a `UNARY_TYPEOF_IS` operator testing the name at `index` in
+    /// `bytecode::TYPEOF_NAMES` yields for `value`.
+    #[inline]
+    pub(super) fn typeof_test_value(&self, value: Value, index: usize, negated: bool) -> Value {
+        if (typeof_name_index(self.typeof_kind(value)) == index) != negated { Value::TRUE } else { Value::FALSE }
     }
 
     /// The one string `typeof` yields for values of `kind`: every result and every string
@@ -210,6 +223,9 @@ impl<H: Host> Vm<H> {
             }
             TYPEOF => return Ok(self.typeof_value(value)),
             VOID => Value::UNDEFINED,
+            op if let Some((index, negated)) = crate::bytecode::typeof_test(op) => {
+                self.typeof_test_value(value, index, negated)
+            }
             crate::bytecode::UNARY_TO_STRING => {
                 let text = self.coerce_js_string(p, value)?;
                 self.string_value_from(value, &text)
@@ -224,17 +240,8 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         value: Value,
     ) -> Result<f64, JsError> {
-        if let Some(value) = value.as_number() {
-            return Ok(value);
-        }
-        if let Some(value) = value.as_bool() {
-            return Ok(if value { 1.0 } else { 0.0 });
-        }
-        if value.is_null() {
-            return Ok(0.0);
-        }
-        if value.is_undefined() || value.is_deleted() {
-            return Ok(f64::NAN);
+        if let Some(number) = value.immediate_number() {
+            return Ok(number);
         }
         if self.object_data(value).is_some() {
             let primitive = self.to_primitive(program, value, "number")?;
@@ -273,17 +280,8 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         value: Value,
     ) -> Result<String, JsError> {
-        if value.is_undefined() || value.is_deleted() {
-            return Ok("undefined".into());
-        }
-        if value.is_null() {
-            return Ok("null".into());
-        }
-        if let Some(value) = value.as_bool() {
-            return Ok(value.to_string());
-        }
-        if let Some(value) = value.as_number() {
-            return Ok(crate::number_to_string::format(value));
+        if let Some(text) = immediate_to_string(value) {
+            return Ok(text);
         }
         if self.object_data(value).is_some() {
             let primitive = self.to_primitive(program, value, "string")?;
@@ -425,17 +423,39 @@ const TYPEOF_KINDS: [crate::ValueType; 8] = {
     [T::Undefined, T::Object, T::Boolean, T::Number, T::String, T::BigInt, T::Symbol, T::Function]
 };
 
-/// The text `typeof` yields for a value of `kind`.
-fn typeof_text(kind: crate::ValueType) -> &'static str {
+/// The index in `bytecode::TYPEOF_NAMES` of the name `typeof` yields for a value of `kind`;
+/// `TYPEOF_KINDS` lists the kinds in that order.
+fn typeof_name_index(kind: crate::ValueType) -> usize {
     use crate::ValueType as T;
     match kind {
-        T::Undefined => "undefined",
-        T::Null | T::Object => "object",
-        T::Boolean => "boolean",
-        T::Number => "number",
-        T::String => "string",
-        T::BigInt => "bigint",
-        T::Symbol => "symbol",
-        T::Function => "function",
+        T::Undefined => 0,
+        T::Null | T::Object => 1,
+        T::Boolean => 2,
+        T::Number => 3,
+        T::String => 4,
+        T::BigInt => 5,
+        T::Symbol => 6,
+        T::Function => 7,
     }
+}
+
+/// The text `typeof` yields for a value of `kind`.
+fn typeof_text(kind: crate::ValueType) -> &'static str {
+    crate::bytecode::TYPEOF_NAMES[typeof_name_index(kind)]
+}
+
+/// ToString where the value alone decides it: `undefined` (the deleted marker reads as it),
+/// `null`, a Boolean or a Number. `None` for a heap value, whose conversion reads its cell and
+/// may run guest code.
+pub(super) fn immediate_to_string(value: Value) -> Option<String> {
+    if value.is_undefined() || value.is_deleted() {
+        return Some("undefined".into());
+    }
+    if value.is_null() {
+        return Some("null".into());
+    }
+    if let Some(value) = value.as_bool() {
+        return Some(value.to_string());
+    }
+    value.as_number().map(crate::number_to_string::format)
 }

@@ -2114,7 +2114,13 @@ fn drain_checkpoint(
             continue;
         }
         let udp_progress=crate::modules::udp_binding::poll(runtime,&shared_state)?;
-        if crate::modules::http_shared_vm::poll(runtime, program, &shared_state)? || udp_progress {
+        let http_progress = crate::modules::http_shared_vm::poll(runtime, program, &shared_state)?;
+        // Each turn of the loop is a collection safepoint, once its network writes have gone
+        // out: its callbacks and jobs may reach no back edge (a promise-driven stream), so a
+        // due collection would otherwise wait for guest code that loops. Nothing runs here,
+        // and every value is a root.
+        runtime.collect_if_due(program).map_err(|error| error.to_string())?;
+        if http_progress || udp_progress {
             continue;
         }
         if crate::modules::napi::poll(runtime, program)? {
@@ -2215,7 +2221,7 @@ fn drain_checkpoint(
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
                 if !wait.is_zero() {
-                    std::thread::sleep(wait);
+                    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, wait);
                 }
                 continue;
             }
@@ -2274,7 +2280,7 @@ fn drain_checkpoint(
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
                 if !wait.is_zero() {
-                    std::thread::sleep(wait);
+                    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, wait);
                 }
                 continue;
             }

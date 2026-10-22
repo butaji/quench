@@ -732,7 +732,7 @@ impl<H: Host> Vm<H> {
                         .and_then(|value| {
                             vm.heap
                                 .array_elements(value)
-                                .map(|elements| elements.as_ref().clone())
+                                .map(|elements| elements.to_vec())
                         })
                         .unwrap_or_default();
                     let mut arguments = bound_args;
@@ -753,16 +753,8 @@ impl<H: Host> Vm<H> {
                     vm.switch_realm_global(previous_global);
                     let result = result?;
                     let result = if vm.intl_constructor_prototypes(native).is_none()
-                        && !native.is_typed_array_constructor()
-                        && !native.is_error_constructor()
-                        && !matches!(
-                            native,
-                            Native::Proxy
-                                | Native::Array
-                                | Native::ArrayBuffer
-                                | Native::SharedArrayBuffer
-                                | Native::RegExp
-                        )
+                        && !native.constructs_from_new_target()
+                        && native != Native::Proxy
                         && !(native == Native::Object
                             && new_target == vm.native_value(Native::Object)
                             && args
@@ -839,7 +831,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         frame: usize,
         callee: Value,
-    ) -> Option<(u32, Value, Value)> {
+    ) -> Option<(ProgramId, u32, Value, Value)> {
         let caller = &self.frames[frame];
         if frame + 1 != self.frames.len()
             || caller.function == super::ROOT_FUNCTION_ID
@@ -861,17 +853,24 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let (program_id, id, env) = (*program_id, *id, *env);
-        if *realm != self.realm.globals
-            || program_id != caller.program
-            || program_id != self.active_program
-            || id == super::ROOT_FUNCTION_ID
-        {
+        if *realm != self.realm.globals || id == super::ROOT_FUNCTION_ID {
             return None;
         }
-        if !Self::inline_constructible(p.function_get(id as usize)?) {
+        // A constructor of another program is pushed in its own, which the pushing loop
+        // makes active until the return restores the caller's (`StepResult::PushFrame`).
+        let body = if program_id == caller.program && program_id == self.active_program {
+            p.function_get(id as usize)?
+        } else {
+            let owner = self.programs.residual(program_id)?;
+            if owner.kind == crate::bytecode::ProgramKind::Wasm {
+                return None;
+            }
+            owner.function_get(id as usize)?
+        };
+        if !Self::inline_constructible(body) {
             return None;
         }
-        Some((id, env, self.inline_construct_receiver(callee)?))
+        Some((program_id, id, env, self.inline_construct_receiver(callee)?))
     }
 
     /// A body whose [[Construct]] the dispatch loop may push in place: a constructible
@@ -905,6 +904,21 @@ impl<H: Host> Vm<H> {
         let mut object = Self::empty_object(prototype);
         self.capture_constructed_name(&mut object, callee, true);
         Some(object)
+    }
+
+    /// `Get(constructor, "prototype")` of GetPrototypeFromConstructor: an own data property
+    /// read in place (`own_function_prototype_data`), which runs no guest code, and any
+    /// other through [[Get]].
+    pub(super) fn constructor_prototype_value(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+    ) -> Result<Value, JsError> {
+        let prototype_atom = self.prototype_atom();
+        match self.own_function_prototype_data(constructor, prototype_atom) {
+            Some(prototype) => Ok(prototype),
+            None => self.get_property(p, constructor, prototype_atom),
+        }
     }
 
     pub(super) fn own_function_prototype_data(
@@ -998,8 +1012,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
         }
@@ -1021,8 +1034,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
         }
@@ -1043,7 +1055,16 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         native: Native,
     ) -> Result<Value, JsError> {
-        if self.object_data(result).is_none() {
+        let Some(current) = self.object_data(result).map(Object::proto) else {
+            return Ok(result);
+        };
+        // GetPrototypeFromConstructor reading an own data `prototype` runs no guest code, and
+        // [[SetPrototypeOf]] to the prototype the object already has changes nothing. A
+        // DataView still checks its buffer afterwards.
+        if native != Native::DataView
+            && let Some(prototype_atom) = self.known_prototype_atom()
+            && self.own_function_prototype_data(new_target, prototype_atom) == Some(current)
+        {
             return Ok(result);
         }
         let result_root = self.heap.root(result);
@@ -1096,7 +1117,7 @@ impl<H: Host> Vm<H> {
         native: Native,
     ) -> Result<Option<Value>, JsError> {
         let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
             let Some(intrinsic) = TYPED_ARRAY_INSTALLS
                 .iter()
@@ -1389,7 +1410,7 @@ impl<H: Host> Vm<H> {
             let array = self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(prototype),
-                    Rc::new(Vec::new()),
+                    Vec::new(),
                 ),
             });
             self.heap.sparse_set_length(array, length as usize);
@@ -1399,7 +1420,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(prototype),
-                Rc::new(args.to_vec()),
+                args.to_vec(),
             ),
         }))
     }

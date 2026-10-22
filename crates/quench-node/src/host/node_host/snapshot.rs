@@ -21,6 +21,8 @@ impl NodeHost {
             net_pending_ends,
             net_pending_destroys,
             building_snapshot: _,
+            // False at the snapshot point; a restored host sets it in `Host::resume`.
+            bootstrapped: _,
             // Caches of this process's filesystem, which the restoring one fills itself.
             real_paths: _,
             resolved_imports: _,

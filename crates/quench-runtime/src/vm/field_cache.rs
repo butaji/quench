@@ -33,6 +33,10 @@ impl<H: Host> Vm<H> {
         if let Some(iterator) = self.heap.iterator(value) {
             return self.shape_answers(&iterator.object, atom, ReceiverKind::Exotic);
         }
+        // A promise's internal slots change no object operation, as for its cell form below.
+        if let Some(promise) = self.heap.promise(value) {
+            return self.shape_answers(&promise.object, atom, ReceiverKind::Ordinary);
+        }
         self.shape_property_lookup_cell(self.heap.get(value)?, atom)
     }
 

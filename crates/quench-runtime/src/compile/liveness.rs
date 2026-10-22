@@ -1,6 +1,6 @@
 use crate::bytecode::{
     ControlFlowLayout, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout,
-    ImmediateRole, Instr, InstructionField, Operand, Register, Superinstruction, WideInstruction,
+    ImmediateRole, Instr, InstructionField, Op, Operand, Register, Superinstruction, WideInstruction,
 };
 
 /// The registers a root mask covers: one bit each.
@@ -139,9 +139,16 @@ pub(super) fn live_out(
     output
 }
 
+/// Whether a frame paused at `op` can resume with an abrupt completion that enters the
+/// enclosing handler: a call that throws, or a suspension point (an awaited rejection, a
+/// generator's `throw` or `return`).
+fn resumes_into_handler(op: Op) -> bool {
+    op.control_flow_layout() == ControlFlowLayout::Call || matches!(op, Op::Await | Op::Yield | Op::YieldStar)
+}
+
 fn add_suspended_exception_roots(function: &Function, live: &mut [u64]) {
     for (pc, instruction) in function.instructions().enumerate() {
-        if instruction.op().control_flow_layout() != ControlFlowLayout::Call {
+        if !resumes_into_handler(instruction.op()) {
             continue;
         }
         for handler in &function.handlers {

@@ -306,13 +306,13 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.heap.array_mut(this) else {
             unreachable!("matched an array above");
         };
-        let taken = super::index::mutable_array_elements(object.elements_mut())
-            .splice(start..start + delete_count, items.iter().copied())
-            .collect::<Vec<_>>();
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        let taken = elements[start..start + delete_count].to_vec();
+        elements.splice(start..start + delete_count, &items);
         let Some(removed_object) = self.heap.array_mut(removed) else {
             unreachable!("matched an array above");
         };
-        *super::index::mutable_array_elements(removed_object.elements_mut()) = taken;
+        *removed_object.elements_mut() = taken.into();
         true
     }
 
@@ -530,9 +530,11 @@ impl<H: Host> Vm<H> {
         true
     }
 
-    /// ArrayAccumulation's CreateDataPropertyOrThrow on the literal under construction, which
-    /// no code can reach yet: an element `MakeArray` reserved below its length is written in
-    /// place, one at its length appended. A literal in sparse storage takes the general path.
+    /// `define_array_literal_element` into a literal's dense storage: the hole `MakeArray`
+    /// left at `index` (`Vm::hole_array`), or the next element at the literal's length. A
+    /// literal is unreachable from guest code until it is complete, so no prototype observes
+    /// the index, and CreateDataProperty stores the value as its own element. `false` leaves
+    /// any other definition to `define_array_literal_element`.
     pub(super) fn define_literal_element(&mut self, array: Value, index: usize, value: Value) -> bool {
         let Some(length) = self.dense_array_length(array) else {
             return false;
@@ -549,6 +551,27 @@ impl<H: Host> Vm<H> {
         } else {
             elements[index] = value;
         }
+        true
+    }
+
+    /// ArrayAccumulation's CreateDataPropertyOrThrow of `values` at a dense literal's next
+    /// indices (`define_literal_element` of each at the literal's length) as one append.
+    /// `false` leaves the literal untouched.
+    pub(super) fn append_literal_elements(&mut self, array: Value, values: &[Value]) -> bool {
+        let Some(length) = self.dense_array_length(array) else {
+            return false;
+        };
+        if length.checked_add(values.len()).is_none_or(|end| end > MAX_ARRAY_LENGTH) {
+            return false;
+        }
+        let Some(object) = self.heap.array_mut(array) else {
+            unreachable!("matched an array above");
+        };
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        let capacity = elements.capacity();
+        elements.extend_from_slice(values);
+        let grown = elements.capacity() - capacity;
+        self.heap.charge_payload_growth(grown * size_of::<Value>());
         true
     }
 
@@ -773,8 +796,8 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn is_array(&mut self, p: &ResidualProgram, value: Value) -> Result<bool, JsError> {
-        if let Some(object) = self.heap.array(value) {
-            return Ok(!object.is_arguments_object());
+        if let Some(answer) = self.steady_is_array(value) {
+            return Ok(answer);
         }
         match self.heap.get(value) {
             Some(Cell::Proxy { handler, .. }) if handler.is_null() => {
@@ -783,6 +806,15 @@ impl<H: Host> Vm<H> {
             Some(Cell::Proxy { target, .. }) => self.is_array(p, *target),
             _ => Ok(false),
         }
+    }
+
+    /// IsArray of any value but a Proxy, which reads no state beyond the value's kind; `None`
+    /// for a Proxy, whose target (or revocation) `is_array` follows.
+    pub(super) fn steady_is_array(&self, value: Value) -> Option<bool> {
+        if let Some(object) = self.heap.array(value) {
+            return Some(!object.is_arguments_object());
+        }
+        (!matches!(self.heap.get(value), Some(Cell::Proxy { .. }))).then_some(false)
     }
 
     pub(super) fn array_relative_index(

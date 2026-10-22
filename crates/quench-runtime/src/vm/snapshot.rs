@@ -120,7 +120,8 @@ crate::snapshot::snap_struct!(ErrorRealmIntrinsics {
 crate::snapshot::snap_struct!(PrivateHomeKey { environment, program, function, name });
 crate::snapshot::snap_struct!(RuntimeAtoms {
     lexical_this, new_target, regexp_exec, regexp_flags, last_index, regexp_flag_accessors, then,
-    constructor, next, name, empty, value, done, writable, enumerable, configurable, get, set,
+    constructor, next, name, empty, value, done, iterator_return, writable, enumerable, configurable,
+    get, set,
     bound_target, bound_this, bound_args,
 });
 crate::snapshot::snap_struct!(RealmIntrinsics {
@@ -320,9 +321,12 @@ impl<H: Host> Vm<H> {
             shape_slot_memo: _,
             symbol_write_proofs: _,
             symbol_load_proofs: _,
+            private_site_homes: _,
+            array_iteration_proof: _,
             function_name_shapes: _,
             typeof_names: _,
             closure_templates: _,
+            enumerable_keys: _,
             capture_walks: _,
             shape_attribute_memo: _,
             name_atom_memo: _,
@@ -354,6 +358,7 @@ impl<H: Host> Vm<H> {
             instanceof_constructor_layout: _,
             closure_shapes: _,
             iterator_result_shape: _,
+            reused_iterator_result: _,
             descriptor_shapes: _,
             descriptor_layout: _,
             regexp_object_shapes: _,
@@ -510,7 +515,7 @@ impl<H: Host> Vm<H> {
             matchers.insert(key, matcher.clone());
             Ok(matcher)
         };
-        self.heap = Heap::read_snapshot(&mut reader, &mut CellDecoder { regexp: &mut regexp })?;
+        self.heap = Heap::read_snapshot(&mut reader, &mut CellDecoder { regexp: &mut regexp }, self.heap.memory_policy())?;
         self.realm.globals = reader.value()?;
         self.realm.global_lexical_declarations = Snap::unsnap(&mut reader)?;
         self.realm.global_lexical_bindings = Snap::unsnap(&mut reader)?;
@@ -585,6 +590,7 @@ impl<H: Host> Vm<H> {
         self.atoms = hashbrown::HashTable::with_capacity(base + appended);
         self.array_index_atoms.clear();
         self.name_atom_memo.clear();
+        self.private_site_homes.clear();
         self.atom_classes.clear();
         self.atom_classes.reserve(base + appended);
         self.atom_classes.resize_with(base, Default::default);

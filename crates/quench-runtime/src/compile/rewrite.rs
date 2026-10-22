@@ -59,6 +59,21 @@ fusion_recipes! {
             first.set_optional_register_b(Some(second.result_register()));
             Some(first)
         };
+    LocalField: [LoadLocal, GetField; LoadLocalPlain, GetField] =>
+        |first: Instr, mut second: Instr, _: &mut SiteTable<'_, FieldSite>| {
+            if first.numeric_local_store_target().is_some() || second.writes_current_this() {
+                return None;
+            }
+            let crate::bytecode::FieldLookup::Atom { base, .. } = second.field_lookup()? else {
+                return None;
+            };
+            if base.register_index() != Some(first.result_register()) {
+                return None;
+            }
+            let local = u16::try_from(first.local_slot()).ok()?;
+            second.set_b(crate::bytecode::FieldBase::local(local)?.0);
+            Some(second)
+        };
     ProducerMove: [
         LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
         LoadName, Move; Binary, Move; Unary, Move; GetField, Move; IncDec, Move;
@@ -1300,7 +1315,7 @@ mod tests {
 
     #[test]
     fn recipe_schema_generates_ordered_pattern_rows() {
-        assert_eq!(RULES.len(), 33);
+        assert_eq!(RULES.len(), 35);
         assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
         assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
         assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));

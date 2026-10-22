@@ -3,6 +3,11 @@ use super::typed_array_install::{TYPED_ARRAY_BASE_METHODS, TYPED_ARRAY_CALLBACK_
 use super::typed_array_install::{UINT8_ARRAY_PROTOTYPE_METHODS, UINT8_ARRAY_STATIC_METHODS};
 use super::*;
 impl<H: Host> Vm<H> {
+    /// `ArrayBuffer.isView(value)`: whether `value` is a typed array or a DataView.
+    pub(super) fn is_array_buffer_view(&self, value: Value) -> bool {
+        matches!(self.heap.get(value), Some(Cell::TypedArray { .. } | Cell::DataView { .. }))
+    }
+
     pub(super) fn maybe_call_typed_array_native(
         &mut self,
         p: &ResidualProgram,
@@ -229,16 +234,8 @@ impl<H: Host> Vm<H> {
             return self.typed_array_callback_native(p, array_native, this, args);
         }
         if native == Native::ArrayBufferIsView {
-            return Ok(
-                if matches!(
-                    args.first().and_then(|value| self.heap.get(*value)),
-                    Some(Cell::TypedArray { .. }) | Some(Cell::DataView { .. })
-                ) {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                },
-            );
+            let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+            return Ok(Value::boolean(self.is_array_buffer_view(value)));
         }
         let buffer = self.validate_typed_array_method(p, native, this)?;
         let length = self.typed_array_length(this).unwrap_or_default();
@@ -956,6 +953,25 @@ impl<H: Host> Vm<H> {
         native: Native,
         this: Value,
     ) -> Result<Value, JsError> {
+        if let Some(value) = self.typed_array_getter_value(native, this) {
+            return Ok(value);
+        }
+        {
+            let property = match native {
+                Native::TypedArrayBufferGetter => "buffer",
+                Native::TypedArrayByteLengthGetter => "byteLength",
+                Native::TypedArrayByteOffsetGetter => "byteOffset",
+                Native::TypedArrayLengthGetter => "length",
+                _ => unreachable!(),
+            };
+            let receiver = self.typed_array_receiver_diagnostic(p, this)?;
+            Err(self.type_error(p, format!("Method get TypedArray.prototype.{property} called on incompatible receiver {receiver}")))
+        }
+    }
+
+    /// A `%TypedArray%.prototype` accessor's value for a typed array `this`; `None` for any
+    /// other receiver, which the getter rejects.
+    pub(super) fn typed_array_getter_value(&self, native: Native, this: Value) -> Option<Value> {
         let Some(Cell::TypedArray {
             buffer,
             object,
@@ -965,15 +981,7 @@ impl<H: Host> Vm<H> {
             ..
         }) = self.heap.get(this)
         else {
-            let property = match native {
-                Native::TypedArrayBufferGetter => "buffer",
-                Native::TypedArrayByteLengthGetter => "byteLength",
-                Native::TypedArrayByteOffsetGetter => "byteOffset",
-                Native::TypedArrayLengthGetter => "length",
-                _ => unreachable!(),
-            };
-            let receiver = self.typed_array_receiver_diagnostic(p, this)?;
-            return Err(self.type_error(p, format!("Method get TypedArray.prototype.{property} called on incompatible receiver {receiver}")));
+            return None;
         };
         let (buffer, offset, length, length_tracking, kind) =
             (*buffer, object.offset, *length, *length_tracking, *kind);
@@ -996,7 +1004,7 @@ impl<H: Host> Vm<H> {
         } else {
             length
         };
-        Ok(match native {
+        Some(match native {
             Native::TypedArrayBufferGetter => buffer,
             Native::TypedArrayByteOffsetGetter if !out_of_bounds => {
                 Value::number(self.typed_array_byte_offset(this).unwrap_or_default() as f64)

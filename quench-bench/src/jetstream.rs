@@ -184,7 +184,9 @@ pub(crate) fn arguments(file: &Path, prelude: &Path) -> Vec<OsString> {
 pub(crate) fn score(file: &Path, stdout: &str) -> Option<f64> {
     let name = test_name(file);
     stdout.lines().find_map(|line| {
-        let mut fields = line.strip_prefix(name.as_str())?.split_whitespace();
+        let printed_name = line.get(..name.len())?;
+        printed_name.eq_ignore_ascii_case(&name).then_some(())?;
+        let mut fields = line[name.len()..].split_whitespace();
         (fields.next()? == "Score").then_some(())?;
         fields.next()?.parse().ok()
     })
@@ -237,6 +239,12 @@ mod tests {
         assert_eq!(score(&file, stdout), Some(70.47));
         assert_eq!(score(&fixture_path("zlib-wasm"), stdout), None);
         assert_eq!(semantic_output(stdout), "Running web-ssr:");
+    }
+
+    #[test]
+    fn reads_stock_jetstream_lowercased_names() {
+        let stdout = "Running crypto:\ncrypto First-Score 1.0 pts\ncrypto Score 2.5 pts\n";
+        assert_eq!(score(&fixture_path("Crypto"), stdout), Some(2.5));
     }
 
     #[test]
