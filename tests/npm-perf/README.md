@@ -255,3 +255,34 @@ throughput, despite its lower 40.91 MB sampled RSS. The candidate remains
 reverted. The next React JIT work needs to target the unsupported object-heavy
 render functions with a materially broader compiled path; small dispatch fusions
 have not closed the gap. Linux RSS sampling is diagnostic, not qualification.
+
+A guarded JIT entry path for direct parameter-zero data-field getters was
+screened against React SSR. The full 11-round JIT run matched output and measured
+298.1 renders/s / 42.63 MB sampled RSS, compared with the clean baseline's
+288.6 / 42.72 MB. A separate 500-render diagnostic found zero candidate and
+zero fast entries, so the small full-run difference is run-to-run noise rather
+than a path used by React. The code was reverted. The next JIT work must cover
+the central render function's repeated field, mutation, and guest-call sequence
+instead of leaf getters. Reports remain in `work/react-perf`; Linux RSS is
+diagnostic only.
+
+Two follow-up string probes used the full 5,000-render workload, 250 warmups,
+11 rounds, the memory-first policy, and a 16,384 young-generation cap. The
+matched clean 2,048-unit rope-prefix build measured 243.7 renders/s / 29.91 MB;
+the 512-unit candidate measured 276.2 / 30.34 MB. Output matched at
+24,980,000 bytes with checksum 414318. The candidate raised throughput 13.3%
+but also raised RSS 1.4% over its clean control, and its RSS was only 12.1%
+below Node. The earlier three-round screen's larger RSS margin did not hold,
+so the threshold change was rejected. Reports are in
+`work/react-perf/react-rope-prefix-2048-memory-first-max-young-16k-nojit-11.json`
+and `work/react-perf/react-rope-prefix-512-memory-first-max-young-16k-nojit-11.json`.
+
+A second candidate read one UTF-16 code unit from a rope without flattening it,
+on the hypothesis that React SSR's final `charCodeAt` sample flattened an
+otherwise transient HTML string. It measured 238.5 renders/s / 29.87 MB versus
+the same 243.7 / 29.91 MB clean control, with matching output. The small RSS
+difference is noise and throughput was 2.1% lower, so this path was reverted.
+Its report is `work/react-perf/react-rope-charcodeat-memory-first-max-young-16k-nojit-11.json`.
+These results shift the next React work to the object-heavy call and interpreter
+path; string assembly experiments have not produced a combined speed and memory
+win. Linux RSS is diagnostic only.
