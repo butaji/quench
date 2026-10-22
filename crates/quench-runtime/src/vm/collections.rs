@@ -7,23 +7,20 @@ enum CollectionEntries {
     Pairs,
     Values,
 }
-/// The name of the Map and Set count accessor `collection_size_field` answers.
-const COLLECTION_SIZE: &str = "size";
 include!("collections_set_relations.rs");
 impl<H: Host> Vm<H> {
-    /// A Map's or Set's `size` read that runs no guest code: the walk from the receiver
-    /// through ordinary prototypes meets no other `size` before an accessor whose getter is
-    /// the collection's own (`Map.prototype.size` or `Set.prototype.size`, wherever a
-    /// prototype holds it, as primordials copy it), which reads the entry count. `None` leaves
-    /// the read to the general path.
-    pub(super) fn collection_size_field(&self, object: Value, atom: Atom) -> Option<Value> {
-        let (getter, count) = match self.heap.get(object)? {
-            Cell::Map { entries, .. } => (Native::MapSizeGetter, entries.len()),
-            Cell::Set { entries, .. } => (Native::SetSizeGetter, entries.len()),
-            _ => return None,
-        };
+    /// A virtual field read (`AtomClass::VIRTUAL_FIELD`) of a collection or buffer view that
+    /// runs no guest code: the walk from the receiver through ordinary prototypes meets no
+    /// other property of the name before an accessor whose getter answers this receiver
+    /// without a call (`pure_native_getter_value`: a Map's or Set's `size`, a typed array's
+    /// `length`, and a typed array's or DataView's `byteLength` and `byteOffset`), wherever a
+    /// prototype holds it, as primordials copy it. `None` leaves the read to the general path.
+    pub(super) fn pure_virtual_field(&self, object: Value, atom: Atom) -> Option<Value> {
         if !self.atom_class(atom).contains(object::AtomClass::VIRTUAL_FIELD)
-            || self.atom_name(atom) != COLLECTION_SIZE
+            || !matches!(
+                self.heap.get(object)?,
+                Cell::Map { .. } | Cell::Set { .. } | Cell::TypedArray { .. } | Cell::DataView { .. }
+            )
         {
             return None;
         }
@@ -38,12 +35,8 @@ impl<H: Host> Vm<H> {
             }
             if let Some(slot) = self.property_shape_slot(data.shape(), key) {
                 let attributes = self.slot_attributes(data, slot)?;
-                let found = attributes.getter.filter(|_| attributes.accessor)?;
-                let own = matches!(
-                    self.heap.function(found),
-                    Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) if *native == getter
-                );
-                return own.then(|| Value::length(count));
+                let getter = attributes.getter.filter(|_| attributes.accessor)?;
+                return self.pure_native_getter_value(getter, object);
             }
             current = data.proto();
             if current.is_null() {
