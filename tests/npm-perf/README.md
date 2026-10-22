@@ -425,3 +425,21 @@ for the generic PGO+512 control (+0.18% speed, -1.8% RSS). The fused handler
 was reverted. Reports:
 `work/react-perf/react-move-jumpfalse-vs-generic-screen-3.json` and
 `work/react-perf/react-move-jumpfalse-vs-generic-11.json`.
+
+Reordering the monomorphic own-field cache lookup to fetch the site cache before
+loading the receiver object record was also rejected. The 11-round paired
+React no-JIT run measured 316.7 renders/s / 27.78 MB versus 327.1 / 27.69 MB
+for the generic PGO+512 control (-3.2% speed; effectively unchanged RSS).
+Output matched at 24,980,000 bytes/checksum 414318. The small screen had also
+shown no reliable throughput gain. Report:
+`work/react-perf/react-getfield-load-order-11.json`.
+
+An activation-window experiment filled only the registers after call arguments,
+avoiding initialization stores that were immediately overwritten by the
+argument copy. In the full 11-round React no-JIT comparison it measured 307.0
+renders/s / 26.78 MB versus 312.6 / 27.66 MB for the generic PGO+512 control
+(-1.8% speed, -3.2% RSS). Output matched. Because it reduced RSS without a
+throughput win, the change was reverted. The existing PGO profile also dropped
+counts for inlined call handlers after the change, so a fresh profile would be
+needed to evaluate the candidate fairly. Report:
+`work/react-perf/react-activation-fill-after-args-11.json`.
