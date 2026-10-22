@@ -10,7 +10,6 @@
 
 use super::Value;
 use super::property_key::PropertyKey;
-use std::cell::Cell;
 
 /// Direct-mapped entries: a power of two. Node's streams and Fastify's request and reply
 /// objects read a few dozen distinct symbol keys through a handful of receiver shapes per
@@ -42,10 +41,10 @@ struct SymbolLoadProof {
 }
 
 pub(super) struct SymbolLoadProofs {
-    entries: Box<[Cell<Option<SymbolLoadProof>>]>,
+    entries: super::shape_memo::DirectMappedTable<SymbolLoadProof, SYMBOL_LOAD_PROOF_ENTRIES>,
     /// Per read site: the own data slot a proof gave the site's last receiver shape and key
     /// (`SiteOwnRead`), so the site's next read of that pair is one compare.
-    sites: Box<[Cell<Option<SiteOwnRead>>]>,
+    sites: super::shape_memo::DirectMappedTable<SiteOwnRead, SITE_OWN_READ_ENTRIES>,
 }
 
 /// Direct-mapped site entries: a power of two. A request's symbol-keyed reads run at a few
@@ -66,10 +65,7 @@ struct SiteOwnRead {
 
 impl Default for SymbolLoadProofs {
     fn default() -> Self {
-        Self {
-            entries: (0..SYMBOL_LOAD_PROOF_ENTRIES).map(|_| Cell::new(None)).collect(),
-            sites: (0..SITE_OWN_READ_ENTRIES).map(|_| Cell::new(None)).collect(),
-        }
+        Self { entries: Default::default(), sites: Default::default() }
     }
 }
 
@@ -81,22 +77,22 @@ impl SymbolLoadProofs {
     /// The answer a proof for `key` on a receiver of `shape` holds under `epoch`.
     #[inline(always)]
     pub(super) fn answer(&self, shape: u32, key: PropertyKey, epoch: u64) -> Option<SymbolLoadAnswer> {
-        self.entries[Self::index(shape, key)]
-            .get()
+        self.entries
+            .get(Self::index(shape, key))
             .filter(|proof| proof.shape == shape && proof.key == key && proof.epoch == epoch)
             .map(|proof| proof.answer)
     }
 
     pub(super) fn record(&self, shape: u32, key: PropertyKey, epoch: u64, answer: SymbolLoadAnswer) {
-        self.entries[Self::index(shape, key)].set(Some(SymbolLoadProof { shape, key, epoch, answer }));
+        self.entries.set(Self::index(shape, key), SymbolLoadProof { shape, key, epoch, answer });
     }
 
     /// The own data slot site `site` last read `key` from on a receiver of `shape`, while
     /// `epoch` holds.
     #[inline(always)]
     pub(super) fn site_own_slot(&self, site: usize, shape: u32, key: Value, epoch: u64) -> Option<u32> {
-        self.sites[site_index(site)]
-            .get()
+        self.sites
+            .get(site_index(site))
             .filter(|read| read.site == site && read.shape == shape && read.key == key && read.epoch == epoch)
             .map(|read| read.slot)
     }
@@ -105,17 +101,13 @@ impl SymbolLoadProofs {
     /// gives one under `epoch`.
     pub(super) fn record_site_own_slot(&self, site: usize, shape: u32, key: Value, epoch: u64) {
         if let Some(SymbolLoadAnswer::Own(slot)) = self.answer(shape, PropertyKey::symbol(key), epoch) {
-            self.sites[site_index(site)].set(Some(SiteOwnRead { site, shape, key, epoch, slot }));
+            self.sites.set(site_index(site), SiteOwnRead { site, shape, key, epoch, slot });
         }
     }
 
     pub(super) fn clear(&self) {
-        for entry in self.entries.iter() {
-            entry.set(None);
-        }
-        for entry in self.sites.iter() {
-            entry.set(None);
-        }
+        self.entries.clear();
+        self.sites.clear();
     }
 }
 
