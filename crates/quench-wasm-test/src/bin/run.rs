@@ -118,7 +118,7 @@ fn run() -> Result<bool, String> {
         let started = Instant::now();
         let mut child = Command::new(env::current_exe().map_err(|error| error.to_string())?)
             .env(
-                quench_wasm::EXECUTION_MODE_VARIABLE,
+                quench_wasm_test::EXECUTION_MODE_VARIABLE,
                 if jit { "jit" } else { "no-jit" },
             )
             .arg("--worker")
