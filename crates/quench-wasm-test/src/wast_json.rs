@@ -215,3 +215,27 @@ fn heap_name(heap: &HeapType<'_>) -> &'static str {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::wast_to_json;
+
+    #[test]
+    fn commands_carry_binaries_and_bit_patterns() {
+        let json = wast_to_json(
+            "inline.wast",
+            r#"(module (func (export "f") (param i64) (result f32) f32.const nan))
+               (assert_return (invoke "f" (i64.const -1)) (f32.const nan:canonical))
+               (assert_malformed (module quote "(func") "unexpected end")"#,
+        )
+        .unwrap();
+        let commands = json["commands"].as_array().unwrap();
+        assert_eq!(commands[0]["cmd"], "module");
+        assert!(commands[0]["binary"].as_str().unwrap().starts_with("0061736d"));
+        assert_eq!(commands[1]["action"]["args"][0]["bits"], u64::MAX.to_string());
+        assert_eq!(commands[1]["expected"][0]["nan"], "canonical");
+        assert_eq!(commands[2]["cmd"], "assert_malformed");
+        assert!(commands[2]["binary"].is_null());
+        assert_eq!(commands[1]["line"], 2);
+    }
+}
