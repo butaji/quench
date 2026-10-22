@@ -1356,7 +1356,7 @@ impl Heap {
 
     /// Storage for an object's first property `values`: inline where they fit and `inline`
     /// allows it, else the arena.
-    fn initial_object_storage(
+    pub(crate) fn initial_object_storage(
         &mut self,
         shape: u32,
         values: &[Value],

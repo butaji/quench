@@ -5,7 +5,7 @@ use super::*;
 /// defines them, each with its final attributes: `length`, then `name`, then for a
 /// constructor `prototype`, paired with its prototype object's shape once `constructor` is
 /// defined. Recorded from the first such closure built property by property; a later one
-/// adds its values along them.
+/// is allocated with its values under them (`Vm::finished_closure_object`).
 #[derive(Clone, Copy)]
 pub(super) struct ClosureShapes {
     length: u32,
@@ -34,13 +34,16 @@ pub(super) struct ClosureTemplate {
 /// when it has one, follows them.
 const FINISHED_CLOSURE_NAMED_SLOTS: usize = 2;
 
-/// Whether a closure's own properties fit its inline slots, so it can be allocated finished.
+/// A closure's own properties: `length` and `name`, then its `prototype` when it has one.
+const FINISHED_CLOSURE_SLOTS: usize = FINISHED_CLOSURE_NAMED_SLOTS + 1;
+
+/// Whether a closure's own properties fit its inline slots.
 fn finished_closure_fits(prototype: Option<Value>) -> bool {
     FINISHED_CLOSURE_NAMED_SLOTS + usize::from(prototype.is_some())
         <= crate::value_vec::INLINE_PROPERTY_COUNT
 }
 
-/// The inline slots of a closure allocated finished (`finished_closure_fits`).
+/// The inline slots of a closure whose own properties fit them (`finished_closure_fits`).
 fn finished_closure_slots(
     named: &[Value; FINISHED_CLOSURE_NAMED_SLOTS],
     prototype: Option<Value>,
@@ -315,14 +318,39 @@ impl<H: Host> Vm<H> {
 
     /// A closure of `template`'s function over `env`, as `closure_in_realm` makes a
     /// recorded one.
+    /// A closure's object allocated finished: its own `length`, `name` and `prototype` under
+    /// `shape`, as the recorded adds would leave them, inline where they fit, else in the
+    /// property arena.
+    fn finished_closure_object(
+        &mut self,
+        function_prototype: Value,
+        shape: u32,
+        named: [Value; FINISHED_CLOSURE_NAMED_SLOTS],
+        prototype: Option<Value>,
+    ) -> crate::heap::Object {
+        if finished_closure_fits(prototype) {
+            return crate::heap::Object::with_property_storage(
+                function_prototype,
+                crate::value_vec::ValueVec::inline_property_storage(shape),
+                finished_closure_slots(&named, prototype),
+            );
+        }
+        let [length, name] = named;
+        let values: [Value; FINISHED_CLOSURE_SLOTS] = [length, name, prototype.unwrap_or(Value::UNDEFINED)];
+        let count = FINISHED_CLOSURE_NAMED_SLOTS + usize::from(prototype.is_some());
+        let (storage, inline) = self.heap.initial_object_storage(shape, &values[..count], false);
+        crate::heap::Object::with_property_storage(function_prototype, storage, inline)
+    }
+
     fn closure_of_template(&mut self, template: ClosureTemplate, env: Value) -> Value {
         let prototype = template
             .prototype
             .map(|(parent, _)| self.heap.alloc_object(Self::empty_object(parent)));
-        let object = crate::heap::Object::with_property_storage(
+        let object = self.finished_closure_object(
             template.function_prototype,
-            crate::value_vec::ValueVec::inline_property_storage(template.shape),
-            finished_closure_slots(&[template.length, template.name], prototype),
+            template.shape,
+            [template.length, template.name],
+            prototype,
         );
         let function = self.heap.alloc_function(FunctionRecord {
             object,
@@ -417,16 +445,12 @@ impl<H: Host> Vm<H> {
             && !function_plan.is_class_constructor;
         let shapes_key = usize::from(prototype.is_some());
         let recorded_shapes = self.closure_shapes[shapes_key].filter(|_| ordinary);
-        // A recorded closure whose own properties fit its inline slots is allocated finished:
-        // its `length`, `name` and `prototype` inline, as the adds would leave them, under the
-        // shape they and its original name would reach. A larger one takes the recorded shapes
-        // by adds after allocation.
-        let finished = recorded_shapes.and_then(|shapes| {
-            let (shape, own_prototype) = match (prototype, shapes.prototype) {
-                (Some(prototype), Some((with_prototype, _))) => (with_prototype, Some(prototype)),
-                _ => (shapes.name, None),
-            };
-            finished_closure_fits(own_prototype).then_some((shape, own_prototype))
+        // A recorded closure is allocated finished (`finished_closure_object`): its `length`,
+        // `name` and `prototype` as the adds would leave them, under the shape they and its
+        // original name would reach.
+        let finished = recorded_shapes.map(|shapes| match (prototype, shapes.prototype) {
+            (Some(prototype), Some((with_prototype, _))) => (with_prototype, Some(prototype)),
+            _ => (shapes.name, None),
         });
         let mut named_shape = None;
         let object = match finished {
@@ -434,11 +458,7 @@ impl<H: Host> Vm<H> {
                 let named =
                     self.function_name_shape(shape, plan_name.unwrap_or(self.runtime_atoms.empty));
                 named_shape = Some(named);
-                crate::heap::Object::with_property_storage(
-                    function_object_prototype,
-                    crate::value_vec::ValueVec::inline_property_storage(named),
-                    finished_closure_slots(&[length_value, name_value], own_prototype),
-                )
+                self.finished_closure_object(function_object_prototype, named, [length_value, name_value], own_prototype)
             }
             None => Self::empty_object(function_object_prototype),
         };
@@ -464,14 +484,6 @@ impl<H: Host> Vm<H> {
             );
         }
         if let Some(shapes) = recorded_shapes {
-            if finished.is_none() {
-                self.heap.property_add(function, length_value, shapes.length);
-                self.heap.property_add(function, name_value, shapes.name);
-                if let (Some(prototype), Some((with_prototype, _))) = (prototype, shapes.prototype) {
-                    self.heap.property_add(function, prototype, with_prototype);
-                }
-                self.capture_fresh_closure_name(function, plan_name);
-            }
             let constructor = match (prototype, shapes.prototype) {
                 (Some(prototype), Some((_, constructor))) => {
                     self.heap.property_add(prototype, function, constructor);
@@ -480,9 +492,8 @@ impl<H: Host> Vm<H> {
                 _ => None,
             };
             // A nested function's closures are found by none of its plans, so a template
-            // makes the next ones the same way; a top-level one is recorded above. Only a
-            // closure allocated finished (`named_shape`) has a template, and a prototype the
-            // recorded shapes do not hold leaves the template unmade.
+            // makes the next ones the same way; a top-level one is recorded above. A prototype
+            // the recorded shapes do not hold leaves the template unmade.
             if plain_scope
                 && function_plan.parent.is_some_and(|parent| parent != super::ROOT_FUNCTION_ID)
                 && prototype.is_some() == constructor.is_some()
