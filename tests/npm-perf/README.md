@@ -161,6 +161,23 @@ budget both regressed; those iteration-profile diagnostics are recorded at
 and
 [`reports/react-no-jit-memory-first-young-half-linux-11.json`](reports/react-no-jit-memory-first-young-half-linux-11.json).
 The benchmark runner records memory and GC policy settings in each report.
-The lane census also attributes about 268,000 capture reads to the React server
-root over 275 renders; the next optimization target is that repeated global
-capture path. These Linux RSS measurements are diagnostic, not qualification.
+These Linux RSS measurements are diagnostic, not qualification.
+
+Recent no-JIT probes used profile-guided candidates for the remaining React
+dispatch work. Frame-capture cache priming, direct `hasOwnProperty`, a projected
+global-capture shortcut, fused local-branch dispatch, and a single-probe string
+concat path all regressed against the 312.9 renders/s / 41.67 MB production
+baseline and were reverted. The best memory-first policy screen remains
+217.0 renders/s / 23.76 MB; it clears the RSS margin, but is far below Node and
+Bun throughput.
+
+A lane-exit profile showed 6,600 of 6,742 `SetFieldStrict` exits over 500
+renders came from direct-array receivers in React's `flushCompletedQueues`
+function; the hot sites assign `length = 0`. A guarded fast path for this dense
+array case preserved output but measured 288.4 renders/s / 41.39 MB. A version
+that gated the path on the `length` atom before trying the ordinary field cache
+measured 279.6 renders/s / 41.43 MB. Both were reverted after 11-round
+production comparisons. The profile attribution is useful for future work, but
+this array-length shortcut is not a performance win. The reports and profile
+logs from these probes remain under the local `work/react-perf` scratch folder;
+Linux RSS sampling is diagnostic, not qualification.
