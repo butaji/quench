@@ -16,6 +16,10 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
         "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
         "\0quench:object-define-property" => Native::ObjectDefineProperty,
         "\0quench:object-freeze" => Native::ObjectFreeze,
+        // The iteration helpers each realm also installs on its global object.
+        "\0quench:iterator-close" => Native::IteratorClose,
+        "\0quench:for-in-keys" => Native::ForInKeys,
+        "\0quench:for-in-key-is-enumerable" => Native::ForInKeyIsEnumerable,
         _ => return None,
     })
 }
