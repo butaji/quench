@@ -240,17 +240,8 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         value: Value,
     ) -> Result<f64, JsError> {
-        if let Some(value) = value.as_number() {
-            return Ok(value);
-        }
-        if let Some(value) = value.as_bool() {
-            return Ok(if value { 1.0 } else { 0.0 });
-        }
-        if value.is_null() {
-            return Ok(0.0);
-        }
-        if value.is_undefined() || value.is_deleted() {
-            return Ok(f64::NAN);
+        if let Some(number) = value.immediate_number() {
+            return Ok(number);
         }
         if self.object_data(value).is_some() {
             let primitive = self.to_primitive(program, value, "number")?;

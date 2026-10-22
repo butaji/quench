@@ -857,21 +857,10 @@ impl<H: Host> Vm<H> {
             Native::JsonStringify => self.json_stringify(p, args),
             Native::JsonRawJson => self.json_raw_json(p, args),
             Native::JsonIsRawJson => self.json_is_raw_json(args),
-            Native::GlobalIsNaN => {
+            Native::GlobalIsNaN | Native::GlobalIsFinite => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                Ok(if self.to_number(p, value)?.is_nan() {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
-            }
-            Native::GlobalIsFinite => {
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                Ok(if self.to_number(p, value)?.is_finite() {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
+                let number = self.to_number(p, value)?;
+                Ok(Value::boolean(super::number::global_number_predicate(native, number).unwrap_or_default()))
             }
             Native::MathLog => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);

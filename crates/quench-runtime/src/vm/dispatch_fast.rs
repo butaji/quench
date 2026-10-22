@@ -2903,6 +2903,30 @@ fn lane_projected_capture<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u1
     vm.plain_projected_global_var(env, slot)
 }
 
+/// A frame run's innermost capture slots for `LaneContext::capture`, when the frame's
+/// cache holds them dense: tagged `CAPTURE_STORES` when their environment admits every
+/// store, whose barrier this takes once, as `Vm::target_capture` tags an activation's. The
+/// first store of a frame run asks (`lane_store_capture`).
+#[inline(never)]
+fn lane_frame_capture<H: Host>(cx: *mut LaneContext<H>) -> Option<*const crate::heap::EnvironmentSlots> {
+    let vm = unsafe { vm(cx) };
+    let frame = unsafe { (*cx).frame };
+    let Some((slots, None)) = vm.current_capture_slots(frame) else {
+        return None;
+    };
+    // SAFETY: the frame's cache names live slots this collection; none runs in the lane.
+    let dense = std::ptr::from_ref(unsafe { &*slots }.dense()?);
+    // The cache's slots are those of the frame's depth-0 capture environment.
+    let env = vm.capture_env(frame, 0)?;
+    // SAFETY: the context's program outlives the lane run.
+    let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
+    if vm.admits_every_direct_store(code, program, env) {
+        vm.heap.remember_cell(env);
+        return Some(dense.map_addr(|address| address | CAPTURE_STORES));
+    }
+    Some(dense)
+}
+
 script_handler! {
     /// `lane_load_capture` before the running function's slots are known: the walk from
     /// the frame's cache, or from the activation's environment, which keeps them.
@@ -3040,6 +3064,22 @@ script_handler! {
         }
         let vm = unsafe { vm(cx) };
         let env = unsafe { (*cx).env };
+        // A frame run's first depth-0 store finds its slots, tagged when they admit every
+        // store (reads leave them untagged: most frame runs store none), then stores through
+        // them.
+        if depth == 0
+            && env.is_deleted()
+            && let Some(capture) = lane_frame_capture(cx)
+        {
+            unsafe { (*cx).capture = capture };
+            if let Some(slots) = capture_stores(capture)
+                // SAFETY: as for the stores above.
+                && let Some(binding) = unsafe { &mut *slots }.dense_plain_mut(usize::from(ImmediateLayout::capture_slot(imm)))
+            {
+                *binding = r.get(i.a);
+                next!(cx, r, following(ip), view)
+            }
+        }
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let program = unsafe { (*cx).program };
@@ -3504,6 +3544,10 @@ script_handler! {
     #[inline(never)]
     fn lane_get_field_first<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
+        if vm.is_private_name(i.imm()) && i.b != crate::bytecode::FieldBase::NESTED {
+            requicken(ip, lane_get_private_field::<H>);
+            sibling!(lane_get_private_field::<H>, r, ip, Carried::script(cx))
+        }
         if vm.reads_function_info(i.imm()) {
             // A register's `length` is most often an array's, which no function information
             // can answer.
@@ -4089,7 +4133,7 @@ fn lane_set_field<H: Host>(
     // `SetField` does, before any cache; the general loop's cached write otherwise: the store
     // inline, the add out of line.
     let stored = if vm.is_private_name(i.imm()) {
-        lane_private_field_store(cx, code, object, i.imm(), r.get(i.a))
+        lane_private_field_store(cx, ip, code, object, i.imm(), r.get(i.a))
     } else {
         vm.cached_field_write_hit(code, object, i.imm(), r.get(i.a), i.c)
     };
@@ -4101,29 +4145,65 @@ fn lane_set_field<H: Host>(
     next!(cx, r, following(ip), Carried::script(cx))
 }
 
-/// The store of private field `atom` of `object`, whose home follows the running function
-/// and the environment its frame would capture from, as `lane_cached_field_miss` reads one:
-/// the lane's frame, or a frameless activation's function and closure environment. `false`
-/// leaves the store, a private accessor's or method's included, to the general path.
+/// The brand of private name `atom` at the record `ip`, whose home follows the running
+/// function and the environment its frame would capture from: the lane's frame, or a
+/// frameless activation's function and closure environment (`Vm::site_private_brand`).
+#[inline(never)]
+fn lane_private_brand<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    code: &ResidualProgram,
+    atom: crate::bytecode::Atom,
+) -> Option<crate::heap::PrivateBrand> {
+    let vm = unsafe { vm(cx) };
+    let (environment, function, frame) = match vm.lane_stack.activations.last() {
+        None => {
+            // The running frame is the top one, whose home `Vm::private_name_home` finds.
+            let frame = vm.frames.len().checked_sub(1)?;
+            (vm.captured_parent_environment(frame), vm.frames[frame].function, true)
+        }
+        // SAFETY: the context outlives the lane run.
+        Some(activation) => (unsafe { (*cx).env }, activation.script().map(|_| activation.function)?, false),
+    };
+    vm.site_private_brand(code, ip.addr(), environment, function, frame, atom)
+}
+
+/// The store of private field `atom` of `object` at the record `ip`, under its brand there
+/// (`lane_private_brand`). `false` leaves the store, a private accessor's or method's
+/// included, to the general path.
 #[inline(never)]
 fn lane_private_field_store<H: Host>(
     cx: *mut LaneContext<H>,
+    ip: Ip,
     code: &ResidualProgram,
     object: Value,
     atom: crate::bytecode::Atom,
     value: Value,
 ) -> bool {
-    let vm = unsafe { vm(cx) };
-    match vm.lane_stack.activations.last() {
-        None => vm.set_private_field_value(code, object, atom, value),
-        Some(activation) => {
-            let Some(function) = activation.script().map(|_| activation.function) else {
-                return false;
-            };
-            // SAFETY: the context outlives the lane run.
-            let environment = unsafe { (*cx).env };
-            vm.memoized_set_private_field_value(code, environment, function, object, atom, value)
-        }
+    let Some(brand) = lane_private_brand(cx, ip, code, atom) else {
+        return false;
+    };
+    (unsafe { vm(cx) }).object_data_mut(object).is_some_and(|data| data.set_private_field(brand, value))
+}
+
+script_handler! {
+    /// `GetField` of a private name (`Vm::is_private_name`) from a register or `this`, which
+    /// no field cache records (`lane_get_field_first`): the object's private element under
+    /// the name's brand at this record (`lane_private_brand`). Any other read, a private
+    /// method's or accessor's included, takes `lane_get_field`.
+    #[inline(never)]
+    fn lane_get_private_field<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let value = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }.and_then(|object| {
+            let brand = lane_private_brand(cx, ip, code, i.imm())?;
+            (unsafe { vm(cx) }).object_data(object)?.private_field(brand)
+        });
+        let Some(value) = value else {
+            sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
@@ -7401,7 +7481,8 @@ fn lane_receiver_this<H: Host>(vm: &Vm<H>, binding: ThisBinding, receiver: Value
         // An arrow whose environment binds no `this` takes its caller's receiver.
         return (binding != ThisBinding::Lexical).then_some(receiver);
     }
-    if receiver.direct_object_index().is_some() {
+    // An object receiver binds itself; a direct record of any object family is one.
+    if receiver.is_direct_object_family() {
         Some(receiver)
     } else if receiver.is_null() || receiver.is_undefined() {
         Some(vm.realm.globals)
@@ -8194,25 +8275,29 @@ fn lane_promise_native<H: Host>(
 /// place so the lane's activations need not become frames (`lane_call_native`): a dense
 /// array's `indexOf` (`Vm::dense_index_of`), `String.fromCharCode` of Numbers, which
 /// allocates its string, `Number`'s predicates, which coerce nothing
-/// (`number::number_predicate`), and `ArrayBuffer.isView`. `None` leaves any other call to
+/// (`number::number_predicate`), the global `isNaN` and `isFinite` of an argument whose
+/// ToNumber reads nothing (`Value::immediate_number`), `Boolean` called as a function, whose
+/// ToBoolean runs no guest code, and `ArrayBuffer.isView`. `None` leaves any other call to
 /// `lane_call_native`.
 #[inline(never)]
 fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, args: &[Value]) -> Option<Value> {
     let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else {
         return None;
     };
-    match *native {
+    let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
+    match native {
         Native::ArrayIndexOf => vm.dense_index_of(receiver, args),
         Native::StringFromCharCode => {
             let text = vm.from_char_code_numbers(args)?;
             note_allocation(vm);
             Some(text)
         }
-        Native::ArrayBufferIsView => {
-            Some(Value::boolean(vm.is_array_buffer_view(args.first().copied().unwrap_or(Value::UNDEFINED))))
+        Native::ArrayBufferIsView => Some(Value::boolean(vm.is_array_buffer_view(argument))),
+        Native::Boolean => Some(Value::boolean(vm.truthy(argument))),
+        Native::GlobalIsNaN | Native::GlobalIsFinite => {
+            super::number::global_number_predicate(*native, argument.immediate_number()?).map(Value::boolean)
         }
-        native => super::number::number_predicate(native, args.first().copied().unwrap_or(Value::UNDEFINED))
-            .map(Value::boolean),
+        native => super::number::number_predicate(*native, argument).map(Value::boolean),
     }
 }
 

@@ -154,6 +154,7 @@ mod object;
 mod shape_memo;
 mod symbol_write_proof;
 mod symbol_load_proof;
+mod private_site_home;
 mod enumerable_key_memo;
 mod name_atom_memo;
 mod object_assignment;
@@ -1667,6 +1668,8 @@ pub(crate) struct Vm<H> {
     function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
+    /// Lane private-name sites' homes (`private_site_home`).
+    private_site_homes: private_site_home::PrivateSiteHomes,
     array_iteration_proof: Option<iterators::ArrayIterationProof>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
@@ -2600,6 +2603,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
+        self.private_site_homes.clear();
         self.array_iteration_proof = None;
         self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();
