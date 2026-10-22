@@ -892,8 +892,11 @@ impl Native {
             Self::ObjectLiteralPrototype
                 | Self::ObjectKeys
                 | Self::ObjectDefineProperty
+                | Self::ObjectGetPrototypeOf
                 | Self::StringSplit
                 | Self::JsonStringify
+                | Self::ParseInt
+                | Self::ArrayShift
         )
     }
 

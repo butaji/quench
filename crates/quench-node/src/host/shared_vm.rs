@@ -1056,7 +1056,10 @@ const BESIDE_ACTIVATIONS: &[&str] = &[
     "bufferBindingByteLengthUtf8",
     "nextTick",
     "httpResponseGetHeader",
+    "httpResponseSetHeader",
     "httpResponseWrite",
+    "httpResponseWriteHead",
+    "httpResponseFinish",
     "stringDecoderDecode",
     "markAsUncloneable",
 ];

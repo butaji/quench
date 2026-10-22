@@ -87,7 +87,7 @@ pub(super) fn collected(env: &Env, c: &mut Context<'_>) -> Vec<Finalizer> {
 /// A nested handle scope: the handle and root counts it restores when closed.
 pub(crate) struct HandleScope {
     handles: usize,
-    roots: usize,
+    roots: quench_runtime::RootScopeMark,
     /// For an escapable scope, the enclosing-scope handle reserved for the escapee.
     escape_slot: Option<usize>,
     escaped: Cell<Option<RootId>>,
