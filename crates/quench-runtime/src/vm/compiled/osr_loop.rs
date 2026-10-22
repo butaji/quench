@@ -48,7 +48,7 @@ const PC_MASK: u64 = u32::MAX as u64;
 
 /// The outcome of one native run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum LoopOutcome {
+pub(crate) enum LoopOutcome {
     /// An entry guard failed: registers are untouched, and the interpreter takes the jump.
     /// A representation guard names what the compilation assumed wrongly.
     NotEntered(Option<Widening>),
@@ -64,7 +64,7 @@ pub(super) enum LoopOutcome {
 /// A value a compilation held as an `i32` that turned out not to be one; the next
 /// compilation holds it as an `f64`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Widening {
+pub(crate) enum Widening {
     Register(Register),
     /// A capture, by its index in the region's capture order.
     Capture(u16),
@@ -118,21 +118,21 @@ impl LoopOutcome {
 
 /// An array a region indexes, by its register; `written` when the region stores into it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ArrayUse {
-    pub(super) register: Register,
-    pub(super) written: bool,
+pub(crate) struct ArrayUse {
+    pub(crate) register: Register,
+    pub(crate) written: bool,
 }
 
 /// A loop's admissible region and the facts its entry needs.
-pub(super) struct LoopRegion {
-    pub(super) header: u32,
-    pub(super) backedge: u32,
+pub(crate) struct LoopRegion {
+    pub(crate) header: u32,
+    pub(crate) backedge: u32,
     /// The Number registers; a register's index here names its entry definition (`Webs`).
     numbers: Vec<Register>,
     /// The arrays, in entry-record order.
-    pub(super) arrays: Vec<ArrayUse>,
+    pub(crate) arrays: Vec<ArrayUse>,
     /// The depth-0 capture slots `LoadCapture` reads, in entry-record order.
-    pub(super) captures: Vec<u16>,
+    pub(crate) captures: Vec<u16>,
     /// The region's instructions, from the header.
     instructions: Vec<WideInstruction>,
     /// The Number constants the region reads, by constant index.
@@ -156,7 +156,7 @@ impl LoopRegion {
 
 /// The entry record native code reads: the termination flag, then each capture's value,
 /// then each array's element pointer and length.
-pub(super) struct LoopEntry {
+pub(crate) struct LoopEntry {
     words: [u64; ENTRY_WORDS],
     length: usize,
 }
@@ -172,7 +172,7 @@ const ARRAY_WORDS: usize = 2;
 const ENTRY_WORDS: usize = ENTRY_CAPTURES + MAX_REGION_CAPTURES + ARRAY_WORDS * MAX_REGION_ARRAYS;
 
 impl LoopEntry {
-    pub(super) fn new(interrupt: &std::sync::atomic::AtomicBool) -> Self {
+    pub(crate) fn new(interrupt: &std::sync::atomic::AtomicBool) -> Self {
         let mut words = [0; ENTRY_WORDS];
         words[ENTRY_INTERRUPT] = std::ptr::from_ref(interrupt).addr() as u64;
         Self { words, length: ENTRY_CAPTURES }
@@ -184,18 +184,18 @@ impl LoopEntry {
     }
 
     /// Captures come first, in the region's order.
-    pub(super) fn push_capture(&mut self, value: Value) {
+    pub(crate) fn push_capture(&mut self, value: Value) {
         self.push(value.to_bits());
     }
 
     /// The first `count` capture values, as pushed.
-    pub(super) fn captures(&self, count: usize) -> Vec<Value> {
+    pub(crate) fn captures(&self, count: usize) -> Vec<Value> {
         self.words[ENTRY_CAPTURES..ENTRY_CAPTURES + count].iter().map(|bits| Value::from_bits(*bits)).collect()
     }
 
     /// Arrays follow the captures, in the region's order. An array longer than
     /// `MAX_INDEXED_LENGTH` declines the entry.
-    pub(super) fn push_array(&mut self, elements: *mut Value, length: usize) -> Option<()> {
+    pub(crate) fn push_array(&mut self, elements: *mut Value, length: usize) -> Option<()> {
         (length <= MAX_INDEXED_LENGTH).then_some(())?;
         self.push(elements.addr() as u64);
         self.push(length as u64);
@@ -476,12 +476,12 @@ enum Representation {
 
 /// The values a compilation starts from: what the region's registers and captures held when
 /// it compiled, and what earlier compilations found was no `i32` (`Widening`).
-pub(super) struct Observation<'a> {
-    pub(super) register: &'a dyn Fn(Register) -> Value,
+pub(crate) struct Observation<'a> {
+    pub(crate) register: &'a dyn Fn(Register) -> Value,
     /// Whether the array in a register looks to hold `i32` elements.
-    pub(super) int32_elements: &'a dyn Fn(Register) -> bool,
-    pub(super) captures: &'a [Value],
-    pub(super) widened: &'a std::collections::BTreeSet<Widening>,
+    pub(crate) int32_elements: &'a dyn Fn(Register) -> bool,
+    pub(crate) captures: &'a [Value],
+    pub(crate) widened: &'a std::collections::BTreeSet<Widening>,
 }
 
 /// A definition of a Number register in a region: the value it holds at entry, by its
