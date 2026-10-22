@@ -4,10 +4,12 @@
 //! ```sh
 //! conformance-compare --suite test262|wasm --mode no-jit|jit --out DIR \
 //!     --quench BINARY --node NODE --bun BUN [--wasm-json DIR] [--jobs N] [--timeout-ms MS] \
-//!     [--every K]
+//!     [--every K] [--rounds R]
 //! ```
 //!
 //! `--every K` keeps every Kth case in discovery order (a sample spread across every area).
+//! `--rounds R` measures every case R times, round after round; the summary takes each
+//! case's per-engine median wall time, CPU time and peak RSS across the rounds.
 //!
 //! Every case runs as its own process on every engine, as Quench's runners run them:
 //!
@@ -93,6 +95,7 @@ struct Options {
     jobs: usize,
     timeout: Duration,
     every: usize,
+    rounds: usize,
     rss_exec: PathBuf,
 }
 
@@ -103,7 +106,9 @@ struct Case {
     commands: [Vec<String>; 3],
 }
 
+#[derive(Clone)]
 struct Sample {
+    round: usize,
     case: usize,
     engine: usize,
     wall_ms: f64,
@@ -142,6 +147,7 @@ fn parse(mut arguments: impl Iterator<Item = String>) -> Result<Options, String>
     let mut jobs = thread::available_parallelism().map_or(1, |jobs| jobs.get());
     let mut timeout = Duration::from_millis(DEFAULT_TIMEOUT_MS);
     let mut every = 1;
+    let mut rounds = 1;
     while let Some(argument) = arguments.next() {
         let mut value = || arguments.next().ok_or(format!("{argument} needs a value"));
         match argument.as_str() {
@@ -164,6 +170,7 @@ fn parse(mut arguments: impl Iterator<Item = String>) -> Result<Options, String>
             "--node" => node = Some(PathBuf::from(value()?)),
             "--bun" => bun = Some(PathBuf::from(value()?)),
             "--wasm-json" => wasm_json = Some(PathBuf::from(value()?)),
+            "--rounds" => rounds = value()?.parse().map_err(|_| "--rounds needs a count")?,
             "--every" => every = value()?.parse().map_err(|_| "--every needs a count")?,
             "--jobs" => jobs = value()?.parse().map_err(|_| "--jobs needs a count")?,
             "--timeout-ms" => {
@@ -187,6 +194,7 @@ fn parse(mut arguments: impl Iterator<Item = String>) -> Result<Options, String>
         jobs: jobs.max(1),
         timeout,
         every: every.max(1),
+        rounds: rounds.max(1),
         rss_exec: std::env::current_exe()
             .map_err(|error| error.to_string())?
             .with_file_name("rss-exec"),
@@ -210,7 +218,7 @@ fn run(options: &Options) -> Result<(), String> {
     let mut lines = fs::File::create(options.out.join("samples.jsonl")).map_err(|error| error.to_string())?;
     for sample in &samples {
         let line = json!({
-            "case": cases[sample.case].id, "area": cases[sample.case].area,
+            "round": sample.round, "case": cases[sample.case].id, "area": cases[sample.case].area,
             "engine": ENGINES[sample.engine], "wall_ms": sample.wall_ms, "user_ms": sample.user_ms,
             "sys_ms": sample.sys_ms, "maxrss_kib": sample.maxrss_kib, "status": sample.status,
             "passed": sample.passed,
@@ -272,9 +280,12 @@ fn is_module_case(source: &str) -> bool {
         .any(|line| line.trim_start().starts_with("flags:") && line.contains("module"))
 }
 
-/// A Test262 path's first two directories (`built-ins/Array`).
+/// A Test262 path's first two directories (`built-ins/Array`), or its one directory for a
+/// file directly inside one (`harness`).
 fn area_of(relative: &str) -> String {
-    relative.split('/').take(2).collect::<Vec<_>>().join("/")
+    let directories = relative.split('/').collect::<Vec<_>>();
+    let depth = (directories.len() - 1).min(2);
+    directories[..depth.max(1)].join("/")
 }
 
 fn wasm_cases(options: &Options) -> Result<(Vec<Case>, usize), String> {
@@ -389,7 +400,8 @@ fn argv_name(arguments: &[CString]) -> String {
 
 fn measure(options: &Options, cases: &[Case]) -> Result<Vec<Sample>, String> {
     let next = AtomicUsize::new(0);
-    let total = cases.len() * ENGINES.len();
+    let per_round = cases.len() * ENGINES.len();
+    let total = per_round * options.rounds;
     let samples = Mutex::new(Vec::with_capacity(total));
     let watchdog = Arc::new(Mutex::new(HashMap::<i32, Instant>::new()));
     let done = Arc::new(AtomicUsize::new(0));
@@ -416,8 +428,10 @@ fn measure(options: &Options, cases: &[Case]) -> Result<Vec<Sample>, String> {
                 if index >= total {
                     break;
                 }
-                let (case, engine) = (index / ENGINES.len(), index % ENGINES.len());
-                let sample = run_one(options, &cases[case], case, engine, &watchdog);
+                let round = index / per_round;
+                let (case, engine) = (index % per_round / ENGINES.len(), index % ENGINES.len());
+                let mut sample = run_one(options, &cases[case], case, engine, &watchdog);
+                sample.round = round;
                 let mut samples = samples.lock().unwrap();
                 samples.push(sample);
                 if samples.len() % 1000 == 0 {
@@ -429,7 +443,7 @@ fn measure(options: &Options, cases: &[Case]) -> Result<Vec<Sample>, String> {
     done.store(1, Ordering::Relaxed);
     watch.join().map_err(|_| "watchdog panicked")?;
     let mut samples = samples.into_inner().unwrap();
-    samples.sort_by_key(|sample| (sample.case, sample.engine));
+    samples.sort_by_key(|sample| (sample.case, sample.engine, sample.round));
     Ok(samples)
 }
 
@@ -464,6 +478,7 @@ fn run_one(
         .unwrap_or(usage.ru_maxrss);
     let _ = fs::remove_file(&stderr);
     Sample {
+        round: 0,
         case: index,
         engine,
         wall_ms,
@@ -559,10 +574,33 @@ impl Totals {
 /// The metrics compared per area, each lower-is-better.
 const METRICS: [&str; 4] = ["cpu_s", "wall_s", "rss_median_mib", "rss_max_mib"];
 
+/// Each (case, engine)'s rounds as one sample: the median wall time, CPU time (as
+/// `user_ms`) and peak RSS, passing only when every round passed. `samples` is sorted by
+/// case, engine and round.
+fn medians(samples: &[Sample]) -> Vec<Sample> {
+    fn median(mut values: Vec<f64>) -> f64 {
+        values.sort_by(f64::total_cmp);
+        values[values.len() / 2]
+    }
+    samples
+        .chunk_by(|left, right| (left.case, left.engine) == (right.case, right.engine))
+        .map(|rounds| Sample {
+            wall_ms: median(rounds.iter().map(|sample| sample.wall_ms).collect()),
+            user_ms: median(rounds.iter().map(|sample| sample.user_ms + sample.sys_ms).collect()),
+            sys_ms: 0.0,
+            maxrss_kib: median(rounds.iter().map(|sample| sample.maxrss_kib as f64).collect()) as i64,
+            status: rounds.iter().map(|sample| sample.status).find(|status| *status != 0).unwrap_or(0),
+            passed: rounds.iter().all(|sample| sample.passed),
+            ..rounds[0].clone()
+        })
+        .collect()
+}
+
 fn summarize(options: &Options, cases: &[Case], samples: &[Sample], excluded: usize, elapsed: Duration) -> Value {
+    let samples = medians(samples);
     let mut overall = vec![Totals::default(); ENGINES.len()];
     let mut areas = BTreeMap::<&str, Vec<Totals>>::new();
-    for sample in samples {
+    for sample in &samples {
         overall[sample.engine].add(sample);
         areas.entry(&cases[sample.case].area).or_insert_with(|| vec![Totals::default(); ENGINES.len()])[sample.engine]
             .add(sample);
@@ -601,6 +639,7 @@ fn summarize(options: &Options, cases: &[Case], samples: &[Sample], excluded: us
         "jobs": options.jobs,
         "timeout_ms": options.timeout.as_millis(),
         "every": options.every,
+        "rounds": options.rounds,
         "elapsed_s": elapsed.as_secs_f64(),
         "excluded_cases": excluded,
         "host": host,
@@ -633,13 +672,14 @@ fn git_head() -> String {
 
 fn markdown(summary: &Value) -> String {
     let mut text = format!(
-        "# {} {} — Quench vs Node vs Bun\n\nhost: {} CPUs, {}; jobs {}; elapsed {:.0}s; excluded {} cases\n\
+        "# {} {} — Quench vs Node vs Bun\n\nhost: {} CPUs, {}; jobs {}; rounds {}; elapsed {:.0}s; excluded {} cases\n\
          versions: quench {} · node {} · bun {}\n\n",
         summary["suite"].as_str().unwrap_or(""),
         summary["mode"].as_str().unwrap_or(""),
         summary["host"]["cpus"],
         summary["host"]["cpu_model"].as_str().unwrap_or(""),
         summary["jobs"],
+        summary["rounds"],
         summary["elapsed_s"].as_f64().unwrap_or(0.0),
         summary["excluded_cases"],
         summary["versions"]["quench"].as_str().unwrap_or(""),
