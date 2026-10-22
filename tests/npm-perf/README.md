@@ -109,3 +109,8 @@ only 6.9% lower than Node, so this is a partial improvement, not a win. A 2^18
 cap measured 191.7 renders/s / 30.66 MB versus 208.3 / 31.20 MB at 2^17 in a
 separate five-round screen. The 2^16 cap was selected on the 11-round follow-up.
 These Linux RSS samples are diagnostic, not qualification.
+
+The optional `quench-alloc` feature raised the 11-round React screen to 224.3
+renders/s but also raised sampled max RSS to 32.49 MB (from 196.7 renders/s /
+29.74 MB with the system allocator). It remains disabled for this workload
+because the speed gain comes with a larger memory footprint.
