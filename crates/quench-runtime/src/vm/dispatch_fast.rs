@@ -10825,7 +10825,7 @@ fn derive_lane_view<H: Host>(
     specialize_outer_captures::<H>(&mut records);
     let environment_window = specialize_environment_window::<H>(function, &mut records);
     let loops = if loop_tier && kind != crate::bytecode::ProgramKind::Wasm {
-        install_loop_sites::<H>(function, &decoded, constants, &mut records)
+        install_loop_sites::<H>(function, &decoded, constants, live, &mut records)
     } else {
         Box::default()
     };
@@ -10870,6 +10870,7 @@ fn install_loop_sites<H: Host>(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[Value],
+    live: Option<&[u64]>,
     records: &mut [LaneInstruction],
 ) -> Box<[LoopSite]> {
     let backward = lane_jump_always::<H, true> as Handler as *const ();
@@ -10877,7 +10878,7 @@ fn install_loop_sites<H: Host>(
         .filter(|pc| records[*pc].handler == backward && decoded[*pc].op() == Op::Jump)
         .filter_map(|pc| {
             let header = decoded[pc].jump_target();
-            let region = super::loop_compiled::region(function, decoded, constants, header, pc as u32)?;
+            let region = super::loop_compiled::region(function, decoded, constants, live, header, pc as u32)?;
             Some((
                 pc,
                 LoopSite {
