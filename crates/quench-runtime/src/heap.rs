@@ -21,7 +21,7 @@ pub use memory_stats::HeapMemoryComposition;
 mod memory_profile;
 mod pacing;
 mod promise_record;
-pub(crate) use promise_record::{PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
+pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
 mod records;
 mod root;
 mod slots;
@@ -53,7 +53,7 @@ const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_
 // A sparse element is an index and a value in a hash table, at least this many dense slots;
 // a sparse array whose elements fill as many slots as its length turns dense.
 const SPARSE_ENTRY_SLOTS: usize = size_of::<(usize, Value)>() / size_of::<Value>();
-use pacing::pacing;
+pub use pacing::MemoryPolicy;
 #[inline(always)]
 fn payload_unit() -> usize {
     #[cfg(feature = "gc-tuning")]
@@ -64,14 +64,10 @@ fn payload_unit() -> usize {
 /// The fewest allocations after which a collection is full on a small heap: the first
 /// collection runs after the young minimum, and is full once the allocation cap has passed.
 #[cfg(test)]
-pub(crate) const FULL_COLLECTION_ALLOCATION_BOUND: usize = {
-    let pacing = pacing::PRODUCTION_PACING;
-    if pacing.minimum_young > pacing.minimum_allocation_cap {
-        pacing.minimum_young
-    } else {
-        pacing.minimum_allocation_cap
-    }
-};
+pub(crate) fn full_collection_allocation_bound(policy: MemoryPolicy) -> usize {
+    let pacing = policy.pacing();
+    pacing.minimum_young.max(pacing.minimum_allocation_cap)
+}
 /// Payload bytes beside a cell (string units, array elements) that weigh as one more
 /// allocation toward the next collection.
 #[cfg(not(feature = "gc-tuning"))]
@@ -192,7 +188,7 @@ impl<'slots> ParallelSweepSlab<'slots> {
             let cell = slot.cell.take().expect("occupied dead sweep slot");
             result.external_bytes = result.external_bytes.saturating_add(cell.external_bytes());
             if let Cell::Promise(promise) = &cell {
-                result.abandoned_job_contexts.extend(promise.record.reaction_job_contexts());
+                result.abandoned_contexts.abandon(&promise.record);
             }
             if let Some(object) = cell.object() {
                 result.released_properties.push(object.properties());
@@ -223,7 +219,7 @@ struct ParallelSweepResult {
     rc_cells: Vec<StoppedCellDrop>,
     external_bytes: usize,
     live_payload_bytes: usize,
-    abandoned_job_contexts: Vec<crate::HostExecutionContext>,
+    abandoned_contexts: AbandonedHostContexts,
     swept_slots: usize,
 }
 
@@ -415,9 +411,11 @@ pub(crate) struct Heap {
     live_after_full: usize,
     /// The next collection traces the whole heap.
     full_due: bool,
+    /// Selects the pacing table (`MemoryPolicy::pacing`); reset keeps it.
+    memory_policy: MemoryPolicy,
     pacing_state: pacing::PacingState,
-    /// Job contexts held by reactions of promises the sweep freed, for the host to release.
-    abandoned_job_contexts: Vec<crate::HostExecutionContext>,
+    /// Host contexts of promises the sweep freed, for the host to release.
+    abandoned_contexts: AbandonedHostContexts,
     /// Live weight after the previous collection.
     live_weight_after_previous: usize,
     live_weight_after_full: usize,
@@ -770,11 +768,25 @@ impl Heap {
             free_by_slab: Vec::with_capacity(12),
             free_slabs: Vec::with_capacity(12),
             free_slots: 0,
-            threshold: pacing().minimum_young,
-            max_threshold: pacing().minimum_young,
+            threshold: MemoryPolicy::default().pacing().minimum_young,
+            max_threshold: MemoryPolicy::default().pacing().minimum_young,
             external_collection_budget: MINIMUM_EXTERNAL_COLLECTION_BUDGET,
             ..Self::default()
         }
+    }
+    /// Selects the memory policy at startup, before the first collection: the next
+    /// collection runs after the policy's young minimum, and pacing follows its table.
+    pub(crate) fn set_memory_policy(&mut self, policy: MemoryPolicy) {
+        debug_assert_eq!(self.collections, 0, "the memory policy is chosen at startup");
+        self.memory_policy = policy;
+        self.threshold = self.pacing().minimum_young;
+        self.max_threshold = self.threshold;
+    }
+    pub(crate) fn memory_policy(&self) -> MemoryPolicy {
+        self.memory_policy
+    }
+    fn pacing(&self) -> pacing::GenerationalPacing {
+        self.memory_policy.pacing()
     }
     /// Keep the complete allocation census available to ownership tests.
     /// Explicit collection remains available; only threshold collection stops.
@@ -1493,12 +1505,12 @@ impl Heap {
         self.live_weight_after_previous = 0;
         self.live_weight_after_full = 0;
         self.old_live = 0;
-        self.threshold = pacing().minimum_young;
+        self.threshold = self.pacing().minimum_young;
         self.total_allocations = 0;
         self.collections = 0;
         self.peak_live = 0;
         self.peak_survivors = 0;
-        self.max_threshold = pacing().minimum_young;
+        self.max_threshold = self.pacing().minimum_young;
         self.properties.reset();
         self.remembered_marks.clear();
         self.remembered.clear();
@@ -1558,15 +1570,16 @@ impl Heap {
     pub fn should_collect(&self) -> bool {
         self.allocations >= self.threshold
     }
-    /// The job contexts of promises freed since the last call, which their reactions held.
-    pub(crate) fn take_abandoned_job_contexts(&mut self) -> Vec<crate::HostExecutionContext> {
-        std::mem::take(&mut self.abandoned_job_contexts)
+    /// The host contexts of promises freed since the last call.
+    pub(crate) fn take_abandoned_contexts(&mut self) -> AbandonedHostContexts {
+        std::mem::take(&mut self.abandoned_contexts)
     }
     pub(crate) fn should_full_collect(&self) -> bool {
         self.full_due
-            || pacing().allocation_cap_reached(
+            || self.pacing().allocation_cap_reached(
                 self.live_after_full,
                 self.allocations_since_full,
+                self.pacing_state.cap_backoff,
             )
     }
     /// Every collection may be minor, so the legacy young list and barrier are always kept.
@@ -1846,7 +1859,7 @@ impl Heap {
                         memory_profile.freed_function(Value::direct_function(_record_id), slots);
                     }
                 });
-            let abandoned_job_contexts = &mut self.abandoned_job_contexts;
+            let abandoned_contexts = &mut self.abandoned_contexts;
             let (promise_live, promise_freed) =
                 self.promise_records.sweep(full, full, |record| match record {
                     RecordSweep::Keep(record_id, promise) => {
@@ -1858,7 +1871,7 @@ impl Heap {
                         }
                     }
                     RecordSweep::Dead(_record_id, promise) => {
-                        abandoned_job_contexts.extend(promise.record.reaction_job_contexts());
+                        abandoned_contexts.abandon(&promise.record);
                         #[cfg(feature = "profile-memory")]
                         let slots = properties.len(promise.object.properties());
                         properties.release(promise.object.properties());
@@ -1999,7 +2012,7 @@ impl Heap {
             self.live_after_full = live;
             self.live_weight_after_full = live_weight;
         }
-        let next = pacing().plan(
+        let next = self.pacing().plan(
             &mut self.pacing_state,
             pacing::CollectionOutcome {
                 full,
@@ -2091,10 +2104,10 @@ impl Heap {
                     rc_cells,
                     external_bytes,
                     live_payload_bytes,
-                    abandoned_job_contexts,
+                    abandoned_contexts,
                     swept_slots,
                 } = result;
-                self.abandoned_job_contexts.extend(abandoned_job_contexts);
+                self.abandoned_contexts.append(abandoned_contexts);
                 let freed_cells = free_slots.len();
                 if freed_cells > 0 {
                     let slab_free = &mut self.free_by_slab[slab as usize];
@@ -2141,7 +2154,7 @@ impl Heap {
         {
             let external_bytes = &mut self.external_bytes;
             let payload_bytes = &mut self.payload_bytes;
-            let abandoned_job_contexts = &mut self.abandoned_job_contexts;
+            let abandoned_contexts = &mut self.abandoned_contexts;
             let free_by_slab = &mut self.free_by_slab;
             let free_slabs = &mut self.free_slabs;
             let free_slot_count = &mut self.free_slots;
@@ -2152,7 +2165,7 @@ impl Heap {
                 *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
                 *payload_bytes = payload_bytes.saturating_sub(cell.payload_bytes());
                 if let Cell::Promise(promise) = &cell {
-                    abandoned_job_contexts.extend(promise.record.reaction_job_contexts());
+                    abandoned_contexts.abandon(&promise.record);
                 }
                 #[cfg(feature = "profile-memory")]
                 {
