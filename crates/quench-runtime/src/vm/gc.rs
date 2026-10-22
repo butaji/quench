@@ -309,7 +309,7 @@ impl<H: Host> Vm<H> {
     }
 
     #[inline(always)]
-    pub(super) fn maybe_collect(&mut self, program: &ResidualProgram) {
+    pub(crate) fn maybe_collect(&mut self, program: &ResidualProgram) {
         if !self.heap.should_collect() {
             return;
         }
