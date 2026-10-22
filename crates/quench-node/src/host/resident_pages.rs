@@ -80,6 +80,62 @@ pub fn release_read_only_pages() {
     }
 }
 
+/// Releases the read-only pages at a collection boundary when they could raise the process's
+/// peak resident set before the next boundary: when the resident set, plus the largest rise of
+/// the heap (the resident set less its file pages) between two boundaries so far, reaches the
+/// peak. Below that, the code resident beside the heap cannot set a new peak, and a release
+/// only refaults the code the run executes: at MemoryFirst's young minimum a run collects
+/// thousands of times, and releasing at each cost about a fifth of V8-v7's score. The heap's
+/// rise, not the resident set's, is the measure, so the code a release makes refault does not
+/// count as growth (counting it made every boundary release).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_read_only_pages_near_peak() {
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+    /// The heap's size at the last boundary, and its largest rise between two, in pages.
+    static HEAP_PAGES: AtomicUsize = AtomicUsize::new(0);
+    static LARGEST_HEAP_RISE_PAGES: AtomicUsize = AtomicUsize::new(0);
+    let Some((resident, file)) = resident_and_file_pages() else {
+        release_read_only_pages();
+        return;
+    };
+    let heap = resident.saturating_sub(file);
+    let rise = heap.saturating_sub(HEAP_PAGES.swap(heap, Relaxed));
+    let largest_rise = LARGEST_HEAP_RISE_PAGES.fetch_max(rise, Relaxed).max(rise);
+    if (resident + largest_rise) * page_size() >= peak_resident_bytes() {
+        release_read_only_pages();
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_read_only_pages_near_peak() {}
+
+/// The process's resident and file-backed resident pages (`/proc/self/statm`'s second and
+/// third fields).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn resident_and_file_pages() -> Option<(usize, usize)> {
+    const STATM_PATH: &str = "/proc/self/statm";
+    let statm = std::fs::read(STATM_PATH).ok()?;
+    let mut fields = statm
+        .split(|byte| byte.is_ascii_whitespace())
+        .filter(|field| !field.is_empty())
+        .skip(1)
+        .map(|field| std::str::from_utf8(field).ok()?.parse::<usize>().ok());
+    Some((fields.next()??, fields.next()??))
+}
+
+/// The process's peak resident set so far (`getrusage`, which Linux reports in KiB).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn peak_resident_bytes() -> usize {
+    const KIB: usize = 1024;
+    // SAFETY: `getrusage` writes only the struct it is given.
+    let usage = unsafe {
+        let mut usage = std::mem::zeroed::<libc::rusage>();
+        libc::getrusage(libc::RUSAGE_SELF, &mut usage);
+        usage
+    };
+    usize::try_from(usage.ru_maxrss).unwrap_or(0) * KIB
+}
+
 /// Read-only file mappings the host made after start-up (compile-cache entries), as start
 /// and length, released with the segments above.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
