@@ -87,31 +87,8 @@ impl<H: Host> Vm<H> {
             self.set_array_like_length(p, object, 0)?;
             return Ok(Value::UNDEFINED);
         }
-        // Every index is an ordinary own data element, so shifting cannot
-        // consult prototype getters/setters or run guest code. Exceptional
-        // descriptors, holes, mapped arguments and integrity states use the
-        // same ordered property algorithm below.
-        let dense = self.heap.sparse_length(object).is_none()
-            && self.heap.array(object).is_some_and(|data| {
-                let elements = data.elements();
-                data.is_extensible()
-                    && !data.is_arguments_object()
-                    && !data.has_indexed_descriptors()
-                    && elements.len() == length
-                    && elements.iter().all(|value| !value.is_deleted())
-            });
-        let writable_length = self
-            .property_attributes(
-                object,
-                super::property_key::PropertyKey::string(self.length_atom),
-            )
-            .is_some_and(|attributes| attributes.writable);
-        if dense && writable_length {
-            let elements = self
-                .heap
-                .array_elements_mut(object)
-                .expect("dense array guard");
-            return Ok(super::index::mutable_array_elements(elements).remove(0));
+        if let Some(first) = self.shift_dense(object, length) {
+            return Ok(first);
         }
         let first = self.get_index(p, object, Value::number(0.0))?;
         for index in 1..length {
@@ -161,6 +138,37 @@ impl<H: Host> Vm<H> {
         }
         self.set_array_like_length(p, object, new_length)?;
         Ok(Value::number(new_length as f64))
+    }
+
+    /// `shift` of a non-empty array of `length` whose every index is an ordinary own data
+    /// element and whose `length` is writable, so shifting consults no prototype accessor
+    /// and runs no guest code: one vector removal. Exceptional descriptors, holes, mapped
+    /// arguments and integrity states leave `None`, for the ordered property algorithm.
+    fn shift_dense(&mut self, object: Value, length: usize) -> Option<Value> {
+        let dense = length > 0
+            && self.heap.sparse_length(object).is_none()
+            && self.heap.array(object).is_some_and(|data| {
+                let elements = data.elements();
+                data.is_extensible()
+                    && !data.is_arguments_object()
+                    && !data.has_indexed_descriptors()
+                    && elements.len() == length
+                    && elements.iter().all(|value| !value.is_deleted())
+            });
+        let writable_length = self
+            .property_attributes(object, super::property_key::PropertyKey::string(self.length_atom))
+            .is_some_and(|attributes| attributes.writable);
+        if !dense || !writable_length {
+            return None;
+        }
+        let elements = self.heap.array_elements_mut(object).expect("dense array guard");
+        Some(super::index::mutable_array_elements(elements).remove(0))
+    }
+
+    /// `shift` of an array as `shift_dense` makes it, which observes nothing.
+    pub(super) fn plain_array_shift(&mut self, this: Value) -> Option<Value> {
+        let length = self.own_array_length(this)?;
+        self.shift_dense(this, length)
     }
 
     pub(super) fn delete_array_like_property(
