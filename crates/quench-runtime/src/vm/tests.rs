@@ -10983,8 +10983,56 @@ fn js_jit_lowers_guarded_numeric_field_reads_into_arithmetic() {
     else {
         panic!("numeric field arithmetic should compile");
     };
-    assert!(compiled.field_argument().is_some());
+    assert_eq!(compiled.numeric_field_inputs().len(), 1);
     assert_eq!(compiled.params(), 2);
+    assert!(compiled.native_entries() >= 9);
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
+fn js_jit_lowers_multiple_guarded_this_field_reads_into_arithmetic() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function scaledSum(scale) { return this.left + this.right * scale; }
+          const receiver = {left: 3, right: 4};
+          for (let index = 0; index < 40; index++) {
+            if (scaledSum.call(receiver, 2) !== 11) throw Error('this field arithmetic');
+          }
+          let reads = 0;
+          const accessor = {get left() { reads++; return 3; }, right: 4};
+          if (scaledSum.call(accessor, 2) !== 11 || reads !== 1) throw Error('this accessor fallback');
+          const nonNumber = {left: '3', right: 4};
+          if (scaledSum.call(nonNumber, 2) !== '38') throw Error('this non-number fallback');
+        "#,
+        "js-jit-guarded-this-fields.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "scaledSum")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function_id)
+    else {
+        panic!("multiple guarded `this` reads should compile");
+    };
+    assert_eq!(compiled.numeric_field_inputs().len(), 2);
     assert!(compiled.native_entries() >= 9);
 }
 
