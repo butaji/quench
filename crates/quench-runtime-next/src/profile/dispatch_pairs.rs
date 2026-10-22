@@ -54,6 +54,21 @@ fn derive(profile: &Profile, program: &ResidualProgram) -> Matrix {
 }
 
 pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
+    let pair_sites_total = profile.pair_sites.values().sum::<u64>();
+    let recorded_pair_total = profile.pairs.iter().sum::<u64>();
+    let pair_sites_in_program = profile.pair_sites.keys().all(|(function_id, pc)| {
+        program
+            .functions
+            .get(*function_id as usize)
+            .is_some_and(|function| (*pc as usize + 1) < function.code.len())
+    });
+    if !dispatch_opcodes::complete(profile, program)
+        || pair_sites_total != recorded_pair_total
+        || !pair_sites_in_program
+    {
+        eprint!(",\"dispatch_pair_targets\":null,\"dispatch_pair_targets_complete\":false");
+        return;
+    }
     let matrix = derive(profile, program);
     eprint!(",\"dispatch_pair_targets\":{{");
     for (class, name) in ["general", "numeric"].into_iter().enumerate() {

@@ -476,22 +476,33 @@ impl Profile {
             }
             eprint!("[{}, {}, {}, {}]", mode / 16, mode / 4 % 4, mode % 4, count);
         }
-        eprint!("],\"top_pair_sites\":[");
-        for (position, ((function, pc), count)) in pair_sites.iter().take(20).enumerate() {
-            if position != 0 {
-                eprint!(",");
+        let pair_sites_in_program = pair_sites.iter().all(|((function, pc), _)| {
+            program
+                .functions
+                .get(*function as usize)
+                .is_some_and(|function| (*pc as usize + 1) < function.code.len())
+        });
+        eprint!("],\"top_pair_sites\":");
+        if !pair_sites_in_program {
+            eprint!("null");
+        } else {
+            eprint!("[");
+            for (position, ((function, pc), count)) in pair_sites.iter().take(20).enumerate() {
+                if position != 0 {
+                    eprint!(",");
+                }
+                let code = &program.functions[*function as usize].code;
+                eprint!(
+                    "{{\"function\":{},\"pc\":{},\"first\":\"{}\",\"second\":\"{}\",\"count\":{}}}",
+                    function,
+                    pc,
+                    crate::bytecode::Op::NAMES[code[*pc as usize].op() as usize],
+                    crate::bytecode::Op::NAMES[code[*pc as usize + 1].op() as usize],
+                    count
+                );
             }
-            let code = &program.functions[*function as usize].code;
-            eprint!(
-                "{{\"function\":{},\"pc\":{},\"first\":\"{}\",\"second\":\"{}\",\"count\":{}}}",
-                function,
-                pc,
-                crate::bytecode::Op::NAMES[code[*pc as usize].op() as usize],
-                crate::bytecode::Op::NAMES[code[*pc as usize + 1].op() as usize],
-                count
-            );
+            eprint!("]");
         }
-        eprint!("]");
         instruction_words::report(program);
         root_maps::report(self, program);
         regional::report_functions(self, program);

@@ -120,6 +120,17 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Evaluate a named script compiled with bytecode specialization and the
+    /// active VM's immutable atom prefix.
+    pub fn evaluate_specialized_script_rooted(
+        &mut self,
+        source: &str,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_specialized_script(source, name);
+        self.completion(result)
+    }
+
     pub fn parse_json_rooted(&mut self, source: &str) -> Result<RootId, RootedError> {
         let result = self.vm.parse_embedding_json(source);
         self.completion(result)
@@ -142,6 +153,10 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     pub fn boolean(&mut self, value: bool) -> RootId {
         self.scoped_value(if value { Value::TRUE } else { Value::FALSE })
+    }
+
+    pub fn null(&mut self) -> RootId {
+        self.scoped_value(Value::NULL)
     }
 
     pub fn error_rooted(&mut self, message: &str) -> Result<RootId, RootedError> {
@@ -183,6 +198,29 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Queue a callback using roots owned by this native call scope.
+    pub fn queue_microtask_rooted(
+        &mut self,
+        callback: RootId,
+        args: &[RootId],
+    ) -> Result<(), RootedError> {
+        let callback = self
+            .vm
+            .embedding_value(callback)
+            .map_err(|error| self.error(error))?;
+        let args = args
+            .iter()
+            .copied()
+            .map(|root| {
+                self.vm
+                    .embedding_value(root)
+                    .map_err(|error| self.error(error))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.vm.enqueue_job(callback, args);
+        Ok(())
+    }
+
     pub fn host_mut(&mut self) -> &mut H {
         &mut self.vm.host
     }
@@ -215,6 +253,12 @@ impl<'a, H: Host> NativeContext<'a, H> {
     /// Create an ordinary object with the active realm's intrinsic prototype.
     pub fn object_rooted(&mut self) -> Result<RootId, RootedError> {
         let result = self.vm.create_embedding_object();
+        self.completion(result)
+    }
+
+    /// Create an ordinary object with no prototype, matching `Object.create(null)`.
+    pub fn null_object_rooted(&mut self) -> Result<RootId, RootedError> {
+        let result = self.vm.create_embedding_null_object();
         self.completion(result)
     }
 

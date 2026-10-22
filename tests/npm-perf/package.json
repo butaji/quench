@@ -1,0 +1,10 @@
+{
+  "name": "quench-npm-perf-workloads",
+  "private": true,
+  "type": "commonjs",
+  "description": "Pinned npm workloads run by quench-node, Node, and Bun.",
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  }
+}

@@ -32,6 +32,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "pathNormalize" (1) => crate::modules::path::shared_vm::normalize_operation,
         method "urlParse" (2) => crate::modules::url::shared_vm::parse,
         method "querystringParse" (1) => crate::modules::querystring::shared_vm::parse,
+        method "cryptoMd5" (1) => crate::modules::crypto::shared_vm::md5,
         method "osType" (0) => crate::modules::os::shared_vm::type_operation,
         method "osTotalmem" (0) => crate::modules::os::shared_vm::totalmem_operation,
         method "netGetAutoSelectFamilyAttemptTimeout" (0) => crate::modules::net::shared_vm::get_timeout,

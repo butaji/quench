@@ -700,6 +700,24 @@ impl Engine {
             false,
         )
     }
+    /// Compile a script with the shared immutable atom prefix while retaining
+    /// the ordinary bytecode specialization pipeline.
+    pub fn specialize_with_atom_prefix(
+        source: &str,
+        name: &str,
+        atom_prefix: &[String],
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_with_mode(
+            source,
+            name,
+            SpecializationMode::Enabled,
+            atom_prefix,
+            SourceType::script(),
+            false,
+            false,
+            false,
+        )
+    }
     pub(crate) fn specialize_eval_with_context(
         source: &str,
         name: &str,
@@ -708,6 +726,47 @@ impl Engine {
         context: EvalContext,
         private_names: &[(String, String)],
         annex_b_forbidden_names: &[String],
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_eval_with_mode(
+            source,
+            name,
+            atom_prefix,
+            inherited_strict,
+            context,
+            private_names,
+            annex_b_forbidden_names,
+            SpecializationMode::Disabled,
+        )
+    }
+
+    pub(crate) fn specialize_eval_specialized_with_context(
+        source: &str,
+        name: &str,
+        atom_prefix: &[String],
+        inherited_strict: bool,
+        context: EvalContext,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_eval_with_mode(
+            source,
+            name,
+            atom_prefix,
+            inherited_strict,
+            context,
+            &[],
+            &[],
+            SpecializationMode::Enabled,
+        )
+    }
+
+    fn specialize_eval_with_mode(
+        source: &str,
+        name: &str,
+        atom_prefix: &[String],
+        inherited_strict: bool,
+        context: EvalContext,
+        private_names: &[(String, String)],
+        annex_b_forbidden_names: &[String],
+        mode: SpecializationMode,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let method_source;
         let (source, source_type) = if context.home_atom.is_some() {
@@ -735,7 +794,7 @@ impl Engine {
         Self::specialize_with_mode_and_private_names(
             source,
             name,
-            SpecializationMode::Disabled,
+            mode,
             atom_prefix,
             source_type,
             false,
