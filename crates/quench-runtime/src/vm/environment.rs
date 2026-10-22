@@ -2525,7 +2525,7 @@ impl<H: Host> Vm<H> {
 }
 
 /// The built-in each engine-internal binding name the compiler emits resolves to.
-fn internal_name_native(name: &str) -> Option<Native> {
+pub(super) fn internal_name_native(name: &str) -> Option<Native> {
     Some(match name {
         "\0quench:dynamic-import" => Native::DynamicImport,
         "\0quench:intrinsic-promise" => Native::Promise,
@@ -2535,6 +2535,8 @@ fn internal_name_native(name: &str) -> Option<Native> {
         "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
         "\0quench:object-define-property" => Native::ObjectDefineProperty,
         "\0quench:object-freeze" => Native::ObjectFreeze,
+        "\0quench:for-in-keys" => Native::ForInKeys,
+        "\0quench:for-in-key-is-enumerable" => Native::ForInKeyIsEnumerable,
         _ => return None,
     })
 }

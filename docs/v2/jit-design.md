@@ -1154,3 +1154,56 @@ large peer variation, so the sample does not establish a causal score or RSS
 win. Keep interpreting it as a low-risk local candidate while broader JIT
 coverage remains the larger opportunity. Reports are in
 `evidence/jit-jetstream3-2026-10-22/async-fs-native-dispatch-dedup/`.
+
+## V8-v7 native coverage census — 2026-10-22
+
+Current `QUENCH_JS_JIT_STATS=1` runs show native function entries on Crypto
+(3,195) and DeltaBlue (35,055 across three tiny functions); OSR executes
+4,730,536 regions on Crypto and 48,954 on NavierStokes. Richards has zero
+native entries and zero admitted OSR sites: its hot `runRichards` and
+`Scheduler` functions reject on unsupported shapes. Its scheduling workload
+uses mutable object fields and indirect calls, so the next broad compiler
+coverage work should prioritize guarded field access and cached calls with
+exact instruction-level interpreter fallback. This is coverage evidence, not
+a performance claim; the diagnostic runs overlapped release-feature builds,
+so their Score and wall-time outputs are excluded. Raw inputs/counters and
+method are in `evidence/jit-jetstream3-2026-10-22/v8-v7-native-coverage/`.
+
+### Recheck after the merged OSR tier — 2026-10-22
+
+I rebuilt the production binary from the post-merge source and reran the same
+four stock V8-v7 scripts with `QUENCH_JS_JIT_STATS=1`. The runs completed their
+benchmark assertions; their printed Scores are not comparable performance
+measurements. Richards still has zero native function entries and zero admitted
+OSR sites. DeltaBlue has 17,539 native function entries and no admitted OSR
+sites. Crypto has 2,456 native function entries, 12 admitted OSR sites, 8 OSR
+compilation successes and 6,120,293 region runs. NavierStokes has no native
+function entries, 22 admitted OSR sites, 26 reported OSR compilation successes
+and 17,435 region runs. The merged OSR mode therefore adds loop execution for
+numeric regions, but does not yet cover Richards' field-, call-, construction-
+and write-heavy hot loops. This is diagnostic coverage evidence only; it does
+not establish a score or memory win. Full logs and binary provenance are in
+`evidence/jit-jetstream3-2026-10-22/v8-v7-coverage-after-osr-merge/`.
+
+## Bounded `new Array(number)` fast path screen — 2026-10-22
+
+A lane fast path plus direct dense-hole initialization looked promising in an
+initial Richards pair, but that control binary predated the source merge and
+was not comparable. Rebuilding the baseline at the candidate's exact base
+revision reversed the result: across 11 valid fixed-work rounds, outputs were
+identical, but candidate marginal work time was 5.9% slower by paired geometric
+mean (1.059 candidate/baseline), faster in only 2/11 rounds, and median RSS was
+effectively unchanged (12,066,816 vs 12,034,048 bytes). The experiment was
+removed. The runner could not collect IPC/cycle counters, so this remains a
+diagnostic screen; it does not measure JIT mode or qualify JetStream. Raw report
+and provenance are in
+`evidence/jit-jetstream3-2026-10-22/array-length-construction-ab/`.
+
+The next performance work should target suite-scale bottlenecks. Current JIT
+coverage is absent on Richards and sparse on TypeScript, so extend the shared
+compiler with general guarded field and inline-cache call denotations, then
+measure OSR coverage, compilation cost, code size and paired fixture scores.
+For no-JIT, old per-op instruction screens show large dispatch and allocation
+costs in object/closure creation, field/array operations and string/RegExp
+builtins; these need current profiles and fixture-level validation before
+choosing a hot path. No 20% runtime-level gain has been demonstrated yet.

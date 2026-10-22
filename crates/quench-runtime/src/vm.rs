@@ -1,7 +1,6 @@
 mod compiled;
 mod js_compiled;
 mod jit_backend;
-mod loop_compiled;
 mod shape_transitions;
 mod snapshot;
 mod startup_intrinsics;
@@ -155,6 +154,7 @@ mod object;
 mod shape_memo;
 mod symbol_write_proof;
 mod symbol_load_proof;
+mod private_site_home;
 mod enumerable_key_memo;
 mod name_atom_memo;
 mod object_assignment;
@@ -673,6 +673,7 @@ const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
 #[derive(Clone, Copy)]
 struct InheritedFieldCache {
     receiver: u32,
+    atom: Atom,
     prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
     depth: u8,
     answer: InheritedFieldAnswer,
@@ -1668,6 +1669,8 @@ pub(crate) struct Vm<H> {
     function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
+    /// Lane private-name sites' homes (`private_site_home`).
+    private_site_homes: private_site_home::PrivateSiteHomes,
     array_iteration_proof: Option<iterators::ArrayIterationProof>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
@@ -2253,8 +2256,9 @@ impl<H: Host> Vm<H> {
                 let id = ProgramId::from_raw(index as u32);
                 if let Some(residual) = self.programs.get(id) {
                     eprintln!(
-                        "{{\"kind\":\"quench-profile-program\",\"program_id\":{}}}",
+                        "{{\"kind\":\"quench-profile-program\",\"program_id\":{},\"source_name\":{:?}}}",
                         id.raw(),
+                        residual.source_name,
                     );
                     self.profile.report(&self.heap, id.raw(), &residual);
                 }
@@ -2601,6 +2605,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
+        self.private_site_homes.clear();
         self.array_iteration_proof = None;
         self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();

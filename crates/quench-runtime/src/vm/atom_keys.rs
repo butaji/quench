@@ -65,6 +65,19 @@ impl<H: Host> Vm<H> {
         self.find_atom(hash, |atom| self.atom_units_equal(atom, name.units()))
     }
 
+    /// `lookup_js_atom` of the heap string `key`, memoized by the string's identity
+    /// (`NameAtomMemo::string_atom`); `None` for any other value or a name with no atom.
+    #[inline]
+    pub(super) fn lookup_string_atom(&self, key: Value) -> Option<Atom> {
+        let epoch = self.heap.collection_epoch();
+        if let Some(atom) = self.name_atom_memo.string_atom(key, epoch) {
+            return Some(atom);
+        }
+        let atom = self.lookup_js_atom(self.heap.string(key)?)?;
+        self.name_atom_memo.record_string(key, epoch, atom);
+        Some(atom)
+    }
+
     /// The text of `atom` as it is held: a host string, or the units of an atom added later.
     pub(super) fn atom_text(&self, atom: Atom) -> AtomText<'_> {
         let index = atom as usize;

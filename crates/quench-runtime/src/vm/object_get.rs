@@ -541,7 +541,7 @@ impl<H: Host> Vm<H> {
     /// `set_plain_named_property` makes the named one; `false` leaves the write, and any key
     /// that function refuses, to the general path, which interns a new name.
     pub(super) fn try_plain_string_key_set(&mut self, object: Value, key: Value, value: Value) -> bool {
-        let Some(atom) = self.heap.string(key).and_then(|text| self.lookup_js_atom(text)) else {
+        let Some(atom) = self.lookup_string_atom(key) else {
             return false;
         };
         self.set_plain_named_property(object, atom, value).is_some()
@@ -554,8 +554,11 @@ impl<H: Host> Vm<H> {
         if let Some(index) = key.as_int() {
             return self.plain_index_get(object, usize::try_from(index).ok()?);
         }
-        if let Some(text) = self.heap.string(key) {
-            return self.plain_named_get(object, self.lookup_js_atom(text)?);
+        if let Some(atom) = self.lookup_string_atom(key) {
+            return self.plain_named_get(object, atom);
+        }
+        if self.heap.string(key).is_some() {
+            return None;
         }
         match self.heap.get(key)? {
             // A host-private symbol names only an own property, which the general path reads.
@@ -1061,6 +1064,35 @@ impl<H: Host> Vm<H> {
         Some(PrivateBrand { home: *self.private_homes.get(&key)?, name: atom })
     }
 
+    /// The private brand of `atom` at lane site `site` of `function`, whose frame captures
+    /// from `environment`: the home the site found last for that environment
+    /// (`PrivateSiteHomes`), else the running frame's home (`private_name_home`) when `frame`
+    /// is set, or the memoized one (`memoized_private_brand`) for a frameless activation.
+    /// `None` leaves the access to the general path.
+    pub(super) fn site_private_brand(
+        &mut self,
+        p: &ResidualProgram,
+        site: usize,
+        environment: Value,
+        function: u32,
+        frame: bool,
+        atom: Atom,
+    ) -> Option<PrivateBrand> {
+        let epoch = self.heap.collection_epoch();
+        if let Some(home) = self.private_site_homes.home(site, environment, epoch) {
+            return Some(PrivateBrand { home, name: atom });
+        }
+        let brand = if frame {
+            PrivateBrand { home: self.private_name_home(p, atom)?, name: atom }
+        } else {
+            self.memoized_private_brand(p, environment, function, atom)?
+        };
+        if p.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty()) {
+            self.private_site_homes.record(site, environment, epoch, brand.home);
+        }
+        Some(brand)
+    }
+
     /// `private_field_value` through `memoized_private_brand`.
     pub(super) fn memoized_private_field_value(
         &self,
@@ -1072,22 +1104,6 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         let brand = self.memoized_private_brand(p, environment, function, atom)?;
         self.object_data(target)?.private_field(brand)
-    }
-
-    /// `set_private_field_value` through `memoized_private_brand`.
-    pub(super) fn memoized_set_private_field_value(
-        &mut self,
-        p: &ResidualProgram,
-        environment: Value,
-        function: u32,
-        target: Value,
-        atom: Atom,
-        value: Value,
-    ) -> bool {
-        let Some(brand) = self.memoized_private_brand(p, environment, function, atom) else {
-            return false;
-        };
-        self.object_data_mut(target).is_some_and(|object| object.set_private_field(brand, value))
     }
 
     /// The store of private field `atom` of `target` under the running frame's home for the
