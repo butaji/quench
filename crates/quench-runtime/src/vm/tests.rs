@@ -891,8 +891,13 @@ fn for_of_iterator_cleanup_survives_body_temporaries() {
 }
 
 fn global_text(source: &str, name: &str) -> String {
+    global_text_under(crate::MemoryPolicy::default(), source, name)
+}
+
+fn global_text_under(policy: crate::MemoryPolicy, source: &str, name: &str) -> String {
     let program = Engine::specialize(source, "global-text.js").unwrap();
     let mut vm = Vm::new(SilentHost);
+    vm.set_memory_policy(policy);
     vm.execute(&program).unwrap();
     let name = vm.intern_atom(name);
     let value = vm.own_property(vm.realm.globals, name).unwrap();
@@ -1139,8 +1144,10 @@ fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
     // A job leaves the queue before it runs, so a value only its arguments held is
     // collectable while later jobs of the same drain still run: its cleanup is observed
     // inside the await loop instead of never. Each iteration allocates at least one cell,
-    // so the bound lets the drain pass the collection headroom several times.
-    let iterations = 4 * crate::heap::FULL_COLLECTION_ALLOCATION_BOUND;
+    // so the bound lets the drain pass the collection headroom several times. Memory-first
+    // pacing collects soonest, which keeps the drain short.
+    let policy = crate::MemoryPolicy::MemoryFirst;
+    let iterations = 4 * crate::heap::full_collection_allocation_bound(policy);
     let source = format!(
         "var finalized = false, registry = new FinalizationRegistry(function () {{ finalized = true; }});\n\
          function make() {{ var o = {{}}; registry.register(o, 0); return o; }}\n\
@@ -1151,7 +1158,7 @@ fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
            result = String(finalized);\n\
          }})();"
     );
-    assert_eq!(global_text(&source, "result"), "true");
+    assert_eq!(global_text_under(policy, &source, "result"), "true");
 }
 
 #[test]
@@ -11865,6 +11872,33 @@ fn bound_calls_and_base_class_constructions_pushed_in_place_keep_their_semantics
         output.borrow().as_slice(),
         ["T:1:0:x|T:1:2:0|u:0::|global|object|T:1:1:x|T:1:2:1|u:1::|global|object|T:1:2:x|T:1:2:2|u:2::|global|object|1,2,0,true,true|1|{\"other\":true}|TypeError|1,2,1,true,true|1|{\"other\":true}|TypeError"]
     );
+}
+
+#[test]
+fn lane_forwarded_calls_run_callees_of_other_programs_in_their_program() {
+    // `f.call(...)` and a bound call of a callee compiled as another program, made from a
+    // lane function often enough that its cross-program target is cached: the callee reads
+    // its own program's names, constants and field sites (`globalThis`, a defined property,
+    // string keys), not the caller's.
+    let source = r#"
+      const loose = Function('return function(){ return this === globalThis ? "global" : typeof this; }')();
+      const definer = Function('o', 'k', 'Object.defineProperty(o, k, { value: k.length, enumerable: true }); o[k + "x"] = "v"; return Object.keys(o).join("+");');
+      function run(i) {
+        const bound = loose.bind(null);
+        return [bound(), loose.call(null), loose.call(i), definer.call(null, {}, 'key' + i)].join(",");
+      }
+      const out = [];
+      for (let i = 0; i < 24; i++) out.push(run(i % 2));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-cross-program-forwarded.js").unwrap()).unwrap();
+    let expected = (0..24)
+        .map(|i| format!("global,global,object,key{0}+key{0}x", i % 2))
+        .collect::<Vec<_>>()
+        .join("|");
+    assert_eq!(output.borrow().as_slice(), [expected]);
 }
 
 #[test]

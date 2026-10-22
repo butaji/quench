@@ -23,11 +23,28 @@ pub(super) struct ClosureTemplate {
     function: u32,
     realm: Value,
     function_prototype: Value,
-    shape: u32,
+    layout: ClosureLayout,
     length: Value,
     name: Value,
     kind: FunctionKind,
     prototype: Option<(Value, u32)>,
+}
+
+/// How a templated closure's own properties are laid out: all inline under their named
+/// shape (allocated finished), or `length` and `name` inline under `inline` with `prototype`
+/// added past them (`with_prototype`) and the original name recorded (`named`), the shapes
+/// the adds of a constructor that does not fit its inline slots reach.
+#[derive(Clone, Copy)]
+enum ClosureLayout {
+    Finished { shape: u32 },
+    Extended { inline: u32, with_prototype: u32, named: u32 },
+}
+
+/// The closure template slot of a program's function: functions of different programs share
+/// ids, so the program is mixed in by a multiplicative hash (the 32-bit golden ratio).
+fn closure_template_index(program: ProgramId, function: u32) -> usize {
+    const PROGRAM_MIX: u32 = 0x9E37_79B9;
+    (function ^ program.raw().wrapping_mul(PROGRAM_MIX)) as usize & (CLOSURE_TEMPLATES - 1)
 }
 
 /// A closure's own `length` and `name`, which the recorded shapes add first; its `prototype`,
@@ -319,10 +336,14 @@ impl<H: Host> Vm<H> {
         let prototype = template
             .prototype
             .map(|(parent, _)| self.heap.alloc_object(Self::empty_object(parent)));
+        let (shape, inline_prototype) = match template.layout {
+            ClosureLayout::Finished { shape } => (shape, prototype),
+            ClosureLayout::Extended { inline, .. } => (inline, None),
+        };
         let object = crate::heap::Object::with_property_storage(
             template.function_prototype,
-            crate::value_vec::ValueVec::inline_property_storage(template.shape),
-            finished_closure_slots(&[template.length, template.name], prototype),
+            crate::value_vec::ValueVec::inline_property_storage(shape),
+            finished_closure_slots(&[template.length, template.name], inline_prototype),
         );
         let function = self.heap.alloc_function(FunctionRecord {
             object,
@@ -330,6 +351,12 @@ impl<H: Host> Vm<H> {
             kind: template.kind,
             env,
         });
+        if let (ClosureLayout::Extended { with_prototype, named, .. }, Some(prototype)) =
+            (template.layout, prototype)
+        {
+            self.heap.property_add(function, prototype, with_prototype);
+            self.object_data_mut(function).expect("function object").set_shape(named);
+        }
         if let (Some(prototype), Some((_, constructor))) = (prototype, template.prototype) {
             self.heap.property_add(prototype, function, constructor);
         }
@@ -356,7 +383,7 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(active)
                 .to_vec()
         };
-        let template_index = id as usize & (CLOSURE_TEMPLATES - 1);
+        let template_index = closure_template_index(self.active_program, id);
         let plain_scope = with_objects.is_empty();
         if plain_scope
             && let Some(template) = self.closure_templates[template_index].filter(|template| {
@@ -464,14 +491,28 @@ impl<H: Host> Vm<H> {
             );
         }
         if let Some(shapes) = recorded_shapes {
-            if finished.is_none() {
-                self.heap.property_add(function, length_value, shapes.length);
-                self.heap.property_add(function, name_value, shapes.name);
-                if let (Some(prototype), Some((with_prototype, _))) = (prototype, shapes.prototype) {
-                    self.heap.property_add(function, prototype, with_prototype);
+            let layout = match finished {
+                Some(_) => named_shape.map(|shape| ClosureLayout::Finished { shape }),
+                None => {
+                    self.heap.property_add(function, length_value, shapes.length);
+                    self.heap.property_add(function, name_value, shapes.name);
+                    let with_prototype = match (prototype, shapes.prototype) {
+                        (Some(prototype), Some((with_prototype, _))) => {
+                            self.heap.property_add(function, prototype, with_prototype);
+                            Some(with_prototype)
+                        }
+                        _ => None,
+                    };
+                    self.capture_fresh_closure_name(function, plan_name);
+                    with_prototype.zip(self.object_data(function).map(Object::shape)).map(
+                        |(with_prototype, named)| ClosureLayout::Extended {
+                            inline: shapes.name,
+                            with_prototype,
+                            named,
+                        },
+                    )
                 }
-                self.capture_fresh_closure_name(function, plan_name);
-            }
+            };
             let constructor = match (prototype, shapes.prototype) {
                 (Some(prototype), Some((_, constructor))) => {
                     self.heap.property_add(prototype, function, constructor);
@@ -480,20 +521,20 @@ impl<H: Host> Vm<H> {
                 _ => None,
             };
             // A nested function's closures are found by none of its plans, so a template
-            // makes the next ones the same way; a top-level one is recorded above. Only a
-            // closure allocated finished (`named_shape`) has a template, and a prototype the
-            // recorded shapes do not hold leaves the template unmade.
+            // makes the next ones the same way; a top-level one is recorded above. A closure
+            // with a recorded layout has a template, and a prototype the recorded shapes do
+            // not hold leaves the template unmade.
             if plain_scope
                 && function_plan.parent.is_some_and(|parent| parent != super::ROOT_FUNCTION_ID)
                 && prototype.is_some() == constructor.is_some()
-                && let Some(shape) = named_shape
+                && let Some(layout) = layout
             {
                 self.closure_templates[template_index] = Some(ClosureTemplate {
                     program: self.active_program,
                     function: id,
                     realm,
                     function_prototype: function_object_prototype,
-                    shape,
+                    layout,
                     length: length_value,
                     name: name_value,
                     kind,
@@ -790,7 +831,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         frame: usize,
         callee: Value,
-    ) -> Option<(u32, Value, Value)> {
+    ) -> Option<(ProgramId, u32, Value, Value)> {
         let caller = &self.frames[frame];
         if frame + 1 != self.frames.len()
             || caller.function == super::ROOT_FUNCTION_ID
@@ -812,17 +853,24 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let (program_id, id, env) = (*program_id, *id, *env);
-        if *realm != self.realm.globals
-            || program_id != caller.program
-            || program_id != self.active_program
-            || id == super::ROOT_FUNCTION_ID
-        {
+        if *realm != self.realm.globals || id == super::ROOT_FUNCTION_ID {
             return None;
         }
-        if !Self::inline_constructible(p.function_get(id as usize)?) {
+        // A constructor of another program is pushed in its own, which the pushing loop
+        // makes active until the return restores the caller's (`StepResult::PushFrame`).
+        let body = if program_id == caller.program && program_id == self.active_program {
+            p.function_get(id as usize)?
+        } else {
+            let owner = self.programs.residual(program_id)?;
+            if owner.kind == crate::bytecode::ProgramKind::Wasm {
+                return None;
+            }
+            owner.function_get(id as usize)?
+        };
+        if !Self::inline_constructible(body) {
             return None;
         }
-        Some((id, env, self.inline_construct_receiver(callee)?))
+        Some((program_id, id, env, self.inline_construct_receiver(callee)?))
     }
 
     /// A body whose [[Construct]] the dispatch loop may push in place: a constructible

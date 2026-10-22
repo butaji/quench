@@ -27,6 +27,10 @@ impl ProgramStore {
             jit_mapped_bytes: _,
             js_jit_diagnostics: _,
             js_jit_numeric_find_candidate: _,
+            // Process configuration a restoring store reads again, and its diagnostics.
+            js_jit_dataview_float64_enabled: _,
+            js_jit_dataview_float64_get_entries: _,
+            js_jit_dataview_float64_set_entries: _,
         } = self;
         if !owned_scripts.is_empty() {
             return Err(SnapshotError::unsupported("scripts an embedder compiled and holds"));
