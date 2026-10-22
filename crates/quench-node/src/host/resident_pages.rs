@@ -208,6 +208,21 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 fn release_once_per_interval(_: CompileRelease, _: fn()) {}
 
+/// Releases before the entry's compilation, the start-up peak, and lets its own code
+/// generation boundary release again whatever `LOAD_RELEASE_INTERVAL` says: only the
+/// parser's and compiler's pages, not the bootstrap's, need be resident across it, and the
+/// parser's not across its code generation. A bootstrap compilation within the interval had
+/// held that boundary (V8-v7 max RSS, entry compiled with the bootstrap cached, bolted static
+/// x86_64, 2026-10-22: Crypto 3100-3276 -> 2704-3052 KiB, RayTrace 2996 -> 2764, Richards
+/// 2812 -> 2484).
+pub fn release_before_entry_compile() {
+    release_read_only_code_and_data();
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    if let Ok(mut releases) = LAST_COMPILE_RELEASES.lock() {
+        releases[CompileRelease::CodeGeneration as usize] = None;
+    }
+}
+
 /// The page-aligned address ranges of the segments above, from the loader's own table: every
 /// non-writable segment of the executable, which the table lists without a name, and every
 /// library's non-writable code segment. The kernel's vDSO, whose name is not a path, is left
