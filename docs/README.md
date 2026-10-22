@@ -637,6 +637,12 @@ calls up to a large budget, since a call costs it a frame and a dispatch, while
 the compiled mode keeps every call, since Cranelift calls cheaply and a copied
 body only adds register pressure. The residual's meaning is the same in both.
 
+`QUENCH_WASM_JIT_PERF_MAP` (diagnostics) names each compiled Wasm function in
+`/tmp/perf-PID.map` for `perf report` and writes the module's code to
+`/tmp/quench-jit-PID-BASE.bin` for `objdump -b binary --adjust-vma=0xBASE`; the
+`profile-lane-exits` feature reports, beside lane exits, the most dispatched interpreter
+records by function and instruction index (`wasm-disasm` prints the same indices).
+
 On Linux the harness binaries link position-dependent, and on x86-64 with
 `ld.lld` available they link in the trained symbol order
 `crates/quench-wasm-test/link/x86_64-linux.order`: executed functions share
