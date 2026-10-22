@@ -11,11 +11,7 @@ use wast::core::{WastArgCore, WastRetCore};
 use wast::{QuoteWat, WastArg, WastExecute, WastInvoke};
 
 use crate::wast_protocol::{LinkError, Outcome};
-use crate::{Module, WastReport};
-
-pub(crate) fn run_wast(filename: &str, source: &str) -> WastReport {
-    crate::wast_script::run_wast_using(filename, source, Store::new())
-}
+use quench_wasm::Module;
 
 const SPECTEST_FUNCTIONS: &[(&str, &[WasmType])] = &[
     ("print", &[]),
@@ -102,7 +98,7 @@ const SPECTEST_TABLE_MAX: u32 = 20;
 pub const EXECUTION_MODE_VARIABLE: &str = "QUENCH_EXECUTION_MODE";
 
 impl Store {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let mut runtime = Runtime::new(ScriptHost);
         // The spec runner selects the execution mode for its workers.
         if std::env::var_os(EXECUTION_MODE_VARIABLE).is_some_and(|mode| mode == "jit") {
@@ -126,10 +122,10 @@ impl Store {
         // Host resources include both memory kinds. This fixture's features do
         // not broaden the independently validated feature set of guest modules.
         assert_eq!(
-            crate::inspect_binary_with(&bytes, crate::core_features() | WasmFeatures::THREADS),
-            crate::ModuleStatus::Valid
+            quench_wasm::inspect_binary_with(&bytes, quench_wasm::core_features() | WasmFeatures::THREADS),
+            quench_wasm::ModuleStatus::Valid
         );
-        let module = Module { bytes };
+        let module = Module::from_validated(bytes);
         let mut instance = store.prepare(Rc::new(module)).unwrap_or_else(|_| {
             panic!("static spectest resources must instantiate on the shared VM")
         });
@@ -190,7 +186,7 @@ impl Store {
                 }
                 Payload::GlobalSection(reader) if !has_instance_state => {
                     // Preserve initializer admission on the lazy, stateless path.
-                    crate::shared::decode_globals(reader, &mut Vec::new(), &declaration_types)
+                    quench_wasm::decode_globals(reader, &mut Vec::new(), &declaration_types)
                         .map_err(|error| LinkError::Unsupported(error.to_string()))?;
                 }
                 // Stateful modules lower all declarations together, including imports.
@@ -458,7 +454,7 @@ impl Store {
         let name = module.name().map(|id| id.name().to_owned());
         let decoded = module
             .encode()
-            .map(|bytes| Rc::new(Module { bytes }))
+            .map(|bytes| Rc::new(Module::from_validated(bytes)))
             .map_err(|error| error.to_string());
         self.install(name.as_deref(), decoded)
     }
@@ -468,7 +464,7 @@ impl Store {
             name: module.name().map(|id| id.name().to_owned()),
             module: module
                 .encode()
-                .map(|bytes| Rc::new(Module { bytes }))
+                .map(|bytes| Rc::new(Module::from_validated(bytes)))
                 .map_err(|error| error.to_string()),
         });
     }
@@ -597,17 +593,15 @@ impl Store {
         bytes: &[u8],
         features: WasmFeatures,
     ) -> Result<(), LinkError> {
-        match crate::inspect_binary_with(bytes, features) {
-            crate::ModuleStatus::Valid => {}
-            crate::ModuleStatus::ParseError(error) | crate::ModuleStatus::ValidateError(error) => {
+        match quench_wasm::inspect_binary_with(bytes, features) {
+            quench_wasm::ModuleStatus::Valid => {}
+            quench_wasm::ModuleStatus::ParseError(error) | quench_wasm::ModuleStatus::ValidateError(error) => {
                 return Err(LinkError::Unsupported(format!(
                     "invalid instantiation input: {error}"
                 )));
             }
         }
-        let instance = self.prepare(Rc::new(Module {
-            bytes: bytes.to_vec(),
-        }))?;
+        let instance = self.prepare(Rc::new(Module::from_validated(bytes.to_vec())))?;
         if let Instance::Ready {
             lowered, module, ..
         } = instance
@@ -735,11 +729,10 @@ fn nan_f64(pattern: &wast::core::NanPattern<wast::token::F64>, bits: u64) -> boo
 
 #[cfg(test)]
 mod tests {
-    use crate::Engine;
 
     #[test]
     fn gc_result_protocol_uses_live_kind_and_recurses_through_either() {
-        let report = Engine::new().run_wast(
+        let report = crate::run_wast(
             "gc-result-protocol.wast",
             r#"
 (module
@@ -775,7 +768,7 @@ mod tests {
 
     #[test]
     fn failed_module_replacement_is_not_a_fallback_to_previous_instance() {
-        let report = Engine::new().run_wast(
+        let report = crate::run_wast(
             "lifecycle-control.wast",
             r#"
 (module (func (export "f") (result i32) i32.const 17))

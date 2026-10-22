@@ -10,7 +10,13 @@ export default [
       "crates/quench-node-test/examples/**",
       "crates/quench-wasm-test/testsuite/**",
       "target/**",
+      "target-*/**",
       "node_modules/**",
+      "quench-bench/**",
+      "evidence/**",
+      "work/**",
+      "tests/frameworks/**",
+      "tests/npm-*/**",
     ],
   },
 ];
