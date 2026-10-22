@@ -198,7 +198,7 @@ impl<H: Host> Vm<H> {
             .map_err(|error| context.finish_error(error))
     }
 
-    pub(super) fn initialize_host(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+    pub(super) fn initialize_host(&mut self, _program: &ResidualProgram) -> Result<(), JsError> {
         for index in 0..self.host.functions().len() {
             let Some(name) = self.host.functions()[index].global else {
                 continue;
@@ -206,7 +206,23 @@ impl<H: Host> Vm<H> {
             let id = u32::try_from(index)
                 .map_err(|_| JsError("host function table exceeds index space".into()))?;
             let function = self.create_host_function(HostFunctionId(id))?;
-            self.global(program, name, function)?;
+            // A host's globals are its platform's operations (timers, `fetch`,
+            // `structuredClone`), enumerable as WebIDL makes a global's operations and as
+            // Node defines them, unlike the language's own non-enumerable builtins.
+            let atom = self.intern_atom(name);
+            self.set_property_with_attributes(
+                self.realm.globals,
+                atom,
+                function,
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: true,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            )?;
         }
         let mut context = NativeContext::new(self);
         H::initialize(&mut context).map_err(|error| context.finish_error(error))
