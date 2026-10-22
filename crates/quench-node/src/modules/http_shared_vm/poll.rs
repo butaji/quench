@@ -1117,6 +1117,7 @@ pub(crate) fn cleanup(
             let responses = shared.responses.into_values().collect::<Vec<_>>();
             roots.extend(shared.response_factory);
             roots.extend(shared.incoming_factory);
+            roots.extend(shared.response_tracking.into_iter().flat_map(super::state::ResponseTracking::roots));
             for socket in host.net_sockets.values_mut() {
                 roots.extend(socket.write_callbacks.drain(..));
             }
