@@ -452,3 +452,14 @@ include taken control flow and are more useful for choosing fusion candidates
 than static instruction adjacency. The instrumented run produced the expected
 2,498,000 bytes/checksum 41826; its throughput is diagnostic only. Report:
 `work/react-perf/react-dynamic-transition-profile.log`.
+
+A direct `LoadConst` → `Return` fusion was screened from the dynamic pair
+census. The short 3-round screen measured 311.1 renders/s / 26.91 MB versus
+316.1 / 27.72 MB for the control, but the full 11-round paired run reversed
+that result: 303.0 / 27.37 MB versus 299.6 / 27.67 MB (+1.1% speed, -1.1%
+RSS). Output matched at 24,980,000 bytes/checksum 414318, so the fusion is
+retained as a small speed-and-memory improvement. It returns the already
+resolved constant through the existing activation/frame return path, avoiding
+the temporary register write/read and one dispatch. Reports:
+`work/react-perf/react-loadconst-return-screen-3.json` and
+`work/react-perf/react-loadconst-return-11.json`.
