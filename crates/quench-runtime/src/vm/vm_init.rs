@@ -77,7 +77,6 @@ impl<H: Host> Vm<H> {
             frame_pool: vec![],
             lane_stack: Default::default(),
             execution_mode: ExecutionMode::default(),
-            wasm_compilation: super::compiled::WasmCompilation::from_environment(),
             execution_interrupt,
             wasm_reference_epoch: std::cell::Cell::new(1),
             active_call_roots: vec![],
