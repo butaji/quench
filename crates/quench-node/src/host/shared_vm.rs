@@ -1491,6 +1491,10 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::async_hooks_shared_vm::release_job_context(&self.shared_state, context.0)
     }
 
+    fn release_promise_contexts(&mut self, contexts: &[quench_runtime::HostExecutionContext]) {
+        crate::modules::async_hooks_shared_vm::release_promise_contexts(&self.shared_state, contexts);
+    }
+
     fn functions(&self) -> &[HostFunction<Self>] {
         bindings()
     }

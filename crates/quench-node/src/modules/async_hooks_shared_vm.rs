@@ -262,7 +262,6 @@ fn prune_promise_resources(context: &mut NativeContext<'_, NodeHost>) -> Result<
         if context.resolve_host_weak_root(weak).is_none() {
             shared.borrow_mut().async_hooks.promise_resources.remove(&id);
             context.release_host_weak_root(weak);
-            shared.borrow_mut().async_hooks.context_triggers.remove(&id);
             queue_destroy(context, id)?;
         }
     }
@@ -393,6 +392,19 @@ pub(crate) fn release_job_context(
 ) -> Vec<RootId> {
     shared_state.borrow_mut().async_hooks.job_resources.remove(&token);
     take_store_context(shared_state, StoreContext::Job(token))
+}
+
+/// Forget the triggers of collected promises (`create_promise_context`), observed or not: only
+/// a job capturing a live promise reads one. An observed promise's weak entry and destroy
+/// hook stay with `prune_promise_resources`.
+pub(crate) fn release_promise_contexts(
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
+    contexts: &[quench_runtime::HostExecutionContext],
+) {
+    let triggers = &mut shared_state.borrow_mut().async_hooks.context_triggers;
+    for context in contexts {
+        triggers.remove(&context.0);
+    }
 }
 
 /// Enter a named async identity and restore the previous identity on every
