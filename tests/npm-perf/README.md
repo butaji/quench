@@ -371,3 +371,10 @@ A 64K young-generation cap did not improve the paired 32K PGO+512 control. The
 26.83 MB at 32K (-7.0% speed, effectively identical RSS), with matching output.
 The 32K cap remains selected. Report:
 `work/react-perf/react-pgo-prefix-512-young64k-vs-32k-11.json`.
+
+An early string-pair branch tried to bypass numeric operator checks for the
+625k React string-string additions. The paired three-round screen measured
+307.0 renders/s / 28.02 MB versus 305.4 / 26.89 MB for the unchanged PGO+512
+control: only 0.5% more throughput and 4.2% more RSS, with matching output. The
+fast path was reverted without a full run because it showed no useful signal.
+Report: `work/react-perf/react-pgo-string-pair-fastpath-vs-control-memory-first-32k-screen-3.json`.
