@@ -56,6 +56,11 @@ pub struct NodeHost {
     /// resolves through one, and canonicalizing reads each path component's link. Keyed by
     /// the path's text: `Path`'s own hash walks its components.
     pub(crate) real_paths: rustc_hash::FxHashMap<std::ffi::OsString, std::path::PathBuf>,
+    /// Each referrer's resolved import specifiers (`NodeHost::import_location`).
+    pub(crate) resolved_imports: rustc_hash::FxHashMap<
+        Box<str>,
+        rustc_hash::FxHashMap<Box<str>, Rc<crate::host::shared_vm::ImportLocation>>,
+    >,
 }
 
 impl NodeHost {
@@ -442,6 +447,7 @@ impl NodeHost {
             eval_source_nonempty: false,
             initial_node_debug: std::env::var_os("NODE_DEBUG").map(|value| value.to_string_lossy().into_owned()),
             real_paths: Default::default(),
+            resolved_imports: Default::default(),
             net_pending_writes: Vec::new(),
             net_pending_ends: Vec::new(),
             net_pending_destroys: Vec::new(),

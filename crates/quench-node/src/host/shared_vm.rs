@@ -1028,10 +1028,15 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
 /// indexed once rather than searched among every binding. Each name registers exactly one
 /// function (`operation_names_are_unique`).
 pub(crate) fn operation(name: &str) -> HostFunctionId {
-    static INDEX: std::sync::OnceLock<std::collections::HashMap<&'static str, u32>> =
+    static INDEX: std::sync::OnceLock<rustc_hash::FxHashMap<&'static str, u32>> =
         std::sync::OnceLock::new();
+    // Built in every process: hashed by FxHash and sized for every binding, it is neither
+    // rehashed as it grows nor SipHashed (2% of an empty script's instructions).
     let index = INDEX.get_or_init(|| {
-        let mut index = std::collections::HashMap::new();
+        let mut index = rustc_hash::FxHashMap::with_capacity_and_hasher(
+            bindings().len(),
+            Default::default(),
+        );
         for (position, binding) in bindings().iter().enumerate() {
             // A repeated name resolves to its first registration.
             index
@@ -1063,10 +1068,14 @@ impl quench_runtime::Host for NodeHost {
     /// Splay 39800 -> 38988 KiB with the release before full collections).
     /// The allocator's free pages, which the collection's sweep just freed, leave with them
     /// (V8-v7 max RSS, static x86_64 unbolted, 2026-10-19: RegExp 6772-7044 -> 6664-6772 KiB,
-    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged).
-    fn at_collection_boundary(&mut self) {
-        crate::host::resident_pages::release_read_only_pages();
-        crate::host::resident_pages::release_free_heap_pages();
+    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged). Only under a policy that
+    /// returns pages at collections (memory-first); every policy counts the collection for
+    /// the release before output (`resident_pages::note_collection`).
+    fn at_collection_boundary(&mut self, policy: quench_runtime::MemoryPolicy) {
+        if policy.returns_pages_at_collections() {
+            crate::host::resident_pages::release_read_only_pages();
+            crate::host::resident_pages::release_free_heap_pages();
+        }
         crate::host::resident_pages::note_collection();
     }
 
@@ -1163,8 +1172,6 @@ impl quench_runtime::Host for NodeHost {
         referrer: &str,
         specifier: &str,
     ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
-        use std::path::Path;
-
         // Parsed once: every import resolves through here, and the table is 21 KB of JSON.
         static BUILTIN_EXPORTS: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<String>>> =
             std::sync::OnceLock::new();
@@ -1214,121 +1221,39 @@ impl quench_runtime::Host for NodeHost {
             )));
         }
 
-        // Node resolves filesystem specifiers as URLs before accessing a file.
-        // The URL suffix belongs to module identity, never to the disk path.
-        let referrer_url = if referrer.starts_with("file:") {
-            Some(url::Url::parse(referrer).map_err(|error| error.to_string())?)
-        } else {
-            None
-        };
-        let referrer_path = match &referrer_url {
-            Some(url) => url
-                .to_file_path()
-                .map_err(|_| "invalid file URL referrer".to_owned())?,
-            None => std::path::PathBuf::from(referrer),
-        };
-        let internal = specifier.starts_with("internal/");
-        let base = if internal {
-            self.node_library_root.join("lib")
-        } else {
-            referrer_path
-                .parent()
-                .unwrap_or(Path::new("."))
-                .to_path_buf()
-        };
-        let file_url = if specifier
-            .get(..5)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))
+        // Each (referrer, specifier) resolves to one location, as Node's loader caches a
+        // resolution (`ModuleLoader#resolveCache`); module linking asks for each request in
+        // several of its phases.
+        let location = match self
+            .resolved_imports
+            .get(referrer)
+            .and_then(|imports| imports.get(specifier))
         {
-            Some(url::Url::parse(specifier).map_err(|error| error.to_string())?)
-        } else if !internal
-            && (specifier.starts_with("./")
-                || specifier.starts_with("../")
-                || Path::new(specifier).is_absolute())
-        {
-            let base_url = match referrer_url {
-                Some(url) => url,
-                None => {
-                    let absolute = if referrer_path.is_absolute() {
-                        referrer_path.clone()
-                    } else {
-                        std::env::current_dir()
-                            .map_err(|error| error.to_string())?
-                            .join(&referrer_path)
-                    };
-                    url::Url::from_file_path(absolute)
-                        .map_err(|_| "invalid file module referrer".to_owned())?
-                }
-            };
-            Some(
-                base_url
-                    .join(specifier)
-                    .map_err(|error| error.to_string())?,
-            )
-        } else {
-            None
-        };
-        let path = if let Some(url) = &file_url {
-            let encoded = url.path().to_ascii_lowercase();
-            if encoded.contains("%2f") || (cfg!(windows) && encoded.contains("%5c")) {
-                return Err("File URL path must not include encoded path separators".into());
-            }
-            Some(
-                url.to_file_path()
-                    .map_err(|_| "invalid file module URL".to_owned())?,
-            )
-        } else if !internal {
-            commonjs::exact_file_path(&base, specifier)
-        } else {
-            None
-        };
-        let path = match path {
-            Some(path) => path,
+            Some(location) => std::rc::Rc::clone(location),
             None => {
-                let resolution_specifier = if internal {
-                    format!("./{specifier}")
-                } else {
-                    specifier.to_owned()
-                };
-                let resolved = with_import_resolver(|resolver| {
-                    match commonjs::resolve_kept(resolver, |resolver| resolver.resolve(&base, &resolution_specifier)) {
-                        Ok(resolution) => Ok(Some(resolution.full_path())),
-                        Err(oxc_resolver::ResolveError::Specifier(_)) => Ok(None),
-                        Err(error) => Err(esm_errors::unresolved(resolver, error, specifier, &base, &referrer_path)),
-                    }
-                })?;
-                let Some(path) = resolved else {
+                let Some(location) = self.import_location(referrer, specifier)? else {
                     return Ok(None);
                 };
-                path
+                let location = std::rc::Rc::new(location);
+                self.resolved_imports
+                    .entry(referrer.into())
+                    .or_default()
+                    .insert(specifier.into(), std::rc::Rc::clone(&location));
+                location
             }
         };
-        let path = self.real_path(path);
-        if !internal {
-            if let Some(error) = esm_errors::unloadable(&path) {
-                return Err(error);
-            }
-        }
+        let (path, name) = (location.path.clone(), location.name.clone());
         let bytes = std::fs::read(&path).map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => esm_errors::module_not_found(&path, &referrer_path),
+            std::io::ErrorKind::NotFound => match referrer_location(referrer) {
+                Ok((_, referrer_path)) => esm_errors::module_not_found(&path, &referrer_path),
+                Err(error) => error,
+            },
             _ => format!("module {}: {error}", path.display()).into(),
         })?;
         let extension = path
             .extension()
             .and_then(|value| value.to_str())
             .unwrap_or("");
-        let name = if let Some(original) = file_url.as_ref().filter(|url| {
-            url.query().is_some_and(|value| !value.is_empty())
-                || url.fragment().is_some_and(|value| !value.is_empty())
-        }) {
-            let mut canonical = url::Url::from_file_path(&path)
-                .map_err(|_| "invalid canonical module path".to_owned())?;
-            canonical.set_query(original.query().filter(|value| !value.is_empty()));
-            canonical.set_fragment(original.fragment().filter(|value| !value.is_empty()));
-            canonical.to_string()
-        } else {
-            path.to_string_lossy().into_owned()
-        };
         if extension == "wasm" {
             // Node's `wasm` format: the module record is a facade over the instance.
             let source = esm_wasm::facade(&name, &path, &bytes)?;
@@ -1491,6 +1416,10 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::async_hooks_shared_vm::release_job_context(&self.shared_state, context.0)
     }
 
+    fn release_promise_contexts(&mut self, contexts: &[quench_runtime::HostExecutionContext]) {
+        crate::modules::async_hooks_shared_vm::release_promise_contexts(&self.shared_state, contexts);
+    }
+
     fn functions(&self) -> &[HostFunction<Self>] {
         bindings()
     }
@@ -1638,5 +1567,151 @@ mod tests {
         for binding in super::bindings() {
             assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
         }
+    }
+}
+
+/// Where an import loads from (`NodeHost::import_location`).
+pub(crate) struct ImportLocation {
+    path: std::path::PathBuf,
+    name: String,
+}
+
+/// An import referrer's file URL, when it is one, and its path: Node resolves filesystem
+/// specifiers as URLs before accessing a file.
+fn referrer_location(
+    referrer: &str,
+) -> Result<(Option<url::Url>, std::path::PathBuf), quench_runtime::ModuleLoadError> {
+    let Some(url) = referrer
+        .starts_with("file:")
+        .then(|| url::Url::parse(referrer))
+        .transpose()
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok((None, std::path::PathBuf::from(referrer)));
+    };
+    let path = url
+        .to_file_path()
+        .map_err(|_| "invalid file URL referrer".to_owned())?;
+    Ok((Some(url), path))
+}
+
+impl NodeHost {
+    /// Where an import of `specifier` from `referrer` loads from: the file and the module's
+    /// name, which keeps a file URL's query and fragment.
+    fn import_location(
+        &mut self,
+        referrer: &str,
+        specifier: &str,
+    ) -> Result<Option<ImportLocation>, quench_runtime::ModuleLoadError> {
+        use std::path::Path;
+
+        // Node resolves filesystem specifiers as URLs before accessing a file.
+        // The URL suffix belongs to module identity, never to the disk path.
+        let (referrer_url, referrer_path) = referrer_location(referrer)?;
+        let internal = specifier.starts_with("internal/");
+        let base = if internal {
+            self.node_library_root.join("lib")
+        } else {
+            referrer_path
+                .parent()
+                .unwrap_or(Path::new("."))
+                .to_path_buf()
+        };
+        let file_url = if specifier
+            .get(..5)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))
+        {
+            Some(url::Url::parse(specifier).map_err(|error| error.to_string())?)
+        } else if !internal
+            && (specifier.starts_with("./")
+                || specifier.starts_with("../")
+                || Path::new(specifier).is_absolute())
+        {
+            let base_url = match referrer_url {
+                Some(url) => url,
+                None => {
+                    let absolute = if referrer_path.is_absolute() {
+                        referrer_path.clone()
+                    } else {
+                        std::env::current_dir()
+                            .map_err(|error| error.to_string())?
+                            .join(&referrer_path)
+                    };
+                    url::Url::from_file_path(absolute)
+                        .map_err(|_| "invalid file module referrer".to_owned())?
+                }
+            };
+            Some(
+                base_url
+                    .join(specifier)
+                    .map_err(|error| error.to_string())?,
+            )
+        } else {
+            None
+        };
+        let path = if let Some(url) = &file_url {
+            let encoded = url.path().to_ascii_lowercase();
+            if encoded.contains("%2f") || (cfg!(windows) && encoded.contains("%5c")) {
+                return Err("File URL path must not include encoded path separators".into());
+            }
+            Some(
+                url.to_file_path()
+                    .map_err(|_| "invalid file module URL".to_owned())?,
+            )
+        } else if !internal {
+            commonjs::exact_file_path(&base, specifier)
+        } else {
+            None
+        };
+        let path = match path {
+            Some(path) => path,
+            None => {
+                thread_local! {
+                    /// The import resolver, kept as `commonjs::with_commonjs_resolver` keeps
+                    /// the require one.
+                    static IMPORT_RESOLVER: oxc_resolver::Resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+                        extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
+                        main_files: vec!["index".into()],
+                        condition_names: vec!["node".into(), "import".into(), "default".into()],
+                        ..Default::default()
+                    });
+                }
+                let resolution_specifier = if internal {
+                    format!("./{specifier}")
+                } else {
+                    specifier.to_owned()
+                };
+                let resolved = IMPORT_RESOLVER.with(|resolver| {
+                    match commonjs::resolve_kept(resolver, |resolver| resolver.resolve(&base, &resolution_specifier)) {
+                        Ok(resolution) => Ok(Some(resolution.full_path())),
+                        Err(oxc_resolver::ResolveError::Specifier(_)) => Ok(None),
+                        Err(error) => Err(esm_errors::unresolved(resolver, error, specifier, &base, &referrer_path)),
+                    }
+                })?;
+                let Some(path) = resolved else {
+                    return Ok(None);
+                };
+                path
+            }
+        };
+        let path = self.real_path(path);
+        if !internal {
+            if let Some(error) = esm_errors::unloadable(&path) {
+                return Err(error);
+            }
+        }
+        let name = if let Some(original) = file_url.as_ref().filter(|url| {
+            url.query().is_some_and(|value| !value.is_empty())
+                || url.fragment().is_some_and(|value| !value.is_empty())
+        }) {
+            let mut canonical = url::Url::from_file_path(&path)
+                .map_err(|_| "invalid canonical module path".to_owned())?;
+            canonical.set_query(original.query().filter(|value| !value.is_empty()));
+            canonical.set_fragment(original.fragment().filter(|value| !value.is_empty()));
+            canonical.to_string()
+        } else {
+            path.to_string_lossy().into_owned()
+        };
+        Ok(Some(ImportLocation { path, name }))
     }
 }

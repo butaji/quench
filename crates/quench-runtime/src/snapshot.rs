@@ -193,8 +193,22 @@ impl<'a> Reader<'a> {
         Ok(bytes)
     }
 
-    #[inline]
+    /// The next `N` bytes. Read without a call while the read stretch has not reached
+    /// `RELEASE_STRIDE` (every fixed-width read of a snapshot is one of these), else through
+    /// `take`, which releases the stretch and reports a truncated snapshot.
+    #[inline(always)]
     fn array<const N: usize>(&mut self) -> SnapshotResult<[u8; N]> {
+        if self.cursor - self.released < RELEASE_STRIDE
+            && let Some(bytes) = self.bytes.get(self.cursor..).and_then(<[u8]>::first_chunk::<N>)
+        {
+            self.cursor += N;
+            return Ok(*bytes);
+        }
+        self.array_through_take()
+    }
+
+    #[inline(never)]
+    fn array_through_take<const N: usize>(&mut self) -> SnapshotResult<[u8; N]> {
         Ok(self.take(N)?.try_into().expect("take returns N bytes"))
     }
 
