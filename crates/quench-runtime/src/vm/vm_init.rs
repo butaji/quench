@@ -167,6 +167,7 @@ impl<H: Host> Vm<H> {
             wasm_js: Default::default(),
             direct_eval: false,
             direct_eval_var_program: None,
+            dynamic_functions_to_keep: super::error::DYNAMIC_FUNCTIONS_KEPT,
             parameter_eval: false,
             eval_script_context: false,
             deferred_dependency_batch: false,

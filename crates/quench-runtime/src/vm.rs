@@ -1,6 +1,7 @@
 mod compiled;
 mod js_compiled;
 mod jit_backend;
+mod loop_compiled;
 mod shape_transitions;
 mod snapshot;
 mod startup_intrinsics;
@@ -1799,6 +1800,9 @@ pub(crate) struct Vm<H> {
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
     direct_eval_var_program: Option<ProgramId>,
+    /// The Function-constructor programs this VM may still offer the host's compile cache
+    /// (`DYNAMIC_FUNCTIONS_KEPT`).
+    dynamic_functions_to_keep: u16,
     parameter_eval: bool,
     eval_script_context: bool,
     deferred_dependency_batch: bool,
@@ -2215,6 +2219,8 @@ impl<H: Host> Vm<H> {
         self.instantiate_global_declarations(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("initialized");
+        #[cfg(feature = "profile-allocator")]
+        self.report_allocator_if_enabled("initialized");
         let root = self.closure(program, 0, Value::NULL)?;
         let this = if program.is_module() {
             Value::UNDEFINED
@@ -2237,6 +2243,8 @@ impl<H: Host> Vm<H> {
     }
 
     fn report_execution(&mut self, program: &ResidualProgram) {
+        #[cfg(feature = "profile-allocator")]
+        self.report_allocator_if_enabled("complete");
         #[cfg(feature = "profile-gc-time")]
         self.report_gc_time_if_enabled();
         #[cfg(feature = "profile-aggregate")]
@@ -2273,6 +2281,12 @@ impl<H: Host> Vm<H> {
             .report(&self.heap, ProgramId::MAIN.raw(), program);
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("complete");
+    }
+    #[cfg(feature = "profile-allocator")]
+    fn report_allocator_if_enabled(&self, phase: &str) {
+        if std::env::var_os("QUENCH_ALLOCATOR_MEMORY").is_some() {
+            crate::report_allocator_memory(phase);
+        }
     }
     #[cfg(feature = "profile-gc-time")]
     fn report_gc_time_if_enabled(&self) {

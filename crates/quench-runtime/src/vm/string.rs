@@ -664,11 +664,11 @@ impl<H: Host> Vm<H> {
                 .into_iter()
                 .take(limit)
                 .map(|part| vm.heap.alloc_string(part))
-                .collect();
+                .collect::<Vec<_>>();
             Ok(vm.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(vm.array_proto),
-                    Rc::new(values),
+                    values,
                 ),
             }))
         })

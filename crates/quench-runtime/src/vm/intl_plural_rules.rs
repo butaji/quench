@@ -581,7 +581,7 @@ impl<H: Host> Vm<H> {
         let categories = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(categories),
+                categories,
             ),
         });
         self.set_plural_result_property(result, "pluralCategories", categories)?;
