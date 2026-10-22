@@ -6932,9 +6932,12 @@ impl<H: Host> Vm<H> {
         } else if let Some(inputs) = &facts.numeric_field_inputs {
             numeric_field_inputs.extend_from_slice(inputs);
         }
-        let parameter_zero_is_field = numeric_field_inputs.iter().any(|input| {
-            input.receiver == super::js_compiled::JsJitFieldReceiver::ParameterZero
-        });
+        let is_field_receiver_parameter = |parameter: usize| {
+            numeric_field_inputs.iter().any(|input| {
+                input.receiver
+                    == super::js_compiled::JsJitFieldReceiver::Parameter(parameter as u16)
+            })
+        };
         let numeric_field_argument = match compiled_tier {
             Some(compiled) if compiled.uses_numeric_field_argument() => compiled.field_argument(),
             Some(_) => None,
@@ -6953,7 +6956,7 @@ impl<H: Host> Vm<H> {
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
         for (index, value) in registers.iter().copied().enumerate() {
-            if index == 0 && parameter_zero_is_field {
+            if is_field_receiver_parameter(index) {
                 arguments.push(0.0);
                 continue;
             }
@@ -6989,8 +6992,8 @@ impl<H: Host> Vm<H> {
                         }
                         self.frames[frame].this
                     }
-                    super::js_compiled::JsJitFieldReceiver::ParameterZero => {
-                        let Some(receiver) = first_argument else {
+                    super::js_compiled::JsJitFieldReceiver::Parameter(parameter) => {
+                        let Some(receiver) = registers.get(usize::from(parameter)).copied() else {
                             numeric = false;
                             break;
                         };
