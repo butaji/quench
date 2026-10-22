@@ -394,6 +394,8 @@ impl<H: Host> Vm<H> {
             random_state: _,
             // Each process keeps its own budget.
             dynamic_functions_to_keep: _,
+            lane_deferred: _,
+            host_beside_activations: _,
         } = self;
         let Realm {
             globals,
