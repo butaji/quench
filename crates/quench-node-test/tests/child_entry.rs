@@ -87,6 +87,62 @@ fn package_scope_applies_inside_nested_checkouts() {
 }
 
 #[test]
+fn builtin_esm_exports_keep_node_snapshots_of_lazy_members() {
+    // `node:fs` builds its streams and library policy on first use; its ESM exports must
+    // still be the values the members had when the facade was made (Node's `syncExports`).
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("reexport.mjs"), "export * from 'node:fs';").unwrap();
+    for (name, source, expected) in [
+        (
+            "read",
+            "import * as fs from 'node:fs'; import { ReadStream as R } from './reexport.mjs';
+             import { createRequire } from 'node:module';
+             const cjs = createRequire(import.meta.url)('fs');
+             const d = Object.getOwnPropertyDescriptor(fs, 'WriteStream');
+             let n = 0; for (let i = 0; i < 2000; i++) if (typeof fs.createWriteStream === 'function') n++;
+             console.log(typeof fs.ReadStream, fs.ReadStream === cjs.ReadStream, fs.ReadStream.name,
+               R === fs.ReadStream, typeof d.value, d.writable, d.enumerable, d.configurable,
+               d.value.name, Object.keys(fs).includes('createReadStream'), n);",
+            "function true ReadStream true function true true false WriteStream true 2000\n",
+        ),
+        (
+            "write",
+            "import * as fs from 'node:fs'; import { createRequire } from 'node:module';
+             const cjs = createRequire(import.meta.url)('fs');
+             cjs.ReadStream = 1; delete cjs.WriteStream; cjs.glob = 'g';
+             console.log(typeof fs.ReadStream, cjs.ReadStream, typeof fs.WriteStream,
+               'WriteStream' in cjs, typeof fs.glob, cjs.glob);",
+            "function 1 function false function g\n",
+        ),
+        (
+            "named",
+            "import { createReadStream, glob } from 'node:fs'; import * as fs from 'node:fs';
+             console.log(typeof createReadStream, typeof glob, createReadStream === fs.createReadStream);",
+            "function function true\n",
+        ),
+        (
+            "materialized",
+            "import { createRequire } from 'node:module';
+             const cjs = createRequire(import.meta.url)('fs');
+             const original = cjs.WriteStream; const fs = await import('node:fs');
+             cjs.WriteStream = 2; console.log(fs.WriteStream === original, cjs.WriteStream);",
+            "true 2\n",
+        ),
+    ] {
+        let entry = directory.path().join(format!("{name}.mjs"));
+        std::fs::write(&entry, source).unwrap();
+        for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+            let mut command = Command::new(executable);
+            command.arg(&entry);
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap();
+            assert_eq!(result.exit_code, Some(0), "{name} {executable}: {}", String::from_utf8_lossy(&result.stderr));
+            assert_eq!(String::from_utf8_lossy(&result.stdout), expected, "{name} {executable}");
+        }
+    }
+}
+
+#[test]
 fn package_scope_reads_nearest_type_and_stops_at_node_modules() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("package.json"), r#"{"type":"module"}"#).unwrap();
@@ -8349,6 +8405,22 @@ fn process_memory_reports_kernel_constraints_and_native_function_metadata() {
 }
 #[cfg(target_os = "linux")]
 #[test]
+fn process_memory_usage_reports_heap_and_external_backing_stores_like_node() {
+    compare_node_stream_source(
+        r#"
+const memoryUsage=process.memoryUsage,descriptor=Object.getOwnPropertyDescriptor(process,'memoryUsage'),out=[];
+out.push([memoryUsage.name,memoryUsage.length,Object.keys(memoryUsage),descriptor.writable,descriptor.enumerable,descriptor.configurable,memoryUsage.rss.name]);
+const before=memoryUsage();
+out.push(Object.keys(before),Object.values(before).every(Number.isSafeInteger));
+out.push([before.rss>0,memoryUsage.rss()>0,before.heapTotal>=before.heapUsed,before.heapUsed>0,before.external>=before.arrayBuffers]);
+const size=8*1024*1024,buffer=new ArrayBuffer(size),after=memoryUsage();
+out.push([after.external-before.external>=size,after.arrayBuffers>=size,buffer.byteLength]);
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+#[cfg(target_os = "linux")]
+#[test]
 fn process_memory_constraints_respect_inherited_data_limits() {
     use std::os::unix::process::CommandExt;
     const DATA_LIMIT_BYTES: u64 = 12 * 1024 * 1024 * 1024;
@@ -10203,4 +10275,330 @@ fn domain_sdk_owns_emitter_association_without_compatibility_global() {
         include_str!("../node-tests/test-domain-source-emitter-policy.js"),
         &["--no-warnings", "--expose-internals"],
     );
+}
+
+#[test]
+fn require_resolve_options_paths_resolve_paths_and_global_paths_match_node() {
+    compare_node_stream_source(
+        r#"
+const fs=require('fs'),path=require('path'),os=require('os');
+const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'resolve-paths-')));
+fs.mkdirSync(path.join(root,'node_modules','pkg'),{recursive:true});
+fs.writeFileSync(path.join(root,'node_modules','pkg','index.js'),'');
+fs.writeFileSync(path.join(root,'local.js'),'');
+const out=[],rel=p=>typeof p==='string'?p.replace(root,'<root>'):p;
+const t=f=>{try{out.push(f())}catch(e){out.push([e.name,e.code,e.message.split('\n')[0].replace(root,'<root>')])}};
+t(()=>rel(require.resolve('pkg',{paths:[root]})));
+t(()=>rel(require.resolve('./local.js',{paths:[root]})));
+t(()=>rel(require.resolve('pkg',{paths:[path.join(root,'missing'),root]})));
+t(()=>rel(require.resolve('pkg/index.js',{paths:[path.join(root,'node_modules','pkg')]})));
+t(()=>require.resolve('pkg',{paths:'x'}));
+t(()=>require.resolve('pkg',{paths:[1]}));
+t(()=>require.resolve('missing-pkg',{paths:[root]}));
+t(()=>require.resolve('fs',{paths:[]}));
+t(()=>require.resolve.paths('fs'));
+t(()=>require.resolve.paths('node:fs'));
+t(()=>[require.resolve.paths.name,require.resolve.paths.length,typeof require('module').createRequire(root+'/').resolve.paths]);
+t(()=>require.resolve.paths('..x').length);
+t(()=>require('module').globalPaths.slice(-1)[0].endsWith(path.join('lib','node')));
+fs.rmSync(root,{recursive:true,force:true});
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn advanced_ipc_serialization_carries_v8_values_like_node() {
+    compare_node_stream_source(
+        r#"
+const {spawn}=require('child_process');
+const child=`process.on('message',m=>{process.send({map:m.map instanceof Map&&m.map.get(1),self:m.self===m,big:m.big+1n,date:m.date instanceof Date,bytes:[...m.bytes]});process.disconnect()})`;
+const c=spawn(process.execPath,['-e',child],{stdio:['inherit','inherit','inherit','ipc'],serialization:'advanced'});
+const message={map:new Map([[1,'one']]),big:41n,date:new Date(0),bytes:new Uint8Array([1,2,3])};message.self=message;
+c.on('message',reply=>console.log(JSON.stringify(reply,(k,v)=>typeof v==='bigint'?`${v}n`:v)));
+c.on('exit',code=>console.log('exit',code));
+c.send(message);
+"#,
+    );
+}
+
+#[test]
+fn process_execve_replaces_the_process_and_reports_errors_like_node() {
+    compare_node_source_with_args(
+        r#"
+const out = [];
+const t = (f) => { try { out.push(f()); } catch (e) { out.push([e.name, e.code, e.message, e.errno, e.path, e.syscall, Object.keys(e)]); } };
+t(() => [process.execve.length, process.execve.name, Object.getOwnPropertyDescriptor(process, 'execve').enumerable]);
+t(() => process.execve('/nonexistent/quench-execve', ['x']));
+t(() => process.execve('/bin/sh', [1]));
+t(() => process.execve('/bin/sh', ['a\0b']));
+t(() => process.execve('/bin/sh', [], { a: 1 }));
+t(() => process.execve(1));
+const seen = [];
+require('diagnostics_channel').channel('process.execve').subscribe((m) => seen.push(m.execPath, m.args.length, m.env));
+process.on('exit', () => console.log('exit handlers do not run'));
+console.log(JSON.stringify(out));
+process.execve('/bin/sh', ['sh', '-c', 'echo replaced "$X" "$#"', 'sh', 'one'], { X: 'kept' });
+"#,
+        &["--no-warnings"],
+    );
+}
+
+/// The parity script of `evidence/wasm-coremark-buffer-before-library-linux-2026-10-18/`:
+/// each case reads files before anything touches `Buffer`, then observes the result.
+const BUFFER_PARITY_SCRIPT: &str = r#"// Usage: node parity.cjs <case>. Each case reads files before touching Buffer, then observes.
+const fs = require('fs');
+const path = require('path');
+const dir = __dirname;
+const out = [];
+const log = (...a) => out.push(a.map(v => typeof v === 'string' ? v : JSON.stringify(v)).join(' '));
+const desc = (o, k) => { const d = Object.getOwnPropertyDescriptor(o, k); return d && ['value' in d ? 'data' : 'acc', d.enumerable, d.configurable, d.writable].join(','); };
+const c = process.argv[2];
+// Node's library loads internal/buffer.js without buffer.js for streams and encodings.
+if (c === 'stream-first') require('stream');
+const a = fs.readFileSync(path.join(dir, 'small.bin'));
+const b = fs.readFileSync(path.join(dir, 'big.bin'));
+const t = fs.readFileSync(path.join(dir, 'tiny.bin'));
+const p = Object.getPrototypeOf(a);
+if (c === 'keys') {
+  log('ownKeys', Reflect.ownKeys(p).map(String));
+  log('keys', Object.keys(p));
+} else if (c === 'proto') {
+  log(p === Object.getPrototypeOf(b), p === Object.getPrototypeOf(t), Object.getPrototypeOf(p) === Uint8Array.prototype);
+  log(p === Buffer.prototype, a instanceof Buffer, a.constructor === Buffer);
+} else if (c === 'ctor-first') {
+  log(a.constructor === Buffer, a.constructor.name, p.constructor.name);
+} else if (c === 'pool') {
+  log(a.byteLength, a.buffer.byteLength, a.byteOffset % 8, b.buffer.byteLength, b.byteOffset, t.buffer.byteLength);
+  log(a.buffer === t.buffer, (t.byteOffset - a.byteOffset));
+  const x = Buffer.allocUnsafe(10);
+  log(x.buffer === a.buffer, x.byteOffset - t.byteOffset);
+  try { a.buffer.transfer(); log('transferred'); } catch (e) { log('transfer', e.name); }
+} else if (c === 'inspect') {
+  log(require('util').inspect(t).slice(0, 12));
+  log(t.toString('hex').length, desc(p, 'parent'), desc(p, 'toString'), desc(p, 'constructor'));
+} else if (c === 'desc-first') {
+  log(desc(p, 'parent'), desc(p, 'offset'), desc(p, 'readUInt8'), desc(p, Symbol.for('nodejs.util.inspect.custom')));
+  log(Reflect.ownKeys(p).length);
+} else if (c === 'write-first') {
+  p.toString = function () { return 'mine'; };
+  log(a.toString(), Buffer.from('x').toString(), Object.keys(p).indexOf('toString'));
+} else if (c === 'delete-first') {
+  delete p.toString;
+  log(typeof a.toString, Object.keys(p).includes('toString'), String(Object.getOwnPropertyNames(p).length));
+} else if (c === 'define-first') {
+  Object.defineProperty(p, 'swap16', { value: 1, writable: false, enumerable: false, configurable: true });
+  log(desc(p, 'swap16'), Buffer.prototype.swap16, Object.keys(p).length);
+} else if (c === 'buffer-first') {
+  log(typeof Buffer.alloc, Buffer.prototype === p, Reflect.ownKeys(p).length, a.readUInt8(0) === a[0]);
+} else if (c === 'parent') {
+  log(a.parent === a.buffer, b.offset === b.byteOffset);
+} else if (c === 'freeze') {
+  Object.freeze(p);
+  log(Object.isFrozen(p), typeof p.toString, Reflect.ownKeys(p).length);
+} else if (c === 'forin') {
+  const ks = []; for (const k in t) if (!/^\d+$/.test(k)) ks.push(k);
+  log(ks.length, ks.slice(0, 3), ks.slice(-3));
+} else if (c === 'stream-first') {
+  log(typeof a.readUInt8, a.toString('hex', 0, 4), p === Buffer.prototype, Reflect.ownKeys(p).length);
+} else if (c === 'sym') {
+  const s = Symbol.for('nodejs.util.inspect.custom');
+  log(typeof t[s], s in p, Object.getOwnPropertySymbols(p).map(String));
+}
+console.log(out.join('\n'));
+"#;
+
+fn buffer_parity_directory() -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("parity.cjs"), BUFFER_PARITY_SCRIPT).unwrap();
+    // Below Node's unpooled size, above it, and within the heap-buffer size.
+    let pattern = |length: u32, modulus: u32| (0..length).map(|i| (i % modulus) as u8).collect::<Vec<_>>();
+    std::fs::write(directory.path().join("small.bin"), pattern(7684, 251)).unwrap();
+    std::fs::write(directory.path().join("big.bin"), pattern(100_000, 241)).unwrap();
+    std::fs::write(directory.path().join("tiny.bin"), pattern(50, 256)).unwrap();
+    directory
+}
+
+fn run_quench(entry: &std::path::Path, args: &[&str]) -> String {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_run-parallel"));
+    command.arg(entry).args(args).env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+    let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap();
+    assert_eq!(result.exit_code, Some(0), "{args:?}: {}", String::from_utf8_lossy(&result.stderr));
+    String::from_utf8_lossy(&result.stdout).into_owned()
+}
+
+#[test]
+fn buffer_prototype_keys_match_node() {
+    // A prototype made before `buffer.js` loads ends with the keys the library gives it, in
+    // the library's order and with its attributes, as one the library made itself.
+    let directory = buffer_parity_directory();
+    let probe = "const p = Object.getPrototypeOf(globalThis.__first());
+      console.log(JSON.stringify(Reflect.ownKeys(p).map(k => [String(k), Object.getOwnPropertyDescriptor(p, k)]).map(([k, d]) => [k, 'value' in d, d.enumerable, d.configurable, d.writable])));";
+    let eager = directory.path().join("eager.cjs");
+    std::fs::write(&eager, format!("globalThis.__first = () => Buffer.alloc(1);\n{probe}")).unwrap();
+    let lazy = directory.path().join("lazy.cjs");
+    std::fs::write(&lazy, format!("globalThis.__first = () => require('fs').readFileSync(__dirname + '/small.bin');\n{probe}")).unwrap();
+    let eager = run_quench(&eager, &[]);
+    assert!(eager.contains("readBigUInt64LE") && eager.contains("nodejs.util.inspect.custom"), "{eager}");
+    assert_eq!(run_quench(&lazy, &[]), eager);
+}
+
+#[test]
+fn read_file_before_buffer_keeps_node_buffer_semantics() {
+    // Expected outputs are Node v26.12.0's, the pinned library's release.
+    let directory = buffer_parity_directory();
+    let entry = directory.path().join("parity.cjs");
+    for (case, expected) in [
+        ("proto", r#"true true true\ntrue true true"#),
+        ("ctor-first", r#"true Buffer Buffer"#),
+        ("pool", r#"7684 65600 0 100000 0 65600\ntrue 7688\ntrue 56\ntransfer TypeError"#),
+        ("inspect", r#"<Buffer 00 0\n100 acc,true,false, data,true,true,true data,false,true,true"#),
+        ("desc-first", r#"acc,true,false, acc,true,false, data,true,true,true data,true,true,true\n97"#),
+        ("write-first", r#"mine mine 79"#),
+        ("delete-first", r#"function false 95"#),
+        ("define-first", r#"data,false,true,false 1 94"#),
+        ("buffer-first", r#"function true 97 true"#),
+        ("parent", r#"true true"#),
+        ("freeze", r#"true function 97"#),
+        ("forin", r#"95 ["readBigUInt64LE","readBigUInt64BE","readBigUint64LE"] ["swap32","swap64","toLocaleString"]"#),
+        ("sym", r#"function true ["Symbol(nodejs.util.inspect.custom)"]"#),
+        ("stream-first", r#"function 00010203 true 97"#),
+    ] {
+        assert_eq!(run_quench(&entry, &[case]), format!("{}\n", expected.replace("\\n", "\n")), "{case}");
+    }
+}
+
+#[test]
+fn wasm_files_are_es_modules_as_in_node() {
+    // Node's `wasm` translator: a `.wasm` file is a module whose namespace holds its
+    // instance's exports (globals unwrapped), whose import modules are module specifiers,
+    // and which instantiates when it evaluates; an entry `.wasm` runs the same way.
+    let directory = tempfile::tempdir().unwrap();
+    let wat = |name: &str, text: &str| {
+        let buffer = wast::parser::ParseBuffer::new(text).unwrap();
+        let mut module: wast::Wat = wast::parser::parse(&buffer).unwrap();
+        std::fs::write(directory.path().join(name), module.encode().unwrap()).unwrap();
+    };
+    wat("lib.wasm", r#"(module (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add)
+        (memory (export "mem") 1) (global (export "g") i32 (i32.const 42)) (global (export "m") (mut i32) (i32.const 7)))"#);
+    wat("main.wasm", r#"(module (import "./lib.wasm" "g" (global i32)) (import "./lib.wasm" "add" (func $add (param i32 i32) (result i32)))
+        (import "./host.mjs" "log" (func $log (param i32)))
+        (func (export "start") global.get 0 i32.const 1 call $add call $log) (start 2))"#);
+    wat("missing.wasm", r#"(module (import "./host.mjs" "nope" (func)))"#);
+    wat("reserved-import.wasm", r#"(module (import "wasm-js:x" "f" (func)))"#);
+    wat("reserved-export.wasm", r#"(module (func (export "wasm:f")))"#);
+    std::fs::write(directory.path().join("bad.wasm"), b"\0asm\x01\0\0\0\x01\x05").unwrap();
+    std::fs::write(directory.path().join("host.mjs"), "export function log(value) { console.log('log', value); }").unwrap();
+    std::fs::write(directory.path().join("namespace.mjs"), "import * as lib from './lib.wasm';
+        import { add, g, m } from './lib.wasm';
+        console.log(Object.keys(lib), g, m, typeof add, add(2, 3), lib.mem instanceof WebAssembly.Memory,
+          Object.prototype.toString.call(lib));
+        const main = await import('./main.wasm');
+        console.log(Object.keys(main), main === await import('./main.wasm'));
+        for (const name of ['bad', 'missing', 'reserved-import', 'reserved-export']) {
+          try { await import(`./${name}.wasm`); } catch (error) {
+            const path = new URL(`./${name}.wasm`, import.meta.url);
+            console.log(name, error.constructor.name, error.message.startsWith(`${path.pathname}: `),
+              error.message.replace(path.href, '<url>'));
+          }
+        }").unwrap();
+    // The warning goes through the public `process.emitWarning` as it is when it warns.
+    std::fs::write(directory.path().join("patched.mjs"), "process.emitWarning = (message, type) => console.log(type);
+        console.log((await import('./lib.wasm')).g);").unwrap();
+    let warning = "ExperimentalWarning: Importing WebAssembly module instances is an experimental feature and might change at any time";
+    for (entry, expected, warnings) in [
+        (
+            "namespace.mjs",
+            "[ 'add', 'g', 'm', 'mem' ] 42 7 function 5 true [object Module]\nlog 43\n[ 'start' ] true\n",
+            1,
+        ),
+        ("main.wasm", "log 43\n", 1),
+        ("patched.mjs", "ExperimentalWarning\n42\n", 0),
+    ] {
+        for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+            let mut command = Command::new(executable);
+            command.arg(directory.path().join(entry));
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap();
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            assert_eq!(result.exit_code, Some(0), "{entry} {executable}: {stderr}");
+            let errors: Vec<_> = stdout.lines().skip(expected.lines().count()).collect();
+            assert!(stdout.starts_with(expected), "{entry} {executable}: {stdout}");
+            assert_eq!(stderr.matches(warning).count(), warnings, "{entry} {executable}: {stderr}");
+            if entry == "namespace.mjs" {
+                assert_eq!(errors.len(), 4, "{executable}: {stdout}");
+                assert!(errors[0].starts_with("bad CompileError true "), "{executable}: {}", errors[0]);
+                assert!(errors[1].starts_with("missing LinkError false "), "{executable}: {}", errors[1]);
+                assert_eq!(errors[2], "reserved-import LinkError false Invalid Wasm import \"wasm-js:x\" in <url>", "{executable}");
+                assert_eq!(errors[3], "reserved-export LinkError false Invalid Wasm export name \"wasm:f\" in <url>", "{executable}");
+            }
+        }
+    }
+}
+
+#[test]
+fn process_warnings_match_node_without_loading_the_warning_module_graph() {
+    // `process.emitWarning` and the default listener are Node's own functions over supplied
+    // imports (`process_warning_shared_vm`): forms, validation errors, listener payloads,
+    // option handling and the console the listener writes with match Node.
+    let directory = tempfile::tempdir().unwrap();
+    let scripts = [
+        ("forms.mjs", r#"
+const seen = [];
+process.on('warning', (w) => seen.push([w.name, w.message, w.code, w.detail, w instanceof Error, w.stack.split('\n')[0]]));
+const source = process.emitWarning.toString();
+console.log(process.emitWarning.name, process.emitWarning.length, typeof process.emitWarning.prototype, source.slice(0, source.indexOf(')') + 1));
+process.emitWarning('one');
+process.emitWarning('two', 'CustomType', 'CODE1');
+process.emitWarning('three', { type: 'T', code: 'C', detail: 'more' });
+process.emitWarning(new Error('four'));
+process.emitWarning('five', 'DeprecationWarning', 'DEP0');
+function ctor() { process.emitWarning('six', 'X', undefined, ctor); }
+ctor();
+process.emitWarning('seven', '');
+for (const args of [['eight', 5], [5]]) {
+  try { process.emitWarning(...args); } catch (e) { console.log(e.code, e.message); }
+}
+setTimeout(() => console.log(JSON.stringify(seen)), 10);
+"#),
+        ("replaced.mjs", "console.error = (m) => console.log('replaced:', m); process.emitWarning('a');"),
+        ("grouped.mjs", "console.group('g'); process.emitWarning('a'); setTimeout(() => { console.groupEnd(); process.emitWarning('b'); }, 5);"),
+        ("late.mjs", "process.emitWarning('a'); setTimeout(() => { console.error = (m) => console.log('late:', m); process.emitWarning('b'); }, 5);"),
+        ("custom.mjs", "const w = new Error('custom'); w.name = 'Mine'; w.toString = () => 'TOSTRING'; process.emitWarning(w); const v = new Error('z'); v.toString = 1; process.emitWarning(v); process.emitWarning('x', 'Mine');"),
+    ];
+    for (name, source) in scripts {
+        std::fs::write(directory.path().join(name), source).unwrap();
+    }
+    let normalize = |text: &[u8]| {
+        let text = String::from_utf8_lossy(text);
+        let mut normalized = String::new();
+        for line in text.lines() {
+            // The process id, and the program name in the trace hint (`process.argv0`).
+            let line = match (line.find("(node:"), line.find(") ")) {
+                (Some(start), Some(end)) if start < end => format!("{}(node:PID{}", &line[..start], &line[end..]),
+                _ => line.to_owned(),
+            };
+            let line = match (line.find("(Use `"), line.find(" --trace")) {
+                (Some(start), Some(end)) if start < end => format!("(Use `PROGRAM{}", &line[end..]),
+                _ => line,
+            };
+            normalized.push_str(&line);
+            normalized.push('\n');
+        }
+        normalized
+    };
+    for flags in [&[][..], &["--no-warnings"], &["--disable-warning=CustomType", "--disable-warning=DeprecationWarning"], &["--no-deprecation"]] {
+        for (name, _) in scripts {
+            let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+                let mut command = Command::new(executable);
+                command.args(flags).arg(directory.path().join(name));
+                if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+                quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+            });
+            assert_eq!(observations[0].exit_code, observations[1].exit_code, "{name} {flags:?}");
+            assert_eq!(normalize(&observations[0].stdout), normalize(&observations[1].stdout), "{name} {flags:?}");
+            assert_eq!(normalize(&observations[0].stderr), normalize(&observations[1].stderr), "{name} {flags:?}");
+        }
+    }
 }

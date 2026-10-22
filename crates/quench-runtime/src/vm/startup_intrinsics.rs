@@ -127,7 +127,8 @@ impl<H: Host> Vm<H> {
                 .into_iter()
                 .flatten()
             {
-                let (getter, setter) = attributes.functions(&self.shape_accessors);
+                // `values` already holds a slot getter.
+                let (getter, setter) = attributes.functions(&self.shape_accessors, || None);
                 roots.extend(key.symbol_value().into_iter().chain(getter).chain(setter));
             }
         }
@@ -207,8 +208,10 @@ impl<H: Host> Vm<H> {
             .enumerate()
             .filter_map(|(slot, entry)| {
                 let (key, attributes) = entry?;
-                let value = sealed.values.get(slot).copied().unwrap_or(Value::UNDEFINED);
-                let attributes = attributes.attributes(&self.shape_accessors);
+                let raw = sealed.values.get(slot).copied();
+                let value = if attributes.slot_getter() { None } else { raw };
+                let attributes = attributes.attributes(&self.shape_accessors, || raw);
+                let value = value.unwrap_or(Value::UNDEFINED);
                 Some((key, SlotProperty { value, attributes }))
             })
             .collect()
@@ -298,12 +301,10 @@ impl<H: Host> Vm<H> {
 
     /// `holder`'s own shape-held property `key`, read without allocating.
     fn slot_property(&self, holder: Value, key: PropertyKey) -> Option<SlotProperty> {
-        let (shape, slot) = self.object_property_slot(holder, key)?;
-        let attributes = self.shape_attribute(shape, slot)?;
-        let value = self
-            .object_data(holder)
-            .and_then(|object| self.heap.property_get(object, slot))
-            .unwrap_or(Value::UNDEFINED);
+        let (_, slot) = self.object_property_slot(holder, key)?;
+        let object = self.object_data(holder)?;
+        let attributes = self.slot_attributes(object, slot)?;
+        let value = self.slot_data_value(object, slot).unwrap_or(Value::UNDEFINED);
         Some(SlotProperty { value, attributes })
     }
 
@@ -343,9 +344,35 @@ impl<H: Host> Vm<H> {
     fn property_key_value(&mut self, key: PropertyKey) -> Value {
         match key {
             PropertyKey::String(atom) | PropertyKey::Private(atom) => {
-                self.heap.alloc(Cell::String(self.atom_value(atom)))
+                self.heap.alloc_string(self.atom_value(atom))
             }
             PropertyKey::Symbol(symbol) => symbol,
         }
+    }
+}
+
+impl StartupIntrinsics {
+    /// The sealed holders for a snapshot (`crate::snapshot`); a snapshot is taken outside every
+    /// `enter_startup_intrinsics`, so nothing is swapped.
+    pub(super) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
+        let Self { holders, sealed_roots, depth, swapped, regexp } = self;
+        if *depth != 0 || !swapped.is_empty() || regexp.is_some() {
+            return Err(crate::snapshot::SnapshotError::unsupported("a startup intrinsics scope"));
+        }
+        writer.len(holders.len());
+        for SealedHolder { holder, shape, values } in holders {
+            writer.value(*holder);
+            writer.u32(*shape);
+            writer.values(values);
+        }
+        writer.values(sealed_roots);
+        Ok(())
+    }
+
+    pub(super) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        let holders = crate::snapshot::read_list(reader, |reader| {
+            Ok(SealedHolder { holder: reader.value()?, shape: reader.u32()?, values: reader.values()?.into() })
+        })?;
+        Ok(Self { holders, sealed_roots: reader.values()?.into(), depth: 0, swapped: Vec::new(), regexp: None })
     }
 }

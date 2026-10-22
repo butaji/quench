@@ -140,7 +140,7 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .flat_map(|part| part.value.units().iter())
                 .collect::<Vec<_>>();
-            return Ok(self.heap.alloc(Cell::String(JsString::from_units(&text))));
+            return Ok(self.heap.alloc_string(JsString::from_units(&text)));
         }
         let mut values = Vec::with_capacity(parts.len());
         for part in parts {
@@ -148,15 +148,15 @@ impl<H: Host> Vm<H> {
                 self.realm_object_prototype(self.realm.globals),
             )));
             self.set_intl_string_property(object, "type", part.kind)?;
-            let atom = self.intern_atom("value");
-            let value = self.heap.alloc(Cell::String(part.value));
+            let atom = self.runtime_atoms.value;
+            let value = self.heap.alloc_string(part.value);
             self.set_property(object, atom, value)?;
             values.push(object);
         }
         Ok(self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                Rc::new(values),
+                values,
             ),
         }))
     }
@@ -175,10 +175,7 @@ impl<H: Host> Vm<H> {
                 let iterator = vm.iterator_get_direct(p, iterator)?;
                 vm.with_call_roots([iterator], |vm| {
                     while let Some(item) = vm.iterator_step_value(p, iterator)? {
-                        let Some(item) = (match vm.heap.get(item) {
-                            Some(Cell::String(value)) => Some(value.clone()),
-                            _ => None,
-                        }) else {
+                        let Some(item) = vm.heap.string(item).cloned() else {
                             let error = vm
                                 .type_error(p, "ListFormat iterable values must be strings".into());
                             return Err(vm.iterator_abrupt(p, iterator, error));

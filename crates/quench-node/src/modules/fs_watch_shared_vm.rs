@@ -1107,3 +1107,32 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
     #[cfg(target_os = "linux")]
     state.fs_watch.kernel.reset();
 }
+
+impl State {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self {
+            next_id,
+            api,
+            dispatch,
+            handles,
+            groups,
+            deliveries,
+            #[cfg(target_os = "linux")]
+            kernel,
+        } = self;
+        require_quiescent(handles.is_empty() && groups.is_empty() && deliveries.is_empty(), "a file watcher")?;
+        #[cfg(target_os = "linux")]
+        require_quiescent(kernel.snapshot_quiescent(), "an inotify descriptor")?;
+        next_id.write(writer)?;
+        api.write(writer)?;
+        dispatch.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::HostSnap;
+        self.next_id = HostSnap::read(reader)?;
+        self.api = HostSnap::read(reader)?;
+        self.dispatch = HostSnap::read(reader)?;
+        Ok(())
+    }
+}

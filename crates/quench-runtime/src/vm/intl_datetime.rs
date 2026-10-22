@@ -222,7 +222,7 @@ impl<H: Host> Vm<H> {
                         .unwrap_or(locale);
 
                     let formatter = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-                    let locale_value = vm.heap.alloc(Cell::String(locale.into()));
+                    let locale_value = vm.heap.alloc_string(locale.into());
                     vm.set_date_time_slot(formatter, DATE_TIME_FORMAT_OPTIONS_SLOT, locale_value)?;
                     vm.set_date_time_slot(
                         formatter,
@@ -287,11 +287,11 @@ impl<H: Host> Vm<H> {
             .unwrap_or_else(|| quench_intl::default_numbering_system(&locale).into());
         let calendar_value = self
             .heap
-            .alloc(Cell::String(locale_calendar.clone().into()));
+            .alloc_string(locale_calendar.clone().into());
         self.set_date_time_property(resolved, "calendar", calendar_value)?;
         let numbering_value = self
             .heap
-            .alloc(Cell::String(locale_numbering_system.clone().into()));
+            .alloc_string(locale_numbering_system.clone().into());
         self.set_date_time_property(resolved, "numberingSystem", numbering_value)?;
         let temporal_zoned = matches!(defaults, DateTimeDefaults::TemporalZonedDateTime(_));
         if temporal_zoned {
@@ -331,7 +331,7 @@ impl<H: Host> Vm<H> {
                     if matches!(*key, "localeMatcher" | "formatMatcher") {
                         None
                     } else {
-                        Some(self.heap.alloc(Cell::String(text.into())))
+                        Some(self.heap.alloc_string(text.into()))
                     }
                 }
                 "timeZone" => {
@@ -339,7 +339,7 @@ impl<H: Host> Vm<H> {
                     let Some(zone) = normalize_time_zone_identifier(&zone) else {
                         return Err(self.range_error(p, "invalid timeZone".into()));
                     };
-                    Some(self.heap.alloc(Cell::String(zone.into())))
+                    Some(self.heap.alloc_string(zone.into()))
                 }
                 "hour12" => Some(if self.truthy(value) {
                     Value::TRUE
@@ -360,7 +360,7 @@ impl<H: Host> Vm<H> {
                     }
                     let calendar = quench_intl::calendar_alias(&text);
                     quench_intl::valid_calendar(&calendar)
-                        .then(|| self.heap.alloc(Cell::String(calendar.into())))
+                        .then(|| self.heap.alloc_string(calendar.into()))
                 }
                 "numberingSystem" => {
                     let text = self.to_string(p, value)?.to_ascii_lowercase();
@@ -368,7 +368,7 @@ impl<H: Host> Vm<H> {
                         return Err(self.range_error(p, format!("invalid {key}").into()));
                     }
                     quench_intl::valid_numbering_system(&text)
-                        .then(|| self.heap.alloc(Cell::String(text.into())))
+                        .then(|| self.heap.alloc_string(text.into()))
                 }
                 _ => None,
             };
@@ -420,7 +420,7 @@ impl<H: Host> Vm<H> {
                 if !has_date && !has_time && !has_date_style && !has_time_style =>
             {
                 for (component, value) in components {
-                    let value = self.heap.alloc(Cell::String((*value).into()));
+                    let value = self.heap.alloc_string((*value).into());
                     self.set_date_time_property(resolved, component, value)?;
                     if matches!(*component, "year" | "month" | "day") {
                         has_date = true;
@@ -429,7 +429,7 @@ impl<H: Host> Vm<H> {
                     }
                 }
                 if temporal_zoned && !any {
-                    let time_zone_name = self.heap.alloc(Cell::String("short".into()));
+                    let time_zone_name = self.heap.alloc_string("short".into());
                     self.set_date_time_property(resolved, "timeZoneName", time_zone_name)?;
                 }
             }
@@ -465,7 +465,7 @@ impl<H: Host> Vm<H> {
             self.resolve_date_time_hour_cycle(resolved, &mut resolved_locale)?;
         }
         let locale_atom = self.intern_atom("\0locale");
-        let locale_value = self.heap.alloc(Cell::String(resolved_locale.into()));
+        let locale_value = self.heap.alloc_string(resolved_locale.into());
         self.set_property(resolved, locale_atom, locale_value)?;
         if self.date_time_option(resolved, "dateStyle").is_some()
             || self.date_time_option(resolved, "timeStyle").is_some()
@@ -519,7 +519,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn set_default_date_components(&mut self, options: Value) -> Result<(), JsError> {
-        let numeric = self.heap.alloc(Cell::String("numeric".into()));
+        let numeric = self.heap.alloc_string("numeric".into());
         for name in ["year", "month", "day"] {
             self.set_date_time_property(options, name, numeric)?;
         }
@@ -527,7 +527,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn set_default_time_components(&mut self, options: Value) -> Result<(), JsError> {
-        let numeric = self.heap.alloc(Cell::String("numeric".into()));
+        let numeric = self.heap.alloc_string("numeric".into());
         for name in ["hour", "minute", "second"] {
             self.set_date_time_property(options, name, numeric)?;
         }
@@ -574,7 +574,7 @@ impl<H: Host> Vm<H> {
         {
             *locale = remove_locale_unicode_key(locale, "hc");
         }
-        let cycle_value = self.heap.alloc(Cell::String(cycle.into()));
+        let cycle_value = self.heap.alloc_string(cycle.into());
         self.set_date_time_property(options, "hourCycle", cycle_value)?;
         let is_hour12 = matches!(cycle, "h11" | "h12");
         let hour12_value = if hour12.unwrap_or(is_hour12) {
@@ -598,7 +598,7 @@ impl<H: Host> Vm<H> {
         }
         if matches!(self.heap.get(this), Some(Cell::Date { milliseconds, .. }) if !milliseconds.is_finite())
         {
-            return Ok(self.heap.alloc(Cell::String("Invalid Date".into())));
+            return Ok(self.heap.alloc_string("Invalid Date".into()));
         }
         let constructor = self
             .realm
@@ -685,7 +685,7 @@ impl<H: Host> Vm<H> {
             }
             let time_zone = normalize_time_zone_identifier(&time_zone)
                 .ok_or_else(|| self.range_error(p, "Invalid time zone".into()))?;
-            let time_zone = self.heap.alloc(Cell::String(time_zone.into()));
+            let time_zone = self.heap.alloc_string(time_zone.into());
             self.set_date_time_property(resolved, "timeZone", time_zone)?;
             let instant = self.heap.alloc(Cell::TemporalInstant {
                 object: Box::new(Self::empty_object(self.object_proto)),
@@ -714,7 +714,7 @@ impl<H: Host> Vm<H> {
             .date_time_option(options.2, "\0locale")
             .and_then(|value| self.string_value(value))
             .unwrap_or(locale);
-        let locale = self.heap.alloc(Cell::String(locale.into()));
+        let locale = self.heap.alloc_string(locale.into());
         self.set_date_time_slot(formatter, DATE_TIME_FORMAT_OPTIONS_SLOT, locale)?;
         self.set_date_time_slot(
             formatter,
@@ -883,7 +883,7 @@ impl<H: Host> Vm<H> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let fields = self.date_time_fields_for_value(p, this, value)?;
         let text = self.format_intl_date_time(this, fields);
-        Ok(self.heap.alloc(Cell::String(text.into())))
+        Ok(self.heap.alloc_string(text.into()))
     }
 
     fn date_time_fields_for_value(
@@ -1293,10 +1293,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn string_value(&self, value: Value) -> Option<String> {
-        match self.heap.get(value) {
-            Some(Cell::String(value)) => Some(value.to_string()),
-            _ => None,
-        }
+        self.heap.string(value).map(ToString::to_string)
     }
 
     fn temporal_plain_time_fields(&self, value: Value) -> Option<DateTimeFields> {
@@ -1404,7 +1401,7 @@ impl<H: Host> Vm<H> {
                 .into_iter()
                 .map(|(_, value, _)| value)
                 .collect::<String>();
-            Ok(self.heap.alloc(Cell::String(text.into())))
+            Ok(self.heap.alloc_string(text.into()))
         }
     }
 
@@ -1459,12 +1456,12 @@ impl<H: Host> Vm<H> {
             let entry = self
                 .heap
                 .alloc(Cell::Object(Self::empty_object(self.object_proto)));
-            let kind = self.heap.alloc(Cell::String(kind.into()));
-            let value = self.heap.alloc(Cell::String(value.into()));
+            let kind = self.heap.alloc_string(kind.into());
+            let value = self.heap.alloc_string(value.into());
             self.set_date_time_property(entry, "type", kind)?;
             self.set_date_time_property(entry, "value", value)?;
             if let Some(source) = source {
-                let source = self.heap.alloc(Cell::String(source.into()));
+                let source = self.heap.alloc_string(source.into());
                 self.set_date_time_property(entry, "source", source)?;
             }
             entries.push(entry);
@@ -1472,7 +1469,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(entries),
+                entries,
             ),
         }))
     }
@@ -1488,19 +1485,19 @@ impl<H: Host> Vm<H> {
         let result = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.object_proto)));
-        let locale = self.heap.alloc(Cell::String(locale.into()));
+        let locale = self.heap.alloc_string(locale.into());
         let resolved = self
             .date_time_slot(this, DATE_TIME_FORMAT_RESOLVED_SLOT)
             .unwrap_or(Value::UNDEFINED);
         let calendar = self
             .date_time_option(resolved, "calendar")
-            .unwrap_or_else(|| self.heap.alloc(Cell::String("gregory".into())));
+            .unwrap_or_else(|| self.heap.alloc_string("gregory".into()));
         let numbering_system = self
             .date_time_option(resolved, "numberingSystem")
-            .unwrap_or_else(|| self.heap.alloc(Cell::String("latn".into())));
+            .unwrap_or_else(|| self.heap.alloc_string("latn".into()));
         let time_zone = self
             .date_time_option(resolved, "timeZone")
-            .unwrap_or_else(|| self.heap.alloc(Cell::String("America/Lima".into())));
+            .unwrap_or_else(|| self.heap.alloc_string("America/Lima".into()));
         self.set_date_time_property(result, "locale", locale)?;
         self.set_date_time_property(result, "calendar", calendar)?;
         self.set_date_time_property(result, "numberingSystem", numbering_system)?;
@@ -1568,10 +1565,7 @@ impl<H: Host> Vm<H> {
 
     fn date_time_locale(&self, object: Value) -> Option<String> {
         self.date_time_slot(object, DATE_TIME_FORMAT_OPTIONS_SLOT)
-            .and_then(|value| match self.heap.get(value) {
-                Some(Cell::String(locale)) => Some(locale.to_string()),
-                _ => None,
-            })
+            .and_then(|value| self.heap.string(value).map(ToString::to_string))
     }
 }
 

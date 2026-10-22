@@ -3,7 +3,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-pub(super) fn get(
+pub(crate) fn get(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,
     name: &str,
@@ -17,11 +17,10 @@ fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
         .rooted_value(value)
         .is_some_and(|value| value.is_null() || value.is_undefined())
 }
-/// The emitter configuration's members that `install` fixes: the private shape and capture
-/// keys and the EventEmitter constructor, retained once instead of read per construction.
+/// The emitter configuration's members that `install` fixes: the private capture key and the
+/// EventEmitter constructor, retained once instead of read per use.
 #[derive(Clone, Copy)]
 pub(crate) struct EmitterKeys {
-    shape: RootId,
     capture: RootId,
     constructor: RootId,
 }
@@ -34,11 +33,9 @@ fn emitter_keys(
     if let Some(keys) = state.borrow().emitter_keys {
         return Ok(keys);
     }
-    let shape = get(context, data, "shapeKey")?;
     let capture = get(context, data, "captureKey")?;
     let constructor = get(context, data, "emitterCtor")?;
     let keys = EmitterKeys {
-        shape: context.retain(shape)?,
         capture: context.retain(capture)?,
         constructor: context.retain(constructor)?,
     };
@@ -116,56 +113,16 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), R
     Ok(())
 }
 
-pub(crate) fn initialize(
+/// The `options.captureRejections` check of `EventEmitter.init`: a non-boolean throws Node's
+/// argument type error.
+pub(crate) fn validate_capture_rejections(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let target = args.first().copied().unwrap_or(undefined);
-    let options = args.get(1).copied().unwrap_or(undefined);
-    let data = context.host_function_data()?;
-    let first = get(context, target, "_events")?;
-    let initialize = if context
-        .rooted_value(first)
-        .is_some_and(|value| value.is_undefined())
-    {
-        true
-    } else {
-        let own = get(context, target, "_events")?;
-        let prototype = context.prototype_rooted(target)?;
-        let inherited = get(context, prototype, "_events")?;
-        context.strict_equal_rooted(own, inherited)?
-    };
-    if initialize {
-        let events = context.null_object_rooted()?;
-        context.assign_named_property_rooted(target, "_events", events)?;
-        let zero = context.number(0.0);
-        context.assign_named_property_rooted(target, "_eventsCount", zero)?;
-    }
-    let shape = context.boolean(!initialize);
-    let keys = emitter_keys(context, data)?;
-    context.assign_property_rooted(target, keys.shape, shape)?;
-    let maximum = get(context, target, "_maxListeners")?;
-    if !context.truthy_rooted(maximum)? {
-        context.assign_named_property_rooted(target, "_maxListeners", undefined)?;
-    }
-    let first_capture = if nullish(context, options) {
-        undefined
-    } else {
-        get(context, options, "captureRejections")?
-    };
-    let capture = if context.truthy_rooted(first_capture)? {
-        let value = get(context, options, "captureRejections")?;
-        validate_boolean(context, value, "options.captureRejections")?;
-        let value = get(context, options, "captureRejections")?;
-        let enabled = context.truthy_rooted(value)?;
-        context.boolean(enabled)
-    } else {
-        capture_default(context, data)?
-    };
-    context.assign_property_rooted(target, keys.capture, capture)?;
-    Ok(undefined)
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    validate_boolean(context, value, "options.captureRejections")?;
+    Ok(context.undefined())
 }
 
 pub(crate) fn default_get(
@@ -333,3 +290,5 @@ pub(crate) fn capture_deliver(
     }
     result
 }
+
+crate::host::startup_snapshot::host_snap_struct!(EmitterKeys { capture, constructor });

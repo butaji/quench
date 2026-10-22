@@ -1,0 +1,19 @@
+fw/express                       speed x1.071 wins 5/5  RSS    25.4 ->    25.3 MB  wall 1.5s
+fw/koa                           speed x1.091 wins 4/5  RSS    32.2 ->    31.9 MB  wall 1.4s
+fw/fastify                       speed x1.046 wins 3/5  RSS    27.8 ->    27.6 MB  wall 2.2s
+fw/hono                          speed x0.934 wins 1/5  RSS    29.9 ->    29.7 MB  wall 1.1s
+fw/h3                            speed x0.922 wins 1/5  RSS    29.1 ->    29.1 MB  wall 1.0s
+js3/json-parse-inspector         speed x0.929 wins 0/5  RSS    86.0 ->    85.9 MB  wall 2.0s
+js3/json-stringify-inspector     speed x1.051 wins 5/5  RSS    86.0 ->    85.9 MB  wall 2.0s
+js3/web-ssr                      speed x1.050 wins 4/5  RSS    59.9 ->    59.5 MB  wall 6.5s
+js3/hash-map                     speed x0.900 wins 1/5  RSS    25.8 ->    24.2 MB  wall 4.0s
+js3/chai-wtb                     speed x1.015 wins 3/5  RSS    23.6 ->    23.5 MB  wall 16.4s
+js3/doxbee-promise               speed x1.024 wins 3/5  RSS    54.6 ->    51.1 MB  wall 5.1s
+js3/doxbee-async                 speed x0.943 wins 2/5  RSS    51.8 ->    49.2 MB  wall 2.6s
+js3/async-fs                     speed x1.009 wins 3/5  RSS    18.8 ->    18.4 MB  wall 12.5s
+js3/lazy-collections             speed x1.014 wins 3/5  RSS    13.2 ->    13.0 MB  wall 9.9s
+js3/acorn-wtb                    speed x1.012 wins 3/5  RSS    38.6 ->    36.8 MB  wall 42.9s
+js3/source-map-wtb               speed x1.036 wins 4/5  RSS    44.3 ->    43.7 MB  wall 24.8s
+js3/espree-wtb                   speed x1.023 wins 4/5  RSS    52.6 ->    49.8 MB  wall 42.4s
+== fw        speed geomean x1.010  RSS ratio geomean x0.995  (5 workloads)
+== js3       speed geomean x0.999  RSS ratio geomean x0.972  (12 workloads)

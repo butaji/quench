@@ -148,7 +148,6 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let exiting = context.boolean(false);
     install(context, process, "_exiting", exiting)?;
     let shared_state = context.host_mut().shared_state();
-    let argv = shared_state.borrow().process_argv.clone();
     let exec_argv = shared_state.borrow().exec_argv.clone();
     if let Some(pair) = exec_argv.windows(2).rev().find(|pair| {
         matches!(
@@ -178,6 +177,46 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let load_env_file =
         context.host_function(crate::host::shared_vm::operation("processLoadEnvFile"))?;
     install(context, process, "loadEnvFile", load_env_file)?;
+    install_identity(context, process)?;
+    let version = format!("v{}", process_state::NODE_VERSION);
+    let version = context.string_rooted(&version);
+    let key = context.string_rooted("version");
+    context.define_data_property_rooted(process, key, version, false, true, true)?;
+    let global = context.global_root()?;
+    let symbol_key = context.string_rooted("Symbol");
+    let symbol = context.get_property_rooted(global, symbol_key)?;
+    let tag_key = context.string_rooted("toStringTag");
+    let tag = context.get_property_rooted(symbol, tag_key)?;
+    let process_tag = context.string_rooted("process");
+    if !context.set_property_rooted(process, tag, process_tag, process)? {
+        return Err(RootedError::host("cannot set process toStringTag"));
+    }
+    context.scoped(|context| install_config(context, process))?;
+    context.scoped(|context| {
+        install_facts(context, process, "features", process_state::feature_facts())
+    })?;
+    context.scoped(|context| install_versions(context, process))?;
+    install(context, global, "global", global)?;
+    define_global_process(context, global, process)?;
+    let retained = context.retain(process)?;
+    let previous = context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .process_module
+        .replace(retained);
+    if let Some(previous) = previous {
+        context.release_root(previous);
+    }
+    Ok(())
+}
+
+/// The process's arguments, executable and ids on `process`. A restored startup snapshot
+/// (`Host::resume`) holds another process's, which these replace in place.
+fn install_identity(context: &mut NativeContext<'_, NodeHost>, process: RootId) -> Result<(), RootedError> {
+    let shared_state = context.host_mut().shared_state();
+    let argv = shared_state.borrow().process_argv.clone();
+    let exec_argv = shared_state.borrow().exec_argv.clone();
     for (name, values) in [
         ("argv", argv.as_slice()),
         ("execArgv", exec_argv.as_slice()),
@@ -220,35 +259,23 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let ppid = 0;
     let ppid = context.number(ppid as f64);
     install(context, process, "ppid", ppid)?;
-    let version = format!("v{}", process_state::NODE_VERSION);
-    let version = context.string_rooted(&version);
-    let key = context.string_rooted("version");
-    context.define_data_property_rooted(process, key, version, false, true, true)?;
-    let global = context.global_root()?;
-    let symbol_key = context.string_rooted("Symbol");
-    let symbol = context.get_property_rooted(global, symbol_key)?;
-    let tag_key = context.string_rooted("toStringTag");
-    let tag = context.get_property_rooted(symbol, tag_key)?;
-    let process_tag = context.string_rooted("process");
-    if !context.set_property_rooted(process, tag, process_tag, process)? {
-        return Err(RootedError::host("cannot set process toStringTag"));
-    }
-    context.scoped(|context| install_config(context, process))?;
-    context.scoped(|context| {
-        install_facts(context, process, "features", process_state::feature_facts())
-    })?;
-    context.scoped(|context| install_versions(context, process))?;
-    install(context, global, "global", global)?;
-    define_global_process(context, global, process)?;
-    let retained = context.retain(process)?;
-    let previous = context
+    Ok(())
+}
+
+/// `install_identity` on the installed `process` (`Host::resume`).
+pub(crate) fn refresh_identity(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let process = context
         .host_mut()
         .shared_state()
-        .borrow_mut()
+        .borrow()
         .process_module
-        .replace(retained);
-    if let Some(previous) = previous {
-        context.release_root(previous);
+        .ok_or_else(|| RootedError::host("process is not initialized"))?;
+    install_identity(context, process)?;
+    // The bootstrap's process streams describe the builder's descriptors.
+    for (name, fd) in [("stdout", STDOUT_FD), ("stderr", STDERR_FD)] {
+        let key = context.string_rooted(name);
+        let stream = context.get_property_rooted(process, key)?;
+        install_terminal(context, stream, fd)?;
     }
     Ok(())
 }
@@ -277,6 +304,12 @@ fn install_exit_code(
     Ok(())
 }
 
+/// Whether the stream's descriptor is a terminal, as `isTTY`.
+fn install_terminal(context: &mut NativeContext<'_, NodeHost>, stream: RootId, fd: i32) -> Result<(), RootedError> {
+    let tty = context.boolean(crate::modules::tty_state::is_terminal_fd(fd));
+    install(context, stream, "isTTY", tty)
+}
+
 fn create_stream(
     context: &mut NativeContext<'_, NodeHost>,
     fd: i32,
@@ -285,8 +318,7 @@ fn create_stream(
     let writable = context.boolean(true);
     install(context, stream, "writable", writable)?;
     install(context, stream, "_isStdio", writable)?;
-    let tty = context.boolean(crate::modules::tty_state::is_terminal_fd(fd));
-    install(context, stream, "isTTY", tty)?;
+    install_terminal(context, stream, fd)?;
     let fd_value = context.number(fd as f64);
     install(context, stream, "fd", fd_value)?;
     let data = context.number(fd as f64);
@@ -790,6 +822,7 @@ pub(crate) fn cwd(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
+    crate::host::startup_snapshot::refuse_process_state(context, "process.cwd()")?;
     let cwd = context.host_mut().shared_state().borrow().cwd.clone();
     match cwd.query_path() {
         Ok(path) => Ok(context.string_rooted(&path.to_string_lossy())),
@@ -1107,16 +1140,39 @@ fn throw_os_process_error(
     error: std::io::Error,
 ) -> Result<RootedError, RootedError> {
     let errno = error.raw_os_error().unwrap_or(libc::EINVAL);
-    let code = errno_name(errno);
-    let message = unsafe {
+    let error = errno_exception(context, errno, syscall, None)?;
+    Ok(context.throw(error))
+}
+
+/// Node's C++ `ErrnoException`: `"<code>, <strerror>"`, then ` '<path>'` when a path is
+/// given, with `errno` (positive), `code`, `path` and `syscall` set in that order.
+pub(crate) fn errno_exception(
+    context: &mut NativeContext<'_, NodeHost>,
+    errno: i32,
+    syscall: &str,
+    path: Option<&str>,
+) -> Result<RootId, RootedError> {
+    let code = super::util_system_error_shared_vm::system_error_code(-f64::from(errno))
+        .unwrap_or("UNKNOWN");
+    // libc's message is copied before any other host operation can overwrite it.
+    let description = unsafe {
         std::ffi::CStr::from_ptr(libc::strerror(errno))
             .to_string_lossy()
             .into_owned()
     };
-    let error = context.error_rooted(&format!("{code}, {message}"))?;
+    let message = match path {
+        Some(path) => format!("{code}, {description} '{path}'"),
+        None => format!("{code}, {description}"),
+    };
+    let error = context.error_rooted(&message)?;
+    let errno = context.number(f64::from(errno));
+    install(context, error, "errno", errno)?;
     set_text(context, error, "code", code)?;
+    if let Some(path) = path {
+        set_text(context, error, "path", path)?;
+    }
     set_text(context, error, "syscall", syscall)?;
-    Ok(context.throw(error))
+    Ok(error)
 }
 
 fn groups_type_error(
@@ -2058,7 +2114,13 @@ fn drain_checkpoint(
             continue;
         }
         let udp_progress=crate::modules::udp_binding::poll(runtime,&shared_state)?;
-        if crate::modules::http_shared_vm::poll(runtime, program, &shared_state)? || udp_progress {
+        let http_progress = crate::modules::http_shared_vm::poll(runtime, program, &shared_state)?;
+        // Each turn of the loop is a collection safepoint, once its network writes have gone
+        // out: its callbacks and jobs may reach no back edge (a promise-driven stream), so a
+        // due collection would otherwise wait for guest code that loops. Nothing runs here,
+        // and every value is a root.
+        runtime.collect_if_due(program).map_err(|error| error.to_string())?;
+        if http_progress || udp_progress {
             continue;
         }
         if crate::modules::napi::poll(runtime, program)? {
@@ -2159,7 +2221,7 @@ fn drain_checkpoint(
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
                 if !wait.is_zero() {
-                    std::thread::sleep(wait);
+                    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, wait);
                 }
                 continue;
             }
@@ -2218,7 +2280,7 @@ fn drain_checkpoint(
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
                 if !wait.is_zero() {
-                    std::thread::sleep(wait);
+                    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, wait);
                 }
                 continue;
             }
@@ -2574,7 +2636,15 @@ fn drain_shared_jobs(
             super::icu_binding_shared_vm::prune(runtime);
             super::net_reference_shared_vm::prune(runtime);
             super::contextify_shared_vm::prune(runtime);
-            if !runtime.host_mut().shared_state().borrow().async_hooks.promise_resources.is_empty() {
+            let epoch = runtime.collection_epoch();
+            let prune_promises = {
+                let shared = runtime.host_mut().shared_state();
+                let state = shared.borrow();
+                // The prune records the epoch it ran at.
+                !state.async_hooks.promise_resources.is_empty()
+                    && state.async_hooks.promise_resources_pruned_epoch != epoch
+            };
+            if prune_promises {
                 let prune = runtime.host_function(crate::host::shared_vm::operation("asyncPromisePrune"))
                     .map_err(|error| rooted_error_message(runtime, program, error))?;
                 let result = runtime.call_rooted(prune, prune, &[]);
@@ -3522,7 +3592,7 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
         // Node's listener, or, unless a script can reach Node's own to compare, a listener of
         // its name and length that loads Node's on the first warning: most runs never warn.
         let callback = if options.enabled("--expose-internals") {
-            warning_listener(context, process, &[])?
+            warning_export(context, "onWarning")?
         } else {
             let factory = context.evaluate_script_rooted(
                 "(load) => function onWarning(warning) { return load()(warning); }",
@@ -3555,7 +3625,7 @@ fn warning_export(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Resu
 }
 
 /// The environment `process.env` starts from: a worker's own, else the OS environment.
-fn environment(context: &mut NativeContext<'_, NodeHost>) -> Vec<(String, String)> {
+pub(crate) fn environment(context: &mut NativeContext<'_, NodeHost>) -> Vec<(String, String)> {
     let worker_env = context.host_mut().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.env.clone());
     worker_env.unwrap_or_else(|| std::env::vars().collect())
 }
@@ -3563,6 +3633,7 @@ fn environment(context: &mut NativeContext<'_, NodeHost>) -> Vec<(String, String
 /// `process.env`: the environment as Node's bootstrap reads it, less an IPC channel's own
 /// variables.
 pub(crate) fn initialize_env(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    crate::host::startup_snapshot::refuse_process_state(context, "process.env")?;
     let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
     let env = context.object_rooted()?;
     for (name, value) in environment(context) {
@@ -3657,17 +3728,17 @@ const ENV_PROXY_SOURCE: &str = r#"(target, setEnv, deleteEnv) => new Proxy(targe
   }
 })"#;
 
-/// Defines `process.emitWarning` as Node's.
+/// Defines `process.emitWarning` (`process_warning_shared_vm`).
 pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
-    let emit_warning = warning_export(context, "emitWarning")?;
+    let emit_warning = crate::modules::process_warning_shared_vm::emit_warning(context)?;
     let key = context.string_rooted("emitWarning");
     context.define_data_property_rooted(process, key, emit_warning, true, true, true)?;
     Ok(context.undefined())
 }
 
-/// The Console module owns initialization; the SDK owns this public callback.
-/// Node's `onWarning`.
+/// The default `warning` listener's implementation: Node's `onWarning`
+/// (`process_warning_shared_vm`).
 pub(crate) fn warning_listener(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    warning_export(context, "onWarning")
+    crate::modules::process_warning_shared_vm::on_warning(context)
 }

@@ -129,8 +129,18 @@ impl PresumedFiles {
 }
 
 impl FileSystem for PresumedFiles {
+    /// A probe presumes no package's files.
+    fn new() -> Self {
+        Self { package: PathBuf::new() }
+    }
+    fn read(&self, path: &Path) -> std::io::Result<Vec<u8>> {
+        std::fs::read(path)
+    }
     fn read_to_string(&self, path: &Path) -> std::io::Result<String> {
         std::fs::read_to_string(path)
+    }
+    fn read_link(&self, path: &Path) -> Result<PathBuf, oxc_resolver::ResolveError> {
+        Ok(std::fs::read_link(path)?)
     }
     fn metadata(&self, path: &Path) -> std::io::Result<FileMetadata> {
         self.presume(path, std::fs::metadata(path).map(FileMetadata::from), || FileMetadata::new(true, false, false))
@@ -243,12 +253,12 @@ pub(super) fn type_stripping_unsupported(location: &str) -> ModuleLoadError {
 pub(super) fn require_unresolved(error: &oxc_resolver::ResolveError) -> Option<ModuleLoadError> {
     use oxc_resolver::ResolveError as R;
     Some(match error {
-        R::PackagePathNotExported(subpath, package_json) if subpath == "." => ModuleLoadError::new(
+        R::PackagePathNotExported { subpath, package_json_path: package_json, .. } if subpath == "." => ModuleLoadError::new(
             Kind::Error,
             "ERR_PACKAGE_PATH_NOT_EXPORTED",
             format!("No \"exports\" main defined in {}", package_json.display()),
         ),
-        R::PackagePathNotExported(subpath, package_json) => ModuleLoadError::new(
+        R::PackagePathNotExported { subpath, package_json_path: package_json, .. } => ModuleLoadError::new(
             Kind::Error,
             "ERR_PACKAGE_PATH_NOT_EXPORTED",
             format!("Package subpath '{subpath}' is not defined by \"exports\" in {}", package_json.display()),

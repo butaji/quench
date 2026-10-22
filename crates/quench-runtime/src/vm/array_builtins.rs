@@ -56,7 +56,7 @@ impl<H: Host> Vm<H> {
         self.array_proto = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.object_proto),
-                Rc::new(Vec::new()),
+                Vec::new(),
             ),
         });
         self.realm
@@ -69,7 +69,7 @@ impl<H: Host> Vm<H> {
         }
         self.set_builtin_named(program, self.array_proto, "constructor", Native::Array)?;
         self.set_builtin_value_named(array, "length", Value::number(ARRAY_CONSTRUCTOR_LENGTH))?;
-        let length_atom = self.intern_atom("length");
+        let length_atom = self.length_atom;
         self.set_property_attributes(
             array,
             PropertyKey::string(length_atom),
@@ -117,7 +117,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(array, "prototype", prototype)?;
         self.set_builtin_value_named(prototype, "constructor", array)?;
         self.set_builtin_value_named(array, "length", Value::number(ARRAY_CONSTRUCTOR_LENGTH))?;
-        let length = self.intern_atom("length");
+        let length = self.length_atom;
         self.set_property_attributes(
             array,
             PropertyKey::string(length),
@@ -146,7 +146,7 @@ impl<H: Host> Vm<H> {
         for &(name, native) in ARRAY_PROTOTYPE_METHODS {
             self.set_realm_builtin_named(program, prototype, name, native, Some(global))?;
         }
-        if let Some(iterator_symbol) = self.well_known_symbols.get("iterator").copied() {
+        if let Some(iterator_symbol) = self.well_known_symbols.get(WellKnownSymbol::Iterator) {
             let values_atom = self.intern_atom("values");
             let values = self.get_property(program, prototype, values_atom)?;
             self.set_symbol_property(prototype, iterator_symbol, values)?;
@@ -166,7 +166,7 @@ impl<H: Host> Vm<H> {
         for &(name, native) in ARRAY_STATIC_METHODS {
             self.set_realm_builtin_named(program, array, name, native, Some(global))?;
         }
-        if let Some(species) = self.well_known_symbols.get("species").copied() {
+        if let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) {
             let getter = self.native_with_realm(Native::ArraySpecies, global, global);
             self.set_builtin_function_name(getter, "get [Symbol.species]")?;
             self.set_symbol_property(array, species, Value::UNDEFINED)?;
@@ -189,7 +189,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn install_array_species(&mut self) -> Result<(), JsError> {
         let array = self.native_value(Native::Array);
-        let species = self.well_known_symbols.get("species").copied().unwrap();
+        let species = self.well_known_symbols.get(WellKnownSymbol::Species).unwrap();
         let getter = self.native_value(Native::ArraySpecies);
         self.set_builtin_function_name(getter, "get [Symbol.species]")?;
         self.set_symbol_property(array, species, Value::UNDEFINED)?;
@@ -233,7 +233,7 @@ impl<H: Host> Vm<H> {
             let atom = self.intern_atom(name);
             self.set_property(unscopables, atom, Value::TRUE)?;
         }
-        let symbol = self.well_known_symbols.get("unscopables").copied().unwrap();
+        let symbol = self.well_known_symbols.get(WellKnownSymbol::Unscopables).unwrap();
         self.set_symbol_property(array_proto, symbol, unscopables)?;
         self.set_property_attributes(
             array_proto,

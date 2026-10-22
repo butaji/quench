@@ -122,7 +122,7 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     if program.kind == ProgramKind::Wasm || function_id == 0 {
         return None;
     }
-    let function = program.functions.get(function_id as usize)?;
+    let function = program.function_get(function_id as usize)?;
     if let Some(return_pc) = int32_identity_return_candidate(program, function) {
         return compile_int32_identity(function_id, return_pc);
     }
@@ -153,6 +153,12 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
             || (packed.as_wide().op() == Op::Unary
                 && packed.as_wide().unary_operator()
                     == oxc_ast::ast::UnaryOperator::LogicalNot as u32)
+            // A boolean literal, as compile-time folding leaves `!0`, needs the boolean tree.
+            || (packed.as_wide().op() == Op::LoadConst
+                && matches!(
+                    program.constants.get(packed.as_wide().constant_index()),
+                    Some(Constant::Boolean(_))
+                ))
     }) {
         compile_numeric_loop(program, function_id, function)
             .or_else(|| compile_number_domain_boolean_tree(program, function_id, function))
@@ -174,65 +180,16 @@ pub(super) fn int32_identity_return_candidate(
     if function.params != 1
         || function.code.len() > MAX_INSTRUCTIONS
         || function.registers as usize > MAX_REGISTERS
-        || !eligible(function, &program.atoms)
+        || !eligible(function, program)
     {
         return None;
     }
+    // The integer arm: `(param | 0) == param` returning the parameter, found anywhere and
+    // proven to be what a Number argument reaches (`number_type_dispatch_reaches`), however
+    // the `typeof` dispatch before it was compiled.
     let code = &function.code;
-    let first = code.first()?.as_wide();
-    if first.op() != Op::Unary
-        || first.unary_operator() != oxc_ast::ast::UnaryOperator::Typeof as u32
-        || first.register_b() != 0
-    {
-        return None;
-    }
-    let type_local_store = code.get(1)?.as_wide();
-    if !matches!(type_local_store.op(), Op::StoreLocal | Op::StoreLocalPlain)
-        || type_local_store.register_a() != first.result_register()
-    {
-        return None;
-    }
-    let type_local = type_local_store.local_slot();
-    let mut number_target = None;
-    for pc in 0..code.len().saturating_sub(1) {
-        let compare = code[pc].as_wide();
-        let branch = code[pc + 1].as_wide();
-        if compare.op() != Op::Binary
-            || !matches!(compare.binary_operator(), x if x == BinaryOperator::Equality as u32 || x == BinaryOperator::StrictEquality as u32)
-            || branch.op() != Op::JumpTrue
-            || branch.register_a() != compare.result_register()
-        {
-            continue;
-        }
-        let Some(type_load) = pc
-            .checked_sub(1)
-            .and_then(|index| code.get(index))
-            .map(|p| p.as_wide())
-        else {
-            continue;
-        };
-        if !matches!(type_load.op(), Op::LoadLocal | Op::LoadLocalPlain)
-            || type_load.local_slot() != type_local
-        {
-            continue;
-        }
-        let type_register = type_load.result_register();
-        let string_operand = if compare.operand_b().kind() == Some(OperandKind::Register)
-            && compare.operand_b().register_index() == Some(type_register)
-        {
-            compare.operand_c()
-        } else if compare.operand_c().kind() == Some(OperandKind::Register)
-            && compare.operand_c().register_index() == Some(type_register)
-        {
-            compare.operand_b()
-        } else {
-            continue;
-        };
-        if !string_operand_is_number_type(program, function, pc, string_operand) {
-            continue;
-        }
-        let target = usize::try_from(branch.jump_target()).ok()?;
-        let fast = code.get(target)?.as_wide();
+    for target in 0..code.len() {
+        let fast = code[target].as_wide();
         if fast.op() != Op::Binary
             || fast.binary_operator() != BinaryOperator::BitwiseOR as u32
             || !operand_is_parameter(fast.operand_b(), 0)
@@ -240,28 +197,24 @@ pub(super) fn int32_identity_return_candidate(
         {
             continue;
         }
-        let check = code.get(target + 1)?.as_wide();
-        let ret = code.get(target + 2)?.as_wide();
+        let (Some(check), Some(ret)) = (code.get(target + 1), code.get(target + 2)) else {
+            continue;
+        };
+        let (check, ret) = (check.as_wide(), ret.as_wide());
         if check.op() != Op::JumpBinaryFalse
             || check.binary_operator_field() != BinaryOperator::Equality as u32
-            || !operands_are(
-                check.operand_b(),
-                check.operand_c(),
-                fast.result_register(),
-                0,
-            )
+            || !operands_are(check.operand_b(), check.operand_c(), fast.result_register(), 0)
             || ret.op() != Op::Return
             || ret.register_a() != 0
-            || usize::try_from(check.jump_target()).ok()? != target + 3
+            || usize::try_from(check.jump_target()).ok() != Some(target + 3)
         {
             continue;
         }
         if number_type_dispatch_reaches(program, function, target) == Some(true) {
-            number_target = Some(u32::try_from(target + 2).ok()?);
-            break;
+            return u32::try_from(target + 2).ok();
         }
     }
-    number_target
+    None
 }
 
 #[derive(Clone)]
@@ -270,6 +223,19 @@ enum NumberDispatchValue {
     String(String),
     Boolean(bool),
     Other,
+}
+
+/// Whether two values of the Number arm's abstract interpretation are equal, as `==` and
+/// `===` agree on them; `None` where the interpretation does not know.
+fn number_dispatch_equal(left: NumberDispatchValue, right: NumberDispatchValue) -> Option<bool> {
+    Some(match (left, right) {
+        (NumberDispatchValue::TypeNumber, NumberDispatchValue::String(value))
+        | (NumberDispatchValue::String(value), NumberDispatchValue::TypeNumber) => value == "number",
+        (NumberDispatchValue::String(left), NumberDispatchValue::String(right)) => left == right,
+        (NumberDispatchValue::Boolean(left), NumberDispatchValue::Boolean(right)) => left == right,
+        (NumberDispatchValue::Other, NumberDispatchValue::Other) => return None,
+        _ => false,
+    })
 }
 
 /// Interpret only the pure prefix executed when `typeof arg` is `"number"`.
@@ -352,20 +318,7 @@ fn number_type_dispatch_reaches(
             {
                 let left = read(instruction.operand_b(), &registers)?;
                 let right = read(instruction.operand_c(), &registers)?;
-                let equal = match (left, right) {
-                    (NumberDispatchValue::TypeNumber, NumberDispatchValue::String(value))
-                    | (NumberDispatchValue::String(value), NumberDispatchValue::TypeNumber) => {
-                        value == "number"
-                    }
-                    (NumberDispatchValue::String(left), NumberDispatchValue::String(right)) => {
-                        left == right
-                    }
-                    (NumberDispatchValue::Boolean(left), NumberDispatchValue::Boolean(right)) => {
-                        left == right
-                    }
-                    (NumberDispatchValue::Other, NumberDispatchValue::Other) => return None,
-                    _ => false,
-                };
+                let equal = number_dispatch_equal(left, right)?;
                 let value = match instruction.binary_operator() {
                     x if x == BinaryOperator::Inequality as u32
                         || x == BinaryOperator::StrictInequality as u32 =>
@@ -376,6 +329,32 @@ fn number_type_dispatch_reaches(
                 };
                 *registers.get_mut(usize::from(instruction.result_register()))? =
                     Some(NumberDispatchValue::Boolean(value));
+            }
+            Op::JumpBinaryFalse
+                if [
+                    BinaryOperator::Equality,
+                    BinaryOperator::StrictEquality,
+                    BinaryOperator::Inequality,
+                    BinaryOperator::StrictInequality,
+                ]
+                .iter()
+                .any(|operator| instruction.binary_operator_field() == *operator as u32) =>
+            {
+                let left = read(instruction.operand_b(), &registers)?;
+                let right = read(instruction.operand_c(), &registers)?;
+                let Some(equal) = number_dispatch_equal(left, right) else {
+                    return None;
+                };
+                let operator = instruction.binary_operator_field();
+                let holds = if operator == BinaryOperator::Inequality as u32
+                    || operator == BinaryOperator::StrictInequality as u32
+                {
+                    !equal
+                } else {
+                    equal
+                };
+                pc = if holds { next } else { usize::try_from(instruction.jump_target()).ok()? };
+                continue;
             }
             Op::JumpTrue | Op::JumpFalse => {
                 let condition = match registers
@@ -410,37 +389,6 @@ fn number_type_dispatch_reaches(
 
 fn operand_is_parameter(operand: Operand, register: u16) -> bool {
     operand.kind() == Some(OperandKind::Register) && operand.register_index() == Some(register)
-}
-
-fn string_operand_is_number_type(
-    program: &ResidualProgram,
-    function: &Function,
-    before_pc: usize,
-    operand: Operand,
-) -> bool {
-    let constant = match operand.kind() {
-        Some(OperandKind::Constant) => Some(usize::from(operand.payload())),
-        Some(OperandKind::Register) => {
-            let Some(register) = operand.register_index() else {
-                return false;
-            };
-            function.code[..before_pc]
-                .iter()
-                .rev()
-                .map(|packed| packed.as_wide())
-                .find(|instruction| {
-                    instruction.op().has_result_register()
-                        && instruction.result_register() == register
-                })
-                .filter(|instruction| instruction.op() == Op::LoadConst)
-                .map(|instruction| instruction.constant_index())
-        }
-        _ => None,
-    };
-    let Some(constant) = constant else {
-        return false;
-    };
-    matches!(program.constants.get(constant), Some(Constant::String(value)) if value == "number")
 }
 
 fn operands_are(left: Operand, right: Operand, one: u16, two: u16) -> bool {
@@ -671,7 +619,7 @@ pub(super) fn candidate_rejection_reason(
     program: &ResidualProgram,
     function_id: u32,
 ) -> &'static str {
-    let Some(function) = program.functions.get(function_id as usize) else {
+    let Some(function) = program.function_get(function_id as usize) else {
         return "invalid-function-id";
     };
     if function.code.is_empty() {
@@ -691,10 +639,10 @@ pub(super) fn candidate_rejection_reason(
     }
     let field_reject = cached_field_argument_candidate(function)
         .is_some_and(|field| field_reject_layout(function).is_some() && field.entry_pc == 0);
-    if !eligible(function, &program.atoms) && !field_reject {
+    if !eligible(function, program) && !field_reject {
         return "unsupported-activation-or-function-kind";
     }
-    if !function_candidate(function, &program.atoms) {
+    if !function_candidate(function, program) {
         return "unsupported-opcode-or-control-flow";
     }
     "unsupported-lowering-shape-or-codegen-failure"
@@ -784,7 +732,7 @@ pub(super) fn cached_this_field_increment_candidate(
     if function.params != 0
         || function.code.len() != 6
         || !function.handlers.is_empty()
-        || !eligible(function, &program.atoms)
+        || !eligible(function, program)
     {
         return None;
     }
@@ -1030,43 +978,7 @@ pub(super) fn string_transform_candidate(
         {
             Some(JsJitStringTransform::PrefixUnderscore)
         }
-        "unescapeLeadingUnderscores"
-            if function.code.len() == 33
-                && function.code.iter().map(|i| i.as_wide().op()).eq([
-                    Op::StoreLocalPlain,
-                    Op::GetField,
-                    Op::Binary,
-                    Op::Move,
-                    Op::JumpFalse,
-                    Op::LoadLocalPlain,
-                    Op::GetField,
-                    Op::LoadConst,
-                    Op::Call,
-                    Op::Binary,
-                    Op::Move,
-                    Op::JumpFalse,
-                    Op::LoadLocalPlain,
-                    Op::GetField,
-                    Op::LoadConst,
-                    Op::Call,
-                    Op::Binary,
-                    Op::Move,
-                    Op::JumpFalse,
-                    Op::LoadLocalPlain,
-                    Op::GetField,
-                    Op::LoadConst,
-                    Op::Call,
-                    Op::Binary,
-                    Op::JumpFalse,
-                    Op::LoadLocalPlain,
-                    Op::GetField,
-                    Op::LoadConst,
-                    Op::Call,
-                    Op::LoadLocalPlain,
-                    Op::Return,
-                    Op::LoadConst,
-                    Op::Return,
-                ])
+        "unescapeLeadingUnderscores" if unescape_leading_underscores_shape(function)
                 && field_name(program, function, 1) == Some("length")
                 && field_name(program, function, 6) == Some("charCodeAt")
                 && field_name(program, function, 13) == Some("charCodeAt")
@@ -1077,6 +989,27 @@ pub(super) fn string_transform_candidate(
         }
         _ => None,
     }
+}
+
+/// `unescapeLeadingUnderscores`'s instructions, with its parameter read and written either
+/// through a frame slot or through the register frame-register promotion gave it (`Move`s),
+/// and its final `return id` either reloading the parameter or naming its register.
+fn unescape_leading_underscores_shape(function: &Function) -> bool {
+    use Op::{Binary, Call, GetField, JumpFalse, LoadConst, Move, Return};
+    const BODY: [Op; 29] = [
+        Move, GetField, Binary, Move, JumpFalse,
+        Move, GetField, LoadConst, Call, Binary, Move, JumpFalse,
+        Move, GetField, LoadConst, Call, Binary, Move, JumpFalse,
+        Move, GetField, LoadConst, Call, Binary, JumpFalse,
+        Move, GetField, LoadConst, Call,
+    ];
+    let ops = function.code.iter().map(|instruction| match instruction.as_wide().op() {
+        Op::StoreLocalPlain | Op::LoadLocalPlain => Move,
+        op => op,
+    });
+    let reloaded = BODY.iter().copied().chain([Move, Return, LoadConst, Return]);
+    let named = BODY.iter().copied().chain([Return, LoadConst, Return]);
+    ops.clone().eq(reloaded) || ops.eq(named)
 }
 
 fn field_name<'a>(program: &'a ResidualProgram, function: &Function, pc: usize) -> Option<&'a str> {
@@ -1095,23 +1028,108 @@ fn function_instruction(function: &Function, pc: usize) -> Option<WideInstructio
     }
 }
 
-fn string_hash_loop_candidate(program: &ResidualProgram, function: &Function) -> bool {
-    if function.params != 1 || function.code.len() != 20 || !function.wide.is_empty() {
-        return false;
+/// Where a hash-loop local lives: its frame slot, or the register frame-register promotion
+/// moved it into (`compile::frame_registers`). A register local is read and written either
+/// through `Move`s or, once copy coalescing removed them, by instructions naming the
+/// register itself.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LoopLocal {
+    Slot(u16),
+    Register(crate::bytecode::Register),
+}
+
+/// Reads a function's instructions in order for `string_hash_loop_candidate`, matching each
+/// local access in any of its forms.
+struct LoopReader<'a> {
+    function: &'a Function,
+    pc: usize,
+}
+
+impl LoopReader<'_> {
+    fn peek(&self) -> Option<crate::bytecode::WideInstruction> {
+        Some(self.function.code.get(self.pc)?.as_wide())
     }
-    let Some(get_length) = function
-        .code
-        .get(2)
-        .map(|instruction| instruction.as_wide())
-    else {
-        return false;
+
+    fn next(&mut self) -> Option<crate::bytecode::WideInstruction> {
+        let instruction = self.peek()?;
+        self.pc += 1;
+        Some(instruction)
+    }
+
+    fn next_op(&mut self, op: Op) -> Option<crate::bytecode::WideInstruction> {
+        let instruction = self.next()?;
+        (instruction.op() == op).then_some(instruction)
+    }
+
+    /// The local `source` initializes: a slot or register it is stored into, else `source`
+    /// itself, which then holds the local.
+    fn store(&mut self, source: crate::bytecode::Register) -> LoopLocal {
+        let stored = self.peek().and_then(|instruction| match instruction.op() {
+            Op::StoreLocalPlain if instruction.register_a() == source => {
+                Some(LoopLocal::Slot(instruction.local_slot() as u16))
+            }
+            Op::Move if instruction.register_b() == source => {
+                Some(LoopLocal::Register(instruction.result_register()))
+            }
+            _ => None,
+        });
+        if stored.is_some() {
+            self.pc += 1;
+        }
+        stored.unwrap_or(LoopLocal::Register(source))
+    }
+
+    /// The register holding `local`'s value: a load's result, or a register local itself
+    /// when no copy precedes its use.
+    fn load(&mut self, local: LoopLocal) -> Option<crate::bytecode::Register> {
+        let instruction = self.peek()?;
+        match (instruction.op(), local) {
+            (Op::LoadLocalPlain, LoopLocal::Slot(slot)) if instruction.local_slot() as u16 == slot => {
+                self.pc += 1;
+                Some(instruction.result_register())
+            }
+            (Op::Move, LoopLocal::Register(register)) if instruction.register_b() == register => {
+                self.pc += 1;
+                Some(instruction.result_register())
+            }
+            (_, LoopLocal::Register(register)) => Some(register),
+            _ => None,
+        }
+    }
+
+    /// A `Binary` whose result goes to `local`: fused into its numeric local target, written
+    /// to the local's register, or followed by a store of its result.
+    fn binary_into(&mut self, local: LoopLocal) -> Option<crate::bytecode::WideInstruction> {
+        let binary = self.next_op(Op::Binary)?;
+        match (binary.numeric_local_target(), local) {
+            (Some(target), LoopLocal::Slot(slot)) if target == slot => Some(binary),
+            (None, LoopLocal::Register(register)) if binary.result_register() == register => {
+                Some(binary)
+            }
+            (None, LoopLocal::Register(_)) => {
+                (self.store(binary.result_register()) == local).then_some(binary)
+            }
+            _ => None,
+        }
+    }
+}
+
+fn string_hash_loop_candidate(program: &ResidualProgram, function: &Function) -> bool {
+    function.params == 1 && function.wide.is_empty() && string_hash_loop_shape(program, function).is_some()
+}
+
+/// The guarded hash loop `compile_string_hash_loop` emits, matched over the whole function
+/// by data flow rather than by instruction positions, so it holds whether its two locals stay
+/// in frame slots or were promoted to registers.
+fn string_hash_loop_shape(program: &ResidualProgram, function: &Function) -> Option<()> {
+    let number = |index: usize| match program.constants.get(index) {
+        Some(Constant::Number(value)) => Some(*value),
+        _ => None,
     };
-    let Some(get_char_code) = function
-        .code
-        .get(8)
-        .map(|instruction| instruction.as_wide())
-    else {
-        return false;
+    let operand_constant = |operand: crate::bytecode::Operand| {
+        (operand.kind() == Some(OperandKind::Constant))
+            .then(|| number(usize::from(operand.payload())))
+            .flatten()
     };
     let field_is = |instruction: crate::bytecode::WideInstruction, name: &str| {
         instruction.op() == Op::GetField
@@ -1124,107 +1142,88 @@ fn string_hash_loop_candidate(program: &ResidualProgram, function: &Function) ->
                 }) if (atom as usize) < program.atoms.len() && &program.atoms[atom as usize] == name
             )
     };
-    if !field_is(get_length, "length") || !field_is(get_char_code, "charCodeAt") {
-        return false;
-    }
-    let ops = [
-        Op::LoadConst,
-        Op::StoreLocalPlain,
-        Op::GetField,
-        Op::StoreLocalPlain,
-        Op::LoadLocalPlain,
-        Op::JumpBinaryFalse,
-        Op::LoadLocalPlain,
-        Op::Binary,
-        Op::GetField,
-        Op::LoadLocalPlain,
-        Op::Call,
-        Op::Binary,
-        Op::Binary,
-        Op::LoadLocalPlain,
-        Op::Binary,
-        Op::Jump,
-        Op::LoadLocalPlain,
-        Op::Binary,
-        Op::LoadConst,
-        Op::Return,
-    ];
-    if function
-        .code
-        .iter()
-        .zip(ops)
-        .any(|(packed, op)| packed.as_wide().op() != op)
-    {
-        return false;
-    }
-    let instruction = |pc: usize| function.code[pc].as_wide();
-    let constant = |pc: usize| match program.constants.get(instruction(pc).constant_index()) {
-        Some(Constant::Number(value)) => Some(*value),
-        _ => None,
+    let operator_is = |instruction: crate::bytecode::WideInstruction, operator: BinaryOperator| {
+        instruction_binary_operator(instruction) == Some(operator as u32)
     };
-    let operand_constant = |operand: crate::bytecode::Operand| {
-        (operand.kind() == Some(OperandKind::Constant))
-            .then(|| program.constants.get(usize::from(operand.payload())))
-            .flatten()
-            .and_then(|constant| match constant {
-                Constant::Number(value) => Some(*value),
-                _ => None,
-            })
-    };
-    let jump = instruction(5);
-    let call = instruction(10);
-    constant(0) == Some(5381.0)
-        && instruction(1).local_slot() == 1
-        && instruction(2).field_lookup().is_some()
-        && instruction(3).local_slot() == 2
-        && instruction(4).local_slot() == 2
-        && instruction(0).result_register() == 2
-        && instruction(1).register_a() == 2
-        && instruction(2).result_register() == 2
-        && instruction(3).register_a() == 2
-        && instruction(4).result_register() == 2
-        && jump.jump_target() == 16
-        && super::operations::NumberRelation::from_operator(jump.binary_operator_field())
+    let check = |condition: bool| condition.then_some(());
+    let mut code = LoopReader { function, pc: 0 };
+
+    // let hash = 5381; let index = str.length;
+    let seed = code.next_op(Op::LoadConst)?;
+    check(number(seed.constant_index()) == Some(5381.0))?;
+    let hash = code.store(seed.result_register());
+    let length = code.next()?;
+    check(field_is(length, "length"))?;
+    let index = code.store(length.result_register());
+    check(hash != index)?;
+
+    // while (index > 0)
+    let head = code.pc;
+    let tested = code.load(index)?;
+    let exit = code.next_op(Op::JumpBinaryFalse)?;
+    check(
+        super::operations::NumberRelation::from_operator(exit.binary_operator_field())
             == Some(super::operations::NumberRelation::GreaterThan)
-        && jump.operand_b().kind() == Some(OperandKind::Register)
-        && jump.operand_b().payload() == 2
-        && operand_constant(jump.operand_c()) == Some(0.0)
-        && instruction(6).local_slot() == 1
-        && instruction(6).result_register() == 3
-        && instruction_binary_operator(instruction(7))
-            == Some(BinaryOperator::Multiplication as u32)
-        && instruction(7).result_register() == 4
-        && operand_register(instruction(7).operand_b()) == Some(3)
-        && operand_constant(instruction(7).operand_c()) == Some(33.0)
-        && instruction(8).result_register() == 5
-        && instruction(9).local_slot() == 2
-        && instruction(9).result_register() == 7
-        && call.register_b() == instruction(8).result_register()
-        && call.call_window().base == instruction(9).result_register()
-        && call.call_window().count == 1
-        && instruction_binary_operator(instruction(11)) == Some(BinaryOperator::BitwiseOR as u32)
-        && operand_register(instruction(11).operand_b()) == Some(8)
-        && operand_constant(instruction(11).operand_c()) == Some(0.0)
-        && instruction_binary_operator(instruction(12)) == Some(BinaryOperator::BitwiseXOR as u32)
-        && instruction(12).numeric_local_target() == Some(1)
-        && operand_register(instruction(12).operand_b()) == Some(4)
-        && operand_register(instruction(12).operand_c()) == Some(9)
-        && instruction(13).local_slot() == 2
-        && instruction(13).result_register() == 2
-        && instruction_binary_operator(instruction(14)) == Some(BinaryOperator::Subtraction as u32)
-        && instruction(14).numeric_local_target() == Some(2)
-        && operand_register(instruction(14).operand_b()) == Some(2)
-        && operand_constant(instruction(14).operand_c()) == Some(919.0)
-        && instruction(15).jump_target() == 4
-        && instruction(16).local_slot() == 1
-        && instruction(16).result_register() == 2
-        && instruction(17).returns_from_frame()
-        && instruction_binary_operator(instruction(17)) == Some(BinaryOperator::BitwiseOR as u32)
-        && operand_register(instruction(17).operand_b()) == Some(2)
-        && operand_constant(instruction(17).operand_c()) == Some(0.0)
-        && instruction(18).constant_index() < program.constants.len()
-        && instruction(18).result_register() == 2
-        && instruction(19).register_a() == instruction(18).result_register()
+            && operand_register(exit.operand_b()) == Some(tested)
+            && operand_constant(exit.operand_c()) == Some(0.0),
+    )?;
+
+    // hash = hash * 33 ^ (str.charCodeAt(index) | 0);
+    let current = code.load(hash)?;
+    let scaled = code.next_op(Op::Binary)?;
+    check(
+        operator_is(scaled, BinaryOperator::Multiplication)
+            && operand_register(scaled.operand_b()) == Some(current)
+            && operand_constant(scaled.operand_c()) == Some(33.0),
+    )?;
+    let method = code.next()?;
+    check(field_is(method, "charCodeAt"))?;
+    let argument = code.load(index)?;
+    let call = code.next_op(Op::Call)?;
+    check(
+        call.register_b() == method.result_register()
+            && call.call_window().base == argument
+            && call.call_window().count == 1,
+    )?;
+    let unit = code.next_op(Op::Binary)?;
+    check(
+        operator_is(unit, BinaryOperator::BitwiseOR)
+            && operand_register(unit.operand_b()) == Some(call.result_register())
+            && operand_constant(unit.operand_c()) == Some(0.0),
+    )?;
+    let mixed = code.binary_into(hash)?;
+    check(
+        operator_is(mixed, BinaryOperator::BitwiseXOR)
+            && operand_register(mixed.operand_b()) == Some(scaled.result_register())
+            && operand_register(mixed.operand_c()) == Some(unit.result_register()),
+    )?;
+
+    // index -= 919;
+    let counted = code.load(index)?;
+    let step = code.binary_into(index)?;
+    check(
+        operator_is(step, BinaryOperator::Subtraction)
+            && operand_register(step.operand_b()) == Some(counted)
+            && operand_constant(step.operand_c()) == Some(919.0),
+    )?;
+    let back = code.next_op(Op::Jump)?;
+    check(back.jump_target() as usize == head)?;
+
+    // return hash | 0;
+    check(exit.jump_target() as usize == code.pc)?;
+    let result = code.load(hash)?;
+    let returned = code.next_op(Op::Binary)?;
+    check(
+        returned.returns_from_frame()
+            && operator_is(returned, BinaryOperator::BitwiseOR)
+            && operand_register(returned.operand_b()) == Some(result)
+            && operand_constant(returned.operand_c()) == Some(0.0),
+    )?;
+    // The implicit `return undefined` after it.
+    let undefined = code.next_op(Op::LoadConst)?;
+    check(undefined.constant_index() < program.constants.len())?;
+    let tail = code.next_op(Op::Return)?;
+    check(tail.register_a() == undefined.result_register() && code.pc == function.code.len())
 }
 
 fn operand_register(operand: crate::bytecode::Operand) -> Option<u16> {
@@ -1248,7 +1247,7 @@ fn compile_string_hash_loop(
     function_id: u32,
     function: &Function,
 ) -> Option<JsJitArtifact> {
-    if !function_candidate(function, &program.atoms) {
+    if !function_candidate(function, program) {
         // The string-hash matcher has already checked the bytecode shape; the
         // regular candidate guard still enforces activation and size limits.
         return None;
@@ -1568,7 +1567,7 @@ fn compile_number_domain_boolean_tree(
     function_id: u32,
     function: &Function,
 ) -> Option<JsJitArtifact> {
-    if !function_candidate(function, &program.atoms)
+    if !function_candidate(function, program)
         || usize::from(function.registers) > MAX_REGISTERS
     {
         return None;
@@ -2455,8 +2454,8 @@ fn compile_numeric_with_captures(
     function_id: u32,
     captures: &[JsJitCaptureArgument],
 ) -> Option<JsJitArtifact> {
-    let function = program.functions.get(function_id as usize)?;
-    if !function_candidate(function, &program.atoms)
+    let function = program.function_get(function_id as usize)?;
+    if !function_candidate(function, program)
         || function
             .code
             .iter()
@@ -2661,7 +2660,7 @@ fn compile_numeric_loop(
     function_id: u32,
     function: &Function,
 ) -> Option<JsJitArtifact> {
-    if !function_candidate(function, &program.atoms)
+    if !function_candidate(function, program)
         || function
             .code
             .iter()
@@ -3472,7 +3471,7 @@ fn compile_string_branches(
     function_id: u32,
     function: &Function,
 ) -> Option<JsJitArtifact> {
-    if !function_candidate(function, &program.atoms)
+    if !function_candidate(function, program)
         || usize::from(function.registers) > MAX_REGISTERS
         || function
             .code
@@ -3782,7 +3781,7 @@ fn numeric_operand(
 /// Cheap activation-level filter used before retaining hotness state. The
 /// bytecode scan remains deferred until the function actually crosses the
 /// statistical promotion gate.
-pub(super) fn function_candidate(function: &Function, atoms: &crate::bytecode::AtomTable) -> bool {
+pub(super) fn function_candidate(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
     !function.code.is_empty()
         && function.code.len() <= MAX_INSTRUCTIONS
         && (function.wide.is_empty()
@@ -3790,7 +3789,7 @@ pub(super) fn function_candidate(function: &Function, atoms: &crate::bytecode::A
             || field_reject_layout(function).is_some())
         && usize::from(function.registers) <= MAX_REGISTERS
         && usize::from(function.params) <= MAX_PARAMETERS
-        && (eligible(function, atoms) || field_reject_layout(function).is_some())
+        && (eligible(function, program) || field_reject_layout(function).is_some())
 }
 
 #[derive(Clone, Copy)]
@@ -4025,8 +4024,10 @@ fn wide_boolean_tree_candidate(function: &Function) -> bool {
     }) && has_forward_branch
 }
 
-fn eligible(function: &Function, atoms: &crate::bytecode::AtomTable) -> bool {
+fn eligible(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
+    // An arrow's `this` is its environment's, which this tier does not bind.
     if function.parent.is_none()
+        || function.is_arrow
         || function.is_async
         || function.is_generator
         || function.is_class_constructor
@@ -4036,7 +4037,7 @@ fn eligible(function: &Function, atoms: &crate::bytecode::AtomTable) -> bool {
         || function.rest
         || !function.simple_parameters
         || !function.handlers.is_empty()
-        || (!function.plain_activation(atoms)
+        || (!function.plain_activation(program)
             && !activation_is_irrelevant(function)
             && numeric_capture_candidate(function).is_none())
     {

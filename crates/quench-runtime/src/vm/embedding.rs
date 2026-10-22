@@ -41,7 +41,7 @@ impl<H: Host> Vm<H> {
         let payload = self.boxed_primitive_value(value)?;
         use crate::BuiltinBrand as B;
         let brand = match self.heap.get(payload) {
-            Some(Cell::String(_)) => B::StringObject,
+            _ if self.heap.is_string(payload) => B::StringObject,
             Some(Cell::Symbol(_)) => B::SymbolObject,
             Some(Cell::BigInt(_)) => B::BigIntObject,
             _ if payload.as_bool().is_some() => B::BooleanObject,
@@ -64,6 +64,10 @@ impl<H: Host> Vm<H> {
             target: Some(target),
         });
         Ok(self.heap.root(reference))
+    }
+
+    pub(crate) fn embedding_collection_epoch(&self) -> u64 {
+        self.heap.collection_epoch()
     }
 
     pub(crate) fn embedding_host_weak_value(&self, reference: RootId) -> Option<Value> {
@@ -113,6 +117,17 @@ impl<H: Host> Vm<H> {
         Ok(entries.get(key).unwrap_or(Value::UNDEFINED))
     }
 
+    pub(crate) fn embedding_array_like_values(&mut self, root: RootId) -> Result<Vec<RootId>, JsError> {
+        let value = self.embedding_value(root)?;
+        let program = self.embedding_program()?;
+        let values = self.create_list_from_array_like(
+            &program,
+            value,
+            super::operations::ArrayLikeElementKind::Any,
+        )?;
+        Ok(values.into_iter().map(|value| self.root(value)).collect())
+    }
+
     pub(crate) fn embedding_own_keys(&mut self, root: RootId) -> Result<Vec<RootId>, JsError> {
         let value = self.embedding_value(root)?;
         let program = self.embedding_program()?;
@@ -133,6 +148,93 @@ impl<H: Host> Vm<H> {
         ];
         let program = self.embedding_program()?;
         self.object_define_property(&program, &args)
+    }
+
+    /// [[GetOwnProperty]] of ToObject(`root`) for ToPropertyKey(`key`), as descriptor fields
+    /// rather than a descriptor object. The values are unrooted; the caller roots them before
+    /// anything else allocates.
+    pub(crate) fn embedding_own_property_fields(
+        &mut self,
+        root: RootId,
+        key: RootId,
+    ) -> Result<Option<crate::api::DescriptorFields<Value>>, JsError> {
+        let program = self.embedding_program()?;
+        let target = self.embedding_value(root)?;
+        let target = self.box_object_or_type_error(&program, target)?;
+        let target_root = self.heap.root(target);
+        let mut key_root = None;
+        let outcome = (|| {
+            let key = self.embedding_value(key)?;
+            let key = self.to_property_key(&program, key)?;
+            key_root = Some(self.heap.root(key));
+            let record = if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
+                let descriptor = self.object_get_own_property_descriptor(&program, &[target, key])?;
+                if descriptor.is_undefined() {
+                    None
+                } else {
+                    Some(self.to_property_descriptor(&program, descriptor)?)
+                }
+            } else {
+                self.ordinary_get_own_property(&program, target, key)?
+                    .map(|(value, attributes)| {
+                        super::object_descriptors::PropertyDescriptorRecord::from_attributes(
+                            value, attributes,
+                        )
+                    })
+            };
+            Ok(record.map(|record| crate::api::DescriptorFields {
+                value: record.value,
+                writable: record.writable,
+                get: record.getter,
+                set: record.setter,
+                enumerable: record.enumerable,
+                configurable: record.configurable,
+            }))
+        })();
+        for root in [Some(target_root), key_root].into_iter().flatten() {
+            self.heap.release_root(root);
+        }
+        outcome
+    }
+
+    /// `Reflect.defineProperty(object, key, descriptor)` for a descriptor given as its fields:
+    /// whether [[DefineOwnProperty]] succeeded. The fields' values stay rooted by the caller.
+    pub(crate) fn embedding_define_property_fields(
+        &mut self,
+        object: RootId,
+        key: RootId,
+        fields: crate::api::DescriptorFields<Value>,
+    ) -> Result<bool, JsError> {
+        let program = self.embedding_program()?;
+        let target = self.embedding_value(object)?;
+        if !self.is_object_like(target) {
+            return Err(self.type_error(&program, "Reflect.defineProperty called on non-object".into()));
+        }
+        let record = super::object_descriptors::PropertyDescriptorRecord {
+            value: fields.value,
+            writable: fields.writable,
+            enumerable: fields.enumerable,
+            configurable: fields.configurable,
+            getter: fields.get,
+            setter: fields.set,
+        };
+        // ToPropertyDescriptor's checks, which a descriptor object would have passed.
+        if [record.getter, record.setter]
+            .into_iter()
+            .flatten()
+            .any(|accessor| !accessor.is_undefined() && !self.is_function(accessor))
+        {
+            return Err(self.type_error(&program, "Accessor descriptor must be callable".into()));
+        }
+        if record.has_accessor_fields() && record.has_data_fields() {
+            return Err(self.type_error(
+                &program,
+                "Property descriptor cannot mix accessor and data fields".into(),
+            ));
+        }
+        let key = self.embedding_value(key)?;
+        let key = self.to_property_key(&program, key)?;
+        self.define_own_property_record(&program, target, key, record)
     }
 
     pub(crate) fn embedding_own_descriptor(
@@ -177,7 +279,7 @@ impl<H: Host> Vm<H> {
             for (index, key) in keys.iter().enumerate() {
                 let property = self.root_value(*key).expect("own key root is live");
                 if !include_indices {
-                    if let Some(Cell::String(text)) = self.heap.get(property) {
+                    if let Some(text) = self.heap.string(property) {
                         if super::object_static::array_index(text.host_string()).is_some() {
                             continue;
                         }
@@ -186,9 +288,10 @@ impl<H: Host> Vm<H> {
                 if !include_symbols && matches!(self.heap.get(property), Some(Cell::Symbol(_))) {
                     continue;
                 }
-                let descriptor =
-                    self.object_get_own_property_descriptor(&program, &[value, property])?;
-                if !descriptor.is_undefined() && (!enumerable_only || self.descriptor_flag(descriptor, "enumerable")) {
+                // As `Object.keys` asks: a pending lazy data property answers from its
+                // attributes without materializing, and a Proxy through its descriptor trap.
+                let found = self.own_property_enumerable(&program, value, property)?;
+                if found.is_some_and(|enumerable| enumerable || !enumerable_only) {
                     enumerable.push(*key);
                     retained[index] = true;
                 }
@@ -216,7 +319,7 @@ impl<H: Host> Vm<H> {
             B::Date => matches!(cell, Some(Cell::Date { .. })),
             B::RegExp => matches!(cell, Some(Cell::RegExp { .. })),
             B::NativeError => self.error_is_error(value) || matches!(cell, Some(Cell::Error(_))),
-            B::Promise => self.realm.promise.records.contains_key(&value),
+            B::Promise => self.is_promise(value),
             B::Map => matches!(cell, Some(Cell::Map { .. })),
             B::Set => matches!(cell, Some(Cell::Set { .. })),
             B::WeakMap => matches!(cell, Some(Cell::WeakMap { .. })),
@@ -233,21 +336,21 @@ impl<H: Host> Vm<H> {
             B::ArgumentsObject => self
                 .object_data(value)
                 .is_some_and(Object::is_arguments_object),
-            B::AsyncFunction | B::GeneratorFunction => match cell {
-                Some(Cell::Function {
+            B::AsyncFunction | B::GeneratorFunction => match self.heap.function(value) {
+                Some(FunctionRecord {
                     kind:
-                        FunctionKind::User(program, function)
-                        | FunctionKind::NumericUser(program, function),
+                        FunctionKind::User(program, function),
                     ..
                 }) => self
                     .programs
                     .get(*program)
                     .and_then(|program| {
                         program.functions.get(*function as usize).map(|function| {
+                            let header = function.header();
                             if brand == B::AsyncFunction {
-                                function.is_async
+                                header.is_async
                             } else {
-                                function.is_generator
+                                header.is_generator
                             }
                         })
                     })
@@ -255,15 +358,15 @@ impl<H: Host> Vm<H> {
                 _ => false,
             },
             B::GeneratorObject => matches!(
-                cell,
-                Some(Cell::Iterator {
+                self.heap.iterator(value),
+                Some(IteratorRecord {
                     kind: IteratorKind::Generator | IteratorKind::AsyncGenerator,
                     ..
                 })
             ),
             B::MapIterator => matches!(
-                cell,
-                Some(Cell::Iterator {
+                self.heap.iterator(value),
+                Some(IteratorRecord {
                     kind: IteratorKind::MapKeys
                         | IteratorKind::MapValues
                         | IteratorKind::MapEntries,
@@ -271,8 +374,8 @@ impl<H: Host> Vm<H> {
                 })
             ),
             B::SetIterator => matches!(
-                cell,
-                Some(Cell::Iterator {
+                self.heap.iterator(value),
+                Some(IteratorRecord {
                     kind: IteratorKind::SetValues | IteratorKind::SetEntries,
                     ..
                 })
@@ -398,16 +501,16 @@ impl<H: Host> Vm<H> {
     pub(crate) fn embedding_collection_preview(&self, root: RootId) -> Result<Option<crate::CollectionPreview<Value>>, JsError> {
         use crate::CollectionPreview;
         let value = self.embedding_value(root)?;
-        let preview = match self.heap.get(value) {
-            Some(Cell::Map { entries, .. }) => CollectionPreview {
+        let preview = match (self.heap.iterator(value), self.heap.get(value)) {
+            (_, Some(Cell::Map { entries, .. })) => CollectionPreview {
                 entries: entries.iter().flat_map(|(key, value)| [key, value]).collect(), is_key_value: true,
             },
-            Some(Cell::Set { entries, .. }) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
-            Some(Cell::WeakMap { entries, .. }) => CollectionPreview {
+            (_, Some(Cell::Set { entries, .. })) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
+            (_, Some(Cell::WeakMap { entries, .. })) => CollectionPreview {
                 entries: entries.iter().flat_map(|&(key, value)| [key, value]).collect(), is_key_value: true,
             },
-            Some(Cell::WeakSet { entries, .. }) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
-            Some(Cell::Iterator { source, kind, index, done, ext, .. }) => {
+            (_, Some(Cell::WeakSet { entries, .. })) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
+            (Some(IteratorRecord { source, kind, index, done, ext, .. }), _) => {
                 let is_key_value = match kind {
                     IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::SetValues => false,
                     IteratorKind::MapEntries | IteratorKind::SetEntries => true,
@@ -440,7 +543,7 @@ impl<H: Host> Vm<H> {
                 }
                 CollectionPreview { entries: output, is_key_value }
             }
-            _ => return Ok(None),
+            (_, _) => return Ok(None),
         };
         Ok(Some(preview))
     }
@@ -455,7 +558,7 @@ impl<H: Host> Vm<H> {
         if self.error_is_error(value) {
             return Ok(Some(D::Error));
         }
-        if self.realm.promise.records.contains_key(&value) {
+        if self.is_promise(value) {
             return Ok(Some(D::Opaque));
         }
         if value.direct_object_index().is_some() {
@@ -545,18 +648,12 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn embedding_string_units(&self, root: RootId) -> Result<Option<Vec<u16>>, JsError> {
         let value = self.embedding_value(root)?;
-        Ok(match self.heap.get(value) {
-            Some(Cell::String(text)) => Some(text.units().to_vec()),
-            _ => None,
-        })
+        Ok(self.heap.string(value).map(|text| text.units().to_vec()))
     }
 
     pub(crate) fn embedding_string_text(&self, root: RootId) -> Result<Option<String>, JsError> {
         let value = self.embedding_value(root)?;
-        Ok(match self.heap.get(value) {
-            Some(Cell::String(text)) => Some(text.host_string().to_owned()),
-            _ => None,
-        })
+        Ok(self.heap.string(value).map(|text| text.host_string().to_owned()))
     }
 
     pub(crate) fn embedding_detail_string(&self, root: RootId) -> Result<String, JsError> {
@@ -647,13 +744,15 @@ impl<H: Host> Vm<H> {
             return "[object Array]".into();
         }
 
+        if let Some(text) = self.heap.string(value) {
+            return text.host_string().to_owned();
+        }
         match self.heap.get(value) {
-            Some(Cell::String(text)) => text.host_string().to_owned(),
             Some(Cell::BigInt(integer)) => {
                 if Self::detail_bigint_is_too_large(integer) {
                     "<a very large BigInt>".into()
                 } else {
-                    integer.clone()
+                    integer.to_string()
                 }
             }
             Some(Cell::Symbol(description)) => Self::detail_symbol(description.as_deref()),
@@ -661,40 +760,14 @@ impl<H: Host> Vm<H> {
             Some(Cell::Map { .. }) => "#<Map>".into(),
             Some(Cell::Set { .. }) => "#<Set>".into(),
             Some(cell) => format!("[object {}]", Self::diagnostic_class_name(cell)),
+            None if self.heap.is_function_value(value) => "[object Function]".into(),
             None => "[object Unknown]".into(),
         }
     }
 
-    fn detail_bigint_is_too_large(integer: &str) -> bool {
-        const MAX_V8_DETAIL_BIGINT_LIMBS: usize = 100;
-
-        let digits = integer
-            .strip_prefix('-')
-            .unwrap_or(integer)
-            .trim_start_matches('0');
-        if digits.is_empty() || digits.parse::<usize>().is_ok() {
-            return false;
-        }
-
-        let mut limbs = vec![0usize];
-        for byte in digits.bytes() {
-            let Some(digit) = byte.checked_sub(b'0').filter(|digit| *digit <= 9) else {
-                return false;
-            };
-            let mut carry = u128::from(digit);
-            for limb in &mut limbs {
-                let product = (*limb as u128) * 10 + carry;
-                *limb = product as usize;
-                carry = product >> usize::BITS;
-            }
-            if carry != 0 {
-                limbs.push(carry as usize);
-                if limbs.len() > MAX_V8_DETAIL_BIGINT_LIMBS {
-                    return true;
-                }
-            }
-        }
-        limbs.len() > MAX_V8_DETAIL_BIGINT_LIMBS
+    fn detail_bigint_is_too_large(integer: &num_bigint::BigInt) -> bool {
+        const MAX_V8_DETAIL_BIGINT_LIMBS: u64 = 100;
+        integer.bits() > MAX_V8_DETAIL_BIGINT_LIMBS * u64::from(usize::BITS)
     }
 
     fn detail_symbol(description: Option<&str>) -> String {
@@ -724,10 +797,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let value = self.heap.property_get(data, index)?;
-        match self.heap.get(value) {
-            Some(Cell::String(text)) => Some(text.host_string().to_owned()),
-            _ => None,
-        }
+        self.heap.string(value).map(|text| text.host_string().to_owned())
     }
 
     fn diagnostic_class_name(cell: &Cell) -> &'static str {
@@ -754,7 +824,7 @@ impl<H: Host> Vm<H> {
             Cell::Set { .. } => "Set",
             Cell::Date { .. } => "Date",
             Cell::RegExp { .. } => "RegExp",
-            Cell::Function { .. } => "Function",
+            Cell::Function(_) => "Function",
             Cell::Error(_) => "Error",
             _ => "Object",
         }
@@ -776,7 +846,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn embedding_resolve_promise(&mut self, promise: RootId, value: RootId) -> Result<(), JsError> {
         let promise = self.embedding_value(promise)?;
         let value = self.embedding_value(value)?;
-        let state = self.realm.promise.records.get(&promise)
+        let state = self.promise_record(promise)
             .ok_or_else(|| JsError("value does not have Promise internal slots".into()))?.state;
         if state != super::promise::PromiseState::Pending { return Ok(()); }
         let program = self.embedding_program()?;
@@ -786,7 +856,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn embedding_reject_promise(&mut self, promise: RootId, reason: RootId) -> Result<(), JsError> {
         let promise = self.embedding_value(promise)?;
         let reason = self.embedding_value(reason)?;
-        if !self.realm.promise.records.contains_key(&promise) {
+        if !self.is_promise(promise) {
             return Err(JsError("value does not have Promise internal slots".into()));
         }
         let program = self.embedding_program()?;
@@ -796,7 +866,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn embedding_promise_snapshot(&self, root: RootId) -> Result<Option<crate::PromiseSnapshot<Value>>, JsError> {
         use crate::PromiseSnapshot as Snapshot;
         let value = self.embedding_value(root)?;
-        Ok(self.realm.promise.records.get(&value).map(|record| match record.state {
+        Ok(self.promise_record(value).map(|record| match record.state {
             super::promise::PromiseState::Pending => Snapshot::Pending,
             super::promise::PromiseState::Fulfilled => Snapshot::Fulfilled(record.result),
             super::promise::PromiseState::Rejected => Snapshot::Rejected(record.result),
@@ -805,7 +875,7 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn embedding_mark_promise_handled(&mut self, root: RootId) -> Result<(), JsError> {
         let promise = self.embedding_value(root)?;
-        if !self.realm.promise.records.contains_key(&promise) {
+        if !self.is_promise(promise) {
             return Err(JsError("value does not have Promise internal slots".into()));
         }
         self.observe_promise_rejection(promise);
@@ -942,7 +1012,7 @@ impl<H: Host> Vm<H> {
         let iterator = self.get_iterator(&program, source)?;
         let iterator = self.root(iterator);
         let value = self.embedding_value(iterator)?;
-        let next = self.intern_atom("next");
+        let next = self.runtime_atoms.next;
         match self.get_property(&program, value, next) {
             Ok(next) => Ok((iterator, self.root(next))),
             Err(error) => {
@@ -995,14 +1065,14 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
         let previous = std::mem::replace(&mut self.direct_eval, false);
-        let result = self.eval_global_script_named(&program, source, false, name);
+        let result = self.eval_host_script(&program, source, name);
         self.direct_eval = previous;
         result
     }
 
     pub(crate) fn parse_embedding_json(&mut self, source: &str) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
-        let source = self.heap.alloc(Cell::String(source.into()));
+        let source = self.heap.alloc_string(source.into());
         self.json_parse(&program, &[source])
     }
 
@@ -1018,7 +1088,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(elements),
+                elements,
             ),
         }))
     }
@@ -1029,7 +1099,7 @@ impl<H: Host> Vm<H> {
         message: &str,
     ) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
-        let message = self.heap.alloc(Cell::String(message.into()));
+        let message = self.heap.alloc_string(message.into());
         self.construct_error_native(&program, kind, &[message])
     }
 
@@ -1039,23 +1109,22 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn string_rooted(&mut self, text: &str) -> RootId {
-        // Host strings mostly spell property keys already interned; such a string shares the
-        // atom's storage instead of copying the text.
-        let string = match self.lookup_atom(text) {
-            Some(atom) => self.atom_value(atom),
-            None => JsString::from_str(text),
+        // Host strings mostly spell property keys already interned; such a string is the
+        // atom's shared string value (strings have no identity), else a fresh copy.
+        let value = match self.lookup_atom(text) {
+            Some(atom) => self.atom_string(atom),
+            None => self.heap.alloc_string(JsString::from_str(text)),
         };
-        let value = self.heap.alloc(Cell::String(string));
         self.root(value)
     }
 
     pub(crate) fn bigint_rooted(&mut self, integer: i128) -> RootId {
-        let value = self.heap.alloc(Cell::BigInt(integer.to_string()));
+        let value = self.heap.alloc(Cell::bigint(integer.into()));
         self.root(value)
     }
 
     pub(crate) fn string_units_rooted(&mut self, units: &[u16]) -> RootId {
-        let value = self.heap.alloc(Cell::String(JsString::from_units(units)));
+        let value = self.heap.alloc_string(JsString::from_units(units));
         self.root(value)
     }
 
@@ -1127,7 +1196,7 @@ impl<H: Host> Vm<H> {
         let object = self.embedding_value(object)?;
         let program = self.embedding_program()?;
         if super::object_static::array_index(name).is_some() {
-            let key = self.heap.alloc(Cell::String(JsString::from_str(name)));
+            let key = self.heap.alloc_string(JsString::from_str(name));
             return self.get_index(&program, object, key);
         }
         let atom = self.intern_atom(name);
@@ -1209,9 +1278,15 @@ impl<H: Host> Vm<H> {
         result
     }
 
-    fn is_realm_global(&self, value: Value) -> bool {
+    /// Whether `value` is a realm's global object, live or parked.
+    pub(super) fn is_global_object(&self, value: Value) -> bool {
         value == self.realm.globals
             || self.realm.global_lexical_states.contains_key(&value)
+            || self.realm.parked.as_ref().is_some_and(|parked| parked.global == value)
+    }
+
+    fn is_realm_global(&self, value: Value) -> bool {
+        self.is_global_object(value)
             || self
                 .realm
                 .intrinsics
@@ -1261,7 +1336,7 @@ impl<H: Host> Vm<H> {
         let value = self.embedding_value(value)?;
         let program = self.embedding_program()?;
         if super::object_static::array_index(name).is_some() {
-            let key = self.heap.alloc(Cell::String(JsString::from_str(name)));
+            let key = self.heap.alloc_string(JsString::from_str(name));
             return self.set_index_mode(&program, object, key, value, true);
         }
         let atom = self.intern_atom(name);
@@ -1323,6 +1398,24 @@ impl<H: Host> Vm<H> {
         Ok(accepted.as_bool().expect("Reflect.set returns a boolean"))
     }
 
+    /// `Reflect.set(object, name, value)` for a string key the host spells, without
+    /// allocating the key: the same `[[Set]]` that `Reflect.set` makes after `ToPropertyKey`.
+    pub(crate) fn set_named_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+        value: RootId,
+    ) -> Result<bool, JsError> {
+        let object = self.embedding_value(object)?;
+        let value = self.embedding_value(value)?;
+        let program = self.embedding_program()?;
+        if !self.is_object_like(object) {
+            return Err(self.type_error(&program, "Reflect target is not an object".into()));
+        }
+        let atom = self.intern_atom(name);
+        self.set_property_with_receiver(&program, object, atom, value, object)
+    }
+
     pub(crate) fn define_data_property_rooted(
         &mut self,
         object: RootId,
@@ -1352,6 +1445,78 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    pub(crate) fn pending_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        key: RootId,
+        listener: RootId,
+        index: u32,
+    ) -> Result<Option<Value>, JsError> {
+        let holder = self.embedding_value(holder)?;
+        let key = self.embedding_value(key)?;
+        let listener = self.embedding_value(listener)?;
+        // Lazy data properties have string keys.
+        let Some(name) = self.heap.string(key).cloned() else {
+            return Ok(None);
+        };
+        let key = PropertyKey::string(self.intern_js_atom(&name));
+        Ok(self.pending_lazy_data_property(holder, key, listener, index))
+    }
+
+    /// `define_data_property_rooted` for a string key the host spells, without allocating
+    /// the key where it can: an absent key of an extensible plain object is a shape addition
+    /// with the given attributes, exactly as `[[DefineOwnProperty]]` adds it.
+    pub(crate) fn define_named_data_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+        value: RootId,
+        writable: bool,
+        enumerable: bool,
+        configurable: bool,
+    ) -> Result<bool, JsError> {
+        let object = self.embedding_value(object)?;
+        let value = self.embedding_value(value)?;
+        let program = self.embedding_program()?;
+        let atom = self.intern_atom(name);
+        let key = super::property_key::PropertyKey::string(atom);
+        let absent_plain = self.plain_named_key(atom)
+            && !self.descriptors.contains_key(&(object, key))
+            && self.heap.ordinary_object(object).is_some_and(|data| {
+                data.is_extensible()
+                    && !data.is_module_namespace()
+                    && data.deferred_module().is_none()
+                    && self.property_shape_slot(data.shape(), key).is_none()
+            });
+        if absent_plain {
+            let attributes = super::PropertyAttributes {
+                writable,
+                enumerable,
+                configurable,
+                accessor: false,
+                getter: None,
+                setter: None,
+            };
+            self.set_property_with_attributes(object, atom, value, attributes)?;
+            return Ok(true);
+        }
+        let key = self.atom_string(atom);
+        let key = self.to_property_key(&program, key)?;
+        self.define_own_property_record(
+            &program,
+            object,
+            key,
+            super::object_descriptors::PropertyDescriptorRecord {
+                value: Some(value),
+                writable: Some(writable),
+                enumerable: Some(enumerable),
+                configurable: Some(configurable),
+                getter: None,
+                setter: None,
+            },
+        )
+    }
+
     pub(crate) fn materialize_lazy_data_property_rooted(
         &mut self,
         holder: RootId,
@@ -1361,6 +1526,16 @@ impl<H: Host> Vm<H> {
         let program = self.embedding_program()?;
         let key = PropertyKey::string(self.intern_atom(name));
         self.materialize_lazy_data_property(&program, holder, key)
+    }
+
+    pub(crate) fn is_pending_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<bool, JsError> {
+        let holder = self.embedding_value(holder)?;
+        let key = PropertyKey::string(self.intern_atom(name));
+        Ok(self.is_pending_lazy_data_property(holder, key))
     }
 
     pub(crate) fn define_lazy_data_properties_rooted(
@@ -1389,14 +1564,20 @@ impl<H: Host> Vm<H> {
             .map(|(name, _)| {
                 // The key shares the atom table's text.
                 let atom = self.intern_atom(name);
-                let name = self.heap.alloc(Cell::String(self.atom_value(atom)));
+                let name = self.heap.alloc_string(self.atom_value(atom));
                 self.heap.root(name)
             })
             .collect::<Vec<_>>();
         let values = keys
             .iter()
             .zip(members)
-            .map(|(&key, &(_, enumerable))| (self.heap.root_value(key).unwrap(), enumerable))
+            .map(
+                |(&key, &(_, enumerable))| super::lazy_data_property::LazyMember {
+                    key: self.heap.root_value(key).unwrap(),
+                    enumerable,
+                    redefined: false,
+                },
+            )
             .collect::<Vec<_>>();
         let defined = self.define_lazy_data_properties(
             &program,
@@ -1409,6 +1590,34 @@ impl<H: Host> Vm<H> {
             self.heap.release_root(key);
         }
         defined
+    }
+
+    /// Defines `members` (a rooted string or symbol key, whether it is enumerable while
+    /// pending, and whether `initializer` defines it itself) on `holder` as one lazy group
+    /// (`LazyMember`).
+    pub(crate) fn define_lazy_members_rooted(
+        &mut self,
+        holder: RootId,
+        members: &[(RootId, bool, bool)],
+        initializer: RootId,
+    ) -> Result<(), JsError> {
+        let holder = self.embedding_value(holder)?;
+        let initializer = self.embedding_value(initializer)?;
+        let program = self.embedding_program()?;
+        let members = members
+            .iter()
+            .map(|&(key, enumerable, redefined)| {
+                Ok(super::lazy_data_property::LazyMember {
+                    key: self.embedding_value(key)?,
+                    enumerable,
+                    redefined,
+                })
+            })
+            .collect::<Result<Vec<_>, JsError>>()?;
+        // An initializer that redefines members decides the holder's final keys, so listing
+        // them with symbols or fixing the holder's integrity materializes the group first.
+        let completes_keys = members.iter().any(|member| member.redefined);
+        self.define_lazy_data_properties(&program, holder, &members, completes_keys, initializer)
     }
 
     pub(crate) fn set_prototype_rooted(

@@ -3,6 +3,10 @@ use super::*;
 
 /// The TypeError message for assigning an immutable binding, as V8 words it.
 const ASSIGNMENT_TO_CONSTANT: &str = "Assignment to constant variable.";
+/// The implicit binding `ArgumentsLength` and `ArgumentGet` read, and the property the
+/// former reads.
+const ARGUMENTS: &str = "arguments";
+const LENGTH: &str = "length";
 impl FunctionCompiler<'_, '_> {
     pub(crate) fn expression(&mut self, expression: &Expression<'_>) -> Register {
         self.expression_with_debug_name(expression, None)
@@ -40,7 +44,8 @@ impl FunctionCompiler<'_, '_> {
             Expression::NullLiteral(_) => self.literal(Constant::Null),
             Expression::Identifier(value) => {
                 self.last_operand = last_operand;
-                self.load_name(value.name.as_str())
+                let name = value.name.as_str();
+                self.load_name(if self.arguments_alias.as_deref() == Some(name) { ARGUMENTS } else { name })
             }
             Expression::ThisExpression(_) => self.load_this_value(),
             Expression::NewTarget(_) => self.load_name(crate::bytecode::NEW_TARGET_BINDING),
@@ -67,6 +72,11 @@ impl FunctionCompiler<'_, '_> {
                 function
             },
             Expression::ClassExpression(value) => self.class_expression(value),
+            Expression::ArrayExpression(_) | Expression::ObjectExpression(_)
+                if let Some(literal) = self.literal_template(expression) =>
+            {
+                literal
+            }
             Expression::ArrayExpression(value) => self.array_expression(value),
             Expression::ObjectExpression(value) => self.object_expression(value),
             Expression::StaticMemberExpression(value) => self.static_member(value),
@@ -290,11 +300,7 @@ impl FunctionCompiler<'_, '_> {
             Some(dst)
         } else if self.with_depth == 0
             && (!self.dynamic_eval || compiler_binding)
-            && let Some((depth, slot)) = self
-                .scopes
-                .iter()
-                .enumerate()
-                .find_map(|(depth, scope)| scope.get(&atom).copied().map(|slot| (depth, slot)))
+            && let Some((depth, slot)) = self.scopes.find(atom)
         {
             let dst = self.reg();
             self.emit(
@@ -392,11 +398,7 @@ impl FunctionCompiler<'_, '_> {
             }
         } else if (self.with_depth == 0 || initializing)
             && (!self.dynamic_eval || compiler_binding)
-            && let Some((depth, slot)) = self
-                .scopes
-                .iter()
-                .enumerate()
-                .find_map(|(depth, scope)| scope.get(&atom).copied().map(|slot| (depth, slot)))
+            && let Some((depth, slot)) = self.scopes.find(atom)
         {
             self.emit(
                 Op::StoreCapture,
@@ -452,20 +454,20 @@ impl FunctionCompiler<'_, '_> {
                 .find(&format!("{}{name}", kind.capture_prefix()));
             (kind, marker)
         });
-        self.scopes.iter().find_map(|scope| {
-            markers
-                .iter()
-                .find_map(|(kind, marker)| {
-                    marker
-                        .filter(|marker| scope.contains_key(marker))
-                        .map(|_| *kind)
-                })
-                .or_else(|| {
-                    scope
-                        .contains_key(&atom)
-                        .then_some(LexicalBindingKind::Mutable)
-                })
-        })
+        // The nearest scope binding the name or one of its markers decides; there a marker
+        // gives its kind before the plain binding does.
+        let nearest = |atom: Atom| self.scopes.find(atom).map(|(depth, _)| depth);
+        let candidates = markers
+            .iter()
+            .filter_map(|(kind, marker)| Some((nearest((*marker)?)?, *kind)))
+            .chain(nearest(atom).map(|depth| (depth, LexicalBindingKind::Mutable)));
+        let mut decided: Option<(usize, LexicalBindingKind)> = None;
+        for (depth, kind) in candidates {
+            if decided.is_none_or(|(nearest, _)| depth < nearest) {
+                decided = Some((depth, kind));
+            }
+        }
+        decided.map(|(_, kind)| kind)
     }
 
     fn throw_immutable_binding(&mut self, atom: Atom) {
@@ -480,39 +482,15 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn function_expression(&mut self, value: &oxc_ast::ast::Function<'_>) -> Register {
-        let params = Self::params(value, self.owner);
-        let body = value
-            .body
-            .as_ref()
-            .map_or(&[][..], |body| body.statements.as_slice());
-        let name = value.id.as_ref().map(|id| id.name.as_str());
-        let name_binding = value
-            .id
-            .as_ref()
-            .map(|id| self.owner.atom(id.name.as_str()));
-        let scopes = self.capture_scopes();
-        let function = self.owner.compile_function(
-            name,
-            &params,
-            FunctionBody::Statements(body),
-            &scopes,
-            Some(self.function_id),
-            FunctionOptions {
-                source_span: self.owner.source_span(value.span),
-                defaults: Some(&value.params),
-                name_binding,
-                async_function: value.r#async,
-                generator: value.generator,
-                with_depth: self.with_depth,
-                strict: self.strict
-                    || value.body.as_ref().is_some_and(|body| {
-                        body.directives
-                            .iter()
-                            .any(|directive| directive.directive == "use strict")
-                    }),
-                ..FunctionOptions::default()
-            },
-        );
+        let context = super::super::replay::PlainFunctionContext {
+            expression: true,
+            default_export: false,
+            scopes: self.capture_scopes(),
+            parent: self.function_id,
+            with_depth: self.with_depth,
+            inherited_strict: self.strict,
+        };
+        let function = self.owner.compile_plain_function(value, context);
         let dst = self.reg();
         self.emit(Op::MakeClosure, dst, 0, 0, function);
         dst
@@ -526,25 +504,54 @@ impl FunctionCompiler<'_, '_> {
             self.store_atom(atom, this);
             atom
         });
-        let scopes = self.capture_scopes();
-        let function = self.owner.compile_arrow_function(
-            value,
-            &scopes,
-            Some(self.function_id),
-            self.super_static,
-            self.super_home,
-            self.super_home_atom,
-            self.strict,
-            self.class_initializer,
+        let context = super::super::replay::ArrowContext {
+            scopes: self.capture_scopes(),
+            parent: Some(self.function_id),
+            super_static: self.super_static,
+            super_home: self.super_home,
+            super_home_atom: self.super_home_atom,
+            inherited_strict: self.strict,
+            class_initializer: self.class_initializer,
             lexical_this_atom,
-            self.super_call_binds_this,
-            self.with_depth,
-        );
+            super_call_binds_this: self.super_call_binds_this,
+            with_depth: self.with_depth,
+        };
+        let function = self.owner.compile_replayable_arrow(value, context);
         let dst = self.reg();
         self.emit(Op::MakeClosure, dst, 0, 0, function);
         dst
     }
+    /// The local slot of this function's own `arguments` binding when `object` names it
+    /// statically: `arguments`, or its alias (`arguments_alias`), outside `with`, direct
+    /// eval and parameter scopes, unshadowed and held in its frame slot.
+    fn arguments_binding_slot(&mut self, object: &Expression<'_>) -> Option<u16> {
+        let Expression::Identifier(identifier) = object else {
+            return None;
+        };
+        let name = identifier.name.as_str();
+        if (name != ARGUMENTS && self.arguments_alias.as_deref() != Some(name))
+            || self.with_depth != 0
+            || self.dynamic_eval
+            || self.parameter_context
+            || self.parameter_arguments_slot.is_some()
+        {
+            return None;
+        }
+        let atom = self.owner.atom(ARGUMENTS);
+        if self.resolve_lexical(atom) != atom || self.local_register(atom).is_some() {
+            return None;
+        }
+        self.local_slots.get(&atom).copied()
+    }
+
     pub(super) fn static_get(&mut self, object: &Expression<'_>, key: &str) -> Register {
+        if key == LENGTH
+            && let Some(slot) = self.arguments_binding_slot(object)
+        {
+            let dst = self.reg();
+            self.emit(Op::ArgumentsLength, dst, 0, 0, u32::from(slot));
+            return dst;
+        }
         if matches!(object, Expression::Super(_)) {
             let receiver = self.reg();
             self.emit(Op::LoadThis, receiver, 0, 0, 0);
@@ -605,6 +612,12 @@ impl FunctionCompiler<'_, '_> {
         object: &Expression<'_>,
         key: &Expression<'_>,
     ) -> Register {
+        if let Some(slot) = self.arguments_binding_slot(object) {
+            let key = self.last_operand(key);
+            let dst = self.reg();
+            self.emit(Op::ArgumentGet, dst, key, 0, u32::from(slot));
+            return dst;
+        }
         if matches!(object, Expression::Super(_)) {
             let receiver = self.reg();
             self.emit(Op::LoadThis, receiver, 0, 0, 0);
@@ -738,6 +751,9 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn binary(&mut self, value: &BinaryExpression<'_>) -> Register {
+        if let Some(test) = self.typeof_test(value) {
+            return test;
+        }
         let left = if let Some(constant) = binding_time::expression(&value.left).static_value() {
             self.constant_operand(constant)
         } else {
@@ -754,7 +770,7 @@ impl FunctionCompiler<'_, '_> {
         };
         self.emit_binary(value.operator as u32, left, right)
     }
-    fn constant_operand(&mut self, constant: Constant) -> Operand {
+    pub(super) fn constant_operand(&mut self, constant: Constant) -> Operand {
         let index = self.owner.constant(constant);
         Operand::constant(index).unwrap_or_else(|| {
             let register = self.reg();
@@ -770,14 +786,17 @@ impl FunctionCompiler<'_, '_> {
         if lexical.is_none() && !compiler_binding && self.with_depth != self.inherited_with_depth {
             return None;
         }
+        // Only a local held in a register: the lane reads no frame-slot operand, so a
+        // slot's load runs as its own instruction (`LoadLocal`) instead.
         let atom = lexical.unwrap_or(source);
-        self.local_register(atom)
-            .map(Operand::register)
-            .or_else(|| self.local_slots.get(&atom).copied().map(Operand::local))
+        self.local_register(atom).map(Operand::register)
     }
 
     pub(super) fn condition(&mut self, value: &Expression<'_>) -> usize {
         if let Expression::BinaryExpression(binary) = value {
+            if let Some(test) = self.typeof_test(binary) {
+                return self.emit(Op::JumpFalse, test, 0, 0, 0);
+            }
             let left = if let Some(constant) = binding_time::expression(&binary.left).static_value()
             {
                 self.constant_operand(constant)

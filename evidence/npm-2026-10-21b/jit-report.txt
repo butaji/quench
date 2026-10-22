@@ -1,0 +1,38 @@
+verdicts {"behavior-pass":286,"declarations-pass":13,"oracle-failed":1}
+passing 299  fastest wall 203  fastest cpu 235  lowest rss 293
+wall median (ms) quench 59.4 node 104.6 bun 66.7
+cpu median (ms) quench 58.0 node 124.8 bun 70.6
+rss median (MiB) quench 14.5 node 63.4 bun 36.3
+slowest relative to the faster of Node and Bun (wall ms):
+  jiti                                     q     385 n    256 b     75  x5.1
+  color-convert                            q     321 n    141 b     74  x4.3
+  undici                                   q     169 n    183 b     67  x2.5
+  whatwg-url                               q     264 n    195 b    119  x2.2
+  @typescript-eslint/eslint-plugin         q    1600 n   1050 b    749  x2.1
+  date-fns                                 q     178 n   1505 b     87  x2.0
+  schema-utils                             q     369 n    226 b    188  x2.0
+  ajv                                      q     270 n    190 b    140  x1.9
+  baseline-browser-mapping                 q     145 n    103 b     76  x1.9
+  browserslist                             q     191 n    116 b    104  x1.8
+  @testing-library/dom                     q    1409 n    991 b    772  x1.8
+  semver                                   q     226 n    167 b    125  x1.8
+  @babel/core                              q     386 n    289 b    218  x1.8
+  typescript-eslint                        q    1259 n   1075 b    729  x1.7
+  ajv-formats                              q     213 n    165 b    131  x1.6
+  playwright                               q     667 n    412 b    440  x1.6
+  node-fetch                               q      75 n    125 b     47  x1.6
+  ajv-keywords                             q     260 n    171 b    171  x1.5
+  zod                                      q     121 n    149 b     81  x1.5
+  tinyexec                                 q     114 n    146 b     77  x1.5
+  @babel/plugin-syntax-typescript          q     316 n    257 b    216  x1.5
+  lucide-react                             q     181 n    188 b    125  x1.4
+  foreground-child                         q     148 n    185 b    103  x1.4
+  execa                                    q     172 n    219 b    121  x1.4
+  @babel/helper-compilation-targets        q     153 n    121 b    109  x1.4
+not lowest rss: 6
+  undici-types                             q 74.8 n 74.7 b 75.3
+  jiti                                     q 38.2 n 90.5 b 38.0
+  @types/json-schema                       q 44.7 n 63.0 b 44.4
+  @types/babel__template                   q 53.6 n 62.9 b 53.2
+  @types/yargs                             q 45.9 n 62.7 b 45.8
+  @types/ms                                q 44.8 n 62.9 b 44.3

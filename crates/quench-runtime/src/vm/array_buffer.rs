@@ -264,7 +264,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let function = self.native_value(native);
         let name_atom = self.intern_atom("name");
-        let name_value = self.heap.alloc(Cell::String(name.into()));
+        let name_value = self.heap.alloc_string(name.into());
         self.set_named(program, function, "name", name_value)?;
         self.set_property_attributes(
             function,
@@ -323,10 +323,10 @@ impl<H: Host> Vm<H> {
         global: Value,
         tag: &str,
     ) -> Result<(), JsError> {
-        if self.well_known_symbols.contains_key("toStringTag") {
+        if self.well_known_symbols.get(WellKnownSymbol::ToStringTag).is_some() {
             self.install_builtin_to_string_tag(prototype, tag)?;
         }
-        if let Some(species) = self.well_known_symbols.get("species").copied() {
+        if let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) {
             let getter = self.native_with_realm(Native::ArrayBufferSpecies, Value::NULL, global);
             self.set_builtin_function_name(getter, "get [Symbol.species]")?;
             self.set_symbol_property(constructor, species, getter)?;
@@ -512,8 +512,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         shared: bool,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
+        let prototype = self.constructor_prototype_value(p, new_target)?;
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
         }
@@ -536,13 +535,13 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         length: usize,
-    ) -> Result<Rc<Vec<u8>>, JsError> {
+    ) -> Result<Vec<u8>, JsError> {
         let mut bytes = Vec::new();
         bytes
             .try_reserve_exact(length)
             .map_err(|_| self.range_error(p, "ArrayBuffer length is too large".into()))?;
         bytes.resize(length, 0);
-        Ok(Rc::new(bytes))
+        Ok(bytes)
     }
 
     fn array_buffer_intrinsic_prototype(&self, shared: bool) -> Value {
@@ -560,9 +559,15 @@ impl<H: Host> Vm<H> {
         length: usize,
         shared: bool,
     ) -> Result<Value, JsError> {
-        let prototype = self.array_buffer_intrinsic_prototype(shared);
         let bytes = if shared {crate::heap::BufferBytes::from_shared(crate::shared_backing::SharedBacking::new(length,length,false).map_err(|_|self.range_error(p,"SharedArrayBuffer allocation failed".into()))?)}else{self.array_buffer_zeroed_bytes(p,length)?.into()};
-        Ok(self.heap.alloc(Cell::ArrayBuffer {
+        Ok(self.fixed_array_buffer_from(bytes, shared))
+    }
+
+    /// A fixed-length intrinsic ArrayBuffer that takes ownership of `bytes`.
+    pub(super) fn fixed_array_buffer_from(&mut self, bytes: crate::heap::BufferBytes, shared: bool) -> Value {
+        let prototype = self.array_buffer_intrinsic_prototype(shared);
+        let length = bytes.len();
+        self.heap.alloc(Cell::ArrayBuffer {
             object: Box::new(Self::empty_object(prototype)),
             bytes,
             shared,
@@ -570,7 +575,7 @@ impl<H: Host> Vm<H> {
             max_byte_length: length,
             resizable: false,
             immutable: false,
-        }))
+        })
     }
 
     pub(super) fn array_buffer_slice_native(
@@ -610,7 +615,7 @@ impl<H: Host> Vm<H> {
             .transpose()?
             .unwrap_or(length);
         let count = end.saturating_sub(start);
-        let constructor_atom = self.intern_atom("constructor");
+        let constructor_atom = self.runtime_atoms.constructor;
         let constructor = self.get_property(p, this, constructor_atom)?;
         let species = if constructor.is_undefined() {
             None
@@ -855,7 +860,7 @@ impl<H: Host> Vm<H> {
         let before = previous.capacity();
         let mut resized = self.array_buffer_zeroed_bytes(p, requested)?;
         let copy_length = previous.len().min(requested);
-        Rc::get_mut(&mut resized).unwrap()[..copy_length].copy_from_slice(&previous.read()[..copy_length]);
+        resized[..copy_length].copy_from_slice(&previous.read()[..copy_length]);
         let after = resized.capacity();
         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(this) else {
             unreachable!("receiver validated before mutation");
@@ -959,9 +964,7 @@ impl<H: Host> Vm<H> {
         }
         let count = end - start;
         let mut bytes = self.array_buffer_zeroed_bytes(p, count)?;
-        Rc::get_mut(&mut bytes)
-            .unwrap()
-            .copy_from_slice(&source_bytes[start..end]);
+        bytes.copy_from_slice(&source_bytes[start..end]);
         Ok(self.heap.alloc(Cell::ArrayBuffer {
             object: Box::new(Self::empty_object(
                 self.array_buffer_intrinsic_prototype(false),

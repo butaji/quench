@@ -116,6 +116,30 @@ pub(crate) fn read_file(
     Ok(bytes)
 }
 
+/// A read of the file's size as `fstat` reports it (zero unless a regular file), and then at
+/// most that many bytes, the way Node's `readFileSync` reads a file into a single Buffer.
+pub(crate) fn read_sized_file(
+    file: &mut std::fs::File,
+    maximum: u64,
+) -> Result<(Vec<u8>, u64), ReadFileFailure> {
+    let metadata = file.metadata().map_err(|error| ReadFileFailure::Io {
+        syscall: "fstat",
+        error,
+    })?;
+    let size = if metadata.is_file() { metadata.len() } else { 0 };
+    if size > maximum {
+        return Err(ReadFileFailure::TooLarge(size));
+    }
+    let mut bytes = Vec::with_capacity(size as usize);
+    file.take(size)
+        .read_to_end(&mut bytes)
+        .map_err(|error| ReadFileFailure::Io {
+            syscall: "read",
+            error,
+        })?;
+    Ok((bytes, size))
+}
+
 pub(crate) fn open_write(path: &str, flag: Option<&str>) -> io::Result<std::fs::File> {
     let mut open = std::fs::OpenOptions::new();
     match flag.unwrap_or("w") {

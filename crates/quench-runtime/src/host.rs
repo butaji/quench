@@ -41,8 +41,37 @@ pub struct HostGlobal {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleSource {
     pub name: String,
+    /// The text the VM compiles.
     pub source: String,
-    pub bytes: Vec<u8>,
+    /// The module's bytes when they are not `source`'s UTF-8: a file that is not
+    /// UTF-8, or a host interop wrapper that keeps the bytes it wraps. Absent, the
+    /// bytes are `source` itself, so a module's text is never held twice.
+    pub original_bytes: Option<Vec<u8>>,
+}
+
+impl ModuleSource {
+    /// A module whose bytes are its source text.
+    pub fn text(name: impl Into<String>, source: impl Into<String>) -> Self {
+        Self { name: name.into(), source: source.into(), original_bytes: None }
+    }
+
+    /// A module read as bytes: its source is their UTF-8 decoding, with replacement
+    /// characters where they are not UTF-8, and the bytes are kept only then.
+    pub fn from_bytes(name: impl Into<String>, bytes: Vec<u8>) -> Self {
+        match String::from_utf8(bytes) {
+            Ok(source) => Self::text(name, source),
+            Err(error) => {
+                let bytes = error.into_bytes();
+                let source = String::from_utf8_lossy(&bytes).into_owned();
+                Self { name: name.into(), source, original_bytes: Some(bytes) }
+            }
+        }
+    }
+
+    /// The module's bytes, as an import with `type: "bytes"` reads them.
+    pub fn bytes(&self) -> &[u8] {
+        self.original_bytes.as_deref().unwrap_or(self.source.as_bytes())
+    }
 }
 
 /// An opaque host execution context captured by a Promise reaction or
@@ -52,23 +81,57 @@ pub struct ModuleSource {
 pub struct HostExecutionContext(pub u64);
 
 pub trait Host {
-    /// Opt in to Promise lifecycle observations. Hosts without observers keep
-    /// Promise allocation and optimized await free of embedding callbacks.
-    const OBSERVE_PROMISE_LIFECYCLE: bool = false;
-
-    /// Whether this host currently needs Promise identity and lifecycle
-    /// metadata. Hosts with lazily enabled observers can override this while
-    /// retaining the static default for hosts whose observation policy never
-    /// changes.
-    fn observe_promise_lifecycle(&self) -> bool {
-        Self::OBSERVE_PROMISE_LIFECYCLE
+    /// Whether Promise lifecycle observers are active now. While none are,
+    /// Promise allocation and optimized await stay free of embedding callbacks
+    /// and of per-Promise host resources.
+    fn observes_promise_lifecycle(&self) -> bool {
+        false
     }
 
-    /// Whether the host needs a weakly tracked record for a Promise's
-    /// lifecycle. This can be narrower than identity observation: a host may
-    /// need Promise IDs and job context while no init/destroy hook is active.
-    fn track_promise_lifecycle_resource(&self) -> bool {
-        self.observe_promise_lifecycle()
+    /// Whether `promise_job_boundary` may do anything now; while it is false the VM skips
+    /// the call, and its context, around each Promise job.
+    fn observes_promise_job_boundaries(&self) -> bool {
+        true
+    }
+
+    /// A collection has finished, or a full one is starting: a host may return memory the
+    /// process no longer needs resident (its read-only pages), which nothing observable
+    /// depends on. At these boundaries the code about to run differs from the code that ran.
+    /// The runtime's memory policy says whether it should
+    /// (`MemoryPolicy::returns_pages_at_collections`).
+    fn at_collection_boundary(&mut self, _policy: crate::MemoryPolicy) {}
+
+    /// A compiled host program kept across runs: the bytes `keep_compiled_program` was given
+    /// for compiling `parts` (the program's text, in order) under `name` in this build. The
+    /// runtime decodes them under its own atoms and compiles when they do not decode. A
+    /// decoded program keeps the bytes and reads each function's record on its first call,
+    /// so a host serving a mapped file keeps the records never called out of memory.
+    fn kept_compiled_program(&mut self, _name: &str, _parts: &[&str]) -> Option<crate::KeptBytes> {
+        None
+    }
+
+    /// A program kept by `kept_compiled_program` has decoded, in place of its compilation,
+    /// and is about to run. It parsed nothing, so it took none of a compilation's phase
+    /// boundaries (`set_compile_phase_boundary`): a host may return the pages loading it
+    /// touched here instead.
+    fn cached_program_decoded(&mut self) {}
+
+    /// Offers the host a compiled host program's compact form (`kept_compiled_program`).
+    fn keep_compiled_program(&mut self, _name: &str, _parts: &[&str], _bytes: &[u8]) {}
+
+    /// A WebAssembly module's native compilation, which runs once per module, is about to
+    /// start: like `at_collection_boundary`, the code about to run (the code generator)
+    /// differs from the code that ran before it (loading, linking, instantiation).
+    fn before_wasm_native_compilation(&mut self) {}
+
+    /// A snapshot restore has read `bytes`, part of the snapshot the host gave it
+    /// (`Runtime::restore_snapshot`), and reads them again only to decode a function's record
+    /// on its first call: a host that mapped them may return their pages, so they are not
+    /// resident beside the state decoded from them.
+    fn snapshot_bytes_read(_bytes: &[u8])
+    where
+        Self: Sized,
+    {
     }
 
     fn write_line(&mut self, text: &str);
@@ -99,6 +162,16 @@ pub trait Host {
     /// Install host-owned objects after shared intrinsics and native globals,
     /// before guest execution. Context roots expire when installation returns.
     fn initialize(_context: &mut crate::NativeContext<'_, Self>) -> Result<(), crate::RootedError>
+    where
+        Self: Sized,
+    {
+        Ok(())
+    }
+
+    /// Continue installation in a VM restored from a startup snapshot this host's state was
+    /// written into (`Runtime::write_snapshot`): what `initialize` does after the point the
+    /// snapshot was taken at.
+    fn resume(_context: &mut crate::NativeContext<'_, Self>) -> Result<(), crate::RootedError>
     where
         Self: Sized,
     {
@@ -173,9 +246,9 @@ pub trait Host {
         Vec::new()
     }
 
-    /// Finish a batch of contexts released by one full collection. Hosts can
-    /// use this point to reclaim storage after removing many dead contexts.
-    fn finish_promise_context_collection(&mut self, _live_contexts: &[HostExecutionContext]) {}
+    /// Release the contexts `create_promise_context` gave promises that a collection freed.
+    /// No promise, reaction or job names them again.
+    fn release_promise_contexts(&mut self, _contexts: &[HostExecutionContext]) {}
 
     fn call_wasm(
         &mut self,

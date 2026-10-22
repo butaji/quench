@@ -6,6 +6,8 @@ use crate::heap::WeakHandle;
 use rustc_hash::FxHashMap;
 use std::io::Write as _;
 
+mod snapshot;
+
 #[derive(Default)]
 struct JsJitCounters {
     source_name: Option<Box<str>>,
@@ -91,15 +93,22 @@ struct ProgramEntry {
     residual: Rc<ResidualProgram>,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
     constants: Vec<Value>,
-    const_arrays: Vec<Option<Rc<Vec<Value>>>>,
+    const_arrays: Vec<Option<crate::heap::ArrayElements>>,
     function_sources: Vec<Option<Value>>,
-    regexp_literals: Vec<Option<Result<Rc<quench_regexp::Regex>, Rc<str>>>>,
+    /// Each RegExp literal site's record, shared by every object it evaluates to, or its
+    /// compile error.
+    regexp_literals: Vec<Option<Result<Rc<crate::heap::RegExpMeta>, Rc<str>>>>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
+    /// Each root slot's rule, derived from the residual and `module_imports` on first read.
+    root_slots: std::cell::OnceCell<Box<[crate::bytecode::RootSlotRule]>>,
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
     lane_views: Vec<std::cell::OnceCell<super::dispatch_fast::LaneView>>,
+    /// Per function: the runs it has made without its lane view (`entry_lane_view`,
+    /// `lane_call_may_derive`), up to `LANE_VIEW_DEFERRED_RUNS`.
+    lane_deferred: Vec<std::cell::Cell<u8>>,
     /// The program's compiled functions, once the compiled mode first calls
     /// one; `Some(None)` records that none compile.
     compiled: Option<Option<Rc<super::compiled::CompiledProgram>>>,
@@ -121,6 +130,10 @@ struct ProgramEntry {
     reclaimable: bool,
     /// The reclamation pass current at insertion.
     pass: u64,
+    /// Its root values changed since a collection last traced them. A minor collection
+    /// traces only such programs: what an earlier collection reached stays marked until
+    /// the next full collection, which traces every program.
+    roots_pending: bool,
 }
 
 pub(super) const ANONYMOUS_EVAL_ORIGIN: &str = "eval at <anonymous>";
@@ -281,8 +294,11 @@ impl ProgramStore {
         self.programs.get(id.index())?.as_ref()
     }
 
+    /// Every mutation goes through here, so it also marks the program's roots pending.
     fn entry_mut(&mut self, id: ProgramId) -> Option<&mut ProgramEntry> {
-        self.programs.get_mut(id.index())?.as_mut()
+        let entry = self.programs.get_mut(id.index())?.as_mut()?;
+        entry.roots_pending = true;
+        Some(entry)
     }
 
     /// Inserts dynamic code that `reclaim_unreferenced` may later drop.
@@ -524,7 +540,7 @@ impl ProgramStore {
         self.entry(id).is_some_and(|entry| {
             matches!(entry.origin, CompilationOrigin::FunctionConstructor { .. })
                 && entry.residual.functions.get(function as usize)
-                    .is_some_and(|function| function.parent == Some(super::ROOT_FUNCTION_ID))
+                    .is_some_and(|function| function.header().parent == Some(super::ROOT_FUNCTION_ID))
         })
     }
 
@@ -561,6 +577,18 @@ impl ProgramStore {
         }
     }
 
+    /// Whether a by-name load the compiler left unresolved in `function` of the program can
+    /// only denote a global binding, given that the function's names resolve statically: a
+    /// module's environment holds only bindings the compiler resolved, at its root as in its
+    /// functions; a global-scope program's root body may still meet bindings its own
+    /// declarations add, so only its nested functions qualify.
+    pub(crate) fn unresolved_names_are_global(&self, id: ProgramId, function: u32) -> bool {
+        self.entry(id).is_some_and(|entry| {
+            entry.residual.kind == crate::bytecode::ProgramKind::Module
+                || (function != super::ROOT_FUNCTION_ID && self.runs_in_global_scope(id))
+        })
+    }
+
     /// Whether the program's root body evaluates in the global environment.
     pub(crate) fn runs_in_global_scope(&self, id: ProgramId) -> bool {
         self.entry(id).is_some_and(|entry| match entry.scope {
@@ -585,8 +613,13 @@ impl ProgramStore {
             .and_then(ProgramId::from_index)
     }
 
-    pub(crate) fn insert_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
+    pub(crate) fn insert_shared(&mut self, mut program: Rc<ResidualProgram>) -> Option<ProgramId> {
         let id = ProgramId::from_index(self.programs.len())?;
+        // A function compiles again on its first call; until then it keeps only its header.
+        // A program other owners share keeps its records.
+        if let Some(program) = Rc::get_mut(&mut program) {
+            program.release_replayable_records();
+        }
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
         let function_sources = vec![None; program.functions.len()];
         let lane_views = program
@@ -594,6 +627,7 @@ impl ProgramStore {
             .iter()
             .map(|_| std::cell::OnceCell::new())
             .collect();
+        let lane_deferred = vec![std::cell::Cell::new(0); program.functions.len()];
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.programs.push(Some(ProgramEntry {
             residual: program,
@@ -605,8 +639,10 @@ impl ProgramStore {
             module_environment: None,
             import_meta: None,
             module_imports: Vec::new(),
+            root_slots: std::cell::OnceCell::new(),
             module: false,
             lane_views,
+            lane_deferred,
             compiled: None,
             js_tiers: FxHashMap::default(),
             wasm_tiers: FxHashMap::default(),
@@ -615,6 +651,7 @@ impl ProgramStore {
             script_or_module: None,
             reclaimable: false,
             pass: self.reclaim_passes,
+            roots_pending: true,
         }));
         Some(id)
     }
@@ -780,12 +817,34 @@ impl ProgramStore {
     }
 
     /// Whether `slot` of `id`'s root environment is the binding itself: no global var,
-    /// global lexical or module-import projection reads through it.
-    pub(crate) fn root_slot_is_binding(&self, id: ProgramId, slot: u16) -> bool {
-        self.entry(id).is_some_and(|entry| {
-            entry.residual.root_slots_are_bindings()
-                && !entry.module_imports.iter().any(|(local, _)| *local == slot)
-        })
+    /// module-import or (unless `lexical_slots_are_bindings`) global lexical projection reads
+    /// through it.
+    pub(crate) fn root_slot_is_binding(
+        &self,
+        id: ProgramId,
+        slot: u16,
+        lexical_slots_are_bindings: bool,
+    ) -> bool {
+        use crate::bytecode::RootSlotRule;
+        let Some(entry) = self.entry(id) else {
+            return false;
+        };
+        let rules = entry.root_slots.get_or_init(|| {
+            let locals = entry.residual.functions.first().map_or(0, |root| root.local_atoms.len());
+            (0..locals)
+                .map(|slot| {
+                    let import = entry.module_imports.iter().any(|(local, _)| usize::from(*local) == slot);
+                    if import { RootSlotRule::Projection } else { entry.residual.root_slot_rule(slot) }
+                })
+                .collect()
+        });
+        match rules.get(usize::from(slot)).copied() {
+            Some(RootSlotRule::Binding) => true,
+            Some(RootSlotRule::GlobalLexical) => lexical_slots_are_bindings,
+            Some(RootSlotRule::Projection) => false,
+            // A slot past the root's named locals is a temporary, the binding itself.
+            None => !entry.module_imports.iter().any(|(local, _)| *local == slot),
+        }
     }
 
     pub(crate) fn is_module(&self, id: ProgramId) -> bool {
@@ -798,6 +857,12 @@ impl ProgramStore {
         {
             entry.module_environment = Some(environment);
         }
+    }
+
+    /// Every live program's compiled form.
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn residuals(&self) -> impl Iterator<Item = &ResidualProgram> {
+        self.programs.iter().flatten().map(|entry| &*entry.residual)
     }
 
     pub(crate) fn module_environment(&self, id: ProgramId) -> Option<Value> {
@@ -823,6 +888,7 @@ impl ProgramStore {
     pub(crate) fn set_module_imports(&mut self, id: ProgramId, imports: Vec<(u16, ModuleImport)>) {
         if let Some(entry) = self.entry_mut(id) {
             entry.module_imports = imports;
+            entry.root_slots = std::cell::OnceCell::new();
         }
     }
 
@@ -962,8 +1028,7 @@ impl ProgramStore {
         };
         if !entry
             .residual
-            .functions
-            .get(function as usize)
+            .function_get(function as usize)
             .is_some_and(|function| {
                 function.code.len() <= super::compiled::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
             })
@@ -1089,6 +1154,13 @@ impl ProgramStore {
 
     pub(super) fn js_tier(&self, id: ProgramId, function: u32) -> Option<JsTierState> {
         self.entry(id)?.js_tiers.get(&function).cloned()
+    }
+
+    /// Whether the JavaScript tier settled on not compiling `function`.
+    pub(super) fn js_tier_declined(&self, id: ProgramId, function: u32) -> bool {
+        self.entry(id)
+            .and_then(|entry| entry.js_tiers.get(&function))
+            .is_some_and(|state| matches!(state, JsTierState::Unsupported))
     }
 
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {
@@ -1261,7 +1333,7 @@ impl ProgramStore {
     pub(super) fn record_js_jit_lane_entry(&mut self, id: ProgramId, function: u32) {
         let parameter_count = self
             .entry(id)
-            .and_then(|entry| entry.residual.functions.get(function as usize))
+            .and_then(|entry| entry.residual.function_get(function as usize))
             .map_or(0, |function| function.params);
         self.record_js_jit_counter_entry(id, function, None, parameter_count);
     }
@@ -1301,9 +1373,10 @@ impl ProgramStore {
         let (source_name, function_name, instruction_count, opcode_counts, guard_census) = self
             .entry(id)
             .map(|entry| {
-                let function_code = entry.residual.functions.get(function as usize);
-                let function_name = function_code
-                    .and_then(|function| function.name.or(function.inferred_name))
+                let slot = entry.residual.functions.get(function as usize);
+                let function_code = slot.and_then(|slot| slot.record());
+                let function_name = slot
+                    .and_then(|slot| slot.header().name.or(slot.header().inferred_name))
                     .and_then(|atom| {
                         let index = atom as usize;
                         (index < entry.residual.atoms.len())
@@ -1634,6 +1707,63 @@ impl ProgramStore {
         Some(&self.entry(id)?.lane_views)
     }
 
+    /// The lane view a general-loop entry of `function` runs with. A function that may loop
+    /// gets it at its first entry; any other once its deferred runs are complete
+    /// (`LANE_VIEW_DEFERRED_RUNS`), so code that runs a few times without looping (a module
+    /// body) runs on the general path instead of first deriving a view of every instruction,
+    /// which costs more than those runs.
+    pub(super) fn entry_lane_view(
+        &self,
+        id: ProgramId,
+        function: u32,
+        may_loop: impl FnOnce(&crate::bytecode::Function) -> bool,
+        derive: impl FnOnce(
+            &crate::bytecode::Function,
+            &[Value],
+            crate::bytecode::ProgramKind,
+            Option<&[u64]>,
+        ) -> super::dispatch_fast::LaneView,
+    ) -> Option<*const super::dispatch_fast::LaneView> {
+        let entry = self.entry(id)?;
+        let view = entry.lane_views.get(function as usize)?;
+        if let Some(view) = view.get() {
+            return Some(view);
+        }
+        let code = entry.residual.function_get(function as usize)?;
+        if !deferred_run_completes(entry.lane_deferred.get(function as usize)?) && !may_loop(code) {
+            return None;
+        }
+        Some(view.get_or_init(|| {
+            let live = entry.residual.register_root_masks(function);
+            let view = derive(code, &entry.constants, entry.residual.kind, live);
+            #[cfg(feature = "profile-lane-exits")]
+            {
+                let (start, end) = view.record_range();
+                super::lane_exits::register_view(start, end, census_label(entry, function));
+            }
+            view
+        }))
+    }
+
+    /// Whether a lane call may derive `function`'s view now: it has one, or its earlier entries
+    /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
+    /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
+    /// general path.
+    pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32) -> bool {
+        let Some(entry) = self.entry(id) else {
+            return false;
+        };
+        let derived = entry
+            .lane_views
+            .get(function as usize)
+            .is_some_and(|view| view.get().is_some());
+        derived
+            || entry
+                .lane_deferred
+                .get(function as usize)
+                .is_some_and(deferred_run_completes)
+    }
+
     pub(super) fn lane_view(
         &self,
         id: ProgramId,
@@ -1642,12 +1772,22 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
+            Option<&[u64]>,
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
-        let code = entry.residual.functions.get(function as usize)?;
+        let code = entry.residual.function_get(function as usize)?;
         let view = entry.lane_views.get(function as usize)?;
-        Some(view.get_or_init(|| derive(code, &entry.constants, entry.residual.kind)))
+        Some(view.get_or_init(|| {
+            let live = entry.residual.register_root_masks(function);
+            let view = derive(code, &entry.constants, entry.residual.kind, live);
+            #[cfg(feature = "profile-lane-exits")]
+            {
+                let (start, end) = view.record_range();
+                super::lane_exits::register_view(start, end, census_label(entry, function));
+            }
+            view
+        }))
     }
 
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
@@ -1664,12 +1804,12 @@ impl ProgramStore {
         id: ProgramId,
         start: usize,
         count: usize,
-    ) -> Option<Rc<Vec<Value>>> {
+    ) -> Option<crate::heap::ArrayElements> {
         let entry = self.entry_mut(id)?;
         let end = start.checked_add(count)?;
         let cached = entry.const_arrays.get_mut(start)?;
         if cached.is_none() {
-            *cached = Some(Rc::new(entry.constants.get(start..end)?.to_vec()));
+            *cached = Some(crate::heap::ArrayElements::from_slice(entry.constants.get(start..end)?));
         }
         cached.clone()
     }
@@ -1695,19 +1835,19 @@ impl ProgramStore {
         Some(*cached.get_or_insert(source))
     }
 
-    pub(crate) fn regexp_literal_matcher(
+    pub(crate) fn regexp_literal_meta(
         &self,
         id: ProgramId,
         site: usize,
-    ) -> Option<Result<Rc<quench_regexp::Regex>, Rc<str>>> {
+    ) -> Option<Result<Rc<crate::heap::RegExpMeta>, Rc<str>>> {
         self.entry(id)?.regexp_literals.get(site)?.as_ref().cloned()
     }
 
-    pub(crate) fn cache_regexp_literal_matcher(
+    pub(crate) fn cache_regexp_literal_meta(
         &mut self,
         id: ProgramId,
         site: usize,
-        matcher: Result<Rc<quench_regexp::Regex>, Rc<str>>,
+        matcher: Result<Rc<crate::heap::RegExpMeta>, Rc<str>>,
     ) -> bool {
         let Some(entry) = self.entry_mut(id) else {
             return false;
@@ -1732,9 +1872,15 @@ impl ProgramStore {
         })
     }
 
-    /// Appends every value the stored programs keep alive to `roots`.
-    pub(crate) fn extend_roots(&self, roots: &mut Vec<Value>) {
-        for entry in self.programs.iter().flatten() {
+    /// Appends the values the stored programs keep alive to `roots`: every program's for a
+    /// full collection, only those of programs whose roots changed since the last
+    /// collection for a minor one.
+    pub(crate) fn extend_roots(&mut self, roots: &mut Vec<Value>, full: bool) {
+        for entry in self.programs.iter_mut().flatten() {
+            if !full && !entry.roots_pending {
+                continue;
+            }
+            entry.roots_pending = false;
             roots.extend_from_slice(&entry.constants);
             roots.extend(entry.function_sources.iter().flatten());
             roots.extend(entry.module_environment);
@@ -1744,6 +1890,13 @@ impl ProgramStore {
                 ModuleImport::Binding(_, _, fallback) => *fallback,
             }));
         }
+    }
+}
+
+impl ProgramStore {
+    /// Whether dropping the store reports something (`QUENCH_JS_JIT_STATS`).
+    pub(crate) fn reports_on_drop(&self) -> bool {
+        self.js_jit_diagnostics.is_some()
     }
 }
 
@@ -1778,7 +1931,8 @@ impl Drop for ProgramStore {
             let function_name = entry
                 .and_then(|entry| entry.residual.functions.get(*function as usize).map(|f| (entry, f)))
                 .and_then(|(entry, function)| {
-                    let atom = function.name.or(function.inferred_name)? as usize;
+                    let header = function.header();
+                    let atom = header.name.or(header.inferred_name)? as usize;
                     (atom < entry.residual.atoms.len()).then(|| &entry.residual.atoms[atom])
                 })
                 .or_else(|| counters.function_name.as_deref())
@@ -1896,4 +2050,34 @@ fn numeric_promotion_decision(numeric: u8, observations: u8) -> Option<bool> {
         .iter()
         .find_map(|(look, minimum)| (*look == observations).then_some(*minimum))?;
     Some(numeric >= minimum)
+}
+
+/// The label the `profile-lane-exits` function census gives `function` of `entry`'s program.
+#[cfg(feature = "profile-lane-exits")]
+fn census_label(entry: &ProgramEntry, function: u32) -> String {
+    let code = &entry.residual;
+    let body = code.function_get(function as usize);
+    format!(
+        "{} {} @{:?}",
+        code.source_name,
+        body.and_then(|body| body.name).map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+        body.and_then(|body| body.source_span).map(|span| span.start),
+    )
+}
+
+/// The runs a function makes on the general path before it derives its lane view, which costs
+/// about a thousand instructions per bytecode instruction, so a function that runs fewer times
+/// costs no view. Measured in instructions against deriving at the second run: four takes 3.3%
+/// from the jiti npm scenario (Babel's many functions that run a few times) and 0.1-0.6% from
+/// semver, ajv, Babel, color-convert and typescript-eslint; eight adds at most 0.3%.
+const LANE_VIEW_DEFERRED_RUNS: u8 = 4;
+
+/// Count one view-less run of a function; true once its deferred runs are complete.
+fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
+    let done = runs.get();
+    if done >= LANE_VIEW_DEFERRED_RUNS {
+        return true;
+    }
+    runs.set(done + 1);
+    false
 }

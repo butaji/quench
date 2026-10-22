@@ -1,29 +1,59 @@
 use crate::bytecode::{
     ControlFlowLayout, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout,
-    ImmediateRole, Instr, InstructionField, Operand, Register, Superinstruction, WideInstruction,
+    ImmediateRole, Instr, InstructionField, Op, Operand, Register, Superinstruction, WideInstruction,
 };
 
-pub(super) type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
+/// The registers a root mask covers: one bit each.
+pub(crate) const ROOT_MAP_REGISTERS: u16 = u64::BITS as u16;
 
-pub(crate) fn derive(
-    functions: &mut [Function],
-    methods: &[MethodSite],
-    fields: &[FieldSite],
-    superinstructions: &[Superinstruction],
-) -> crate::bytecode::RegisterRoots {
-    let mut roots = crate::bytecode::RegisterRoots::default();
-    for function in functions {
-        if let Some(map) = analyze(function, methods, fields, superinstructions) {
-            function.register_root_offset = roots.append(function.registers, map);
-        }
-    }
-    roots.shrink_to_fit();
-    roots
+pub(crate) type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
+
+/// The argument registers of each method site, by site index: the compiler's site specs, or
+/// a finished program's site table.
+pub(crate) trait MethodArguments {
+    fn arguments(&self, site: usize) -> u64;
 }
 
-pub(super) fn analyze(
+impl MethodArguments for [MethodSite] {
+    fn arguments(&self, site: usize) -> u64 {
+        self[site].2.iter().copied().fold(0, |mask, register| mask | bit(register))
+    }
+}
+
+impl MethodArguments for super::SiteTable<'_, MethodSite> {
+    fn arguments(&self, site: usize) -> u64 {
+        self.as_slice().arguments(site)
+    }
+}
+
+impl MethodArguments for crate::bytecode::ResidualProgram {
+    fn arguments(&self, site: usize) -> u64 {
+        let site = &self.method_sites[site];
+        let start = site.argument_start as usize;
+        self.method_arguments[start..start + usize::from(site.argument_count)]
+            .iter()
+            .copied()
+            .fold(0, |mask, register| mask | bit(register))
+    }
+}
+
+/// Records which functions liveness covers; the collector derives a covered function's
+/// per-pc root masks when it first finds one on the stack (`ResidualProgram::register_root_mask`).
+pub(crate) fn mark_register_roots<'a>(
+    functions: impl IntoIterator<Item = &'a mut Function>,
+    methods: &(impl MethodArguments + ?Sized),
+    fields: &[FieldSite],
+    superinstructions: &[Superinstruction],
+) {
+    for function in functions {
+        let covered = transfers(function, methods, fields, superinstructions).is_some();
+        function.register_roots = crate::bytecode::RegisterRoots::new(covered);
+    }
+}
+
+pub(crate) fn analyze(
     function: &Function,
-    methods: &[MethodSite],
+    methods: &(impl MethodArguments + ?Sized),
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> Option<Vec<u64>> {
@@ -35,11 +65,11 @@ pub(super) fn analyze(
 /// the masks; liveness iterates only the live sets over this fixed table.
 pub(super) fn transfers(
     function: &Function,
-    methods: &[MethodSite],
+    methods: &(impl MethodArguments + ?Sized),
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> Option<Vec<(u64, u64)>> {
-    if function.registers > 64 {
+    if function.registers > ROOT_MAP_REGISTERS {
         return None;
     }
     Some(
@@ -57,20 +87,30 @@ pub(super) fn transfers(
 
 /// Live registers before each instruction. A reverse pass settles every instruction whose
 /// successors all follow it, so only code with a backward successor iterates to a fixed point.
+/// Each instruction's successors are enumerated once, into `successors[starts[pc]..starts[pc
+/// + 1]]`, which every pass then reads.
 pub(super) fn analyze_transfers(function: &Function, transfers: &[(u64, u64)]) -> Vec<u64> {
-    let decoded = function.instructions().collect::<Vec<_>>();
-    let has_backward_successor = decoded.iter().enumerate().any(|(pc, &instruction)| {
-        let mut backward = false;
-        for_each_successor(function, pc, instruction, |successor| {
-            backward |= successor <= pc
+    let length = function.code.len();
+    let mut starts = Vec::with_capacity(length + 1);
+    let mut successors = Vec::with_capacity(length);
+    let mut has_backward_successor = false;
+    for (pc, instruction) in function.instructions().enumerate() {
+        starts.push(successors.len());
+        function.for_each_successor(pc, instruction, |successor, _| {
+            has_backward_successor |= successor <= pc;
+            successors.push(successor);
         });
-        backward
-    });
-    let mut live = vec![0; function.code.len() + 1];
+    }
+    starts.push(successors.len());
+    let mut live = vec![0; length + 1];
     loop {
         let mut changed = false;
-        for pc in (0..function.code.len()).rev() {
-            let output = live_out(function, &live, pc, decoded[pc]);
+        for pc in (0..length).rev() {
+            let output = successors[starts[pc]..starts[pc + 1]]
+                .iter()
+                .fold(0, |output, &successor| {
+                    output | live.get(successor).copied().unwrap_or(0)
+                });
             let (read, written) = transfers[pc];
             let next = read | (output & !written);
             if live[pc] != next {
@@ -86,38 +126,6 @@ pub(super) fn analyze_transfers(function: &Function, transfers: &[(u64, u64)]) -
     live
 }
 
-/// The instructions control can reach from `instruction` at `pc`, normally or through a
-/// handler covering it. `pc + 1` stands for the function's end after its last instruction.
-fn for_each_successor(
-    function: &Function,
-    pc: usize,
-    instruction: WideInstruction,
-    mut successor: impl FnMut(usize),
-) {
-    match instruction.op().control_flow_layout() {
-        ControlFlowLayout::Jump => successor(instruction.jump_target() as usize),
-        ControlFlowLayout::ConditionalJump => {
-            successor(pc + 1);
-            successor(instruction.jump_target() as usize);
-        }
-        ControlFlowLayout::BranchTable => {
-            crate::bytecode::branch_table_entries(pc, instruction).for_each(&mut successor)
-        }
-        ControlFlowLayout::Terminal => {}
-        ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
-            if instruction.returns_from_frame() => {}
-        ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => successor(pc + 1),
-    }
-    for handler in &function.handlers {
-        if pc as u32 >= handler.start && (pc as u32) < handler.end {
-            successor(handler.target as usize);
-            if let Some(target) = handler.return_target {
-                successor(target as usize);
-            }
-        }
-    }
-}
-
 pub(super) fn live_out(
     function: &Function,
     live: &[u64],
@@ -125,15 +133,22 @@ pub(super) fn live_out(
     instruction: WideInstruction,
 ) -> u64 {
     let mut output = 0;
-    for_each_successor(function, pc, instruction, |successor| {
+    function.for_each_successor(pc, instruction, |successor, _| {
         output |= live.get(successor).copied().unwrap_or(0);
     });
     output
 }
 
+/// Whether a frame paused at `op` can resume with an abrupt completion that enters the
+/// enclosing handler: a call that throws, or a suspension point (an awaited rejection, a
+/// generator's `throw` or `return`).
+fn resumes_into_handler(op: Op) -> bool {
+    op.control_flow_layout() == ControlFlowLayout::Call || matches!(op, Op::Await | Op::Yield | Op::YieldStar)
+}
+
 fn add_suspended_exception_roots(function: &Function, live: &mut [u64]) {
     for (pc, instruction) in function.instructions().enumerate() {
-        if instruction.op().control_flow_layout() != ControlFlowLayout::Call {
+        if !resumes_into_handler(instruction.op()) {
             continue;
         }
         for handler in &function.handlers {
@@ -146,7 +161,7 @@ fn add_suspended_exception_roots(function: &Function, live: &mut [u64]) {
 
 pub(super) fn uses(
     instruction: WideInstruction,
-    methods: &[MethodSite],
+    methods: &(impl MethodArguments + ?Sized),
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> u64 {
@@ -297,12 +312,8 @@ fn operand(value: u16, fields: &[FieldSite]) -> u64 {
     0
 }
 
-fn method_arguments(instruction: WideInstruction, methods: &[MethodSite]) -> u64 {
-    methods[instruction.method_site_index()]
-        .2
-        .iter()
-        .copied()
-        .fold(0, |mask, register| mask | bit(register))
+fn method_arguments(instruction: WideInstruction, methods: &(impl MethodArguments + ?Sized)) -> u64 {
+    methods.arguments(instruction.method_site_index())
 }
 
 /// A superinstruction member in fixed-width form. Members are packed without a wide table, so
@@ -329,6 +340,8 @@ mod tests {
     use super::*;
     use crate::bytecode::Op;
 
+    const NO_METHODS: &[MethodSite] = &[];
+
     #[test]
     fn branch_roots_are_derived_from_successor_uses() {
         let function = Function {
@@ -341,7 +354,7 @@ mod tests {
             params: 0,
             length: 0,
             parameter_end_pc: 0,
-            parameter_atoms: vec![],
+            parameter_atoms: vec![].into(),
             rest: false,
             is_async: false,
             is_generator: false,
@@ -356,21 +369,17 @@ mod tests {
             simple_parameters: true,
             strict: false,
             locals: 0,
-            local_atoms: vec![],
-            environment_atoms: vec![],
+            local_atoms: vec![].into(),
+            environment_atoms: vec![].into(),
             selective_capture_slots: None,
-            local_registers: Vec::new(),
+            local_registers: Vec::new().into(),
             inherited_with_scope: false,
-            lexical_atoms: vec![],
-            global_lexical_atoms: vec![],
-            global_var_atoms: vec![],
-            global_function_atoms: vec![],
-            global_annex_b_var_atoms: vec![],
-            global_immutable_atoms: vec![],
+            lexical_atoms: vec![].into(),
+            global_declarations: None,
             name_bindings: Default::default(),
-            binding_sites: vec![],
+            binding_sites: vec![].into(),
             source_positions: Default::default(),
-            environment_clones: vec![],
+            environment_clones: vec![].into(),
             code: vec![
                 Instr::new(Op::LoadConst, 0, 0, 0, 0),
                 Instr::new(Op::Jump, 0, 0, 0, 3),
@@ -387,13 +396,13 @@ mod tests {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             call_plan: Default::default(),
-            handlers: vec![],
-            register_root_offset: u32::MAX,
+            handlers: vec![].into(),
+            register_roots: Default::default(),
             undefined_register: None,
             parameter_registers: None,
             initial_register: Default::default(),
         };
-        let roots = analyze(&function, &[], &[], &[]).unwrap();
+        let roots = analyze(&function, NO_METHODS, &[], &[]).unwrap();
         assert_eq!(roots[3], bit(1));
         assert_eq!(roots[1], bit(1));
         assert_eq!(roots[1] & bit(0), 0);
@@ -412,9 +421,9 @@ mod tests {
             Op::WasmAtomicAccess,
         ] {
             let instruction = Instr::new(op, 0, 1, 3, 0);
-            assert_eq!(uses(instruction.as_wide(), &[], &[], &[]), bit(1) | bit(2) | bit(3));
+            assert_eq!(uses(instruction.as_wide(), NO_METHODS, &[], &[]), bit(1) | bit(2) | bit(3));
             assert_eq!(definitions(instruction.as_wide(), &[]), bit(0));
-            assert_eq!(uses(Instr::new(op, 0, 0, 0, 0).as_wide(), &[], &[], &[]), 0);
+            assert_eq!(uses(Instr::new(op, 0, 0, 0, 0).as_wide(), NO_METHODS, &[], &[]), 0);
         }
     }
 
@@ -428,7 +437,7 @@ mod tests {
             1,
             0,
         );
-        assert_eq!(uses(append.as_wide(), &[], &[], &[]), bit(1) | bit(2));
+        assert_eq!(uses(append.as_wide(), NO_METHODS, &[], &[]), bit(1) | bit(2));
         assert_eq!(definitions(append.as_wide(), &[]), 0);
         // A store's optional register receives a copy of the stored value.
         let store = Instr::new(
@@ -438,7 +447,7 @@ mod tests {
             0,
             0,
         );
-        assert_eq!(uses(store.as_wide(), &[], &[], &[]), bit(1));
+        assert_eq!(uses(store.as_wide(), NO_METHODS, &[], &[]), bit(1));
         assert_eq!(definitions(store.as_wide(), &[]), bit(3));
     }
 

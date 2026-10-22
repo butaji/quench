@@ -325,7 +325,7 @@ impl<H: Host> Vm<H> {
             .iter()
             .map(|part| part.value.as_str())
             .collect::<String>();
-        Ok(self.heap.alloc(Cell::String(text.into())))
+        Ok(self.heap.alloc_string(text.into()))
     }
 
     fn duration_format_to_parts(
@@ -339,14 +339,14 @@ impl<H: Host> Vm<H> {
         for part in parts {
             let object = self.object();
             let kind_atom = self.intern_atom("type");
-            let kind = self.heap.alloc(Cell::String(part.kind.into()));
+            let kind = self.heap.alloc_string(part.kind.into());
             self.set_property(object, kind_atom, kind)?;
-            let value_atom = self.intern_atom("value");
-            let value = self.heap.alloc(Cell::String(part.value.into()));
+            let value_atom = self.runtime_atoms.value;
+            let value = self.heap.alloc_string(part.value.into());
             self.set_property(object, value_atom, value)?;
             if let Some(unit) = part.unit {
                 let unit_atom = self.intern_atom("unit");
-                let unit = self.heap.alloc(Cell::String(unit.into()));
+                let unit = self.heap.alloc_string(unit.into());
                 self.set_property(object, unit_atom, unit)?;
             }
             values.push(object);
@@ -354,7 +354,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(values),
+                values,
             ),
         }))
     }

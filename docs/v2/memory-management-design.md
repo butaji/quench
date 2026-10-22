@@ -124,8 +124,11 @@ savings.
 - **One write barrier at owner granularity**, in the two mutable gateways that
   already carry every write (`RecordSpace::get_live_mut`, `Heap::get_mut`):
   if the owner is marked, clear its mark and log it. Clearing the mark is
-  the dedupe. Owner-attached VM edges (descriptors, promise reactions, async
-  continuations) call the same gateway when an edge is added. Object
+  the dedupe. Promise state and suspended awaits live in their own cells
+  (`Cell::Promise`, `Cell::AwaitState`, which is both handlers of its await's
+  reaction) and are traced with them; the remaining owner-attached VM edges
+  (descriptors, promise job tables) call the same gateway when an edge is
+  added. Object
   remembering, not card marking (cards rescan old objects on young stores).
 - **Fixed per-collection cost must be near zero.** Roots and owner edges are
   maintained incrementally (dirty sets), not rebuilt by scanning every table,

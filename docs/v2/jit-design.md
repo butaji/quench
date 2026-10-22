@@ -960,9 +960,14 @@ high-coverage loop therefore stays opt-in rather than shipping as the default.
 
 An allocation trace found a ~544 MiB async-hooks trigger map on Doxbee
 Promise workloads. Promise trigger contexts were retained after their Promise
-objects became unreachable. Promise async IDs and private reaction-job tokens
-share a numeric representation, so full GC now tracks their liveness
-separately, drops dead trigger entries, and shrinks an oversized sparse map.
+objects became unreachable. Trunk already gives a promise no context while
+nothing tracks promises (`create_promise_context`). For a tracked promise, the
+sweep that frees it now hands its context to `Host::release_promise_contexts`,
+apart from the reaction-job tokens it hands to `Host::release_job_context` (the
+host numbers the two independently), and the Node host drops its trigger entry;
+no collection walks the live promises. The measurement below was of the earlier
+v2-jit form of this fix, which collected the live promise contexts after each
+full collection.
 
 An uninstrumented three-round JetStream 3 run validated output and reduced
 median Quench peak RSS from 1,012 MB to 170 MB on `doxbee-promise`, and from

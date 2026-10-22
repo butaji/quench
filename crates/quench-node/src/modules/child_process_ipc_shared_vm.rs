@@ -400,8 +400,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
 }
 
 pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>, owner:u64, target:RootId) -> Result<(),RootedError> {
-    let socket={let state=context.host_mut().shared_state();let mut state=state.borrow_mut();channel(&mut state,owner).and_then(IpcChannel::take_socket)};
-    let Some(socket)=socket else {return Ok(())};
+    let taken={let state=context.host_mut().shared_state();let mut state=state.borrow_mut();channel(&mut state,owner).and_then(|channel|{let serialization=channel.serialization;channel.take_socket().map(|socket|(socket,serialization))})};
+    let Some((socket,serialization))=taken else {return Ok(())};
     let constructor=super::pipe_binding::constructor(context)?;
     let kind=context.number(2.0);
     let pipe=context.construct_rooted(constructor,constructor,&[kind])?;
@@ -412,19 +412,19 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>, owner:u64, targ
     }
     let policy=crate::host::shared_vm::commonjs::node_library_module(context,"child_process.js","internal/child_process.js")?;
     let setup=super::event_constructor_shared_vm::get(context,policy,"setupChannel")?;
-    let json=context.string_rooted("json");let undefined=context.undefined();
+    let mode=context.string_rooted(serialization.mode());let undefined=context.undefined();
     let count=context.number(2.0);set(context,target,"_closesNeeded",count)?;
     let count=context.number(0.0);set(context,target,"_closesGot",count)?;
-    context.call_rooted(setup,undefined,&[target,pipe,json])?;
+    context.call_rooted(setup,undefined,&[target,pipe,mode])?;
     Ok(())
 }
 
 pub(crate) fn activate_process(context:&mut NativeContext<'_,NodeHost>)->Result<(),RootedError>{
-    let (process,fd)={let shared=context.host_mut().shared_state();let state=shared.borrow();(state.process_module,state.process_ipc.channel.as_ref().filter(|c|!c.closed()).map(IpcChannel::fd))};
-    let (Some(process),Some(fd))=(process,fd) else{return Ok(())};
+    let (process,channel)={let shared=context.host_mut().shared_state();let state=shared.borrow();(state.process_module,state.process_ipc.channel.as_ref().filter(|c|!c.closed()).map(|c|(c.fd(),c.serialization)))};
+    let (Some(process),Some((fd,serialization)))=(process,channel) else{return Ok(())};
     let policy=crate::host::shared_vm::commonjs::node_library_module(context,"child_process.js","child_process.js")?;
     let fork=super::event_constructor_shared_vm::get(context,policy,"_forkChild")?;
-    let fd=context.number(fd as f64);let mode=context.string_rooted("json");
+    let fd=context.number(fd as f64);let mode=context.string_rooted(serialization.mode());
     context.call_rooted(fork,process,&[fd,mode])?;Ok(())
 }
 
@@ -896,4 +896,20 @@ pub(crate) fn listener_reference(context: &mut NativeContext<'_, NodeHost>, _: R
         context.call_rooted(method, control, &[])?;
     }
     Ok(context.undefined())
+}
+
+impl State {
+    pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::{require_quiescent, HostSnap};
+        let Self { channel, parse, stringify, received } = self;
+        require_quiescent(channel.is_none() && received.is_empty(), "an IPC channel")?;
+        parse.write(writer)?;
+        stringify.write(writer)
+    }
+    pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
+        use crate::host::startup_snapshot::HostSnap;
+        self.parse = HostSnap::read(reader)?;
+        self.stringify = HostSnap::read(reader)?;
+        Ok(())
+    }
 }

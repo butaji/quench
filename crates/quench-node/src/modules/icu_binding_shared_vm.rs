@@ -198,3 +198,5 @@ pub(crate) fn error_name(
     let status = c.to_number(args[0])? as i32;
     Ok(c.string_rooted(&super::text_decoder_icu::status_name(status)))
 }
+
+crate::host::startup_snapshot::host_snap_empty!(State { entries } "an ICU converter");

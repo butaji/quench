@@ -147,13 +147,20 @@ const SERVER_CLOSE_FACTORY: &str = r#"((closeOperation) => function(callback) {
 /// the native exchange `id` names. Methods live on the prototype and read the exchange from
 /// the instance; `end` writes and finishes synchronously, then `finish` and `close` follow on
 /// ticks, as Node's socket write completion and `emitCloseNT` deliver them.
+/// Node's `getDefaultHighWaterMark()` for byte streams outside Windows
+/// (`lib/internal/streams/state.js`); a socket write returns false once its
+/// writable length reaches it.
+pub(super) const RESPONSE_HIGH_WATER_MARK: usize = 64 * 1024;
+
 const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperation, removeHeaderOperation, write, finish, writeHeadOperation, destroyOperation, initializeResponse, nextTick, codes) => {
   const kExchange = Symbol("kResponseExchange");
   const kFinished = Symbol("kResponseFinished");
-  const normalizeHeaderValue = (value) => {
-    if (value === undefined) return [value, false];
-    if (Array.isArray(value)) return [value.map((item) => String(item)), true];
-    return [String(value), false];
+  // A header value as the native exchange takes it: each element of an array as a string,
+  // any other value but `undefined` as one string; an array also marks a multiple header.
+  const headerValue = (value) => {
+    if (value === undefined) return value;
+    if (Array.isArray(value)) return value.map((item) => String(item));
+    return String(value);
   };
   const validChunk = (chunk) => {
     if (chunk === null) throw new codes.ERR_STREAM_NULL_VALUES();
@@ -174,7 +181,6 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
     nextTick(() => response.emit("close"));
   };
   function ServerResponse(id, statusCode, request, server, socket) {
-    // The native exchange calls the constructor as a function for each request.
     if (!(this instanceof ServerResponse)) {
       return new ServerResponse(id, statusCode, request, server, socket);
     }
@@ -212,8 +218,8 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
   });
   define("constructor", ServerResponse);
   define("setHeader", function setHeader(name, value) {
-    const [normalized, multiple] = normalizeHeaderValue(value);
-    setHeaderOperation(this[kExchange].id, name, normalized, multiple);
+    const multiple = Array.isArray(value);
+    setHeaderOperation(this[kExchange].id, name, headerValue(value), multiple);
     return this;
   });
   define("getHeader", function getHeader(name) {
@@ -233,14 +239,18 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
         if (source.length % 2 !== 0) invalid = true;
         else {
           for (let index = 0; index < source.length; index += 2) {
-            const [value, multiple] = normalizeHeaderValue(source[index + 1]);
-            entries.push(source[index], value, multiple);
+            const value = source[index + 1];
+            const multiple = Array.isArray(value);
+            entries.push(source[index], headerValue(value), multiple);
           }
         }
       } else if (source !== null && typeof source === "object") {
-        for (const name of Object.keys(source)) {
-          const [value, multiple] = normalizeHeaderValue(source[name]);
-          entries.push(name, value, multiple);
+        const names = Object.keys(source);
+        for (let index = 0; index < names.length; index++) {
+          const name = names[index];
+          const value = source[name];
+          const multiple = Array.isArray(value);
+          entries.push(name, headerValue(value), multiple);
         }
       } else {
         invalid = true;
@@ -260,13 +270,14 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
       writeAfterEnd(this, callback);
       return false;
     }
-    writeChunk(this, chunk, encoding, true);
+    const belowMark = writeChunk(this, chunk, encoding, true);
     if (typeof callback === "function") nextTick(callback);
-    return true;
+    return belowMark;
   });
   const writeChunk = (response, chunk, encoding, more) => {
-    write(response[kExchange].id, chunk, more, response.statusCode, response.statusMessage, response, encoding);
+    const belowMark = write(response[kExchange].id, chunk, more, response.statusCode, response.statusMessage, response, encoding);
     response._headerSent = true;
+    return belowMark;
   };
   define("end", function end(chunk, encoding, callback) {
     if (typeof chunk === "function") {
@@ -358,6 +369,20 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let map_set = context.get_property_rooted(prototype, key)?;
     set(context, response_data, "responses", responses)?;
     set(context, response_data, "set", map_set)?;
+    // A finished response's host entry lives as long as its JavaScript object: a keep-alive
+    // connection serves many responses and must not keep every one of them.
+    let release =
+        context.host_function(crate::host::shared_vm::operation("httpResponseRelease"))?;
+    let key = context.string_rooted("FinalizationRegistry");
+    let registry_constructor = context.get_property_rooted(global, key)?;
+    let registry =
+        context.construct_rooted(registry_constructor, registry_constructor, &[release])?;
+    let key = context.string_rooted("prototype");
+    let registry_prototype = context.get_property_rooted(registry_constructor, key)?;
+    let key = context.string_rooted("register");
+    let register = context.get_property_rooted(registry_prototype, key)?;
+    set(context, response_data, "registry", registry)?;
+    set(context, response_data, "register", register)?;
     let initialize_response = context.host_function_with_data(
         crate::host::shared_vm::operation("httpResponseInitialize"),
         response_data,
@@ -409,7 +434,20 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let incoming_constructor = crate::host::shared_vm::commonjs::node_library_export(
         context, "http.js", "_http_incoming.js", "IncomingMessage",
     )?;
-    let incoming_data = context.array_rooted(&[incoming_constructor, emitter])?;
+    // One `_read` and `_destroy` serve every message: each finds its exchange under the
+    // host-private key its side records (`incoming::create`).
+    let server_exchange = context.private_symbol_rooted(Some("node:http:serverExchange"));
+    let client_exchange = context.private_symbol_rooted(Some("node:http:clientExchange"));
+    let exchange_keys = context.array_rooted(&[server_exchange, client_exchange])?;
+    let incoming_read = context.host_function_named_with_data(
+        crate::host::shared_vm::operation("httpIncomingRead"), "_read", exchange_keys,
+    )?;
+    let incoming_destroy = context.host_function_named_with_data(
+        crate::host::shared_vm::operation("httpIncomingDestroy"), "_destroy", exchange_keys,
+    )?;
+    let incoming_data = context.array_rooted(&[
+        incoming_constructor, emitter, incoming_read, incoming_destroy, server_exchange, client_exchange,
+    ])?;
     let incoming_factory = context.host_function_with_data(
         crate::host::shared_vm::operation("httpIncomingCreate"), incoming_data,
     )?;
@@ -1038,12 +1076,30 @@ pub(crate) fn response_initialize(
 ) -> Result<RootId, RootedError> {
     let id = argument(context, args.first().copied());
     let response = argument(context, args.get(1).copied());
+    let numeric_id = argument_id(context, Some(id))?;
+    let owner = context.host_weak_root(response)?;
+    let replaced = {
+        let state = context.host_mut().shared_state();
+        let mut host = state.borrow_mut();
+        match host.http.responses.get_mut(&numeric_id) {
+            Some(record) => record.owner.replace(owner),
+            None => Some(owner),
+        }
+    };
+    if let Some(stale) = replaced {
+        context.release_host_weak_root(stale);
+    }
     let data = context.host_function_data()?;
     let key = context.string_rooted("responses");
     let responses = context.get_property_rooted(data, key)?;
     let key = context.string_rooted("set");
     let map_set = context.get_property_rooted(data, key)?;
     context.call_rooted(map_set, responses, &[response, id])?;
+    let key = context.string_rooted("registry");
+    let registry = context.get_property_rooted(data, key)?;
+    let key = context.string_rooted("register");
+    let register = context.get_property_rooted(data, key)?;
+    context.call_rooted(register, registry, &[response, id])?;
     let yes = context.boolean(true);
     set(context, response, "sendDate", yes)?;
     let undefined = context.undefined();
@@ -1178,29 +1234,43 @@ pub(crate) fn response_write(
 ) -> Result<RootId, RootedError> {
     let id = argument_id(context, args.first().copied())?;
     let chunk_root = argument(context, args.get(1).copied());
-    let chunk = response_chunk_bytes(context, chunk_root, args.get(6).copied())?;
     let explicit = args
         .get(2)
         .and_then(|root| context.rooted_value(*root))
         .and_then(Value::as_bool)
         .unwrap_or(true);
+    let state = context.host_mut().shared_state();
+    let lifecycle = state
+        .borrow()
+        .http
+        .responses
+        .get(&id)
+        .map(|response| response.lifecycle)
+        .ok_or_else(|| RootedError::host("shared HTTP response is no longer active"))?;
+    // A view streamed after the head is framed straight into the socket's queue; other
+    // chunks are encoded first, before the lifecycle check, as Node validates them.
+    let streamed_view =
+        explicit && lifecycle != super::state::ResponseLifecycle::Open && context.with_view_bytes_rooted(chunk_root, |_| ()).is_some();
+    let chunk = if streamed_view {
+        Vec::new()
+    } else {
+        response_chunk_bytes(context, chunk_root, args.get(6).copied())?
+    };
+    if lifecycle.is_terminal() {
+        return throw_response_error(
+            context,
+            false,
+            "ERR_STREAM_WRITE_AFTER_END",
+            "write after end",
+        );
+    }
     if !explicit {
-        let state = context.host_mut().shared_state();
         let mut host = state.borrow_mut();
         let response = host
             .http
             .responses
             .get_mut(&id)
-            .ok_or_else(|| RootedError::host("shared HTTP response is no longer active"))?;
-        if response.lifecycle.is_terminal() {
-            drop(host);
-            return throw_response_error(
-                context,
-                false,
-                "ERR_STREAM_WRITE_AFTER_END",
-                "write after end",
-            );
-        }
+            .expect("response checked active above");
         response.body.push(chunk, false);
         return Ok(context.boolean(true));
     }
@@ -1212,59 +1282,60 @@ pub(crate) fn response_write(
         args.get(4).copied(),
     )?;
     response_send_date(context, id, args.get(5).copied())?;
-    let state = context.host_mut().shared_state();
-    let (socket, bytes) = {
-        let mut host = state.borrow_mut();
-        let response = host
-            .http
-            .responses
-            .get_mut(&id)
-            .ok_or_else(|| RootedError::host("shared HTTP response is no longer active"))?;
-        if response.lifecycle.is_terminal() {
+    let mut host = state.borrow_mut();
+    let response = host
+        .http
+        .responses
+        .get_mut(&id)
+        .ok_or_else(|| RootedError::host("shared HTTP response is no longer active"))?;
+    let socket = response.socket;
+    let chunked = is_chunked(&response.headers);
+    if response.lifecycle == super::state::ResponseLifecycle::Open {
+        enable_streaming_framing(&mut response.headers, response.use_chunked_encoding_by_default);
+        if invalid_trailer(&response.headers) {
             drop(host);
-            return throw_response_error(
-                context,
-                false,
-                "ERR_STREAM_WRITE_AFTER_END",
-                "write after end",
-            );
+            return throw_invalid_trailer(context);
         }
-        let first_write = response.lifecycle == super::state::ResponseLifecycle::Open;
-        let bytes = if first_write {
-            enable_streaming_framing(
-                &mut response.headers,
-                response.use_chunked_encoding_by_default,
-            );
-            if invalid_trailer(&response.headers) {
-                drop(host);
-                return throw_invalid_trailer(context);
-            }
-            response.lifecycle.send_headers();
-            crate::modules::http_protocol::compose(
-                status,
-                &status_message,
-                &response.headers,
-                &chunk,
-                &[],
-                !response.http10,
-                response.http10,
-                response.send_date,
-                std::time::SystemTime::now(),
-            )
-        } else if is_chunked(&response.headers) {
-            crate::modules::http_protocol::chunk_frame(&chunk)
-        } else {
-            chunk
+        response.lifecycle.send_headers();
+        let head = crate::modules::http_protocol::compose(
+            status,
+            &status_message,
+            &response.headers,
+            &chunk,
+            &[],
+            !response.http10,
+            response.http10,
+            response.send_date,
+            std::time::SystemTime::now(),
+        );
+        net_shared_vm::write(&mut host.tcp, socket, &head).map_err(RootedError::host)?;
+    } else {
+        let mut write = |body: &[u8]| {
+            net_shared_vm::write_with(&mut host.tcp, socket, |pending| {
+                if chunked {
+                    crate::modules::http_protocol::append_chunk_frame(pending, body);
+                } else {
+                    pending.extend_from_slice(body);
+                }
+            })
         };
-        (response.socket, bytes)
-    };
-    net_shared_vm::write(
-        &mut context.host_mut().shared_state().borrow_mut().tcp,
-        socket,
-        &bytes,
-    )
-    .map_err(RootedError::host)?;
-    Ok(context.boolean(true))
+        let written = if streamed_view {
+            context.with_view_bytes_rooted(chunk_root, &mut write).unwrap_or_else(|| write(&[]))
+        } else {
+            write(&chunk)
+        };
+        written.map_err(RootedError::host)?;
+    }
+    net_shared_vm::try_flush(&mut host.tcp, socket);
+    let below_mark = net_shared_vm::queued_bytes(&host.tcp, socket)
+        .is_none_or(|queued| queued < RESPONSE_HIGH_WATER_MARK);
+    if !below_mark && !host.http.drain_waiters.contains_key(&socket) {
+        drop(host);
+        let response = argument(context, args.get(5).copied());
+        let waiter = context.retain(response)?;
+        state.borrow_mut().http.drain_waiters.insert(socket, waiter);
+    }
+    Ok(context.boolean(below_mark))
 }
 
 pub(crate) fn response_write_head(
@@ -1413,7 +1484,8 @@ pub(crate) fn response_finish(
                 status_message.clone(),
                 response.headers.clone(),
                 headers_sent,
-                response.body.bytes(),
+                // An ended response never writes again: its body leaves with this frame.
+                std::mem::take(&mut response.body).bytes(),
                 is_chunked(&response.headers),
                 response.send_date,
                 response.http10,
@@ -1500,20 +1572,28 @@ pub(crate) fn response_finish(
         args.get(5).copied(),
         args.get(6).copied(),
     ) {
-        let message = context.object_rooted()?;
-        set(context, message, "request", request)?;
-        set(context, message, "response", response)?;
-        set(context, message, "server", server)?;
-        set(context, message, "socket", socket)?;
         let shared_state = context.host_mut().shared_state();
-        let result = {
+        // The finish message is made only for a channel with subscribers, as Node's server
+        // publishes it only then (`hasSubscribers`).
+        let subscribed = crate::modules::diagnostics_channel_shared_vm::channel_has_subscribers(
+            &shared_state.borrow(),
+            RESPONSE_FINISH_CHANNEL,
+        );
+        let result = if subscribed {
+            let message = context.object_rooted()?;
+            set(context, message, "request", request)?;
+            set(context, message, "response", response)?;
+            set(context, message, "server", server)?;
+            set(context, message, "socket", socket)?;
             let _scope =
                 crate::modules::async_hooks_shared_vm::enter_context(&shared_state, async_id);
             crate::modules::diagnostics_channel_shared_vm::publish_named(
                 context,
-                "http.server.response.finish",
+                RESPONSE_FINISH_CHANNEL,
                 message,
             )
+        } else {
+            Ok(())
         };
         for root in
             crate::modules::async_hooks_shared_vm::take_context_stores(&shared_state, async_id)
@@ -1525,6 +1605,31 @@ pub(crate) fn response_finish(
     Ok(context.undefined())
 }
 
+/// The diagnostics channel a server's response finish publishes to.
+const RESPONSE_FINISH_CHANNEL: &str = "http.server.response.finish";
+
+/// The finalization callback of a collected response object: a finished response's host
+/// entry goes with it. An unfinished one stays until its socket closes.
+pub(crate) fn response_release(
+    context: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = argument_id(context, args.first().copied())?;
+    let state = context.host_mut().shared_state();
+    let mut host = state.borrow_mut();
+    if host
+        .http
+        .responses
+        .get(&id)
+        .is_some_and(|response| response.lifecycle.is_terminal())
+    {
+        host.http.responses.remove(&id);
+    }
+    drop(host);
+    Ok(context.undefined())
+}
+
 pub(crate) fn response_destroy(
     context: &mut Context<'_>,
     _: RootId,
@@ -1533,7 +1638,7 @@ pub(crate) fn response_destroy(
     let id = argument_id(context, args.first().copied())?;
     let shared_state = context.host_mut().shared_state();
     let mut host = shared_state.borrow_mut();
-    let (socket, async_id) = {
+    let (socket, async_id, owner) = {
         let Some(response) = host.http.responses.remove(&id) else {
             return Ok(context.undefined());
         };
@@ -1542,7 +1647,7 @@ pub(crate) fn response_destroy(
             host.http.responses.insert(id, response);
             return Ok(context.undefined());
         }
-        (response.socket, response.async_id)
+        (response.socket, response.async_id, response.owner)
     };
     let server_id = host
         .http
@@ -1556,8 +1661,10 @@ pub(crate) fn response_destroy(
     }
     net_shared_vm::close_socket(&mut host.tcp, socket);
     drop(host);
-    for root in crate::modules::async_hooks_shared_vm::take_context_stores(&shared_state, async_id)
-    {
+    if let Some(owner) = owner {
+        context.release_host_weak_root(owner);
+    }
+    for root in crate::modules::async_hooks_shared_vm::retire_context(&shared_state, async_id) {
         context.release_root(root);
     }
     Ok(context.undefined())
@@ -1778,8 +1885,7 @@ fn set(
     name: &str,
     value: RootId,
 ) -> Result<(), RootedError> {
-    let key = context.string_rooted(name);
-    if context.set_property_rooted(object, key, value, object)? {
+    if context.set_named_property_rooted(object, name, value)? {
         Ok(())
     } else {
         Err(RootedError::host(format!(

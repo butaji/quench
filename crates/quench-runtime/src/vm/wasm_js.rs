@@ -240,6 +240,9 @@ pub(crate) struct WasmJsIntrinsics {
     pub(crate) memory: Value,
     pub(crate) table: Value,
     pub(crate) global: Value,
+    /// `WebAssembly.JSTag`: the tag whose one `externref` parameter carries a JavaScript
+    /// exception through Wasm.
+    pub(crate) js_tag: Value,
 }
 
 impl Default for WasmJsIntrinsics {
@@ -250,18 +253,20 @@ impl Default for WasmJsIntrinsics {
             memory: Value::NULL,
             table: Value::NULL,
             global: Value::NULL,
+            js_tag: Value::NULL,
         }
     }
 }
 
 impl WasmJsIntrinsics {
-    pub(crate) fn roots(&self) -> [Value; 5] {
+    pub(crate) fn roots(&self) -> [Value; 6] {
         [
             self.module,
             self.instance,
             self.memory,
             self.table,
             self.global,
+            self.js_tag,
         ]
     }
 }
@@ -282,6 +287,7 @@ const INTERFACES: &[Interface] = &[
         statics: &[
             ("exports", Native::WasmModuleExports),
             ("imports", Native::WasmModuleImports),
+            ("customSections", Native::WasmModuleCustomSections),
         ],
         methods: &[],
         getters: &[],
@@ -348,6 +354,7 @@ pub(super) fn is_wasm_js_native(native: Native) -> bool {
             | Native::WasmModule
             | Native::WasmModuleExports
             | Native::WasmModuleImports
+            | Native::WasmModuleCustomSections
             | Native::WasmInstance
             | Native::WasmInstanceExportsGetter
             | Native::WasmMemory
@@ -402,6 +409,7 @@ pub(super) fn wasm_js_native_length(native: Native) -> Option<f64> {
         | Native::WasmTableLengthGetter
         | Native::WasmGlobalValueGetter
         | Native::WasmGlobalValueOf => 0.0,
+        Native::WasmModuleCustomSections => 2.0,
         _ => return None,
     })
 }
@@ -507,6 +515,22 @@ impl<H: Host> Vm<H> {
             self.set_builtin_value_named(namespace, interface.name, constructor)?;
         }
         self.install_wasm_errors(program, namespace)?;
+        let js_tag = self.heap.alloc(js_tag_cell());
+        self.wasm_js.js_tag = js_tag;
+        let atom = self.intern_atom("JSTag");
+        self.set_property_with_attributes(
+            namespace,
+            atom,
+            js_tag,
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        )?;
         self.global(program, "WebAssembly", namespace)
     }
 
@@ -552,7 +576,7 @@ impl<H: Host> Vm<H> {
         native: Native,
         text: String,
     ) -> JsError {
-        let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
+        let message = self.heap.alloc_string(JsString::from_str(&text));
         let object = self
             .construct_error_native(program, native, &[message])
             .unwrap_or(Value::UNDEFINED);
@@ -597,6 +621,28 @@ impl<H: Host> Vm<H> {
                     values.push(
                         self.wasm_descriptor(p, &[("name", &name), ("kind", kind_name(kind))])?,
                     );
+                }
+                Ok(self.new_array(values))
+            }
+            Native::WasmModuleCustomSections => {
+                let module = self.wasm_module_of(p, arg(0))?;
+                // `sectionName` is a required DOMString.
+                if args.len() < 2 {
+                    return Err(self.type_error(
+                        p,
+                        "WebAssembly.Module.customSections(): Argument 1 must be a string".into(),
+                    ));
+                }
+                let name = self.to_string(p, arg(1))?;
+                let name = String::from(name);
+                let sections = module
+                    .custom_sections_named(&name)
+                    .map(<[u8]>::to_vec)
+                    .collect::<Vec<_>>();
+                let mut values = Vec::with_capacity(sections.len());
+                for bytes in sections {
+                    let length = bytes.len();
+                    values.push(self.new_array_buffer_cell(bytes.into(), false, length, false, false));
                 }
                 Ok(self.new_array(values))
             }
@@ -1044,7 +1090,12 @@ impl<H: Host> Vm<H> {
                     ))
                 },
             );
-        self.create_wasm_host_function(&name.name, target, signature)
+        self.create_owned_wasm_host_function(
+            &name.name,
+            target,
+            signature,
+            Some(module.signatures.clone()),
+        )
     }
 
     /// Recognizes only the canonical Emscripten helper body and its real mutable
@@ -1061,16 +1112,16 @@ impl<H: Host> Vm<H> {
         if signature.params.as_slice() != [I32, I32, I32] {
             return None;
         }
-        let Cell::Function {
+        let FunctionRecord {
             kind: FunctionKind::User(program_id, function_id),
             env,
             ..
-        } = self.heap.get(function)?
+        } = self.heap.function(function)?
         else {
             return None;
         };
         let program = self.programs.get(*program_id)?;
-        let metadata = program.functions.get(*function_id as usize)?;
+        let metadata = program.function_get(*function_id as usize)?;
         if metadata.params != 3
             || metadata.inherited_with_scope
             || !metadata.binding_sites.is_empty()
@@ -1100,13 +1151,17 @@ impl<H: Host> Vm<H> {
             .position(|atom| atom == "HEAPU8")?
             .try_into()
             .ok()?;
-        let binding = metadata.name_bindings.get(view_atom)?;
-        if binding.with_depth != 0 || binding.kind != crate::bytecode::LexicalBindingKind::Mutable {
+        // The exact source reads one captured name, HEAPU8, so its one capture load names the
+        // binding's depth and slot; name bindings are kept only for functions that resolve
+        // names dynamically.
+        let mut captures = metadata
+            .instructions()
+            .filter(|instruction| instruction.op() == crate::bytecode::Op::LoadCapture);
+        let load = captures.next()?;
+        if captures.next().is_some() {
             return None;
         }
-        let crate::bytecode::EvalBindingLocation::Capture { depth, slot } = binding.location else {
-            return None;
-        };
+        let (depth, slot) = (load.capture_depth(), load.capture_slot());
         let owner_environment = self.environment_capture_env(*env, false, depth)?;
 
         // Verify that the statically resolved binding still names this slot in a
@@ -1123,9 +1178,9 @@ impl<H: Host> Vm<H> {
             else {
                 return None;
             };
-            if scope.root_eval_scope
-                || scope.binding_site_pc.is_some()
-                || !scope.with_objects.is_empty()
+            if scope.root_eval_scope()
+                || scope.binding_site_pc().is_some()
+                || !scope.with_objects().is_empty()
                 || self
                     .heap
                     .environment_bindings(environment)?
@@ -1135,13 +1190,13 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             if environment == owner_environment {
-                let owner_program_id = super::program_store::ProgramId::from_raw(scope.program?);
+                let owner_program_id = super::program_store::ProgramId::from_raw(scope.program()?);
                 let owner_program = self.programs.get(owner_program_id)?;
-                let owner_metadata = owner_program.functions.get(*owner_function as usize)?;
+                let owner_metadata = owner_program.function_get(*owner_function as usize)?;
                 let owns_atom = if *owner_function == super::ROOT_FUNCTION_ID {
                     owner_metadata.declares_global_lexical(view_atom)
                         || (owner_program.root_variables_are_local()
-                            && owner_metadata.global_var_atoms.contains(&view_atom))
+                            && owner_metadata.global_var_atoms().contains(&view_atom))
                 } else {
                     owner_metadata.declares_environment_atom(view_atom)
                 };
@@ -1241,7 +1296,7 @@ impl<H: Host> Vm<H> {
                 let exports = self.heap.root_value(exports_root).expect("rooted exports");
                 let key = self
                     .heap
-                    .alloc(Cell::String(JsString::from_str(&export.name)));
+                    .alloc_string(JsString::from_str(&export.name));
                 let key = self.to_property_key(p, key)?;
                 let record = super::object_descriptors::PropertyDescriptorRecord::data(value);
                 self.define_own_property_record(p, exports, key, record)?;
@@ -1290,8 +1345,8 @@ impl<H: Host> Vm<H> {
 
     /// The Wasm closure behind an exported-function wrapper.
     fn wasm_exported_closure(&self, value: Value) -> Option<Value> {
-        match self.heap.get(value)? {
-            Cell::Function {
+        match self.heap.function(value)? {
+            FunctionRecord {
                 kind: FunctionKind::Native(Native::WasmExportedFunction),
                 env,
                 ..
@@ -1328,8 +1383,8 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .map(|value| self.encode_wasm_value(value))
             .collect::<Vec<_>>();
-        let (result, declarations) = match self.heap.get(function) {
-            Some(Cell::Function {
+        let (result, declarations) = match self.heap.function(function) {
+            Some(FunctionRecord {
                 kind: FunctionKind::User(program, index),
                 env,
                 ..
@@ -1472,7 +1527,7 @@ impl<H: Host> Vm<H> {
                 Ok(self.heap.alloc(Cell::Array {
                     object: crate::heap::ArrayObject::new(
                         Self::empty_object(Value::NULL),
-                        encoded.into(),
+                        encoded,
                     ),
                 }))
             }
@@ -1634,8 +1689,8 @@ impl<H: Host> Vm<H> {
         self.data_property_without_getter(view, copy_within_atom)
             .is_some_and(|method| {
                 matches!(
-                    self.heap.get(method),
-                    Some(Cell::Function {
+                    self.heap.function(method),
+                    Some(FunctionRecord {
                         kind: FunctionKind::Native(Native::Uint8ArrayCopyWithin),
                         ..
                     })
@@ -1687,7 +1742,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         Ok(match value {
             WasmValue::I32(value) => Value::number(f64::from(value)),
-            WasmValue::I64(value) => self.heap.alloc(Cell::BigInt(value.to_string())),
+            WasmValue::I64(value) => self.heap.alloc(Cell::bigint(value.into())),
             WasmValue::F32(bits) => Value::number(f64::from(f32::from_bits(bits))),
             WasmValue::F64(bits) => Value::number(f64::from_bits(bits)),
             WasmValue::FuncRef(function) => self.wasm_js_function(function, None)?,
@@ -1779,7 +1834,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let descriptor = self.object();
         for &(name, text) in fields {
-            let value = self.heap.alloc(Cell::String(JsString::from_str(text)));
+            let value = self.heap.alloc_string(JsString::from_str(text));
             self.set_named(p, descriptor, name, value)?;
         }
         Ok(descriptor)
@@ -1894,4 +1949,20 @@ impl<H: Host> Vm<H> {
             _ => Err(self.type_error(p, "receiver is not a WebAssembly.Global".into())),
         }
     }
+}
+
+/// `WebAssembly.JSTag`'s type: a tag whose one `externref` parameter carries a JavaScript
+/// exception through Wasm. Every realm makes the same one.
+pub(crate) fn js_tag_type() -> (crate::WasmTypes, u32) {
+    let declarations = crate::WasmTypes::from_functions([wasmparser::FuncType::new(
+        [wasmparser::ValType::EXTERNREF],
+        [],
+    )]);
+    (declarations, 0)
+}
+
+/// `WebAssembly.JSTag`'s cell (`js_tag_type`).
+pub(crate) fn js_tag_cell() -> Cell {
+    let (declarations, ty) = js_tag_type();
+    Cell::WasmTag { declarations, ty }
 }

@@ -44,7 +44,7 @@ impl<H: Host> Vm<H> {
             Native::BigIntToLocaleString,
         )?;
         self.set_realm_bigint_method(global, prototype, "valueOf", Native::BigIntValueOf)?;
-        if self.well_known_symbols.contains_key("toStringTag") {
+        if self.well_known_symbols.get(WellKnownSymbol::ToStringTag).is_some() {
             self.install_builtin_to_string_tag(prototype, "BigInt")?;
         }
         if global == self.realm.globals {
@@ -143,12 +143,9 @@ impl<H: Host> Vm<H> {
         if !(2.0..=36.0).contains(&radix) {
             return Err(self.range_error(p, "invalid BigInt radix".into()));
         }
-        let value = value
-            .parse::<num_bigint::BigInt>()
-            .map_err(|_| self.type_error(p, "invalid BigInt value".into()))?;
         Ok(self
             .heap
-            .alloc(Cell::String(value.to_str_radix(radix as u32).into())))
+            .alloc_string(value.to_str_radix(radix as u32).into()))
     }
 
     fn bigint_as_n(
@@ -166,14 +163,14 @@ impl<H: Host> Vm<H> {
             value.sign() != num_bigint::Sign::Minus && width >= magnitude_bits
         };
         if unchanged {
-            return Ok(self.heap.alloc(Cell::BigInt(value.to_string())));
+            return Ok(self.heap.alloc(Cell::bigint(value)));
         }
         let modulus = num_bigint::BigInt::from(1_u8) << width;
         let mut reduced = ((value % &modulus) + &modulus) % &modulus;
         if signed && width > 0 && reduced >= (num_bigint::BigInt::from(1_u8) << (width - 1)) {
             reduced -= &modulus;
         }
-        Ok(self.heap.alloc(Cell::BigInt(reduced.to_string())))
+        Ok(self.heap.alloc(Cell::bigint(reduced)))
     }
 
     fn bigint_width(

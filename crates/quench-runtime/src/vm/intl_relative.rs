@@ -110,24 +110,24 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| self.range_error(p, "invalid unit".into()))?;
         let parts = relative_time_parts(value, unit, &style, &numeric, &locale, &numbering_system);
         match native {
-            Native::IntlRelativeTimeFormatFormat => Ok(self.heap.alloc(Cell::String(
+            Native::IntlRelativeTimeFormatFormat => Ok(self.heap.alloc_string(
                 parts
                     .into_iter()
                     .map(|part| part.value)
                     .collect::<String>()
                     .into(),
-            ))),
+            )),
             Native::IntlRelativeTimeFormatFormatToParts => {
                 let values = parts
                     .into_iter()
                     .map(|part| {
                         let object = self.object();
-                        let part_type = self.heap.alloc(Cell::String(part.kind.into()));
+                        let part_type = self.heap.alloc_string(part.kind.into());
                         self.set_named(p, object, "type", part_type)?;
-                        let part_value = self.heap.alloc(Cell::String(part.value.into()));
+                        let part_value = self.heap.alloc_string(part.value.into());
                         self.set_named(p, object, "value", part_value)?;
                         if part.unit {
-                            let part_unit = self.heap.alloc(Cell::String(unit.into()));
+                            let part_unit = self.heap.alloc_string(unit.into());
                             self.set_named(p, object, "unit", part_unit)?;
                         }
                         Ok(object)
@@ -136,7 +136,7 @@ impl<H: Host> Vm<H> {
                 Ok(self.heap.alloc(Cell::Array {
                     object: crate::heap::ArrayObject::new(
                         Self::empty_object(self.array_proto),
-                        Rc::new(values),
+                        values,
                     ),
                 }))
             }
@@ -244,7 +244,7 @@ impl<H: Host> Vm<H> {
             let value = self
                 .hidden_string(this, slot)
                 .unwrap_or_else(|| locale.clone());
-            let value = self.heap.alloc(Cell::String(value.into()));
+            let value = self.heap.alloc_string(value.into());
             self.set_named(p, result, property, value)?;
         }
         Ok(result)

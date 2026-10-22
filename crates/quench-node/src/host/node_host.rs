@@ -5,6 +5,8 @@ use std::rc::Rc;
 
 use crate::shared_run::EntryGoal;
 
+mod snapshot;
+
 /// Output callback owned by the canonical Node host boundary.
 pub type NodeOutputSink = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 
@@ -32,6 +34,11 @@ impl InlineSource {
 pub struct NodeHost {
     /// Immutable installation asset root, independent of guest cwd changes.
     pub(crate) node_library_root: std::path::PathBuf,
+    /// Compiled library modules kept across runs (`compile_cache`).
+    pub(crate) compile_cache: crate::host::compile_cache::CompileCache,
+    /// Whether bootstrap has finished (`Host::initialize`, or `Host::resume` from a startup
+    /// snapshot): bootstrap's own programs decode back to back (`cached_program_decoded`).
+    pub(crate) bootstrapped: bool,
     pub(crate) shared_state: Rc<RefCell<SharedNodeState>>,
     pub(crate) commonjs_entry: Option<CommonJsEntry>,
     pub(crate) inline_source: InlineSource,
@@ -42,6 +49,35 @@ pub struct NodeHost {
     pub(crate) net_pending_writes: Vec<(u64, Vec<u8>)>,
     pub(crate) net_pending_ends: Vec<u64>,
     pub(crate) net_pending_destroys: Vec<(u64, bool)>,
+    /// The kind of startup snapshot this host builds, ending `initialize` at its point.
+    pub(crate) building_snapshot: Option<crate::host::startup_snapshot::SnapshotKind>,
+    /// Module paths' real paths, as Node's ESM resolver keeps them for the process
+    /// (lib/internal/modules/esm/resolve.js `realpathCache`): every import of a module
+    /// resolves through one, and canonicalizing reads each path component's link. Keyed by
+    /// the path's text: `Path`'s own hash walks its components.
+    pub(crate) real_paths: rustc_hash::FxHashMap<std::ffi::OsString, std::path::PathBuf>,
+    /// Each referrer's resolved import specifiers (`NodeHost::import_location`).
+    pub(crate) resolved_imports: rustc_hash::FxHashMap<
+        Box<str>,
+        rustc_hash::FxHashMap<Box<str>, Rc<crate::host::shared_vm::ImportLocation>>,
+    >,
+}
+
+impl NodeHost {
+    /// `path`'s real path through `real_paths`; a path that cannot be resolved is returned
+    /// as it is and not kept.
+    pub(crate) fn real_path(&mut self, path: std::path::PathBuf) -> std::path::PathBuf {
+        if let Some(real) = self.real_paths.get(path.as_os_str()) {
+            return real.clone();
+        }
+        match std::fs::canonicalize(&path) {
+            Ok(real) => {
+                self.real_paths.insert(path.into_os_string(), real.clone());
+                real
+            }
+            Err(_) => path,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -81,6 +117,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) module_parent_api: Option<quench_runtime::RootId>,
     pub(crate) active_esm_requires: std::collections::HashMap<String, quench_runtime::RootId>,
     pub(crate) builtin_cache: std::collections::HashMap<String, quench_runtime::RootId>,
+    /// Buffer's allocation pool while the host holds it for `buffer.js` to adopt.
+    pub(crate) buffer_pool: crate::modules::buffer_shared_vm::PoolOwner,
     pub(crate) commonjs_cache: Option<CommonJsCache>,
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
@@ -122,6 +160,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) emitter_keys: Option<crate::modules::event_constructor_shared_vm::EmitterKeys>,
     /// The internal invocation every receiverless next tick shares (`queue_next_tick`).
     pub(crate) tick_invocation: Option<quench_runtime::RootId>,
+    /// The string `"error"`, which every EventEmitter `emit` compares its event with.
+    pub(crate) error_event_name: Option<quench_runtime::RootId>,
     pub(crate) timer_duration_warnings: crate::modules::timers_shared_vm::TimerDurationWarnings,
     /// Invocation flags supplied by the embedder for this logical process.
     pub(crate) exec_argv: Vec<String>,
@@ -192,6 +232,9 @@ pub(crate) struct SharedChildProcess {
     pub(crate) ipc: Option<crate::modules::child_process_ipc_shared_vm::IpcChannel>,
     pub(crate) ipc_pipe: Option<u64>,
     pub(crate) events: std::sync::mpsc::Receiver<ChildProcessEvent>,
+    /// Held until the loop delivers the child's exit; dropping it lets the waiter reap the
+    /// child, which stays signalable as a zombie until then, as under Node.
+    pub(crate) reap: Option<std::sync::mpsc::Sender<()>>,
     pub(crate) stdout_terminal: bool,
     pub(crate) stderr_terminal: bool,
     pub(crate) exit: Option<(Option<i32>, Option<String>)>,
@@ -211,6 +254,7 @@ impl SharedNodeState {
         self.performance_native = Default::default();
         self.vm_scripts = Default::default();
         self.builtin_cache.clear();
+        self.buffer_pool = Default::default();
         self.messaging.reset();
         #[cfg(not(quench_node_cares))]
         self.dns_channels.reset();
@@ -227,6 +271,7 @@ impl SharedNodeState {
         self.path_module = None;
         self.timer_handle_api = None;
         self.tick_invocation = None;
+        self.error_event_name = None;
         self.emitter_keys = None;
         self.timer_duration_warnings = Default::default();
         self.net_socket_constructor = None;
@@ -279,6 +324,7 @@ impl SharedNodeState {
             fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
             cwd,
             builtin_cache: std::collections::HashMap::new(),
+            buffer_pool: Default::default(),
             commonjs_cache: None,
             module_parent_api: None,
             active_esm_requires: std::collections::HashMap::new(),
@@ -315,6 +361,7 @@ impl SharedNodeState {
             path_module: None,
             timer_handle_api: None,
             tick_invocation: None,
+            error_event_name: None,
             emitter_keys: None,
             timer_duration_warnings: Default::default(),
             exec_argv: Vec::new(),
@@ -370,11 +417,14 @@ impl NodeHost {
             .canonicalize()
             .unwrap_or(node_library_root);
         // The Node test common/tmpdir helper exposes a per-process host path.
-        // Materialize that parent at host construction so fixtures can create
-        // files there even when the helper's JS-side refresh hook is absent
-        // from a reduced bootstrap realm.
-        let tmp = std::path::PathBuf::from(format!("/tmp/quench-node-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(tmp);
+        // Under the test runner, materialize that parent at host construction so
+        // fixtures can create files there even when the helper's JS-side refresh
+        // hook is absent from a reduced bootstrap realm. Other runs create nothing:
+        // every process had left an empty directory in /tmp.
+        if std::env::var_os(crate::shared_run::CHILD_RUNNER_ENV).is_some() {
+            let tmp = std::path::PathBuf::from(format!("/tmp/quench-node-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(tmp);
+        }
         let fs = crate::modules::fs_state::FsState::new();
         let argv = crate::modules::process_state::ProcessArgs::new(argv);
         let async_identity = crate::modules::async_hooks_state::AsyncIdentity::new();
@@ -382,6 +432,8 @@ impl NodeHost {
         let cwd = crate::modules::process_state::ProcessCwd::from_current_directory();
         Self {
             node_library_root,
+            compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
+            bootstrapped: false,
             shared_state: Rc::new(RefCell::new(SharedNodeState::new(
                 fs,
                 cwd,
@@ -394,9 +446,12 @@ impl NodeHost {
             eval_builtin_globals: false,
             eval_source_nonempty: false,
             initial_node_debug: std::env::var_os("NODE_DEBUG").map(|value| value.to_string_lossy().into_owned()),
+            real_paths: Default::default(),
+            resolved_imports: Default::default(),
             net_pending_writes: Vec::new(),
             net_pending_ends: Vec::new(),
             net_pending_destroys: Vec::new(),
+            building_snapshot: None,
         }
     }
 

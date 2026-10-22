@@ -49,32 +49,29 @@ pub(crate) enum Error {
     DivisionByZero,
     NegativeExponent,
     ExponentTooLarge,
-    InvalidDecimal,
 }
 
-pub(crate) fn binary(
-    left: &str,
-    right: &str,
-    operation: impl FnOnce(BigInt, BigInt) -> Result<BigInt, Error>,
-) -> Result<String, Error> {
-    let left = left.parse::<BigInt>().map_err(|_| Error::InvalidDecimal)?;
-    let right = right.parse::<BigInt>().map_err(|_| Error::InvalidDecimal)?;
-    operation(left, right).map(|value| value.to_str_radix(10))
-}
-
-pub(crate) fn shift(left: &str, right: &str, left_shift: bool) -> Result<String, Error> {
-    let value = left.parse::<BigInt>().map_err(|_| Error::InvalidDecimal)?;
-    let count = right.parse::<BigInt>().map_err(|_| Error::InvalidDecimal)?;
+pub(crate) fn shift(value: &BigInt, count: &BigInt, left_shift: bool) -> Result<BigInt, Error> {
     let reverse = count.sign() == Sign::Minus;
-    let magnitude = (-&count)
-        .max(count.clone())
-        .to_str_radix(10)
-        .parse::<usize>()
-        .map_err(|_| Error::ExponentTooLarge)?;
-    let shift_left = left_shift != reverse;
-    Ok(if shift_left {
-        (value << magnitude).to_str_radix(10)
+    let magnitude = usize::try_from(count.magnitude()).map_err(|_| Error::ExponentTooLarge)?;
+    Ok(if left_shift != reverse { value << magnitude } else { value >> magnitude })
+}
+
+/// The value of a BigInt literal; OXC normalizes its digits to base 10 without separators.
+pub(crate) fn decimal_literal(digits: &str) -> BigInt {
+    digits.parse().expect("OXC normalizes BigInt literal digits to base 10")
+}
+
+/// The Number nearest `value`, ties to even; magnitudes past the finite range are infinite.
+pub(crate) fn to_f64(value: &BigInt) -> f64 {
+    num_traits::ToPrimitive::to_f64(value).unwrap_or(if value.sign() == Sign::Minus {
+        f64::NEG_INFINITY
     } else {
-        (value >> magnitude).to_str_radix(10)
+        f64::INFINITY
     })
+}
+
+/// Bytes the magnitude's digits occupy, for heap accounting.
+pub(crate) fn magnitude_bytes(value: &BigInt) -> usize {
+    usize::try_from(value.bits().div_ceil(u64::from(u8::BITS))).unwrap_or(usize::MAX)
 }

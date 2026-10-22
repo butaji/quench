@@ -113,6 +113,17 @@ fn view(ty: crate::WasmType) -> usize {
         .expect("compiled values are numeric scalars")
 }
 
+/// The machine type of a register's view as `ty`. An i32 view holds its value zero-extended to
+/// 64 bits, so an access can use it as an address offset as it is: x64's 32-bit operations
+/// already clear the upper half, and Cranelift elides the extension of their results, but not
+/// across the block parameters a loop carries.
+fn view_ir(ty: crate::WasmType) -> ir::Type {
+    match ty {
+        crate::WasmType::I32 => types::I64,
+        _ => scalar_ir(ty),
+    }
+}
+
 /// The machine type of a scalar Wasm type.
 fn scalar_ir(ty: crate::WasmType) -> ir::Type {
     match ty {
@@ -553,6 +564,10 @@ struct CallContext {
     call_reference_diagnostic: usize,
     reference_call_sites: *const ReferenceCallSiteDiagnostics,
     reference_call_site_count: usize,
+    /// The VM's poll page (`ExecutionInterrupt::poll_page`), whose fault ends the call as
+    /// terminated; empty when compiled code checks the flag instead.
+    poll_start: usize,
+    poll_end: usize,
     /// VM-local epoch advanced by table writes and collections. Fast indirect
     /// calls are valid only while their artifact-local cached epoch matches.
     reference_epoch: *const u64,
@@ -605,6 +620,8 @@ impl CallContext {
             call_reference_diagnostic: self.call_reference_diagnostic,
             reference_call_sites: self.reference_call_sites,
             reference_call_site_count: self.reference_call_site_count,
+            poll_start: self.poll_start,
+            poll_end: self.poll_end,
             reference_epoch: self.reference_epoch,
             reference_fast_caches: self.reference_fast_caches,
             emscripten_memcpy_fast_path_hits: self.emscripten_memcpy_fast_path_hits,
@@ -1105,8 +1122,8 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                         signature.results.first().copied(),
                     )
                 };
-                let same_program_function = match vm.heap.get(callee) {
-                    Some(Cell::Function {
+                let same_program_function = match vm.heap.function(callee) {
+                    Some(FunctionRecord {
                         kind: crate::heap::FunctionKind::User(target_program, function),
                         env,
                         ..
@@ -1546,7 +1563,6 @@ fn direct_reference_entry<H: Host>(
             let (base, length) = super::dispatch_fast::unshared_memory(vm, binding)?;
             let guard = guarded_memory(vm, binding);
             if compiled.guarded && guard.is_none()
-                || compiled.wraps && !wrapping_memory(vm, binding)
                 || compiled.fixed_base.is_some_and(|fixed| {
                     guard.map(|(base, _)| displacement_base(base)) != Some(Some(fixed))
                 })
@@ -1648,8 +1664,8 @@ fn cached_direct_reference<H: Host>(
     if element != cache.target || vm.heap.weak_value(cache.target_weak) != Some(element) {
         return None;
     }
-    match vm.heap.get(element) {
-        Some(Cell::Function {
+    match vm.heap.function(element) {
+        Some(FunctionRecord {
             kind: crate::heap::FunctionKind::User(program, function),
             env,
             ..
@@ -1681,8 +1697,8 @@ fn reference_target_matches<H: Host>(
     env: Value,
 ) -> bool {
     matches!(
-        vm.heap.get(target),
-        Some(Cell::Function {
+        vm.heap.function(target),
+        Some(FunctionRecord {
             kind: crate::heap::FunctionKind::User(target_program, target_function),
             env: target_env,
             ..
@@ -1703,10 +1719,6 @@ pub(super) struct CompiledProgram {
     /// displacement (see `displacement_base`); calls with another base fall
     /// back to the interpreter.
     fixed_base: Option<i32>,
-    /// The guarded memory repeats itself above 2^32, so an i32 sum may be
-    /// formed in 64 bits (see `WRAP_ALIAS`); calls with a memory that does
-    /// not fall back to the interpreter.
-    wraps: bool,
     /// The environment slots of the globals compiled code accesses, in the
     /// order of the context's global addresses.
     globals: Vec<u32>,
@@ -2158,13 +2170,18 @@ impl CompiledProgram {
 }
 
 /// Executable memory holding a program's machine code.
-struct CodeMemory {
+pub(super) struct CodeMemory {
     pointer: *mut u8,
     length: usize,
 }
 
 impl CodeMemory {
-    fn new(bytes: &[u8]) -> Option<Self> {
+    /// The first byte of the executable mapping.
+    pub(super) fn pointer(&self) -> *mut u8 {
+        self.pointer
+    }
+
+    pub(super) fn new(bytes: &[u8]) -> Option<Self> {
         let length = bytes.len().max(1);
         // `mmap` rounds to whole pages. Store that rounded length explicitly
         // so the JS tier's budget reflects its executable mappings.
@@ -3108,7 +3125,7 @@ impl<H: Host> Analysis<'_, H> {
             .as_ref()
             .map(|_| std::time::Instant::now());
         let memory_before = plan_started.and_then(|_| jit_memory_snapshot());
-        let function = &self.code.functions[index];
+        let function = &self.code.function(index);
         let Some(signature) = self.signature(index as u32) else {
             self.reject(index, || "missing-signature".into());
             return None;
@@ -3694,6 +3711,118 @@ enum ThreadEnd {
     Dispatch,
 }
 
+/// Instructions all copies of an unrolled loop body may hold together, and the most copies.
+/// A body of up to a fourth of the budget runs as four copies: one interrupt check, one back
+/// edge and one set of loop-carried moves per four iterations (V8's optimizing tier unrolls
+/// small innermost Wasm loops for the same reasons); a body of more than half of it is not
+/// unrolled.
+const UNROLL_BUDGET: usize = 48;
+const MAX_UNROLL_FACTOR: usize = 4;
+
+/// Bytecodes up to which a compiled Wasm program unrolls its innermost loops. Every function
+/// compiles eagerly, and each copy is compiled whether its loop runs or not: in programs of
+/// 17K to 70K bytecodes the copies cost more compile time than they saved (TSF's first
+/// iteration +6%, gcc-loops +2.5%, HashSet +1.2% per iteration from spills), so only smaller
+/// programs pay for them.
+const UNROLL_PROGRAM_BYTECODES: usize = 16_384;
+
+/// Whether `program` is small enough to unroll its innermost loops (`UNROLL_PROGRAM_BYTECODES`).
+fn program_unrolls(program: &ResidualProgram) -> bool {
+    // A function whose record has not been read yet (compiled again or decoded on first
+    // read) is not counted.
+    program
+        .functions
+        .iter()
+        .filter_map(crate::bytecode::FunctionSlot::record)
+        .map(|function| function.code.len())
+        .sum::<usize>()
+        <= UNROLL_PROGRAM_BYTECODES
+}
+
+/// An innermost loop unrolled at its latch: the back edge enters the next of `factor - 1`
+/// copies of the body, and the last copy's back edge returns to `header` with the loop's
+/// interrupt check (`Emitter::backedge`).
+#[derive(Clone, Copy)]
+struct UnrolledLoop {
+    header: usize,
+    factor: usize,
+}
+
+/// Whether `op` may sit in an unrolled body: no call, and no operation that calls out to the
+/// VM or ends the body other than by a branch out of the loop.
+fn unrollable_op(op: Op) -> bool {
+    !matches!(
+        op,
+        Op::WasmMemoryGrow
+            | Op::WasmMemoryFill
+            | Op::WasmMemoryCopy
+            | Op::WasmMemoryInit
+            | Op::WasmTableGet
+            | Op::WasmTableSet
+            | Op::WasmTableGrow
+            | Op::WasmTableFill
+            | Op::WasmTableCopy
+            | Op::WasmTableInit
+            | Op::WasmTableSize
+            | Op::WasmIndirectTarget
+    )
+}
+
+/// The innermost loops to unroll, by latch: a back edge from `latch` to `header` whose body
+/// `header..=latch` runs straight through but for branches that leave the loop, has no other
+/// entry, and fits the budget at least twice.
+fn unrollable_loops(instructions: &[WideInstruction], plan: &Plan) -> Vec<Option<UnrolledLoop>> {
+    let mut entered = vec![false; instructions.len() + 1];
+    for (pc, instruction) in instructions.iter().enumerate() {
+        if !plan.reachable(pc) {
+            continue;
+        }
+        match instruction.op().control_flow_layout() {
+            ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
+                entered[instruction.jump_target() as usize] = true;
+            }
+            ControlFlowLayout::BranchTable => {
+                for entry in crate::bytecode::branch_table_entries(pc, *instruction) {
+                    entered[instructions[entry].jump_target() as usize] = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut loops = vec![None; instructions.len()];
+    for (latch, instruction) in instructions.iter().enumerate() {
+        let layout = instruction.op().control_flow_layout();
+        if !plan.reachable(latch)
+            || !matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+        {
+            continue;
+        }
+        let header = instruction.jump_target() as usize;
+        if header > latch {
+            continue;
+        }
+        let length = latch - header + 1;
+        let factor = (UNROLL_BUDGET / length).min(MAX_UNROLL_FACTOR);
+        if factor < 2 {
+            continue;
+        }
+        let straight = (header..latch).all(|pc| {
+            let body = instructions[pc];
+            plan.reachable(pc)
+                && unrollable_op(body.op())
+                && match body.op().control_flow_layout() {
+                    ControlFlowLayout::Fallthrough => true,
+                    ControlFlowLayout::ConditionalJump => body.jump_target() as usize > latch,
+                    _ => false,
+                }
+        });
+        if straight && !entered[header + 1..=latch].iter().any(|&entered| entered) {
+            loops[latch] = Some(UnrolledLoop { header, factor });
+        }
+    }
+    loops
+}
+
 /// A copy of the instructions from a jump target to a branch table, for a
 /// jump that leaves the table's selector holding a known constant: along
 /// the copy the selector cannot change, so branches on it are decided and
@@ -3930,8 +4059,6 @@ struct Emitter<'a, 'b, H: Host> {
     reference_body_cache: bool,
     /// Emit a guarded direct leaf for the canonical Emscripten memcpy import.
     emscripten_memcpy_leaf: bool,
-    /// The guarded memory repeats above 2^32 (`CompiledProgram::wraps`).
-    wraps: bool,
     /// Per `Region`, its alias region in this function.
     regions: [ir::AliasRegion; Region::COUNT],
     globals: &'a [u32],
@@ -3971,6 +4098,20 @@ struct Emitter<'a, 'b, H: Host> {
     redirect: Option<(usize, ir::Block)>,
     /// Whether jumps may enter threaded copies (not from within one).
     threading: bool,
+    /// The VM's poll page when every entry runs through the fault-resuming trampoline: an
+    /// interrupt check is then one read of it.
+    poll: Option<i64>,
+    /// Each i32 read from a register's view, by the zero-extended value it was read from.
+    zero_extended: std::collections::HashMap<ir::Value, ir::Value>,
+    /// The innermost loops to unroll, by latch (`unrollable_loops`).
+    unrolled: Vec<Option<UnrolledLoop>>,
+    /// While a latch of an unrolled loop is emitted: its header and the copy its back edge
+    /// enters instead, or `None` for the last copy, whose back edge returns to the header and
+    /// checks for an interrupt.
+    backedge: Option<(usize, Option<ir::Block>)>,
+    /// Copies of an unrolled body to emit right after its latch: the block, the loop, and the
+    /// copy its back edge enters.
+    pending_copies: Vec<(ir::Block, UnrolledLoop, usize, Option<ir::Block>)>,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -3991,8 +4132,31 @@ impl<H: Host> Emitter<'_, '_, H> {
 
     /// The register's value viewed as `ty`.
     fn read_typed(&mut self, register: u16, ty: crate::WasmType) -> ir::Value {
-        self.builder
-            .use_var(self.variables[usize::from(register)][view(ty)])
+        let stored = self
+            .builder
+            .use_var(self.variables[usize::from(register)][view(ty)]);
+        if ty != crate::WasmType::I32 {
+            return stored;
+        }
+        let value = self.builder.ins().ireduce(types::I32, stored);
+        self.zero_extended.insert(value, stored);
+        value
+    }
+
+    /// `value`, an i32, zero-extended to 64 bits: the i32 view it was read from, if any.
+    fn zero_extend(&mut self, value: ir::Value) -> ir::Value {
+        match self.zero_extended.get(&value) {
+            Some(&wide) => wide,
+            None => self.builder.ins().uextend(types::I64, value),
+        }
+    }
+
+    /// The stored form of `value` in the register's view as `ty` (`view_ir`).
+    fn view_value(&mut self, ty: crate::WasmType, value: ir::Value) -> ir::Value {
+        match ty {
+            crate::WasmType::I32 => self.zero_extend(value),
+            _ => value,
+        }
     }
 
     /// Define the register as `value` of type `ty`, in both views; a view no
@@ -4004,8 +4168,10 @@ impl<H: Host> Emitter<'_, '_, H> {
             .builder
             .ins()
             .bitcast(scalar_ir(other), MemFlagsData::new(), value);
+        let stored = self.view_value(ty, value);
+        let converted = self.view_value(other, converted);
         let variables = self.variables[usize::from(register)];
-        self.builder.def_var(variables[view(ty)], value);
+        self.builder.def_var(variables[view(ty)], stored);
         self.builder.def_var(variables[view(other)], converted);
     }
 
@@ -4016,8 +4182,11 @@ impl<H: Host> Emitter<'_, '_, H> {
             self.known.push((register, bits as i32));
         }
         let (integer, float) = match kind {
+            // The i32 view holds the constant zero-extended (`view_ir`).
             Kind::I32 => (
-                self.builder.ins().iconst(types::I32, bits),
+                self.builder
+                    .ins()
+                    .iconst(types::I64, i64::from(bits as u32)),
                 self.builder.ins().f32const(Ieee32::with_bits(bits as u32)),
             ),
             Kind::I64 => (
@@ -4065,15 +4234,25 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     fn interrupt_safepoint(&mut self) {
-        let pointer = self.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            self.context,
-            CONTEXT_INTERRUPT,
-        );
+        if let Some(poll) = self.poll {
+            // The read faults once termination is requested, and the fault resumes as the
+            // termination (`guard_fault`). Atomic, so it is neither merged nor dropped.
+            let page = self.builder.ins().iconst(types::I64, poll);
+            self.builder
+                .ins()
+                .atomic_load(types::I8, MemFlagsData::trusted(), page);
+            return;
+        }
+        // The flag's address is fixed for the call; only the flag changes.
+        let pointer =
+            self.builder
+                .ins()
+                .load(types::I64, invariant(), self.context, CONTEXT_INTERRUPT);
         let requested = self
             .builder
             .ins()
+            // Atomic, so no check reuses an earlier one's load: Cranelift's alias analysis
+            // would merge plain loads of the flag across the loop.
             .atomic_load(types::I8, MemFlagsData::trusted(), pointer);
         let stop = self.builder.ins().icmp_imm_u(IntCC::NotEqual, requested, 0);
         let termination = match self.termination_block {
@@ -4487,35 +4666,7 @@ impl<H: Host> Emitter<'_, '_, H> {
 
     /// The host address of a checked `width`-byte access at `address + offset`.
     fn address(&mut self, address: ir::Value, offset: u32, width: usize) -> ir::Value {
-        if self.wraps && offset == 0 {
-            // The Wasm effective address is already an i32 bit pattern, so
-            // preserve its modulo-2^32 result before extending it. This also
-            // lets x64 lower an i32 base-plus-scaled-index to a 32-bit LEA;
-            // the repeated mapping makes that result equivalent to the old
-            // widened sum when the i32 addition carried past 2^32.
-            let address = self.builder.ins().uextend(types::I64, address);
-            return self.builder.ins().iadd(self.base, address);
-        }
-        if self.wraps && offset != 0 {
-            // An index whose offset carries it past 2^32 would meet the
-            // repeated memory instead of the guard: it traps here. The
-            // memory ends below `RESERVED_LIMIT`, so for offsets up to a Wasm
-            // page that limit bounds the index alone, and accesses through
-            // one index share one check.
-            use crate::wasm::memory::{RESERVED_LIMIT, WASM_PAGE, WRAP_ALIAS};
-            let limit = if offset as usize <= WASM_PAGE {
-                RESERVED_LIMIT
-            } else {
-                WRAP_ALIAS - offset as usize
-            };
-            let past = self.builder.ins().icmp_imm_u(
-                IntCC::UnsignedGreaterThanOrEqual,
-                address,
-                limit as i64,
-            );
-            self.trap_if(past, crate::WasmTrap::OutOfBoundsMemory);
-        }
-        let address = self.builder.ins().uextend(types::I64, address);
+        let address = self.zero_extend(address);
         if self.guarded {
             // Index plus offset plus width stays inside the reservation; past
             // the accessible prefix the access faults, and the fault handler
@@ -5151,11 +5302,19 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.builder.ins().jump(block, &[]);
     }
 
-    /// A loop latch (a branch whose taken target lies behind its
-    /// fallthrough) polls only on the taken backedge. Its exit stays free of
-    /// the atomic check, and values only the exit passes (merge arguments)
-    /// are computed after the loop, not on every iteration.
-    fn branch(&mut self, condition: ir::Value, target: usize, fallthrough: usize) {
+    /// A conditional transfer from `pc`. It checks for an interrupt when
+    /// either edge leads to `pc` or before: a loop repeats through one of
+    /// them (`JumpI32Zero` passes its targets swapped, so either may be the
+    /// one behind). The check sits before the branch so the backedge stays
+    /// direct: routing it through a block of its own measured 10% more
+    /// CoreMark instructions. A loop latch (a taken target behind the
+    /// fallthrough) leaves the loop through a block of its own, so values
+    /// only the exit passes (merge arguments) are computed after the loop,
+    /// not on every iteration.
+    fn branch(&mut self, pc: usize, condition: ir::Value, target: usize, fallthrough: usize) {
+        if self.polls(pc, target) || self.polls(pc, fallthrough) {
+            self.interrupt_safepoint();
+        }
         let taken = self.edge(target);
         let next = self.edge(fallthrough);
         if target >= fallthrough {
@@ -5163,13 +5322,15 @@ impl<H: Host> Emitter<'_, '_, H> {
             return;
         }
         let exit = self.builder.create_block();
-        let backedge = self.builder.create_block();
-        self.builder.ins().brif(condition, backedge, &[], exit, &[]);
-        self.builder.switch_to_block(backedge);
-        self.interrupt_safepoint();
-        self.builder.ins().jump(taken, &[]);
+        self.builder.ins().brif(condition, taken, &[], exit, &[]);
         self.builder.switch_to_block(exit);
         self.builder.ins().jump(next, &[]);
+    }
+
+    /// Whether an edge from `pc` to `target` checks for an interrupt: a back edge does, except
+    /// one into a copy of an unrolled body, whose last copy's back edge checks for all.
+    fn polls(&self, pc: usize, target: usize) -> bool {
+        target <= pc && !matches!(self.backedge, Some((header, Some(_))) if header == target)
     }
 
     /// The block a jump from here to `target` enters: a threaded copy when
@@ -5179,6 +5340,11 @@ impl<H: Host> Emitter<'_, '_, H> {
             && redirected == target
         {
             return block;
+        }
+        if let Some((header, Some(copy))) = self.backedge
+            && header == target
+        {
+            return copy;
         }
         if self.threading {
             for (selector, value) in self.known.clone() {
@@ -5206,6 +5372,56 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     /// Emit the threaded copy `thread` into `block`.
+    /// Emit the latch at `pc`; at an unrolled loop's latch the back edge enters the first copy
+    /// of the body, queued with the rest (`pending_copies`).
+    fn latch(&mut self, function: &Function, pc: usize, instruction: WideInstruction) -> bool {
+        let Some(unrolled) = self.unrolled[pc] else {
+            return self.instruction(function, pc, instruction);
+        };
+        let copies = (1..unrolled.factor)
+            .map(|_| self.builder.create_block())
+            .collect::<Vec<_>>();
+        for (index, &copy) in copies.iter().enumerate() {
+            let next = copies.get(index + 1).copied();
+            self.pending_copies.push((copy, unrolled, pc, next));
+        }
+        self.backedge = Some((unrolled.header, copies.first().copied()));
+        let open = self.instruction(function, pc, instruction);
+        self.backedge = None;
+        open
+    }
+
+    /// Emit a copy of the body of the unrolled loop with latch `latch` into `block`: branches
+    /// out of the loop leave through the original blocks, and the back edge enters `next`, or
+    /// the header from the last copy.
+    fn emit_unrolled_copy(
+        &mut self,
+        function: &Function,
+        block: ir::Block,
+        unrolled: UnrolledLoop,
+        latch: usize,
+        next: Option<ir::Block>,
+    ) {
+        self.builder.switch_to_block(block);
+        self.known.clear();
+        for pc in unrolled.header..latch {
+            let instruction = self.instructions[pc];
+            if instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump {
+                let continuation = self.builder.create_block();
+                self.redirect = Some((pc + 1, continuation));
+                self.instruction(function, pc, instruction);
+                self.redirect = None;
+                self.builder.switch_to_block(continuation);
+                self.known.clear();
+            } else {
+                self.instruction(function, pc, instruction);
+            }
+        }
+        self.backedge = Some((unrolled.header, next));
+        self.instruction(function, latch, self.instructions[latch]);
+        self.backedge = None;
+    }
+
     fn emit_thread(&mut self, function: &Function, block: ir::Block, thread: &Thread) {
         self.builder.switch_to_block(block);
         self.interrupt_safepoint();
@@ -5250,9 +5466,6 @@ impl<H: Host> Emitter<'_, '_, H> {
         instruction: WideInstruction,
     ) -> bool {
         let op = instruction.op();
-        if op == Op::WasmBranchTable {
-            self.interrupt_safepoint();
-        }
         let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
         if let Some(operator) = I32BinaryOperator::from_register_op(op) {
             let left = self.read(b, Kind::I32);
@@ -5279,7 +5492,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             } else {
                 self.integer_binary(widen_binary(operator), left, right)
             };
-            self.branch(holds, instruction.jump_target() as usize, pc + 1);
+            self.branch(pc, holds, instruction.jump_target() as usize, pc + 1);
             return false;
         }
         if let Some(operator) = I32BinaryOperator::from_immediate_jump_op(op) {
@@ -5290,7 +5503,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             } else {
                 self.integer_binary(widen_binary(operator), left, right)
             };
-            self.branch(holds, instruction.jump_target() as usize, pc + 1);
+            self.branch(pc, holds, instruction.jump_target() as usize, pc + 1);
             return false;
         }
         if let Some(load) = MemoryLoad::from_direct_op(op) {
@@ -5464,22 +5677,22 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let addend = self.builder.ins().iconst(types::I32, i64::from(c as i16));
                 let sum = self.builder.ins().iadd(input, addend);
                 self.write(a, Kind::I32, sum);
-                self.branch(sum, instruction.jump_target() as usize, pc + 1);
+                self.branch(pc, sum, instruction.jump_target() as usize, pc + 1);
                 return false;
             }
             Op::WasmJumpI32Zero | Op::WasmJumpI32NonZero => {
                 let value = self.read(a, Kind::I32);
                 let (taken, other) = (instruction.jump_target() as usize, pc + 1);
                 if op == Op::WasmJumpI32NonZero {
-                    self.branch(value, taken, other);
+                    self.branch(pc, value, taken, other);
                 } else {
-                    self.branch(value, other, taken);
+                    self.branch(pc, value, other, taken);
                 }
                 return false;
             }
             Op::Jump => {
                 let target = instruction.jump_target() as usize;
-                self.jump(target, target <= pc);
+                self.jump(target, self.polls(pc, target));
                 return false;
             }
             Op::WasmBranchTable => {
@@ -5490,6 +5703,11 @@ impl<H: Host> Emitter<'_, '_, H> {
                             .jump_target() as usize
                     })
                     .collect();
+                // A table entry at or before `pc` is a backedge; a loop may
+                // repeat through the table alone, so it polls like a jump.
+                if entries.iter().any(|&target| target <= pc) {
+                    self.interrupt_safepoint();
+                }
                 let (default, cases) = entries.split_last().expect("a default entry");
                 let default = self.block(*default);
                 let default = self.builder.func.dfg.block_call(default, &[]);
@@ -5624,13 +5842,12 @@ impl<'a, H: Host> Analysis<'a, H> {
         plan: &Plan,
         plans: &[Option<Plan>],
         guarded: bool,
-        wraps: bool,
         fixed_base: Option<i32>,
         globals: &[u32],
         reference_site_ids: &'a [(usize, usize)],
         diagnostics_enabled: bool,
     ) -> Option<(Vec<u8>, Vec<Call>)> {
-        let function = &self.code.functions[index];
+        let function = &self.code.function(index);
         let call_conv = isa.default_call_conv();
         let memory = MemoryArguments::of(fixed_base, guarded);
         let mut func = ir::Function::with_name_signature(
@@ -5640,7 +5857,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         let mut builder_context = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
         let variables: Vec<[Variable; VIEW_TYPES.len()]> = (0..function.registers)
-            .map(|_| VIEW_TYPES.map(|ty| builder.declare_var(scalar_ir(ty))))
+            .map(|_| VIEW_TYPES.map(|ty| builder.declare_var(view_ir(ty))))
             .collect();
         let entry = builder.create_block();
         builder.append_block_params_for_function_params(entry);
@@ -5718,7 +5935,6 @@ impl<'a, H: Host> Analysis<'a, H> {
             direct_compare_branches: jit_direct_compare_branches_enabled(),
             reference_body_cache: jit_reference_body_cache_enabled(),
             emscripten_memcpy_leaf: jit_emscripten_memcpy_leaf_enabled(),
-            wraps,
             regions,
             globals,
             analysis: self,
@@ -5747,6 +5963,17 @@ impl<'a, H: Host> Analysis<'a, H> {
             pending: Vec::new(),
             redirect: None,
             threading: true,
+            poll: guard_support()
+                .and_then(|_| self.vm.execution_interrupt.poll_page())
+                .map(|(start, _)| start as i64),
+            zero_extended: std::collections::HashMap::new(),
+            unrolled: if program_unrolls(self.code) {
+                unrollable_loops(&instructions, plan)
+            } else {
+                vec![None; instructions.len()]
+            },
+            backedge: None,
+            pending_copies: Vec::new(),
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
@@ -5820,7 +6047,12 @@ impl<'a, H: Host> Analysis<'a, H> {
                     emitter.affine_pair_gate();
                 }
             }
-            open = emitter.instruction(function, pc, instruction);
+            open = emitter.latch(function, pc, instruction);
+            // Copies of an unrolled body follow its latch in the layout, so a loop that runs a few
+            // iterations stays in one stretch of code.
+            for (block, unrolled, latch, next) in std::mem::take(&mut emitter.pending_copies) {
+                emitter.emit_unrolled_copy(function, block, unrolled, latch, next);
+            }
             // A later jump may target the next instruction; give it a block
             // now so falling into it stays explicit.
             if open && emitter.blocks.get(pc + 1).is_some_and(Option::is_some) {
@@ -5971,11 +6203,6 @@ fn guarded_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize
     memory_bytes(vm, binding, crate::wasm::memory::LinearBytes::guard)
 }
 
-/// Whether the guarded memory `binding` names repeats above 2^32.
-fn wrapping_memory<H: Host>(vm: &Vm<H>, binding: Value) -> bool {
-    memory_bytes(vm, binding, |bytes| Some(bytes.wraps())) == Some(true)
-}
-
 /// `query` of the bytes of the unshared memory `binding` names.
 fn memory_bytes<H: Host, T>(
     vm: &Vm<H>,
@@ -6012,6 +6239,9 @@ struct GuardSupport {
     trampoline: Trampoline,
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
     landing: usize,
+    /// Where a fault on the poll page resumes: the terminated status.
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    termination: usize,
 }
 
 // SAFETY: immutable executable code, shared by every thread.
@@ -6021,7 +6251,7 @@ unsafe impl Sync for GuardSupport {}
 /// The x86-64 System V trampoline, as machine code. Offsets of `RESUME` and
 /// `LANDING` are into this array.
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-const TRAMPOLINE_CODE: [u8; 50] = [
+const TRAMPOLINE_CODE: [u8; 60] = [
     0x55, // push rbp
     0x48,
     0x89,
@@ -6072,6 +6302,17 @@ const TRAMPOLINE_CODE: [u8; 50] = [
     0,
     0,
     0,
+    0, // jmp RESUME (patched)
+    // TERMINATION (49):
+    0xb8,
+    0,
+    0,
+    0,
+    0, // mov eax, terminated status (patched)
+    0xe9,
+    0,
+    0,
+    0,
     0,    // jmp RESUME (patched)
     0xcc, // int3
 ];
@@ -6080,6 +6321,8 @@ const TRAMPOLINE_CODE: [u8; 50] = [
 const TRAMPOLINE_RESUME: usize = 24;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 const TRAMPOLINE_LANDING: usize = 39;
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+const TRAMPOLINE_TERMINATION: usize = 49;
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 static PREVIOUS_SEGV: std::sync::OnceLock<libc::sigaction> = std::sync::OnceLock::new();
@@ -6092,17 +6335,24 @@ fn guard_support() -> Option<&'static GuardSupport> {
     SUPPORT
         .get_or_init(|| {
             let mut code = TRAMPOLINE_CODE;
-            let status = trap_status(crate::WasmTrap::OutOfBoundsMemory) as u32;
-            code[TRAMPOLINE_LANDING + 1..TRAMPOLINE_LANDING + 5]
-                .copy_from_slice(&status.to_le_bytes());
-            let after_jump = TRAMPOLINE_LANDING + 10;
-            let displacement = TRAMPOLINE_RESUME as i32 - after_jump as i32;
-            code[TRAMPOLINE_LANDING + 6..TRAMPOLINE_LANDING + 10]
-                .copy_from_slice(&displacement.to_le_bytes());
+            // Each landing loads its status and jumps back to the epilogue.
+            for (landing, status) in [
+                (
+                    TRAMPOLINE_LANDING,
+                    trap_status(crate::WasmTrap::OutOfBoundsMemory) as u32,
+                ),
+                (TRAMPOLINE_TERMINATION, TERMINATED_STATUS as u32),
+            ] {
+                code[landing + 1..landing + 5].copy_from_slice(&status.to_le_bytes());
+                let after_jump = landing + 10;
+                let displacement = TRAMPOLINE_RESUME as i32 - after_jump as i32;
+                code[landing + 6..landing + 10].copy_from_slice(&displacement.to_le_bytes());
+            }
             let memory = CodeMemory::new(&code)?;
             // SAFETY: the code implements `Trampoline` for this ABI.
             let trampoline = unsafe { std::mem::transmute::<*mut u8, Trampoline>(memory.pointer) };
             let landing = memory.pointer as usize + TRAMPOLINE_LANDING;
+            let termination = memory.pointer as usize + TRAMPOLINE_TERMINATION;
             // SAFETY: installs a handler that only redirects faults inside an
             // active compiled call's guard and forwards every other fault to
             // the previous handler.
@@ -6121,6 +6371,7 @@ fn guard_support() -> Option<&'static GuardSupport> {
                 _code: memory,
                 trampoline,
                 landing,
+                termination,
             })
         })
         .as_ref()
@@ -6145,14 +6396,21 @@ extern "C" fn guard_fault(signal: i32, info: *mut libc::siginfo_t, context: *mut
     unsafe {
         let address = (*info).si_addr() as usize;
         if !active.is_null()
-            && (*active).guard_start <= address
-            && address < (*active).guard_end
             && let Some(support) = guard_support()
         {
-            let context = &mut *context.cast::<libc::ucontext_t>();
-            context.uc_mcontext.gregs[libc::REG_RSP as usize] = (*active).entry_stack as i64;
-            context.uc_mcontext.gregs[libc::REG_RIP as usize] = support.landing as i64;
-            return;
+            let landing = if (*active).guard_start <= address && address < (*active).guard_end {
+                Some(support.landing)
+            } else if (*active).poll_start <= address && address < (*active).poll_end {
+                Some(support.termination)
+            } else {
+                None
+            };
+            if let Some(landing) = landing {
+                let context = &mut *context.cast::<libc::ucontext_t>();
+                context.uc_mcontext.gregs[libc::REG_RSP as usize] = (*active).entry_stack as i64;
+                context.uc_mcontext.gregs[libc::REG_RIP as usize] = landing as i64;
+                return;
+            }
         }
         let Some(previous) = PREVIOUS_SEGV.get() else {
             return;
@@ -6246,6 +6504,61 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn execution_mode(&self) -> ExecutionMode {
         self.execution_mode
+    }
+
+    /// Whether the per-function JavaScript tier runs: compiled execution, in a build whose
+    /// profiles do not count interpreted work exactly.
+    pub(super) fn js_tier_runs(&self) -> bool {
+        !cfg!(any(
+            feature = "profile-aggregate",
+            feature = "profile-trace",
+            feature = "profile-memory",
+            feature = "profile-gc-time"
+        )) && self.execution_mode == ExecutionMode::Compiled
+    }
+
+    /// Whether the JavaScript tier may still claim `function` of `program`: it runs, the
+    /// function passes its candidate filter, and the tier has not declined it. The tier
+    /// observes and enters functions at frame entry (`js_tier_frame_entry`), so such calls
+    /// keep their frames rather than running frameless in the lane.
+    pub(super) fn js_tier_may_claim(&self, program: &ResidualProgram, id: ProgramId, function: u32) -> bool {
+        self.js_tier_runs()
+            && program.kind != crate::bytecode::ProgramKind::Wasm
+            && program
+                .function_get(function as usize)
+                .is_some_and(|body| super::js_compiled::function_candidate(body, program))
+            && !self.programs.js_tier_declined(id, function)
+    }
+
+    /// The JavaScript tier at the entry of `frame`, an initialized frame at PC zero, made
+    /// wherever a frame is entered: the general loop, and the lane's in-place frame calls
+    /// (`lane_frame_call`). With the native result written to its return register, the PC
+    /// of the `Return` that completes the frame; else `None`, the entry counted as an
+    /// interpreter fallback, and the untouched frame runs from its entry.
+    pub(super) fn js_tier_frame_entry(
+        &mut self,
+        program: &ResidualProgram,
+        frame: usize,
+    ) -> Option<usize> {
+        if self.execution_mode != ExecutionMode::Compiled {
+            return None;
+        }
+        if let Some((return_pc, return_register, value)) = self.js_jit_at_entry(program, frame) {
+            // The frame's own register file: a lane frame call reaches here before
+            // `active_registers` names the frame (`lane_enter_script_frame`).
+            self.frames[frame].registers[usize::from(return_register)] = value;
+            return Some(return_pc);
+        }
+        let (program_id, function_id) = (self.frames[frame].program, self.frames[frame].function);
+        self.programs
+            .record_js_jit_fallback_entry(program_id, function_id);
+        if program.kind != crate::bytecode::ProgramKind::Wasm
+            && self.programs.js_jit_diagnostics_enabled()
+            && self.frames[frame].js_jit_interpreter_started.is_none()
+        {
+            self.frames[frame].js_jit_interpreter_started = Some(std::time::Instant::now());
+        }
+        None
     }
 
     /// Run a narrow numeric linked-entry search using guarded VM field and
@@ -6355,14 +6668,8 @@ impl<H: Host> Vm<H> {
                     return None;
                 }
                 equal_arguments[1] = entry_key;
-                let equal = Self::js_jit_compiled_call(
-                    &mut self.programs,
-                    program_id,
-                    program,
-                    equals_function,
-                    &equal_arguments,
-                    self.execution_interrupt.atomic_flag(),
-                );
+                let equal =
+                    self.js_jit_compiled_call(program, (program_id, equals_function), false, &equal_arguments);
                 let Some(equal) = equal else {
                     return None;
                 };
@@ -6400,20 +6707,14 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         frame: usize,
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
-        if cfg!(any(
-            feature = "profile-aggregate",
-            feature = "profile-trace",
-            feature = "profile-memory",
-            feature = "profile-gc-time"
-        )) || self.execution_mode != ExecutionMode::Compiled
-            || program.kind == crate::bytecode::ProgramKind::Wasm
+        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm
             || self.frames.get(frame)?.pc != 0
         {
             return None;
         }
         let program_id = self.frames[frame].program;
         let function_id = self.frames[frame].function;
-        let function = program.functions.get(function_id as usize)?;
+        let function = program.function_get(function_id as usize)?;
         let numeric_find_candidate = if jit_numeric_find_enabled() {
             self.programs
                 .js_jit_numeric_find_candidate(program_id, function_id, function)
@@ -6518,6 +6819,9 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
+        if tier.is_none() && !super::js_compiled::function_candidate(function, program) {
+            return None;
+        }
         let compiled_tier = match tier.as_ref() {
             Some(super::program_store::JsTierState::Compiled(compiled)) => Some(compiled.as_ref()),
             _ => None,
@@ -6608,12 +6912,9 @@ impl<H: Host> Vm<H> {
             None => super::js_compiled::has_string_hash_loop_candidate(program, function),
         } && params == 1
             && self.js_jit_string_hash_guard()
-            && matches!(
-                first_argument.and_then(|value| self.heap.get(value)),
-                Some(Cell::String(_))
-            );
+            && first_argument.is_some_and(|value| self.heap.is_string(value));
         let string_hash_units = if string_hash_candidate {
-            let Some(Cell::String(string)) = first_argument.and_then(|value| self.heap.get(value))
+            let Some(string) = first_argument.and_then(|value| self.heap.string(value))
             else {
                 unreachable!("guarded JIT string argument changed")
             };
@@ -6628,13 +6929,10 @@ impl<H: Host> Vm<H> {
         let string_transform = string_transform_kind
             .filter(|kind| self.js_jit_string_transform_guard(*kind))
             .filter(|_| {
-                matches!(
-                    first_argument.and_then(|value| self.heap.get(value)),
-                    Some(Cell::String(_))
-                )
+                first_argument.is_some_and(|value| self.heap.is_string(value))
             });
         let string_transform_units = string_transform.and_then(|_| {
-            let Some(Cell::String(string)) = first_argument.and_then(|value| self.heap.get(value))
+            let Some(string) = first_argument.and_then(|value| self.heap.string(value))
             else {
                 return None;
             };
@@ -6651,7 +6949,7 @@ impl<H: Host> Vm<H> {
         }
         if tier.is_none()
             && capture_argument.is_none()
-            && !super::js_compiled::function_candidate(function, &program.atoms)
+            && !super::js_compiled::function_candidate(function, program)
             && !int32_identity_candidate
         {
             let reason = super::js_compiled::candidate_rejection_reason(program, function_id);
@@ -6856,8 +7154,8 @@ impl<H: Host> Vm<H> {
                 let value = if !matched {
                     first_argument?
                 } else {
-                    let Some(Cell::String(string)) = first_argument
-                        .and_then(|value| self.heap.get(value))
+                    let Some(string) = first_argument
+                        .and_then(|value| self.heap.string(value))
                         .cloned()
                     else {
                         return None;
@@ -6871,7 +7169,7 @@ impl<H: Host> Vm<H> {
                             self.string_from_units(&output).ok()?
                         }
                         super::js_compiled::JsJitStringTransform::RemoveLeadingUnderscore => self
-                            .string_from_unit_run(units.slice(1..units.len()))
+                            .string_substring(&string, 1..units.len())
                             .ok()?,
                     }
                 };
@@ -6907,27 +7205,28 @@ impl<H: Host> Vm<H> {
             .is_some_and(|method| self.is_current_realm_native(method, Native::StringSubstr))
     }
 
-    /// Call an already-promoted JavaScript tier before the generic path pushes
-    /// a callee frame. The native subset is pure and has a guarded Number ABI;
-    /// misses stay on the ordinary frame path.
+    /// The JavaScript tier's direct entry of a plain call of a same-program user function,
+    /// before any callee frame is pushed: the general loop's in-loop and known calls and the
+    /// lane's frame calls (`lane_frame_call`) make it. Only an already-promoted function
+    /// enters; its native subset is pure and has a guarded Number ABI. A call that returns
+    /// its callee's completion (`returns`) completes its caller, so it and every guard miss
+    /// stay on the ordinary frame path.
     pub(super) fn js_jit_compiled_call(
-        programs: &mut ProgramStore,
-        program_id: ProgramId,
+        &mut self,
         program: &ResidualProgram,
-        function_id: u32,
+        (program_id, function_id): (ProgramId, u32),
+        returns: bool,
         arguments: &[Value],
-        interrupt: &std::sync::atomic::AtomicBool,
     ) -> Option<Value> {
-        if cfg!(any(
-            feature = "profile-aggregate",
-            feature = "profile-trace",
-            feature = "profile-memory",
-            feature = "profile-gc-time"
-        )) || program.kind == crate::bytecode::ProgramKind::Wasm
+        if returns
+            || !self.js_tier_runs()
+            || program_id != self.active_program
+            || program.kind == crate::bytecode::ProgramKind::Wasm
         {
             return None;
         }
-        let function = program.functions.get(function_id as usize)?;
+        let (programs, interrupt) = (&mut self.programs, self.execution_interrupt.atomic_flag());
+        let function = program.function_get(function_id as usize)?;
         let compiled = match programs.js_tier(program_id, function_id)? {
             super::program_store::JsTierState::Compiled(compiled) => compiled,
             _ => return None,
@@ -7035,7 +7334,7 @@ impl<H: Host> Vm<H> {
         let count = code.functions.len();
         let allowed = if let Some(root) = root.filter(|_| root_only) {
             let mut selected = vec![false; count];
-            let Some(function) = code.functions.get(root) else {
+            let Some(function) = code.function_get(root) else {
                 if diagnostics_enabled {
                     eprintln!("QUENCH_WASM_JIT_ROOT_REJECTION root={root} invalid-function={root}");
                 }
@@ -7067,7 +7366,7 @@ impl<H: Host> Vm<H> {
                 if *selected_function {
                     continue;
                 }
-                let function = code.functions.get(index)?;
+                let function = code.function_get(index)?;
                 if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
                     if diagnostics_enabled {
                         eprintln!(
@@ -7117,7 +7416,7 @@ impl<H: Host> Vm<H> {
                     if *selected_function {
                         continue;
                     }
-                    let function = code.functions.get(index)?;
+                    let function = code.function_get(index)?;
                     if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
                         if diagnostics_enabled {
                             eprintln!(
@@ -7214,10 +7513,6 @@ impl<H: Host> Vm<H> {
                 displacement_base(guarded_memory(self, binding)?.0)
             })
             .flatten();
-        let wraps = guarded
-            && memory_slot
-                .and_then(|slot| self.heap.environment_slot(env, slot as usize))
-                .is_some_and(|binding| wrapping_memory(self, binding));
         let opt_level = jit_root_opt_level(root, root_only).ok()?;
         if diagnostics_enabled {
             eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
@@ -7234,7 +7529,7 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             let full_plan = plan(index)?;
-            let function = &code.functions[index];
+            let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
                 if instruction.op() == Op::Call
@@ -7262,7 +7557,7 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             let plan = plan(index)?;
-            let function = &code.functions[index];
+            let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
                 if !matches!(instruction.op(), Op::WasmGlobalGet | Op::WasmGlobalSet) {
@@ -7304,7 +7599,6 @@ impl<H: Host> Vm<H> {
                 &full_plan,
                 &plans,
                 guarded,
-                wraps,
                 fixed_base,
                 &globals,
                 &reference_site_ids[index],
@@ -7438,7 +7732,6 @@ impl<H: Host> Vm<H> {
             memory_slot,
             guarded,
             fixed_base,
-            wraps,
             globals,
             diagnostics,
             reference_call_caches: std::cell::RefCell::new(
@@ -7604,6 +7897,13 @@ impl<H: Host> Vm<H> {
         let baseline = match self.programs.compiled(program) {
             Some(compiled) => compiled,
             None => {
+                if self
+                    .programs
+                    .residual(program)
+                    .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
+                {
+                    self.host.before_wasm_native_compilation();
+                }
                 if wasm_root_only || wasm_root_first {
                     // This explicit diagnostic mode compiles only the
                     // function named by QUENCH_WASM_JIT_ROOT. Root-only mode
@@ -7693,7 +7993,7 @@ impl<H: Host> Vm<H> {
             && root_first_ready
             && self.programs.residual(program).is_some_and(|code| {
                 code.kind == crate::bytecode::ProgramKind::Wasm
-                    && code.functions.get(id as usize).is_some_and(|function| {
+                    && code.function_get(id as usize).is_some_and(|function| {
                         function.code.len() <= MAX_JIT_TIER_BYTECODES_PER_FUNCTION
                     })
             })
@@ -7727,9 +8027,6 @@ impl<H: Host> Vm<H> {
                     let guard = guarded_memory(self, binding);
                     // Code compiled without bounds checks needs this memory's guard.
                     if compiled.guarded && guard.is_none() {
-                        return None;
-                    }
-                    if compiled.wraps && !wrapping_memory(self, binding) {
                         return None;
                     }
                     if compiled.fixed_base.is_some_and(|fixed| {
@@ -7800,6 +8097,7 @@ impl<H: Host> Vm<H> {
                     std::ptr::null_mut(),
                 )
             };
+            let poll = self.execution_interrupt.poll_page();
             let mut context = CallContext {
                 stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
                 interrupt: self.execution_interrupt.atomic_flag(),
@@ -7833,6 +8131,8 @@ impl<H: Host> Vm<H> {
                     .diagnostics
                     .as_ref()
                     .map_or(0, |stats| stats.reference_call_sites.len()),
+                poll_start: poll.map_or(0, |(start, _)| start),
+                poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
                 reference_epoch: self.wasm_reference_epoch.as_ptr(),
                 reference_fast_caches: compiled.reference_fast_caches_ptr(),
                 emscripten_memcpy_fast_path_hits: emscripten_memcpy_fast_path_hits_ptr,
@@ -8044,11 +8344,11 @@ impl<H: Host> Vm<H> {
         let Some(wrapper) = self.heap.environment_slot(instance_env, import_slot) else {
             return false;
         };
-        let Some(Cell::Function {
+        let Some(FunctionRecord {
             kind: FunctionKind::Native(Native::WasmHost),
             env: wrapper_env,
             ..
-        }) = self.heap.get(wrapper)
+        }) = self.heap.function(wrapper)
         else {
             return false;
         };
@@ -8171,8 +8471,8 @@ impl<H: Host> Vm<H> {
             && imported_name_is_emscripten_memcpy
             && super::wasm_js::emscripten_memcpy_raw_i32_enabled()
         {
-            match self.heap.get(callee) {
-                Some(Cell::Function {
+            match self.heap.function(callee) {
+                Some(FunctionRecord {
                     kind: FunctionKind::Native(Native::WasmHost),
                     env,
                     ..
@@ -8264,8 +8564,8 @@ impl<H: Host> Vm<H> {
                     return Ok(());
                 }
             }
-            let js_import = match self.heap.get(callee) {
-                Some(Cell::Function {
+            let js_import = match self.heap.function(callee) {
+                Some(FunctionRecord {
                     kind: FunctionKind::Native(Native::WasmHost),
                     env,
                     ..
@@ -8346,6 +8646,9 @@ mod tests {
             entry_stack: 0,
             guard_start: 0,
             guard_end: 0,
+            // No poll page: compiled code checks the interrupt flag.
+            poll_start: 0,
+            poll_end: 0,
             globals: std::ptr::null(),
             callout: 0,
             call_reference: 0,
@@ -8413,7 +8716,8 @@ mod tests {
     fn emscripten_memcpy_leaf_copies_overlap_and_observes_cache_miss_and_interrupt() {
         use std::sync::atomic::{AtomicBool, Ordering};
 
-        let mut bytes = [0, 1, 2, 3, 4, 5];
+        // Wasm memory bytes: an untyped literal would be `[i32; 6]`.
+        let mut bytes: [u8; 6] = [0, 1, 2, 3, 4, 5];
         let mut cache = EmscriptenMemcpyCache {
             valid: 1,
             function: 7,

@@ -18,12 +18,6 @@ pub(crate) const BUILTIN_MODULES: &[&str] = &[
     "_http_incoming",
     "_http_outgoing",
     "_http_server",
-    "_stream_duplex",
-    "_stream_passthrough",
-    "_stream_readable",
-    "_stream_transform",
-    "_stream_wrap",
-    "_stream_writable",
     "_tls_common",
     "_tls_wrap",
     "assert",
@@ -147,6 +141,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let paths = get(context, facades, "1")?;
     set(context, module, "createRequire", create_require)?;
     set(context, module, "_nodeModulePaths", paths)?;
+    let global_paths = global_paths()
+        .iter()
+        .map(|path| context.string_rooted(&path.to_string_lossy()))
+        .collect::<Vec<_>>();
+    let global_paths = context.array_rooted(&global_paths)?;
+    set(context, module, "globalPaths", global_paths)?;
     let resolve_filename =
         context.host_function(crate::host::shared_vm::operation("_resolveFilename"))?;
     set(context, module, "_resolveFilename", resolve_filename)?;
@@ -642,6 +642,27 @@ pub(crate) fn node_search_paths(directory: &Path) -> impl Iterator<Item = PathBu
         .filter(|path| path.file_name().is_none_or(|name| name != "node_modules"))
         .map(|path| path.join("node_modules"))
 }
+
+/// Node's `modulePaths` (lib/internal/modules/cjs/loader.js `initPaths`): `NODE_PATH`'s
+/// entries as given, then `$HOME/.node_modules`, `$HOME/.node_libraries` and
+/// `$PREFIX/lib/node`, the executable being `$PREFIX/bin/node`. Bare requires search them after
+/// the requester's `node_modules` chain; `Module.globalPaths` is a copy.
+pub(crate) fn global_paths() -> Vec<PathBuf> {
+    let node_path = std::env::var_os("NODE_PATH").unwrap_or_default();
+    let mut paths: Vec<PathBuf> =
+        std::env::split_paths(&node_path).filter(|path| !path.as_os_str().is_empty()).collect();
+    if let Some(home) = std::env::var_os("HOME").filter(|home| !home.is_empty()) {
+        let home = std::path::absolute(home).unwrap_or_default();
+        paths.extend([home.join(".node_modules"), home.join(".node_libraries")]);
+    }
+    let executable = crate::shared_run::executable_path().unwrap_or_default();
+    let prefix = executable.ancestors().nth(EXECUTABLE_PREFIX_DEPTH).unwrap_or(Path::new("/"));
+    paths.push(prefix.join("lib").join("node"));
+    paths
+}
+
+/// `$PREFIX/bin/node`: the prefix is the executable's second ancestor.
+const EXECUTABLE_PREFIX_DEPTH: usize = 2;
 
 pub(crate) fn node_module_paths(
     context: &mut NativeContext<'_, NodeHost>,

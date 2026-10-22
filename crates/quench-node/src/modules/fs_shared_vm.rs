@@ -27,7 +27,7 @@ pub(crate) mod file_handle_write;
 pub(crate) mod promise_public;
 
 const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync, createReadStream, normalizeRead, apply, registerHandle, closeHandle) => ({
+    r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync, normalizeRead, apply, registerHandle, closeHandle) => ({
   readFile: (...args) => Promise.resolve().then(() => {
     const handle = args[0];
     if (handle && typeof handle.readFile === 'function') return handle.readFile(args[1]);
@@ -1939,7 +1939,12 @@ pub(super) const UV_DIRENT_FIFO: i32 = 4;
 pub(super) const UV_DIRENT_SOCKET: i32 = 5;
 pub(super) const UV_DIRENT_CHAR: i32 = 6;
 pub(super) const UV_DIRENT_BLOCK: i32 = 7;
+/// libuv's Windows-only open flags, which are no bits elsewhere.
 const UV_FS_O_FILEMAP: i32 = 0;
+const UV_FS_O_TEMPORARY: i32 = 0;
+const UV_FS_O_SHORT_LIVED: i32 = 0;
+const UV_FS_O_SEQUENTIAL: i32 = 0;
+const UV_FS_O_RANDOM: i32 = 0;
 const UV_FS_COPYFILE_EXCL: i32 = 1;
 const UV_FS_COPYFILE_FICLONE: i32 = 2;
 const UV_FS_COPYFILE_FICLONE_FORCE: i32 = 4;
@@ -1974,6 +1979,10 @@ const FS_CONSTANT_VALUES: &[(&str, i32)] = &[
     ("O_CREAT", libc::O_CREAT),
     ("O_EXCL", libc::O_EXCL),
     ("UV_FS_O_FILEMAP", UV_FS_O_FILEMAP),
+    ("UV_FS_O_TEMPORARY", UV_FS_O_TEMPORARY),
+    ("UV_FS_O_SHORT_LIVED", UV_FS_O_SHORT_LIVED),
+    ("UV_FS_O_SEQUENTIAL", UV_FS_O_SEQUENTIAL),
+    ("UV_FS_O_RANDOM", UV_FS_O_RANDOM),
     ("O_NOCTTY", libc::O_NOCTTY),
     ("O_TRUNC", libc::O_TRUNC),
     ("O_APPEND", libc::O_APPEND),
@@ -2023,6 +2032,10 @@ const FS_CONSTANT_VALUES: &[(&str, i32)] = &[
     ("S_IRUSR", S_IRUSR),
     ("S_IWUSR", S_IWUSR),
     ("UV_FS_O_FILEMAP", UV_FS_O_FILEMAP),
+    ("UV_FS_O_TEMPORARY", UV_FS_O_TEMPORARY),
+    ("UV_FS_O_SHORT_LIVED", UV_FS_O_SHORT_LIVED),
+    ("UV_FS_O_SEQUENTIAL", UV_FS_O_SEQUENTIAL),
+    ("UV_FS_O_RANDOM", UV_FS_O_RANDOM),
     ("UV_FS_COPYFILE_EXCL", UV_FS_COPYFILE_EXCL),
     ("COPYFILE_EXCL", UV_FS_COPYFILE_EXCL),
     ("UV_FS_COPYFILE_FICLONE", UV_FS_COPYFILE_FICLONE),
@@ -2060,7 +2073,7 @@ fn make_readdir_sync(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 pub(crate) fn readdir_policy(
     context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let policy = directory_policy(context)?;
+    let policy = library_policy(context)?;
     let function = get(context, policy, "readdirSync")?;
     let undefined = context.undefined();
     context.call_rooted(function, undefined, args)
@@ -2076,12 +2089,83 @@ fn make_readdir_async(
     context.call_rooted(factory, undefined, &[readdir_sync])
 }
 
+/// `fs`'s own keys after `readFileSync`, in order, with whether each is enumerable: one lazy
+/// group (`module`) that `build_module` fills when a script first observes any of them.
+const MODULE_MEMBERS: [(&str, bool); 96] = [
+    ("watch", true), ("readFile", true), ("statSync", true), ("statfsSync", true),
+    ("statfs", true), ("exists", true), ("existsSync", true), ("access", true),
+    ("accessSync", true), ("chmod", true), ("chmodSync", true), ("fchmod", true),
+    ("fchmodSync", true), ("lstatSync", true), ("lstat", true), ("readdirSync", true),
+    ("readdir", true), ("Dir", true), ("opendir", true), ("opendirSync", true),
+    ("readlinkSync", true), ("readlink", true), ("realpathSync", true), ("realpath", true),
+    ("constants", true), ("Stats", true), ("utimesSync", true), ("watchFile", true),
+    ("unwatchFile", true), ("rm", true), ("mkdirSync", true), ("rmdirSync", true),
+    ("mkdtempSync", true), ("mkdtempDisposableSync", true), ("copyFileSync", true),
+    ("symlinkSync", true), ("linkSync", true), ("renameSync", true), ("unlinkSync", true),
+    ("chownSync", true), ("lchownSync", true), ("fchownSync", true), ("truncateSync", true),
+    ("ftruncateSync", true), ("rmSync", true), ("openSync", true), ("closeSync", true),
+    ("fstatSync", true), ("readSync", true), ("writeSync", true), ("fsyncSync", true),
+    ("fdatasyncSync", true), ("writeFileSync", true), ("appendFileSync", true),
+    ("fsync", true), ("fdatasync", true), ("writev", true), ("writevSync", true),
+    ("readv", true), ("readvSync", true), ("truncate", true), ("ftruncate", true),
+    ("stat", true), ("mkdir", true), ("rmdir", true), ("mkdtemp", true), ("copyFile", true),
+    ("cpSync", true), ("cp", true), ("symlink", true), ("link", true), ("rename", true),
+    ("unlink", true), ("chown", true), ("lchown", true), ("fchown", true), ("open", true),
+    ("close", true), ("read", true), ("fstat", true), ("writeFile", true),
+    ("appendFile", true), ("createReadStream", true), ("ReadStream", true), ("promises", true),
+    ("createWriteStream", true), ("WriteStream", true), ("lutimesSync", false),
+    ("futimesSync", false), ("utimes", false), ("lutimes", false), ("futimes", false),
+    ("write", false), ("Dirent", true), ("glob", true), ("globSync", true),
+];
+
+/// The `fs` module. `readFileSync` is defined directly; every other member is a lazy data
+/// property of one group, built when a script first observes any of them: reading a file
+/// needs none of the 50-odd guest factories and wrappers the rest of the module compiles.
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
-    super::fs_watch_shared_vm::install(context, module)?;
-    let opendir_promise;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
     set(context, module, "readFileSync", read_file)?;
+    let initialize = context.host_function_with_data(
+        crate::host::shared_vm::operation("fsModuleInitialize"), module,
+    )?;
+    context.define_lazy_data_members_rooted(module, &MODULE_MEMBERS, initialize)?;
+    let global = context.global_root()?;
+    let key = context.string_rooted("__nodeFs");
+    if !context.define_data_property_rooted(global, key, module, false, false, true)? {
+        return Err(RootedError::host("cannot install canonical Node Fs alias"));
+    }
+    Ok(module)
+}
+
+/// Builds the members of `fs` (the lazy group `module` defines) when a script first observes
+/// one, and checks they are exactly `MODULE_MEMBERS`, ahead of any key a script added.
+pub(crate) fn initialize_module(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let module = context.host_function_data()?;
+    build_module(context, module)?;
+    install_library_policy(context, module)?;
+    // A script may add keys to `fs` before it first reads a lazy member; string keys it adds
+    // follow the group in key order and symbol keys are listed apart, so the module's own
+    // members are the leading string keys.
+    let keys = context.own_keys_rooted(module)?;
+    let mut names = Vec::with_capacity(keys.len());
+    for key in keys {
+        if !context.is_symbol_rooted(key)? {
+            names.push(context.to_string(key)?);
+        }
+    }
+    let expected = std::iter::once("readFileSync").chain(MODULE_MEMBERS.iter().map(|(name, _)| *name));
+    if !names.iter().map(String::as_str).take(expected.clone().count()).eq(expected) {
+        return Err(RootedError::host(format!("fs members differ from MODULE_MEMBERS: {names:?}")));
+    }
+    Ok(context.undefined())
+}
+
+fn build_module(context: &mut NativeContext<'_, NodeHost>, module: RootId) -> Result<(), RootedError> {
+    super::fs_watch_shared_vm::install(context, module)?;
+    let opendir_promise;
+    let read_file = get(context, module, "readFileSync")?;
     let read_file_factory = context
         .evaluate_script_rooted(ASYNC_READ_FILE_FACTORY, "node:fs/shared-async-read-file.js")?;
     let validate =
@@ -2363,6 +2447,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.evaluate_script_rooted(OPEN_CLOSE_FACTORY, "node:fs/shared-open-close.js")?;
     let undefined = context.undefined();
     let read_sync = get(context, module, "readSync")?;
+    let shared = context.host_mut().shared_state();
+    for (name, function) in READ_FILE_CALLS.iter().zip([open_sync, read_sync, close_sync]) {
+        let retained = context.retain(function)?;
+        shared.borrow_mut().builtin_cache.insert(read_file_call_key(name), retained);
+    }
     let open_close = context.call_rooted(
         factory,
         undefined,
@@ -2390,30 +2479,14 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let append_file = context.call_rooted(append_file_factory, undefined, &[append_file_sync])?;
     set(context, module, "appendFile", append_file)?;
-    let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
-    let readable = get(context, streams, "Readable")?;
-    let read_stream_factory = context
-        .evaluate_script_rooted(CREATE_READ_STREAM, "node:fs/shared-create-read-stream.js")?;
-    let read_stream_open =
-        context.host_function(crate::host::shared_vm::operation("fsReadStreamOpen"))?;
-    let read_stream_read =
-        context.host_function(crate::host::shared_vm::operation("fsReadStreamRead"))?;
-    let read_stream_close =
-        context.host_function(crate::host::shared_vm::operation("fsReadStreamClose"))?;
-    let read_stream_api = context.call_rooted(
-        read_stream_factory,
-        undefined,
-        &[
-            read_stream_open,
-            read_stream_read,
-            read_stream_close,
-            readable,
-        ],
+    // The read stream extends `stream.Readable`, whose module graph is most of what loading
+    // `fs` would otherwise build: it is created when a script first observes either name.
+    let initialize_read_stream = context.host_function_with_data(
+        crate::host::shared_vm::operation("fsReadStreamInitialize"), module,
     )?;
-    let create_read_stream = get(context, read_stream_api, "createReadStream")?;
-    let read_stream = get(context, read_stream_api, "ReadStream")?;
-    set(context, module, "createReadStream", create_read_stream)?;
-    set(context, module, "ReadStream", read_stream)?;
+    context.define_lazy_data_properties_rooted(
+        module, &["createReadStream", "ReadStream"], true, initialize_read_stream,
+    )?;
     let rm_sync = get(context, module, "rmSync")?;
     let promises = promises_module(
         context,
@@ -2435,7 +2508,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         copy_file_sync,
         readv_sync,
         writev_sync,
-        create_read_stream,
     )?;
     set(context, promises, "opendir", opendir_promise)?;
     for name in ["stat", "lstat"] {
@@ -2543,9 +2615,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     promise_public::install(context, promises)?;
     set(context, module, "promises", promises)?;
 
-    let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
-    let writable = get(context, streams, "Writable")?;
-    write_stream::install(context, module, writable)?;
+    write_stream::install(context, module)?;
 
     let install_missing_fs_methods = context.evaluate_script_rooted(
         "(fs) => { for (const name of ['utimesSync', 'lutimesSync', 'futimesSync', 'utimes', 'lutimes', 'futimes', 'rm', 'write']) { if (typeof fs[name] === 'function') continue; Object.defineProperty(fs, name, { configurable: true, writable: true, value() { const error = new Error(`${name} is unavailable outside a mounted VFS`); error.code = 'ENOSYS'; throw error; } }); } }",
@@ -2553,7 +2623,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let undefined = context.undefined();
     context.call_rooted(install_missing_fs_methods, undefined, &[module])?;
-    for name in ["lutimesSync", "futimesSync", "createReadStream", "createWriteStream"] {
+    // `createReadStream` and `createWriteStream` take the same wrapper when their lazy groups
+    // materialize (`initialize_read_stream`, `write_stream::initialize`).
+    for name in ["lutimesSync", "futimesSync"] {
         let original = get(context, module, name)?;
         let function = metadata_public::wrap(context, original, name)?;
         set(context, module, name, function)?;
@@ -2565,13 +2637,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_fs_fallbacks");
-    let global = context.global_root()?;
-    let key = context.string_rooted("__nodeFs");
-    if !context.define_data_property_rooted(global, key, module, false, false, true)? {
-        return Err(RootedError::host("cannot install canonical Node Fs alias"));
-    }
-
-    Ok(module)
+    Ok(())
 }
 
 pub(crate) fn promises_module(
@@ -2594,7 +2660,6 @@ pub(crate) fn promises_module(
     copy_file_sync: RootId,
     readv_sync: RootId,
     writev_sync: RootId,
-    create_read_stream: RootId,
 ) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(PROMISES_FACTORY, "node:fs/promises/shared.js")?;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
@@ -2631,7 +2696,6 @@ pub(crate) fn promises_module(
             append_file_sync,
             readv_sync,
             writev_sync,
-            create_read_stream,
             normalize_read,
             apply,
             register_handle,
@@ -2768,6 +2832,95 @@ pub(crate) fn complete_read_file(
     Ok(undefined)
 }
 
+/// The members of `fs` Node's `readFileSync` calls through the module object to read a file
+/// into a new Buffer; a script that replaces one of them observes its calls.
+const READ_FILE_CALLS: [&str; 3] = ["openSync", "readSync", "closeSync"];
+
+fn read_file_call_key(name: &str) -> String {
+    format!("\0builtin:fs/readFileSync/{name}")
+}
+
+/// Whether `fs` still holds the members Node's `readFileSync` calls, so reading natively
+/// observes nothing those calls would.
+fn read_file_calls_are_builtin(context: &mut NativeContext<'_, NodeHost>) -> Result<bool, RootedError> {
+    let module = crate::host::shared_vm::commonjs::fs_module(context)?;
+    let shared = context.host_mut().shared_state();
+    for name in READ_FILE_CALLS {
+        if context.is_pending_lazy_data_property_rooted(module, name)? {
+            continue;
+        }
+        let Some(original) = shared.borrow().builtin_cache.get(&read_file_call_key(name)).copied() else {
+            return Ok(false);
+        };
+        let current = get(context, module, name)?;
+        if !context.strict_equal_rooted(current, original)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Node's `readFileSync` of a regular file of known size without options: the bytes go into
+/// `Buffer.allocUnsafe(size)` (its pooled allocation), cut to the bytes read when the file
+/// shrank since its size was taken. Before `buffer.js` has loaded, the host allocates as it
+/// would, without loading it (`allocate_before_library`).
+fn read_into_unsafe_buffer(context: &mut NativeContext<'_, NodeHost>, bytes: Vec<u8>, size: u64) -> Result<RootId, RootedError> {
+    let early = usize::try_from(size)
+        .ok()
+        .map(|size| crate::modules::buffer_shared_vm::allocate_before_library(context, size))
+        .transpose()?
+        .flatten();
+    let buffer = match early {
+        Some(buffer) => buffer,
+        None => {
+            let buffer_module = crate::host::shared_vm::commonjs::buffer_module(context)?;
+            let constructor = get(context, buffer_module, "Buffer")?;
+            let allocate = get(context, constructor, "allocUnsafe")?;
+            let length = context.number(size as f64);
+            context.call_rooted(allocate, constructor, &[length])?
+        }
+    };
+    let Some(storage) = context.buffer_storage_rooted(buffer)? else {
+        return Err(RootedError::host("Buffer.allocUnsafe returned no buffer"));
+    };
+    let copied = bytes.len().min(storage.byte_length);
+    if copied > 0 {
+        // SAFETY: the view's pinned storage holds `byte_length` bytes and `bytes` is a separate
+        // allocation.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), storage.data, copied) };
+    }
+    if (bytes.len() as u64) >= size {
+        return Ok(buffer);
+    }
+    let slice = get(context, buffer, "slice")?;
+    let start = context.number(0.0);
+    let end = context.number(bytes.len() as f64);
+    context.call_rooted(slice, buffer, &[start, end])
+}
+
+/// Whether `options` is the string `utf8` or `utf-8` and Node's option policy for it would
+/// observe nothing. `getOptions(options, defaults)` then copies `defaults`, sets the encoding
+/// (which `assertEncoding` accepts) and reads `signal`; `validateReadFileBufferOptions` reads
+/// `buffer`. Where the plain `defaults` finds neither key along its prototype chain (a lookup
+/// that runs no guest code), those reads return `undefined`, so `defaults` given the
+/// encoding stands for the copy.
+fn utf8_encoding_option(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: RootId,
+    defaults: RootId,
+) -> Result<bool, RootedError> {
+    if !matches!(context.string_text(options)?.as_deref(), Some("utf8" | "utf-8")) {
+        return Ok(false);
+    }
+    for name in ["signal", "buffer"] {
+        let key = context.string_rooted(name);
+        if context.has_property_rooted(defaults, key)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub(crate) fn read_file_sync(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -2783,9 +2936,24 @@ pub(crate) fn read_file_sync(
     let key = context.string_rooted("flag");
     let read_flag = context.string_rooted("r");
     context.define_data_property_rooted(defaults, key, read_flag, true, true, true)?;
-    let options =
-        super::fs_policy_shared_vm::call(context, "getOptions", &[provided_options, defaults])?;
-    super::fs_policy_shared_vm::call(context, "validateReadFileBufferOptions", &[options])?;
+    // Node's `getOptions(undefined | null, defaults)` returns the defaults, which pass
+    // `validateReadFileBufferOptions`: such a call reads with flag `r` into a new Buffer, and
+    // needs none of Node's option policy.
+    let defaulted = context
+        .rooted_value(provided_options)
+        .is_some_and(|value| value.is_undefined() || value.is_null());
+    let options = if defaulted {
+        defaults
+    } else if utf8_encoding_option(context, provided_options, defaults)? {
+        let key = context.string_rooted("encoding");
+        context.define_data_property_rooted(defaults, key, provided_options, true, true, true)?;
+        defaults
+    } else {
+        let options =
+            super::fs_policy_shared_vm::call(context, "getOptions", &[provided_options, defaults])?;
+        super::fs_policy_shared_vm::call(context, "validateReadFileBufferOptions", &[options])?;
+        options
+    };
     let user_buffer = get(context, options, "buffer")?;
     let has_user_buffer = !context
         .rooted_value(user_buffer)
@@ -2807,7 +2975,14 @@ pub(crate) fn read_file_sync(
     } else {
         None
     };
-    if !fast_utf8 {
+    // Without an encoding, only a primitive path (whose validation reads nothing) is read here,
+    // while `fs` holds the members Node's reads call.
+    let native_buffer = !fast_utf8
+        && defaulted
+        && fd.is_none()
+        && context.string_text(input)?.is_some()
+        && read_file_calls_are_builtin(context)?;
+    if !fast_utf8 && !native_buffer {
         return super::fs_read_file_shared_vm::read_general(
             context,
             input,
@@ -2818,8 +2993,10 @@ pub(crate) fn read_file_sync(
     }
     let mut filename = None;
     let bytes = if let Some(fd) = fd {
-        let flag = get(context, options, "flag")?;
-        super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
+        if !defaulted {
+            let flag = get(context, options, "flag")?;
+            super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
+        }
         let fs = context.host_mut().shared_state().borrow().fs.clone();
         fs.with_descriptor(fd, |file| Ok(fs_ops::read_file(file, MAX_READ_FILE_BYTES)))
             .unwrap_or_else(|error| {
@@ -2828,12 +3005,26 @@ pub(crate) fn read_file_sync(
                     error,
                 })
             })
+            .map(|bytes| {
+                let size = bytes.len() as u64;
+                (bytes, size)
+            })
     } else {
+        let original = input;
         let input = super::fs_path::validate(context, input, "path")?;
         let flag = get(context, options, "flag")?;
-        let flags = super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
-        let flags = context.to_number(flags)? as i32;
         let path = super::fs_path::resolve(context, input)?;
+        // Node reads a file of unknown size in chunks it concatenates into a pooled Buffer;
+        // only a regular file of known size reads into a Buffer of its own.
+        if !fast_utf8 && !std::fs::metadata(&path).is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0) {
+            return super::fs_read_file_shared_vm::read_general(context, original, options, false, false);
+        }
+        let flags = if defaulted {
+            libc::O_RDONLY
+        } else {
+            let flags = super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
+            context.to_number(flags)? as i32
+        };
         filename = Some(super::fs_path::display(context, input)?);
         #[cfg(unix)]
         let opened = fs_ops::open_numeric(&path, flags, None);
@@ -2843,7 +3034,11 @@ pub(crate) fn read_file_sync(
             fs_ops::open(&path, context.string_text(flag)?.as_deref(), None)
         };
         match opened {
-            Ok(mut file) => fs_ops::read_file(&mut file, MAX_READ_FILE_BYTES),
+            Ok(mut file) if native_buffer => fs_ops::read_sized_file(&mut file, MAX_READ_FILE_BYTES),
+            Ok(mut file) => fs_ops::read_file(&mut file, MAX_READ_FILE_BYTES).map(|bytes| {
+                let size = bytes.len() as u64;
+                (bytes, size)
+            }),
             Err(error) => Err(ReadFileFailure::Io {
                 syscall: "open",
                 error,
@@ -2851,7 +3046,8 @@ pub(crate) fn read_file_sync(
         }
     };
     match bytes {
-        Ok(bytes) => super::buffer_binding_shared_vm::decode_bytes(context, &bytes, "utf8"),
+        Ok((bytes, _)) if fast_utf8 => super::buffer_binding_shared_vm::decode_bytes(context, &bytes, "utf8"),
+        Ok((bytes, size)) => read_into_unsafe_buffer(context, bytes, size),
         Err(ReadFileFailure::TooLarge(size)) => {
             let error =
                 context.range_error_rooted(&format!("File size ({size}) is greater than 2 GiB"))?;
@@ -2924,7 +3120,7 @@ pub(crate) fn read_stream_read(
         (result, path)
     };
     match result {
-        Ok(Some(bytes)) => crate::modules::buffer_shared_vm::from_bytes(context, &bytes),
+        Ok(Some(bytes)) => crate::modules::buffer_shared_vm::from_vec(context, bytes),
         Ok(None) => Ok(context.null()),
         Err(error) => Err(stream_io_error(context, error, "read", &path)?),
     }
@@ -2988,25 +3184,73 @@ pub(super) fn stream_io_error(
     Ok(context.throw(exception))
 }
 
-/// Install unchanged Node glob exports when the native fs module is first
-/// required. The original policy retains its own lazy traversal-module import.
-pub(crate) fn initialize_glob_policy(
+/// Defines `fs.createReadStream` and `fs.ReadStream` over `stream.Readable` when a script first
+/// observes either (the lazy group `module` installs).
+pub(crate) fn initialize_read_stream(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let module = context.host_function_data()?;
+    let undefined = context.undefined();
+    let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
+    let readable = get(context, streams, "Readable")?;
+    let read_stream_factory = context
+        .evaluate_script_rooted(CREATE_READ_STREAM, "node:fs/shared-create-read-stream.js")?;
+    let read_stream_open =
+        context.host_function(crate::host::shared_vm::operation("fsReadStreamOpen"))?;
+    let read_stream_read =
+        context.host_function(crate::host::shared_vm::operation("fsReadStreamRead"))?;
+    let read_stream_close =
+        context.host_function(crate::host::shared_vm::operation("fsReadStreamClose"))?;
+    let read_stream_api = context.call_rooted(
+        read_stream_factory,
+        undefined,
+        &[
+            read_stream_open,
+            read_stream_read,
+            read_stream_close,
+            readable,
+        ],
+    )?;
+    let create_read_stream = get(context, read_stream_api, "createReadStream")?;
+    let create_read_stream = metadata_public::wrap(context, create_read_stream, "createReadStream")?;
+    let read_stream = get(context, read_stream_api, "ReadStream")?;
+    set(context, module, "createReadStream", create_read_stream)?;
+    set(context, module, "ReadStream", read_stream)?;
+    Ok(context.undefined())
+}
+
+/// The members `fs` takes from Node's own `lib/fs.js` and `internal/fs/utils.js`, in the order
+/// the module defines them.
+const LIBRARY_POLICY_MEMBERS: [&str; 4] = ["Dirent", "glob", "globSync", "readdirSync"];
+
+/// Install Node's own glob, directory reader and `Dirent` when a script first observes one of
+/// them: loading `lib/fs.js` builds Buffer, util and their dependencies, which reading a file
+/// does not need. Node's promises module is likewise loaded only when requested; in particular
+/// its readline dependencies must not eagerly capture the OS binding while merely requiring fs.
+fn install_library_policy(
     context: &mut NativeContext<'_, NodeHost>, module: RootId,
 ) -> Result<(), RootedError> {
-    let policy = crate::host::shared_vm::commonjs::node_library_module(context, "fs.js", "fs.js")?;
-    for name in ["glob", "globSync", "readdirSync"] {
-        let function = get(context, policy, name)?;
-        set(context, module, name, function)?;
-    }
-    let directory = directory_policy(context)?;
-    let readdir = get(context, policy, "readdirSync")?;
-    set(context, directory, "readdirSync", readdir)?;
-    // Node's public fs module does not load its promises implementation until
-    // requested. In particular its readline dependencies must not eagerly
-    // capture the OS binding while merely requiring fs.
+    let initialize = context.host_function_with_data(
+        crate::host::shared_vm::operation("fsLibraryPolicyInitialize"), module,
+    )?;
+    context.define_lazy_data_properties_rooted(module, &LIBRARY_POLICY_MEMBERS, true, initialize)?;
     let promises = get(context, module, "promises")?;
     let initializer = context.host_function(crate::host::shared_vm::operation("fsPromisesGlobInitialize"))?;
     context.define_lazy_data_properties_rooted(promises, &["glob"], true, initializer)
+}
+
+/// Defines the library members on the `fs` module (the lazy group `install_library_policy`
+/// defines) from the directory policy.
+pub(crate) fn initialize_library_policy(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let module = context.host_function_data()?;
+    let policy = library_policy(context)?;
+    for name in LIBRARY_POLICY_MEMBERS {
+        let value = get(context, policy, name)?;
+        set(context, module, name, value)?;
+    }
+    Ok(context.undefined())
 }
 
 pub(crate) fn initialize_promises_glob_policy(
@@ -3023,22 +3267,31 @@ pub(crate) fn initialize_promises_glob_policy(
     Ok(context.undefined())
 }
 
-/// The native filesystem and original fs utilities import one another. Keep the
-/// constructor in private policy and initialize it after the native module is
-/// cached, so both imports observe the same completed filesystem object.
+/// The private copy of Node's library members that the native readers call, whatever a script
+/// later assigns to the public module. It is filled from `lib/fs.js` on first use.
 fn directory_policy(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(
         context, "\0binding:fs-directory-policy", |context| context.null_object_rooted(),
     )
 }
 
-pub(crate) fn initialize_directory_policy(
-    context: &mut NativeContext<'_, NodeHost>, module: RootId,
-) -> Result<(), RootedError> {
+/// The directory policy, loading Node's `lib/fs.js` into it the first time. The native module is
+/// cached before this runs, so the library and the native module observe one completed
+/// filesystem object.
+fn library_policy(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let policy = directory_policy(context)?;
+    let reader = get(context, policy, "readdirSync")?;
+    if !context.rooted_value(reader).is_some_and(|value| value.is_undefined()) {
+        return Ok(policy);
+    }
+    let library = crate::host::shared_vm::commonjs::node_library_module(context, "fs.js", "fs.js")?;
     let dirent = crate::host::shared_vm::commonjs::node_library_export(
         context, "fs.js", "internal/fs/utils.js", "Dirent",
     )?;
-    let policy = directory_policy(context)?;
     set(context, policy, "Dirent", dirent)?;
-    set(context, module, "Dirent", dirent)
+    for name in ["glob", "globSync", "readdirSync"] {
+        let function = get(context, library, name)?;
+        set(context, policy, name, function)?;
+    }
+    Ok(policy)
 }

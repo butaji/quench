@@ -33,15 +33,128 @@ const _: () = {
     assert!(tags[0] == FIRST_TAG && tags[tags.len() - 1] == LAST_TAG);
 };
 const DIRECT_OBJECT_HANDLE_BIT: u64 = 1 << 47;
+/// The `TAG_DELETED` payload bit of `Value::shared_environment_slot`. Environments are legacy
+/// slot cells, whose payload never sets the direct-handle bits.
+const SHARED_ENVIRONMENT_SLOT_BIT: u64 = DIRECT_OBJECT_HANDLE_BIT;
+/// The `TAG_DELETED` payload bit of `Value::environment_index`, distinct from the shared-slot
+/// bit and from the `DELETED`/`UNMATERIALIZED_ARGUMENTS` sentinels.
+const ENVIRONMENT_INDEX_BIT: u64 = DIRECT_ARRAY_HANDLE_BIT;
 const DIRECT_ARRAY_HANDLE_BIT: u64 = 1 << 46;
+/// Both direct-handle bits: the function record family's code.
+const DIRECT_FUNCTION_HANDLE_BITS: u64 = DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
+/// The promise record family's code, below the other direct-handle bits. Legacy slot and
+/// record indices stay below it (`MAX_HEAP_CELLS`, `RECORD_SPACE_CAPACITY`).
+const DIRECT_PROMISE_HANDLE_BIT: u64 = 1 << 45;
+/// The await-state record family's code.
+const DIRECT_AWAIT_HANDLE_BITS: u64 = DIRECT_PROMISE_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
+/// The iterator record family's code.
+const DIRECT_ITERATOR_HANDLE_BITS: u64 = DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
+/// The string record family's code: every family bit.
+const DIRECT_STRING_HANDLE_BITS: u64 =
+    DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
+/// The payload bits that code a heap value's reference family.
+const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PROMISE_HANDLE_BIT;
 /// The bits that name a heap value's reference family (`Value::heap_reference`).
-const HEAP_FAMILY_MASK: u64 = TAG_MASK | DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
+const HEAP_FAMILY_MASK: u64 = TAG_MASK | HEAP_FAMILY_BITS;
+
+/// A narrow value: a `Value` packed into 32 bits for an object's inline property slot. Bit 0
+/// set holds a `NARROW_INTEGER_BITS` integer above it. Bit 0 clear holds a `NARROW_CODE_BITS` code above it,
+/// naming the value's upper word in `NARROW_UPPER_WORDS`, and the lower word above that, at
+/// most `NARROW_INDEX_BITS` wide. Decoding rebuilds the exact bits, so a value is narrow
+/// exactly when it round-trips. The top two bits of a narrow value are equal, so a payload word
+/// whose upper half is a narrow value never carries an extras tag.
+pub(crate) const NARROW_INTEGER_FLAG: u32 = 1;
+const NARROW_CODE_BITS: u32 = 4;
+const NARROW_CODE_SHIFT: u32 = NARROW_INTEGER_FLAG.trailing_ones();
+const NARROW_INDEX_SHIFT: u32 = NARROW_CODE_SHIFT + NARROW_CODE_BITS;
+/// Lower-word width of a narrow non-integer: it leaves the top two bits clear.
+const NARROW_INDEX_BITS: u32 = u32::BITS - NARROW_INDEX_SHIFT - 2;
+/// Integer width of a narrow integer: its top two bits copy the sign.
+const NARROW_INTEGER_BITS: u32 = u32::BITS - NARROW_CODE_SHIFT - 1;
+const LOWER_WORD: u64 = u32::MAX as u64;
+/// Upper words of narrow non-integers by code: the eight heap reference families in
+/// `HEAP_FAMILY_BITS` order, then the tagged constants. Unused codes hold zero, the upper word
+/// of a number, which `to_narrow` never looks up.
+const NARROW_UPPER_WORDS: [u64; NARROW_LOOKUP_CODES] = {
+    let mut words = [0; NARROW_LOOKUP_CODES];
+    let mut family = 0;
+    while family < NARROW_HEAP_FAMILIES {
+        words[family] = TAG_HEAP | (family as u64) << HEAP_FAMILY_SHIFT;
+        family += 1;
+    }
+    words[NARROW_HEAP_FAMILIES] = TAG_UNDEFINED;
+    words[NARROW_HEAP_FAMILIES + 1] = TAG_NULL;
+    words[NARROW_HEAP_FAMILIES + 2] = TAG_BOOL;
+    words[NARROW_HEAP_FAMILIES + 3] = TAG_DELETED;
+    words
+};
+const HEAP_FAMILY_SHIFT: u32 = HEAP_FAMILY_BITS.trailing_zeros();
+/// The position of `tag` in tag order from `FIRST_TAG`.
+const fn tag_index(tag: u64) -> usize {
+    ((tag - FIRST_TAG) >> TAG_SHIFT) as usize
+}
+/// First narrow code of each tag, in tag order from `FIRST_TAG`; a value's code adds its
+/// family bits. The integer tag's entry is unused: integers pack apart.
+const NARROW_TAG_CODES: [usize; ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as usize + 1] = {
+    let mut codes = [0; ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as usize + 1];
+    codes[tag_index(TAG_UNDEFINED)] = NARROW_HEAP_FAMILIES;
+    codes[tag_index(TAG_NULL)] = NARROW_HEAP_FAMILIES + 1;
+    codes[tag_index(TAG_BOOL)] = NARROW_HEAP_FAMILIES + 2;
+    codes[tag_index(TAG_HEAP)] = 0;
+    codes[tag_index(TAG_DELETED)] = NARROW_HEAP_FAMILIES + 3;
+    codes
+};
+/// Codes `to_narrow` can compute: a constant's base plus stray family bits. Codes past the
+/// packed field name no upper word any value has.
+const NARROW_LOOKUP_CODES: usize = 2 * (1 << NARROW_CODE_BITS);
+const NARROW_HEAP_FAMILIES: usize = 1 << HEAP_FAMILY_BITS.count_ones();
+const _: () = assert!(HEAP_FAMILY_BITS >> HEAP_FAMILY_SHIFT == NARROW_HEAP_FAMILIES as u64 - 1);
+const _: () = assert!(NARROW_HEAP_FAMILIES + 4 <= 1 << NARROW_CODE_BITS);
+const _: () = assert!(NARROW_HEAP_FAMILIES + 3 + NARROW_HEAP_FAMILIES <= NARROW_LOOKUP_CODES);
+
+impl Value {
+    /// This value as a narrow value, when it has one.
+    #[inline(always)]
+    pub(crate) fn to_narrow(self) -> Option<u32> {
+        let upper = self.0 & !LOWER_WORD;
+        let lower = self.0 as u32;
+        if upper == TAG_INT {
+            let integer = lower as i32;
+            let limit = 1i32 << (NARROW_INTEGER_BITS - 1);
+            return (-limit..limit)
+                .contains(&integer)
+                .then_some(((integer as u32) << NARROW_CODE_SHIFT) | NARROW_INTEGER_FLAG);
+        }
+        // The code of the value's tag plus its family bits; only an upper word the code names
+        // exactly is narrow, which also rejects numbers and family bits on a constant.
+        let tag = (self.0 >> TAG_SHIFT).wrapping_sub(FIRST_TAG >> TAG_SHIFT) as usize;
+        let base = *NARROW_TAG_CODES.get(tag)?;
+        let code = base + ((self.0 & HEAP_FAMILY_BITS) >> HEAP_FAMILY_SHIFT) as usize;
+        (NARROW_UPPER_WORDS[code] == upper && lower >> NARROW_INDEX_BITS == 0)
+            .then_some(lower << NARROW_INDEX_SHIFT | (code as u32) << NARROW_CODE_SHIFT)
+    }
+
+    /// The value `narrow` packs (`to_narrow`).
+    #[inline(always)]
+    pub(crate) fn from_narrow(narrow: u32) -> Self {
+        if narrow & NARROW_INTEGER_FLAG != 0 {
+            return Self::integer((narrow as i32) >> NARROW_CODE_SHIFT);
+        }
+        let code = (narrow >> NARROW_CODE_SHIFT) as usize & ((1 << NARROW_CODE_BITS) - 1);
+        Self(NARROW_UPPER_WORDS[code] | u64::from(narrow >> NARROW_INDEX_SHIFT))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HeapReference {
     LegacySlot(u32),
     ObjectRecord(u32),
     ArrayRecord(u32),
+    FunctionRecord(u32),
+    PromiseRecord(u32),
+    AwaitRecord(u32),
+    IteratorRecord(u32),
+    StringRecord(u32),
 }
 
 /// `value` truncated toward zero when it fits `i32`; any other result is some `i32` whose
@@ -97,6 +210,22 @@ pub(crate) struct IntegerEncoding(u64);
 /// The tag bits an encoded i32 carries; compiled code encodes in place.
 pub(crate) const INTEGER_TAG_BITS: u64 = TAG_INT;
 
+/// The encoding facts compiled code tests and builds values with (`Value::number`,
+/// `Value::is_tagged`).
+pub(crate) struct ValueLayout;
+
+impl ValueLayout {
+    pub(crate) const TAG_MASK: u64 = TAG_MASK;
+    pub(crate) const INT_TAG: u64 = TAG_INT;
+    pub(crate) const DELETED_TAG: u64 = TAG_DELETED;
+    pub(crate) const CANONICAL_NAN: u64 = CANONICAL_NAN;
+    /// A tag field is the bits at and above this shift.
+    pub(crate) const TAG_SHIFT: u32 = TAG_SHIFT;
+    /// The first tag's field; a value is tagged when its field less this is at most the span.
+    pub(crate) const FIRST_TAG_FIELD: u64 = FIRST_TAG >> TAG_SHIFT;
+    pub(crate) const TAG_FIELD_SPAN: u64 = (LAST_TAG - FIRST_TAG) >> TAG_SHIFT;
+}
+
 impl IntegerEncoding {
     pub(crate) const TAG: Self = Self(TAG_INT);
 
@@ -112,10 +241,50 @@ impl Value {
     pub const FALSE: Self = Self(TAG_BOOL);
     pub const TRUE: Self = Self(TAG_BOOL | 1);
     pub(crate) const DELETED: Self = Self(TAG_DELETED);
+    /// The canonical NaN `number` stores every NaN as.
+    pub(crate) const NAN: Self = Self(CANONICAL_NAN);
     /// An activation's `arguments` binding whose object does not exist yet
     /// (`CallPlan::forwards_arguments`). Not a heap reference, and distinct from every value a
     /// guest operation produces.
     pub(crate) const UNMATERIALIZED_ARGUMENTS: Self = Self(TAG_DELETED | 1);
+
+    /// An environment slot that shares its owner environment's slot of the same index
+    /// (`EnvironmentSlot::shared`): a `TAG_DELETED` payload of `SHARED_ENVIRONMENT_SLOT_BIT`
+    /// and the owner's heap payload, which no guest operation produces.
+    pub(crate) fn shared_environment_slot(owner: Self) -> Self {
+        debug_assert!(owner.is_heap() && owner.0 & SHARED_ENVIRONMENT_SLOT_BIT == 0);
+        Self(TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT | (owner.0 & PAYLOAD_MASK))
+    }
+
+    /// A slot index or length inside a sparse environment's slot storage
+    /// (`EnvironmentSlots`): a `TAG_DELETED` payload of `ENVIRONMENT_INDEX_BIT` and the number,
+    /// which no guest operation produces.
+    pub(crate) fn environment_index(index: u32) -> Self {
+        Self(TAG_DELETED | ENVIRONMENT_INDEX_BIT | u64::from(index))
+    }
+
+    /// How the `environment_index` word `self` orders against the number `index`: the
+    /// number fills the low payload bits under one fixed tag, so the words order as their
+    /// numbers do and a search needs no decoding.
+    #[inline(always)]
+    pub(crate) fn cmp_environment_index(self, index: u32) -> std::cmp::Ordering {
+        debug_assert!(self.as_environment_index().is_some());
+        self.0.cmp(&Self::environment_index(index).0)
+    }
+
+    /// The number of an `environment_index`.
+    #[inline(always)]
+    pub(crate) fn as_environment_index(self) -> Option<u32> {
+        (self.0 & (TAG_MASK | ENVIRONMENT_INDEX_BIT) == TAG_DELETED | ENVIRONMENT_INDEX_BIT)
+            .then_some(self.0 as u32)
+    }
+
+    /// The owner environment of a `shared_environment_slot`.
+    #[inline(always)]
+    pub(crate) fn shared_environment_owner(self) -> Option<Self> {
+        (self.0 & (TAG_MASK | SHARED_ENVIRONMENT_SLOT_BIT) == TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT)
+            .then(|| Self(TAG_HEAP | (self.0 & PAYLOAD_MASK & !SHARED_ENVIRONMENT_SLOT_BIT)))
+    }
 
     /// A Number: integral values in `i32` range other than -0 are stored as integers, NaN
     /// canonically. A value is integral exactly when its truncation converts back to the
@@ -137,6 +306,13 @@ impl Value {
         IntegerEncoding::TAG.encode(value)
     }
 
+    /// A count or index as a Number, as `number` stores it: an integer within `i32`, without
+    /// the float round trip `number` makes to find that out.
+    #[inline(always)]
+    pub(crate) fn length(value: usize) -> Self {
+        i32::try_from(value).map_or_else(|_| Self::number(value as f64), Self::integer)
+    }
+
     /// A 64-bit Wasm payload held in place. Every payload outside the tag
     /// space already reads as an untagged value, so only tag-space payloads
     /// need a heap box (`Cell::WasmBits64`); a static Wasm type tells the
@@ -145,6 +321,17 @@ impl Value {
     pub(crate) fn from_bits64(bits: u64) -> Option<Self> {
         let value = Self(bits);
         (!value.is_tagged()).then_some(value)
+    }
+
+    /// The value's encoding, which a snapshot writes as is: it restores every heap index the
+    /// value names at the same index (`crate::snapshot`).
+    pub(crate) fn to_bits(self) -> u64 {
+        self.0
+    }
+
+    /// A value `to_bits` gave, read back from a snapshot of the same heap layout.
+    pub(crate) fn from_bits(bits: u64) -> Self {
+        Self(bits)
     }
 
     /// The 64-bit Wasm payload a value holds in place.
@@ -210,6 +397,31 @@ impl Value {
         Self(TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT | u64::from(index))
     }
 
+    #[inline(always)]
+    pub(crate) fn direct_function(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_FUNCTION_HANDLE_BITS | u64::from(index))
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_iterator(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS | u64::from(index))
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_string(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_STRING_HANDLE_BITS | u64::from(index))
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_await(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_AWAIT_HANDLE_BITS | u64::from(index))
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_promise(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT | u64::from(index))
+    }
+
     /// The Number this value holds. Doubles are tested first: arithmetic that reaches this
     /// conversion has already handled the integer pair.
     #[inline(always)]
@@ -243,10 +455,15 @@ impl Value {
         }
         let index = self.0 as u32;
         Some(
-            match self.0 & (DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT) {
+            match self.0 & HEAP_FAMILY_BITS {
                 0 => HeapReference::LegacySlot(index),
                 DIRECT_OBJECT_HANDLE_BIT => HeapReference::ObjectRecord(index),
                 DIRECT_ARRAY_HANDLE_BIT => HeapReference::ArrayRecord(index),
+                DIRECT_FUNCTION_HANDLE_BITS => HeapReference::FunctionRecord(index),
+                DIRECT_PROMISE_HANDLE_BIT => HeapReference::PromiseRecord(index),
+                DIRECT_AWAIT_HANDLE_BITS => HeapReference::AwaitRecord(index),
+                DIRECT_ITERATOR_HANDLE_BITS => HeapReference::IteratorRecord(index),
+                DIRECT_STRING_HANDLE_BITS => HeapReference::StringRecord(index),
                 _ => return None,
             },
         )
@@ -256,7 +473,13 @@ impl Value {
     pub(crate) fn legacy_heap_index(self) -> Option<u32> {
         match self.heap_reference()? {
             HeapReference::LegacySlot(index) => Some(index),
-            HeapReference::ObjectRecord(_) | HeapReference::ArrayRecord(_) => None,
+            HeapReference::ObjectRecord(_)
+            | HeapReference::ArrayRecord(_)
+            | HeapReference::FunctionRecord(_)
+            | HeapReference::PromiseRecord(_)
+            | HeapReference::AwaitRecord(_)
+            | HeapReference::IteratorRecord(_)
+            | HeapReference::StringRecord(_) => None,
         }
     }
 
@@ -271,6 +494,31 @@ impl Value {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT).then_some(self.0 as u32)
     }
 
+    #[inline(always)]
+    pub(crate) fn direct_iterator_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS).then_some(self.0 as u32)
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_string_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_STRING_HANDLE_BITS).then_some(self.0 as u32)
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_await_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_AWAIT_HANDLE_BITS).then_some(self.0 as u32)
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_promise_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT).then_some(self.0 as u32)
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_function_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_FUNCTION_HANDLE_BITS).then_some(self.0 as u32)
+    }
+
     pub fn is_undefined(self) -> bool {
         self.0 == TAG_UNDEFINED
     }
@@ -283,7 +531,11 @@ impl Value {
     /// object or an array: never a string, a BigInt or a function.
     #[inline(always)]
     pub(crate) fn is_record(self) -> bool {
-        self.is_heap() && self.0 & (DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT) != 0
+        self.is_heap()
+            && matches!(
+                self.0 & HEAP_FAMILY_BITS,
+                DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT
+            )
     }
 
     /// ToBoolean where the value alone decides it: Numbers, the primitive tags, and object
@@ -306,6 +558,13 @@ impl Value {
 
     pub(crate) fn is_deleted(self) -> bool {
         self.0 == TAG_DELETED
+    }
+
+    /// Whether this is any `TAG_DELETED` marker: `DELETED`, a shared environment slot, an
+    /// environment index or unmaterialized arguments. None is a value a program observes.
+    #[inline(always)]
+    pub(crate) fn is_internal_marker(self) -> bool {
+        self.0 & TAG_MASK == TAG_DELETED
     }
 
     #[inline(always)]
@@ -375,6 +634,41 @@ mod tests {
     use std::mem::size_of;
 
     #[test]
+    fn narrow_values_round_trip_exactly() {
+        let narrow = [
+            Value::integer(0),
+            Value::integer(-1),
+            Value::integer((1 << 29) - 1),
+            Value::integer(-(1 << 29)),
+            Value::UNDEFINED,
+            Value::NULL,
+            Value::TRUE,
+            Value::FALSE,
+            Value::DELETED,
+            Value::heap(7),
+            Value::direct_object(0),
+            Value::direct_object((1 << 25) - 1),
+            Value::direct_string(3),
+        ];
+        for value in narrow {
+            let packed = value.to_narrow().expect("narrow");
+            assert_eq!(Value::from_narrow(packed), value);
+            assert!(packed >> 30 == 0 || packed >> 30 == 3, "top bits copy each other");
+        }
+        let wide = [
+            Value::integer(1 << 30),
+            Value::integer(i32::MIN),
+            Value::number(1.5),
+            Value::number(-0.0),
+            Value::direct_object(1 << 25),
+            Value::heap(1 << 26),
+        ];
+        for value in wide {
+            assert_eq!(value.to_narrow(), None, "{value:?}");
+        }
+    }
+
+    #[test]
     fn value_is_one_machine_word() {
         assert_eq!(size_of::<Value>(), size_of::<usize>());
     }
@@ -407,6 +701,39 @@ mod tests {
             Some(super::HeapReference::ArrayRecord(42))
         );
         assert_ne!(direct_array, direct_object);
+        let direct_function = Value::direct_function(42);
+        assert_eq!(direct_function.direct_function_index(), Some(42));
+        assert_eq!(direct_function.direct_object_index(), None);
+        assert_eq!(direct_function.direct_array_index(), None);
+        assert_eq!(direct_function.legacy_heap_index(), None);
+        assert_eq!(
+            direct_function.heap_reference(),
+            Some(super::HeapReference::FunctionRecord(42))
+        );
+        // A function may be the IsHTMLDDA object, so truthiness never answers for one.
+        assert!(!direct_function.is_record());
+        assert!(direct_object.is_record() && direct_array.is_record());
+        let direct_promise = Value::direct_promise(42);
+        assert_eq!(direct_promise.direct_promise_index(), Some(42));
+        assert_eq!(direct_promise.direct_object_index(), None);
+        assert_eq!(direct_promise.direct_function_index(), None);
+        assert_eq!(
+            direct_promise.heap_reference(),
+            Some(super::HeapReference::PromiseRecord(42))
+        );
+        let direct_iterator = Value::direct_iterator(42);
+        assert_eq!(direct_iterator.direct_iterator_index(), Some(42));
+        assert_eq!(direct_iterator.direct_object_index(), None);
+        assert_eq!(direct_iterator.direct_promise_index(), None);
+        assert!(!direct_iterator.is_record());
+        let direct_await = Value::direct_await(42);
+        assert_eq!(direct_await.direct_await_index(), Some(42));
+        assert_eq!(direct_await.direct_promise_index(), None);
+        assert_eq!(direct_await.direct_array_index(), None);
+        assert_eq!(
+            direct_await.heap_reference(),
+            Some(super::HeapReference::AwaitRecord(42))
+        );
         assert_eq!(
             Value::int_pair(Value::integer(-2), Value::integer(3)),
             Some((-2, 3))

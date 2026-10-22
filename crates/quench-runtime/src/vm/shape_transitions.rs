@@ -40,6 +40,12 @@ fn child_hash(shapes: &[Shape], child: u32) -> u64 {
     hash(origin.parent, key)
 }
 
+/// Whether `child` is the cached transition from `parent` by `key`.
+pub(super) fn is_transition(shapes: &[Shape], child: u32, parent: u32, key: ShapeTransitionKey) -> bool {
+    let origin = origin(shapes, child);
+    origin.parent == parent && origin.transition.cache_key() == Some(key)
+}
+
 impl ShapeTransitionIndex {
     pub(super) fn get(
         &self,
@@ -48,10 +54,7 @@ impl ShapeTransitionIndex {
         key: ShapeTransitionKey,
     ) -> Option<u32> {
         self.children
-            .find(hash(parent, key), |&child| {
-                let origin = origin(shapes, child);
-                origin.parent == parent && origin.transition.cache_key() == Some(key)
-            })
+            .find(hash(parent, key), |&child| is_transition(shapes, child, parent, key))
             .copied()
     }
 
@@ -71,6 +74,22 @@ impl ShapeTransitionIndex {
 
     pub(super) fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    /// Every indexed child, for a snapshot (`crate::snapshot`).
+    pub(super) fn children(&self) -> impl Iterator<Item = u32> + '_ {
+        self.children.iter().copied()
+    }
+
+    /// An empty index with room for `capacity` children.
+    pub(super) fn with_capacity(capacity: usize) -> Self {
+        Self { children: hashbrown::HashTable::with_capacity(capacity) }
+    }
+
+    /// Records `child`, already in `shapes`, under the parent and key its shape names.
+    pub(super) fn insert_child(&mut self, shapes: &[Shape], child: u32) {
+        self.children
+            .insert_unique(child_hash(shapes, child), child, |&child| child_hash(shapes, child));
     }
 
     #[cfg(feature = "profile-memory")]
