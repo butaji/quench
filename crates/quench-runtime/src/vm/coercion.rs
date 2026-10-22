@@ -280,17 +280,8 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         value: Value,
     ) -> Result<String, JsError> {
-        if value.is_undefined() || value.is_deleted() {
-            return Ok("undefined".into());
-        }
-        if value.is_null() {
-            return Ok("null".into());
-        }
-        if let Some(value) = value.as_bool() {
-            return Ok(value.to_string());
-        }
-        if let Some(value) = value.as_number() {
-            return Ok(crate::number_to_string::format(value));
+        if let Some(text) = immediate_to_string(value) {
+            return Ok(text);
         }
         if self.object_data(value).is_some() {
             let primitive = self.to_primitive(program, value, "string")?;
@@ -451,4 +442,20 @@ fn typeof_name_index(kind: crate::ValueType) -> usize {
 /// The text `typeof` yields for a value of `kind`.
 fn typeof_text(kind: crate::ValueType) -> &'static str {
     crate::bytecode::TYPEOF_NAMES[typeof_name_index(kind)]
+}
+
+/// ToString where the value alone decides it: `undefined` (the deleted marker reads as it),
+/// `null`, a Boolean or a Number. `None` for a heap value, whose conversion reads its cell and
+/// may run guest code.
+pub(super) fn immediate_to_string(value: Value) -> Option<String> {
+    if value.is_undefined() || value.is_deleted() {
+        return Some("undefined".into());
+    }
+    if value.is_null() {
+        return Some("null".into());
+    }
+    if let Some(value) = value.as_bool() {
+        return Some(value.to_string());
+    }
+    value.as_number().map(crate::number_to_string::format)
 }
