@@ -342,6 +342,25 @@ impl<H: Host> Vm<H> {
 
     /// The present dense element `base[key]` for a non-negative integer key: a data property.
     #[inline(always)]
+    /// What a keyed read of `base` gives for a string key naming an array index (`"0"`), as
+    /// the integer key reads it (`dense_array_element`, `absent_array_element`,
+    /// `plain_index_get`), or an array's `"length"`: `None` for any other key or read, which the
+    /// caller's other paths decide.
+    pub(super) fn string_index_element(&self, base: Value, key: Value) -> Option<Value> {
+        let atom = self.lookup_string_atom(key)?;
+        if atom == self.length_atom {
+            return self.own_array_length(base).map(Value::length);
+        }
+        if !self.atom_class(atom).intersects(super::object::AtomClass::ARRAY_INDEX) {
+            return None;
+        }
+        let index = self.array_index_key(key)?;
+        let integer = Value::number(f64::from(index));
+        self.dense_array_element(base, integer)
+            .or_else(|| self.absent_array_element(base, integer))
+            .or_else(|| self.plain_index_get(base, index as usize))
+    }
+
     pub(super) fn dense_array_element(&self, base: Value, key: Value) -> Option<Value> {
         let index = usize::try_from(key.as_int()?).ok()?;
         let Some(object) = self.heap.array(base) else {
