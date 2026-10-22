@@ -35,7 +35,9 @@ const CODE_MAPPING: &str = "r-xp";
 /// 926 -> 741 ms). Collections keep releasing at each boundary (`at_collection_boundary`):
 /// even a 10 ms interval there raised V8-v7 NavierStokes max RSS 5236 -> 5516 KiB.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const LOAD_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+static LOAD_RELEASE_INTERVAL_MEASURED: std::sync::LazyLock<std::time::Duration> = std::sync::LazyLock::new(|| {
+    std::time::Duration::from_millis(std::env::var("QUENCH_MEASURE_LOAD_INTERVAL_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(100))
+});
 
 /// When the read-only pages were last released.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -49,7 +51,7 @@ pub fn release_read_only_pages_after_load() {
         .lock()
         .ok()
         .and_then(|last| *last)
-        .is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL);
+        .is_some_and(|last| last.elapsed() < *LOAD_RELEASE_INTERVAL_MEASURED);
     if !recent {
         release_read_only_pages();
     }
@@ -197,7 +199,7 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
         return;
     };
     let last = &mut releases[release as usize];
-    if last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL) {
+    if last.is_some_and(|last| last.elapsed() < *LOAD_RELEASE_INTERVAL_MEASURED) {
         return;
     }
     *last = Some(std::time::Instant::now());
