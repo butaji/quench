@@ -1033,7 +1033,8 @@ impl<H: Host> Vm<H> {
             return Rc::clone(&self.regexp_subjects[0]);
         }
         let fresh = match text {
-            FlatUnits::Wide(units) => quench_regexp::Subject::new(Rc::clone(units)),
+            // Wide storage always holds a non-ASCII unit (`FlatUnits::Wide`).
+            FlatUnits::Wide(units) => quench_regexp::Subject::from_non_ascii(Rc::clone(units)),
             ascii => {
                 let (text, range) = ascii.shared_ascii().expect("short subjects returned above");
                 quench_regexp::Subject::from_ascii(Rc::clone(text), range)
