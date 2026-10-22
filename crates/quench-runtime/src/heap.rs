@@ -1609,6 +1609,19 @@ impl Heap {
     pub(crate) fn release_root(&mut self, root: RootId) -> bool {
         self.roots.remove(root)
     }
+    /// A root that lasts until its native scope ends (`RootTable::insert_scoped`).
+    pub(crate) fn root_scoped(&mut self, value: Value) -> RootId {
+        self.roots.insert_scoped(value)
+    }
+    pub(crate) fn scoped_root_height(&self) -> usize {
+        self.roots.scoped_height()
+    }
+    pub(crate) fn release_root_scope(&mut self, height: usize) {
+        self.roots.release_scope(height);
+    }
+    pub(crate) fn release_root_scope_keeping(&mut self, height: usize, keep: &[RootId]) {
+        self.roots.release_scope_keeping(height, keep);
+    }
     #[cfg(test)]
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
         self.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, true)
