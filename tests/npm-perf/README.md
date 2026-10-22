@@ -242,3 +242,16 @@ change was reverted. Reports remain at
 `work/react-perf/react-regexp-exec-miss-iteration-nojit-3.json` and
 `work/react-perf/react-regexp-exec-miss-iteration-jit-3.json`; Linux RSS is
 diagnostic only.
+
+A matched full-size JIT baseline is now saved at
+[`reports/react-jit-full-linux-11.json`](reports/react-jit-full-linux-11.json).
+With 5,000 renders and 250 warmups per sample, Quench measured 288.6
+renders/s / 42.72 MB, Node 15,873.0 / 52.04 MB, and Bun 13,404.8 / 92.19
+MB. Output matched at 24,980,000 bytes with checksum 414318. Quench's RSS is
+17.9% lower than Node, short of the required 20%, and throughput trails Node
+by 55x; it trails Bun throughput by 46x. This matched baseline confirms the
+previous `LoadConst → Return` candidate's 286.8 renders/s did not improve
+throughput, despite its lower 40.91 MB sampled RSS. The candidate remains
+reverted. The next React JIT work needs to target the unsupported object-heavy
+render functions with a materially broader compiled path; small dispatch fusions
+have not closed the gap. Linux RSS sampling is diagnostic, not qualification.
