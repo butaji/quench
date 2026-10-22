@@ -2080,6 +2080,50 @@ impl<'a, 'b> Lowering<'a, 'b> {
         result
     }
 
+    /// `left ± c` for a constant `c`, whose `i32` result overflows exactly when `left` lies
+    /// beyond the bound `c` leaves: the guard compares `left` with that bound before the
+    /// sum, which needs no overflow flag.
+    fn int32_offset(
+        &mut self,
+        pc: u32,
+        operator: FloatOperator,
+        register: Register,
+        left: ir::Value,
+        right: ir::Value,
+    ) -> Option<ir::Value> {
+        let (value, offset) = match operator {
+            FloatOperator::Add => match (self.int32_constant(left), self.int32_constant(right)) {
+                (_, Some(offset)) => (left, offset),
+                (Some(offset), None) => (right, offset),
+                (None, None) => return None,
+            },
+            FloatOperator::Subtract => (left, -self.int32_constant(right)?),
+            FloatOperator::Multiply | FloatOperator::Divide => return None,
+        };
+        if !self.proved(pc) && offset != 0 {
+            let (condition, bound) = if offset > 0 {
+                (IntCC::SignedGreaterThan, i64::from(i32::MAX) - offset)
+            } else {
+                (IntCC::SignedLessThan, i64::from(i32::MIN) - offset)
+            };
+            let overflow = self.builder.ins().icmp_imm_s(condition, value, bound);
+            self.guard_int32(pc, overflow, Widening::Register(register));
+        }
+        Some(self.builder.ins().iadd_imm_s(value, offset))
+    }
+
+    /// The value of an `i32` constant operand.
+    fn int32_constant(&self, value: ir::Value) -> Option<i64> {
+        let dfg = &self.builder.func.dfg;
+        let ir::ValueDef::Result(instruction, _) = dfg.value_def(dfg.resolve_aliases(value)) else {
+            return None;
+        };
+        match dfg.insts[instruction] {
+            ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } => Some(i64::from(imm.bits() as i32)),
+            _ => None,
+        }
+    }
+
     fn int32_arithmetic_guarded(
         &mut self,
         pc: u32,
@@ -2088,6 +2132,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
         left: ir::Value,
         right: ir::Value,
     ) -> ir::Value {
+        if let Some(result) = self.int32_offset(pc, operator, register, left, right) {
+            return result;
+        }
         let (result, overflow) = match operator {
             FloatOperator::Add => self.builder.ins().sadd_overflow(left, right),
             FloatOperator::Subtract => self.builder.ins().ssub_overflow(left, right),
