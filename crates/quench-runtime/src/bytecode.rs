@@ -1178,6 +1178,12 @@ pub struct Function {
     pub constructible: bool,
     pub class_initializer: bool,
     pub parameter_eval_arguments_error: bool,
+    /// A mapped `arguments` binding whose mapping nothing can observe: the body only reads
+    /// `arguments.length` and `arguments[key]`, and nothing in it rebinds a parameter
+    /// (`compile::early::ArgumentsUse`). Neither side of the mapping is ever written, so
+    /// the object keeps the mapped layout without parameter links
+    /// (`arguments_alias_parameters`).
+    pub unaliased_arguments: bool,
     pub arguments_slot: Option<u16>,
     pub simple_parameters: bool,
     pub strict: bool,
@@ -1704,6 +1710,12 @@ impl Function {
         !self.is_arrow && !self.strict && self.simple_parameters
     }
 
+    /// Whether the `arguments` object's indices alias the parameters: a mapped object
+    /// whose mapping some write could observe (`unaliased_arguments`).
+    pub(crate) fn arguments_alias_parameters(&self) -> bool {
+        self.arguments_are_mapped() && !self.unaliased_arguments
+    }
+
     /// Parameters an activation binds into frame locals.
     pub(crate) const fn local_parameter_count(&self) -> u16 {
         if self.parameter_registers.is_some() {
@@ -2178,7 +2190,7 @@ impl Function {
         });
         if self.is_generator
             || self.is_async
-            || (self.arguments_are_mapped() && self.params != 0 && !reads_only_length)
+            || (self.arguments_alias_parameters() && self.params != 0 && !reads_only_length)
             || self.local_registers.iter().any(|entry| entry.local == slot)
             || self.has_dynamic_scope_access()
         {
@@ -2293,7 +2305,7 @@ impl Function {
         }
         if slot < usize::from(self.params)
             && self.arguments_slot.is_some()
-            && self.arguments_are_mapped()
+            && self.arguments_alias_parameters()
         {
             return Some(PlainLocalSlotIneligibility::MappedArgument);
         }
@@ -3162,7 +3174,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 102;
+    pub const FORMAT_VERSION: u8 = 103;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
