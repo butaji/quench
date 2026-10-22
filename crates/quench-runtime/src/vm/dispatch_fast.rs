@@ -4252,6 +4252,22 @@ script_handler! {
 }
 
 script_handler! {
+    /// `CopyDataProperties` (an object spread or rest) that a plain copy answers
+    /// (`Vm::copy_plain_data_properties`), which runs no guest code and cannot throw, so it
+    /// runs beside activations; any other copy takes `lane_general_step`.
+    #[inline(never)]
+    fn lane_copy_data_properties<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        if !vm.copy_plain_data_properties(r.get(i.a), r.get(i.b), r.get(i.c)) {
+            sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
+        }
+        // The copy can allocate property storage.
+        note_allocation(vm);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// `PrivateIn` (`#x in object`) of an object with its own data (`Vm::object_data`): whether
     /// it carries the name's brand at this record (`lane_private_brand`), a field's or a
     /// method's. Any other operand, which may raise, takes `lane_general_step`.
@@ -7583,6 +7599,21 @@ fn lane_forwarded_frame_call<H: Host>(
     receiver: Value,
     args: &[Value],
 ) -> Ip {
+    let skip = usize::from(ImmediateLayout::argument_count(i.imm())) - args.len();
+    lane_passed_frame_call(cx, r, ip, i, callee, receiver, FrameCallArguments::Window(skip))
+}
+
+/// The frame call of `callee` with `receiver` and `passed` that `lane_forwarded_frame_call`
+/// and an applied call (`lane_apply_activation`) make.
+fn lane_passed_frame_call<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    callee: Value,
+    receiver: Value,
+    passed: FrameCallArguments<'_>,
+) -> Ip {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -7593,8 +7624,17 @@ fn lane_forwarded_frame_call<H: Host>(
     let Some(target) = vm.in_loop_call_target(code, callee) else {
         return exit(ip);
     };
-    let skip = usize::from(ImmediateLayout::argument_count(i.imm())) - args.len();
-    lane_push_frame_call(cx, r, ip, i, target, callee, receiver, skip)
+    lane_push_frame_call(cx, r, ip, i, target, callee, receiver, passed)
+}
+
+/// The values a frame call passes its callee (`lane_push_frame_call`).
+#[derive(Clone, Copy)]
+enum FrameCallArguments<'a> {
+    /// The call window's values past its first `skip` (a forwarded call's own arguments),
+    /// read again once the caller is a frame.
+    Window(usize),
+    /// Values the caller copied out, as an applied list's elements.
+    List(&'a [Value]),
 }
 
 script_handler! {
@@ -7617,6 +7657,14 @@ script_handler! {
         if matches!(kind, FunctionKind::Native(Native::FunctionCall | Native::FunctionBoundCall)) {
             sibling!(lane_function_call::<H>, r, ip, Carried::script(cx))
         }
+        if let FunctionKind::Native(native @ (Native::FunctionApply | Native::ReflectApply)) = kind
+            && let Some(activation) = lane_apply_activation(cx, r, ip, i, native)
+        {
+            return match activation {
+                Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+                Err(next) => next,
+            };
+        }
         // A call that returns its result completes its caller: an activation in the lane, or
         // the frame in the general loop (`lane_frame_return`).
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
@@ -7632,6 +7680,71 @@ script_handler! {
         lane_native_complete(cx, ip, i, value)
     }
 }
+
+/// `f.apply(thisArg, list)` (`native` `FunctionApply`, `f` the receiver) or
+/// `Reflect.apply(f, thisArg, list)` (`ReflectApply`) of a frameless `f` and a list that is a
+/// dense array without holes, or absent for `apply`: `f`'s activation with the list's
+/// elements, which CreateListFromArrayLike reads as its own data elements and the activation
+/// copies before anything runs, as `lane_function_call_activation` activates a call's. `None`
+/// for any other call, which the native makes.
+#[inline(never)]
+fn lane_apply_activation<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    native: Native,
+) -> Option<Result<(Registers, Ip), Ip>> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the call's window is registers of the running function.
+    let args = unsafe { lane_call_window(r, i) };
+    let argument = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
+    let (callee, receiver, list) = match native {
+        Native::FunctionApply => (r.get(i.c), argument(0), argument(1)),
+        _ => (argument(0), argument(1), *args.get(2)?),
+    };
+    let listed = !(native == Native::FunctionApply && (list.is_undefined() || list.is_null()));
+    let dense = |vm: &Vm<H>| {
+        vm.heap.array(list).is_some_and(|array| {
+            !array.is_arguments_object()
+                && vm.heap.sparse_length(list).is_none()
+                && !array.elements().as_slice().iter().any(|value| value.is_deleted())
+        })
+    };
+    if listed && !dense(vm) {
+        return None;
+    }
+    let target = lane_script_target(cx, callee).or_else(|| {
+        if lane_constructing(vm, callee) {
+            return None;
+        }
+        // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
+        Some(unsafe { *vm.cross_call_entry(callee)? }).filter(|target| target.entry == CallEntry::Activates)
+    });
+    let Some(target) = target else {
+        // A user function that needs a frame takes it in place (`lane_passed_frame_call`), with
+        // the elements copied out first: making the caller's
+        // activations frames moves no heap array, but the callee may change the list.
+        let elements = if listed {
+            vm.heap.array_elements(list)?.as_slice().iter().copied().collect()
+        } else {
+            smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::new()
+        };
+        return Some(Err(lane_passed_frame_call(cx, r, ip, i, callee, receiver, FrameCallArguments::List(&elements))));
+    };
+    let Some(this) = lane_call_this(vm, &target, receiver) else {
+        return Some(Err(exit(ip)));
+    };
+    // Read after the resolution above, which runs no guest code but may allocate.
+    let elements: &[Value] = if listed { vm.heap.array_elements(list)?.as_slice() } else { &[] };
+    let arguments = ActivationArguments::Kept(elements.as_ptr(), elements.len());
+    Some(lane_activate_keeping::<H, true>(cx, r, ip, target, arguments, this, false, None))
+}
+
+/// Values an applied frame call copies out without allocating their list.
+const FRAME_CALL_INLINE_ARGUMENTS: usize = 8;
+
+
 
 /// The values a lane `Call` record passes: its window of the running function's registers.
 ///
@@ -10260,7 +10373,7 @@ script_handler! {
             requicken(ip, lane_script_call::<H>);
             return exit(ip);
         };
-        lane_push_frame_call(cx, r, ip, i, target, callee, r.get(i.c), 0)
+        lane_push_frame_call(cx, r, ip, i, target, callee, r.get(i.c), FrameCallArguments::Window(0))
     }
 }
 
@@ -10278,7 +10391,7 @@ fn lane_push_frame_call<H: Host>(
     target: (ProgramId, u32, Value),
     callee: Value,
     this: Value,
-    skip: usize,
+    passed: FrameCallArguments<'_>,
 ) -> Ip {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
@@ -10323,10 +10436,13 @@ fn lane_push_frame_call<H: Host>(
     // forwarded call is pushed, as the general loop's (`Vm::try_inline_call_apply`).
     // SAFETY: the call's window is registers of the running function, which the direct
     // call only reads.
-    let arguments = unsafe {
-        std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
+    let arguments = match passed {
+        FrameCallArguments::Window(skip) => (skip == 0).then(|| unsafe {
+            std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
+        }),
+        FrameCallArguments::List(list) => Some(list),
     };
-    if skip == 0
+    if let Some(arguments) = arguments
         && let Some(value) = vm.js_jit_compiled_call(code, (target.0, target.1), returns, arguments)
     {
         r.set(i.a, value);
@@ -10338,9 +10454,12 @@ fn lane_push_frame_call<H: Host>(
     // SAFETY: the call record lies in the running view.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     // SAFETY: the call's window is registers of the caller frame, which the push neither
-    // moves nor frees before it copies them.
-    let arguments: *const [Value] = unsafe {
-        std::slice::from_raw_parts(r.0.add(usize::from(window) + skip), usize::from(argc) - skip)
+    // moves nor frees before it copies them; a list outlives the push.
+    let arguments: *const [Value] = match passed {
+        FrameCallArguments::Window(skip) => unsafe {
+            std::slice::from_raw_parts(r.0.add(usize::from(window) + skip), usize::from(argc) - skip)
+        },
+        FrameCallArguments::List(list) => list,
     };
     let destination = i.a & crate::bytecode::REGISTER_MASK;
     let pushed = vm.push_in_loop_call(
@@ -10719,6 +10838,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::DefinePrivateField => Some(lane_define_private_field::<H>),
         Op::CheckPrivate => Some(lane_check_private::<H>),
         Op::PrivateIn => Some(lane_private_in::<H>),
+        Op::CopyDataProperties => Some(lane_copy_data_properties::<H>),
         op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => Some(lane_binary::<H>),
