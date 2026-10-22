@@ -4,8 +4,27 @@ use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Recently matched strings whose prepared subjects are kept (`Vm::regexp_subject`): a
-/// scanner's input plus the few short strings it tests between matches.
+/// scanner's input plus the few strings it tests between matches.
 const REGEXP_SUBJECT_CACHE_ENTRIES: usize = 4;
+
+/// A subject prepared for one operation's searches (`Vm::regexp_subject`).
+pub(super) enum PreparedSubject {
+    /// Built for this operation alone, as its searches keep nothing in it.
+    Local(quench_regexp::Subject),
+    /// Shared through the subject cache, which keeps its decoded units.
+    Shared(Rc<quench_regexp::Subject>),
+}
+
+impl std::ops::Deref for PreparedSubject {
+    type Target = quench_regexp::Subject;
+
+    fn deref(&self) -> &quench_regexp::Subject {
+        match self {
+            Self::Local(subject) => subject,
+            Self::Shared(subject) => subject,
+        }
+    }
+}
 // A short string's units fit a subject's inline text.
 const _: () = assert!(super::wtf16::SHORT_ASCII_CAPACITY <= quench_regexp::INLINE_SUBJECT_BYTES);
 
@@ -992,31 +1011,19 @@ impl<H: Host> Vm<H> {
         Ok(matcher)
     }
 
-    /// The prepared form of `input`, rebuilt only when it is not among the recently matched
-    /// strings. A scanner alternates matches over its input with checks of short tokens, so
-    /// remembering a few keeps the input's preparation across them.
-    fn regexp_subject(&mut self, input: &JsString) -> Rc<quench_regexp::Subject> {
+    /// The prepared form of `input` for the searches of `matcher`. A subject keeps only the
+    /// units it decodes (`Regex::searches_undecoded`), and preparing one touches no unit, so
+    /// a search that decodes nothing prepares it in place; another finds it among the
+    /// recently matched strings, rebuilt only when it is not one of them. A scanner
+    /// alternates matches over its input with checks of short tokens, so remembering a few
+    /// keeps the input's decoding across them.
+    fn regexp_subject(&mut self, input: &JsString, matcher: &quench_regexp::Regex) -> PreparedSubject {
         let flat = input.flat_unkept();
         let text = match &*flat {
-            // A short subject is copied inline and has no shared storage to recognize it by, so
-            // it neither consults nor displaces the cache. The last one is kept by content, as
-            // routers match one short path against many patterns; otherwise its slot is reused
-            // once no match holds it.
+            // A short subject is copied inline, so its decoding, at most a few units, is
+            // never worth finding again.
             FlatUnits::Short(text) => {
-                if let Some(subject) = &self.regexp_short_subject
-                    && subject.spells_ascii(text.as_str())
-                {
-                    return Rc::clone(subject);
-                }
-                if let Some(slot) = self.regexp_short_subject.as_mut()
-                    && let Some(reused) = Rc::get_mut(slot)
-                {
-                    reused.respell_short_ascii(text.as_str());
-                    return Rc::clone(slot);
-                }
-                let subject = Rc::new(quench_regexp::Subject::short_ascii(text.as_str()));
-                self.regexp_short_subject = Some(Rc::clone(&subject));
-                return subject;
+                return PreparedSubject::Local(quench_regexp::Subject::short_ascii(text.as_str()));
             }
             FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) | FlatUnits::Wide(_) => &*flat,
             // A matcher subject owns whole wide storage, so a slice's run is copied into one;
@@ -1025,9 +1032,20 @@ impl<H: Host> Vm<H> {
                 let crate::vm::wtf16::Units::Wide(units) = flat.view() else {
                     unreachable!("a wide slice views wide units")
                 };
-                return Rc::new(quench_regexp::Subject::new(Rc::from(units)));
+                return PreparedSubject::Local(quench_regexp::Subject::new(Rc::from(units)));
             }
         };
+        let fresh = || match text {
+            // Wide storage always holds a non-ASCII unit (`FlatUnits::Wide`).
+            FlatUnits::Wide(units) => quench_regexp::Subject::from_non_ascii(Rc::clone(units)),
+            ascii => {
+                let (text, range) = ascii.shared_ascii().expect("short subjects returned above");
+                quench_regexp::Subject::from_ascii(Rc::clone(text), range)
+            }
+        };
+        if matcher.searches_undecoded(!matches!(text, FlatUnits::Wide(_))) {
+            return PreparedSubject::Local(fresh());
+        }
         let cached = self.regexp_subjects.iter().position(|subject| match text {
             FlatUnits::Wide(units) => subject.is_text_of(units),
             ascii => ascii
@@ -1038,27 +1056,19 @@ impl<H: Host> Vm<H> {
         // least recent entry's place, reusing its allocation when no match holds it.
         if let Some(position) = cached {
             self.regexp_subjects[..=position].rotate_right(1);
-            return Rc::clone(&self.regexp_subjects[0]);
+            return PreparedSubject::Shared(Rc::clone(&self.regexp_subjects[0]));
         }
-        let fresh = match text {
-            // Wide storage always holds a non-ASCII unit (`FlatUnits::Wide`).
-            FlatUnits::Wide(units) => quench_regexp::Subject::from_non_ascii(Rc::clone(units)),
-            ascii => {
-                let (text, range) = ascii.shared_ascii().expect("short subjects returned above");
-                quench_regexp::Subject::from_ascii(Rc::clone(text), range)
-            }
-        };
         if self.regexp_subjects.len() < REGEXP_SUBJECT_CACHE_ENTRIES {
-            self.regexp_subjects.push(Rc::new(fresh));
+            self.regexp_subjects.push(Rc::new(fresh()));
         } else {
             let least_recent = self.regexp_subjects.last_mut().expect("the cache is full");
             match Rc::get_mut(least_recent) {
-                Some(reused) => *reused = fresh,
-                None => *least_recent = Rc::new(fresh),
+                Some(reused) => *reused = fresh(),
+                None => *least_recent = Rc::new(fresh()),
             }
         }
         self.regexp_subjects.rotate_right(1);
-        Rc::clone(&self.regexp_subjects[0])
+        PreparedSubject::Shared(Rc::clone(&self.regexp_subjects[0]))
     }
 
     /// `RegExp.prototype[@@replace]` for a receiver whose exec, flags and lastIndex are its
@@ -1078,7 +1088,7 @@ impl<H: Host> Vm<H> {
         flags: RegExpFlags,
         result_used: bool,
     ) -> Result<Value, JsError> {
-        let subject = self.regexp_subject(input);
+        let subject = self.regexp_subject(input, matcher);
         if let FastReplacement::Template(template) = replacement {
             if !template.units().iter().any(|unit| unit == u16::from(b'$')) {
                 return self.regexp_replace_with_literal(
@@ -1573,7 +1583,7 @@ impl<H: Host> Vm<H> {
         unicode: bool,
     ) -> Result<Value, JsError> {
         let size = input.units().len();
-        let subject = self.regexp_subject(input);
+        let subject = self.regexp_subject(input, matcher);
         let mut last_match = None;
         let mut p_index = 0usize;
         let mut q = 0usize;
@@ -1907,7 +1917,7 @@ impl<H: Host> Vm<H> {
         matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
     ) -> Result<Value, JsError> {
-        let subject = self.regexp_subject(input);
+        let subject = self.regexp_subject(input, matcher);
         // Only the last match's captures are observable (the legacy statics), so every match
         // keeps its range alone; the statics find the last again from its start if read.
         let ranges = self.regexp_global_matches(
@@ -2553,7 +2563,7 @@ impl<H: Host> Vm<H> {
             }
             return Ok(None);
         }
-        let subject = self.regexp_subject(input);
+        let subject = self.regexp_subject(input, &regex);
         let matched = if sticky {
             // A start inside a surrogate pair resolves to the next code point, which a
             // sticky match may not move to.
@@ -2860,7 +2870,7 @@ impl<H: Host> Vm<H> {
         else {
             return;
         };
-        let subject = self.regexp_subject(&input);
+        let subject = self.regexp_subject(&input, &matcher);
         let matched = matcher
             .find_in_subject(&subject, start)
             .next()
