@@ -3213,14 +3213,15 @@ script_handler! {
 
 script_handler! {
     /// `GetField` of a string primitive, which `String.prototype` answers through the
-    /// site's cache (`Vm::string_prototype_field_hit`): a method read, as `s.substring`, at a
-    /// site `Vm::string_field_site_cacheable` admits. A miss moves the record on as
+    /// site's cache or its chain's data walk (`Vm::cached_string_field_hit`): a method read,
+    /// as `s.substring`, or an absent name, at a site `Vm::string_field_site_cacheable` admits. A miss moves the record on as
     /// `lane_get_field_miss` decides.
     fn lane_get_field_string<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
         let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
-            .filter(|object| vm.heap.is_string(*object))
-            .and_then(|_| vm.string_prototype_field_hit(i.c))
+            .and_then(|object| vm.cached_string_field_hit(code, object, i.imm(), i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script(cx))
         };
