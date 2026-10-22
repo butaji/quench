@@ -25,6 +25,7 @@ if (!workloadName || !["no-jit", "jit"].includes(phase) ||
 
 const binaries = {
   quench: process.env.QUENCH_NODE_BIN ?? path.join(repo, "target/production/quench-node"),
+  quenchControl: process.env.QUENCH_CONTROL_BIN,
   node: process.env.NODE_BIN ?? process.execPath,
   bun: process.env.BUN_BIN ?? path.join(repo, "work/bun/bun"),
 };
@@ -53,17 +54,29 @@ function parseRss(stderr) {
 
 function engineSpecs() {
   if (phase === "no-jit") {
-    return [
+    const specs = [
       { name: "quench-interpreter", binary: binaries.quench, args: [workload], env: {} },
+    ];
+    if (binaries.quenchControl) {
+      specs.push({ name: "quench-control", binary: binaries.quenchControl, args: [workload], env: {} });
+    }
+    specs.push(
       { name: "node-jitless", binary: binaries.node, args: ["--jitless", workload], env: {} },
       { name: "bun-no-jit", binary: binaries.bun, args: [workload], env: { BUN_JSC_useJIT: "0" } },
-    ];
+    );
+    return specs;
   }
-  return [
+  const specs = [
     { name: "quench-jit", binary: binaries.quench, args: ["--jit", workload], env: {} },
+  ];
+  if (binaries.quenchControl) {
+    specs.push({ name: "quench-control-jit", binary: binaries.quenchControl, args: ["--jit", workload], env: {} });
+  }
+  specs.push(
     { name: "node-jit", binary: binaries.node, args: [workload], env: {} },
     { name: "bun-jit", binary: binaries.bun, args: [workload], env: {} },
-  ];
+  );
+  return specs;
 }
 
 function linuxRssBytes(pid) {
@@ -211,6 +224,10 @@ const report = {
     workloadSha256: crypto.createHash("sha256").update(source).digest("hex"),
     packageLockSha256: crypto.createHash("sha256").update(lock).digest("hex"),
     quenchBinarySha256: crypto.createHash("sha256").update(fs.readFileSync(binaries.quench)).digest("hex"),
+    ...(binaries.quenchControl ? {
+      controlQuenchBinary: binaries.quenchControl,
+      controlQuenchBinarySha256: crypto.createHash("sha256").update(fs.readFileSync(binaries.quenchControl)).digest("hex"),
+    } : {}),
     nodeBinary: process.execPath,
     bunBinary: binaries.bun,
   },

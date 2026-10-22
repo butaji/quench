@@ -14,11 +14,15 @@ every engine. Package versions and transitive dependencies are pinned in
 
 Install the pinned packages and build Quench from the repository root:
 
+The production build uses the repository's general PGO corpus; install the
+toolchain's `llvm-tools` component if `tools/pgo-build.sh` cannot find
+`llvm-profdata`.
+
 ```sh
 cd tests/npm-perf
 npm ci
 cd ../..
-cargo build --profile production -p quench-node --bin quench-node
+tools/pgo-build.sh production
 ```
 
 Run the no-JIT diagnostic or qualification from `tests/npm-perf`:
@@ -48,6 +52,11 @@ node run-workload.mjs react-ssr jit 11 ../../target/react-jit-linux.json
 JIT phase rows use `quench-node --jit` and the default JIT-enabled Node and Bun
 engines. Linux runs are diagnostic; retain the host, version, output and RSS
 details with each comparison.
+
+For a same-run Quench build comparison, set `QUENCH_CONTROL_BIN` to a second
+`quench-node` binary. The runner interleaves both Quench binaries with Node
+and Bun and records the control binary hash separately. This helps distinguish
+small PGO or code-change effects from host load drift across separate reports.
 
 Winning means at least 20% higher throughput and at least 20% lower maximum
 RSS than both Node and Bun in the active phase. Compare the throughput and RSS
@@ -182,6 +191,7 @@ this array-length shortcut is not a performance win. The reports and profile
 logs from these probes remain under the local `work/react-perf` scratch folder;
 Linux RSS sampling is diagnostic, not qualification.
 
+
 The full-size no-JIT baseline uses 5,000 renders and 250 warmups per sample.
 Its 11-round Linux report is
 [`reports/react-no-jit-full-linux-11.json`](reports/react-no-jit-full-linux-11.json):
@@ -286,3 +296,61 @@ Its report is `work/react-perf/react-rope-charcodeat-memory-first-max-young-16k-
 These results shift the next React work to the object-heavy call and interpreter
 path; string assembly experiments have not produced a combined speed and memory
 win. Linux RSS is diagnostic only.
+
+A follow-up allocator experiment kept empty-page list links in separate mmap
+metadata and used `MADV_DONTNEED` before reuse. The 3-round, 1,000-render
+memory-first screen preserved output (4,996,000 bytes, checksum 83793), but
+measured 203.5 renders/s / 30.88 MB sampled max RSS. The earlier pageout screen
+at the same 4K young cap measured 280.0 / 30.70 MB, so this design was rejected
+and its implementation reverted. The report is
+`work/react-perf/react-quench-alloc-dontneed-memory-first-max-young-4k-nojit-screen-3.json`.
+
+The subsequent call-path audit found that ordinary fast-lane calls already copy
+the common 0–4 arguments directly into lane frames; 92% of React's user calls
+fall in that range. Avoiding `CallArguments::from_slice` would mostly target the
+cold general fallback. The next no-JIT experiment will select a structural
+interpreter or allocation target from measured React lane profiles. Runtime
+research suggests profile-guided quickening for no-JIT and a broad one-pass
+baseline tier for the object-heavy React functions currently outside Quench's
+narrow compiled tier. Neither direction has yet demonstrated the required
+20% win.
+
+The workload build instructions now use the repository's general PGO production
+build (`tools/pgo-build.sh production`); its corpus excludes the scored engine
+benchmarks. An interleaved 11-round comparison of that binary and a clean
+system-allocator build used the same memory-first, 32,768 young-cap settings.
+PGO measured 276.8 renders/s / 26.28 MB versus the clean build at 229.7 /
+28.75 MB, with matching 24,980,000-byte output and checksum 414318. PGO improves
+Quench's throughput 20.5% and RSS 8.6% against the clean binary, and its RSS is
+27.4% below Node and 29.7% below Bun. It remains far slower than both engines:
+1,639.3 renders/s for Node and 1,509.2 for Bun. The paired report is
+`work/react-perf/react-pgo-vs-clean-paired-memory-first-max-young-32k-nojit-11.json`.
+Linux RSS sampling is diagnostic, not qualification.
+
+Combining general PGO with a 512-unit flat-prefix threshold improved React
+no-JIT throughput against the paired PGO control. In 11 rounds at 5,000 renders
+per sample, the 512-unit build measured 305.1 renders/s / 28.11 MB versus
+261.3 / 26.26 MB for the 2,048-unit build. Output matched (24,980,000 bytes,
+checksum 414318). The speed gain was 16.8%; the RSS increase was 7.1%. RSS
+remains 22.4% below Node and 24.9% below Bun, but throughput is still about 5x
+slower than either runtime. The paired report is
+`work/react-perf/react-pgo-prefix-512-vs-2048-memory-first-max-young-32k-nojit-11.json`.
+Linux RSS sampling is diagnostic, not qualification.
+
+A concat-cache probe removed the pre-number-dispatch lookup because the React
+profile showed 625,214 string-string concats and zero hits. The initial
+3-round screen appeared 23.2% faster, but the full 11-round paired run measured
+299.6 renders/s / 28.35 MB versus 311.5 / 26.84 MB for the unchanged PGO+512
+control. Output matched, but speed fell 3.8% and RSS grew 5.6%, so the probe was
+reverted. Reports are
+`work/react-perf/react-pgo-prefix-512-single-concat-lookup-vs-control-memory-first-32k-nojit-screen-3.json`
+and `work/react-perf/react-pgo-prefix-512-single-concat-lookup-vs-control-memory-first-32k-nojit-11.json`.
+Linux RSS sampling is diagnostic, not qualification.
+
+A smaller 256-unit flat-prefix threshold did not improve enough over the retained
+512-unit PGO build to justify its memory cost. In the paired 11-round full-size
+run, 256 measured 319.3 renders/s / 28.07 MB versus 310.1 / 26.81 MB for 512,
+a 3.0% speed gain for 4.7% more RSS. Output matched at 24,980,000 bytes and
+checksum 414318. RSS was 22.3% below Node and 24.9% below Bun, but the 512-unit
+build remains the better memory/speed balance. Report:
+`work/react-perf/react-pgo-prefix-256-vs-512-memory-first-max-young-32k-nojit-11.json`.
