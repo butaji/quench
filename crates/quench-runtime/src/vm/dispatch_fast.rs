@@ -3198,6 +3198,9 @@ unsafe fn lane_single_field_base<H: Host>(
     r: Registers,
     base: u16,
 ) -> Option<Value> {
+    if crate::bytecode::FieldBase(base).local_index().is_some() {
+        return None;
+    }
     if base == crate::bytecode::FieldBase::NESTED {
         return None;
     }
@@ -3415,6 +3418,9 @@ script_handler! {
     /// prepares, so such a site keeps it; any other takes `lane_get_field_own`.
     #[inline(never)]
     fn lane_get_field_first<>(cx, r, ip, i, view) {
+        if crate::bytecode::FieldBase(i.b).local_index().is_some() {
+            sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
+        }
         let vm = unsafe { vm(cx) };
         if vm.reads_function_info(i.imm()) {
             // A register's `length` is most often an array's, which no function information
@@ -3748,6 +3754,9 @@ unsafe fn lane_field_base<H: Host>(
     r: Registers,
     base: crate::bytecode::FieldBase,
 ) -> Option<Value> {
+    if let Some(slot) = base.local_index() {
+        return lane_plain_local_operand(cx, slot);
+    }
     match base.register_index() {
         Some(register) => Some(r.get(register)),
         None => unsafe { lane_this(cx) },
