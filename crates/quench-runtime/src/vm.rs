@@ -676,6 +676,8 @@ struct InheritedFieldCache {
     receiver: u32,
     prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
     depth: u8,
+    /// Whether a function may stand on the chain (`Vm::function_links_answer` of the name).
+    function_links: bool,
     answer: InheritedFieldAnswer,
     /// The `prototype_layout_epoch` under which a walk last proved the chain from
     /// `proved_prototype` up to `proved_holder`, its last recorded prototype, or
