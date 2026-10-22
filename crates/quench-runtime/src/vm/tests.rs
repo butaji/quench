@@ -891,8 +891,13 @@ fn for_of_iterator_cleanup_survives_body_temporaries() {
 }
 
 fn global_text(source: &str, name: &str) -> String {
+    global_text_under(crate::MemoryPolicy::default(), source, name)
+}
+
+fn global_text_under(policy: crate::MemoryPolicy, source: &str, name: &str) -> String {
     let program = Engine::specialize(source, "global-text.js").unwrap();
     let mut vm = Vm::new(SilentHost);
+    vm.set_memory_policy(policy);
     vm.execute(&program).unwrap();
     let name = vm.intern_atom(name);
     let value = vm.own_property(vm.realm.globals, name).unwrap();
@@ -1139,8 +1144,10 @@ fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
     // A job leaves the queue before it runs, so a value only its arguments held is
     // collectable while later jobs of the same drain still run: its cleanup is observed
     // inside the await loop instead of never. Each iteration allocates at least one cell,
-    // so the bound lets the drain pass the collection headroom several times.
-    let iterations = 4 * crate::heap::FULL_COLLECTION_ALLOCATION_BOUND;
+    // so the bound lets the drain pass the collection headroom several times. Memory-first
+    // pacing collects soonest, which keeps the drain short.
+    let policy = crate::MemoryPolicy::MemoryFirst;
+    let iterations = 4 * crate::heap::full_collection_allocation_bound(policy);
     let source = format!(
         "var finalized = false, registry = new FinalizationRegistry(function () {{ finalized = true; }});\n\
          function make() {{ var o = {{}}; registry.register(o, 0); return o; }}\n\
@@ -1151,7 +1158,7 @@ fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
            result = String(finalized);\n\
          }})();"
     );
-    assert_eq!(global_text(&source, "result"), "true");
+    assert_eq!(global_text_under(policy, &source, "result"), "true");
 }
 
 #[test]
@@ -10932,6 +10939,52 @@ fn js_jit_compiles_cached_numeric_kind_field_switches() {
             .js_tier(super::program_store::ProgramId::MAIN, 2),
         Some(super::program_store::JsTierState::Compiled(_))
     ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
+fn js_jit_lowers_guarded_numeric_field_reads_into_arithmetic() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function twice(node) { return node.value * 2; }
+          for (let index = 0; index < 40; index++) {
+            if (twice({value: index}) !== index * 2) throw Error('numeric field result');
+          }
+          let reads = 0;
+          const accessor = { get value() { reads++; return 7; } };
+          if (twice(accessor) !== 14 || reads !== 1) throw Error('accessor fallback');
+          if (twice({value: '7'}) !== 14) throw Error('cache replacement fallback');
+        "#,
+        "js-jit-guarded-field-arithmetic.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "twice")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function_id)
+    else {
+        panic!("numeric field arithmetic should compile");
+    };
+    assert!(compiled.field_argument().is_some());
+    assert!(compiled.native_entries() >= 9);
 }
 
 #[test]

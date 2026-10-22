@@ -916,6 +916,18 @@ impl Subject {
         }
     }
 
+    /// A subject over UTF-16 text known to hold a non-ASCII unit, as a string's wide
+    /// storage always does: neither the ASCII narrowing `new` tries nor its carriage-return
+    /// scan can pay off, so preparing the subject touches no unit.
+    pub fn from_non_ascii(units: std::rc::Rc<[u16]>) -> Self {
+        debug_assert!(units.iter().any(|unit| *unit > ASCII_MAX));
+        Self {
+            text: SubjectText::Wide { units, ascii: None },
+            carriage_return: std::cell::OnceCell::new(),
+            decoded: Default::default(),
+        }
+    }
+
     /// A subject over the bytes `range` of ASCII text, matched in place without a copy.
     pub fn from_ascii(text: std::rc::Rc<str>, range: std::ops::Range<usize>) -> Self {
         debug_assert!(text.is_ascii() && range.end <= text.len());
