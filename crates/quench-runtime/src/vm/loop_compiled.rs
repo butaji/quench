@@ -893,18 +893,34 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     /// `Value::number(number)`'s bits: an integer when the truncation converts back to the
-    /// same bits, the canonical NaN for any NaN, else the double's bits.
+    /// same bits, the canonical NaN for any NaN, else the double's bits. A double its
+    /// truncation differs from (any non-integral value, and NaN) takes the short path, which
+    /// only canonicalizes NaN; integral values and infinities take the conversion.
     fn boxed_float64(&mut self, number: ir::Value) -> ir::Value {
+        let truncated = self.builder.ins().trunc(number);
+        let integral = self.builder.ins().fcmp(FloatCC::Equal, truncated, number);
+        let fractional_block = self.builder.create_block();
+        let integral_block = self.cold_block();
+        let join = self.builder.create_block();
+        self.builder.append_block_param(join, types::I64);
+        self.builder.ins().brif(integral, integral_block, &[], fractional_block, &[]);
+        self.builder.switch_to_block(fractional_block);
+        let bits = self.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
+        let nan = self.builder.ins().fcmp(FloatCC::Unordered, number, number);
+        let canonical = self.builder.ins().iconst(types::I64, ValueLayout::CANONICAL_NAN as i64);
+        let fractional = self.builder.ins().select(nan, canonical, bits);
+        self.builder.ins().jump(join, &[ir::BlockArg::Value(fractional)]);
+        self.builder.switch_to_block(integral_block);
         let integer = self.builder.ins().fcvt_to_sint_sat(types::I32, number);
         let back = self.builder.ins().fcvt_from_sint(types::F64, integer);
         let back_bits = self.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), back);
         let bits = self.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
-        let integral = self.builder.ins().icmp(IntCC::Equal, back_bits, bits);
+        let exact = self.builder.ins().icmp(IntCC::Equal, back_bits, bits);
         let encoded = self.boxed_int32(integer);
-        let nan = self.builder.ins().fcmp(FloatCC::Unordered, number, number);
-        let canonical = self.builder.ins().iconst(types::I64, ValueLayout::CANONICAL_NAN as i64);
-        let other = self.builder.ins().select(nan, canonical, bits);
-        self.builder.ins().select(integral, encoded, other)
+        let integral = self.builder.ins().select(exact, encoded, bits);
+        self.builder.ins().jump(join, &[ir::BlockArg::Value(integral)]);
+        self.builder.switch_to_block(join);
+        self.builder.block_params(join)[0]
     }
 
     fn boxed(&mut self, value: Typed) -> ir::Value {
