@@ -786,18 +786,7 @@ impl<H: Host> Vm<H> {
                         Ok(entries.value_at(index))
                     }
                     Native::MapSet => {
-                        let key = args.first().copied().unwrap_or(Value::UNDEFINED);
-                        let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                        let index = self.map_entry_index(this, key);
-                        let key_hash = self.same_value_zero_hash(key);
-                        let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) else {
-                            unreachable!("receiver validated above")
-                        };
-                        if let Some(index) = index {
-                            entries.set_value(index, value);
-                        } else {
-                            entries.push((key, value), key_hash);
-                        }
+                        self.map_set(this, args);
                         Ok(this)
                     }
                     Native::MapHas => Ok(
@@ -916,7 +905,7 @@ impl<H: Host> Vm<H> {
                         "Set.prototype.add called on incompatible receiver".into(),
                     ));
                 }
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let value = canonical_collection_key(args.first().copied().unwrap_or(Value::UNDEFINED));
                 let exists = self.set_entry_index(this, value).is_some();
                 let value_hash = self.same_value_zero_hash(value);
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
@@ -1293,8 +1282,43 @@ impl<H: Host> Vm<H> {
             (Native::SetHas, Cell::Set { .. }) => {
                 Some(boolean(self.set_entry_index(receiver, key).is_some()))
             }
+            // A value that cannot be held weakly is never a key.
+            (Native::WeakMapGet, Cell::WeakMap { entries, .. }) => Some(if self.is_weak_key_value(key) {
+                entries.get(key).unwrap_or(Value::UNDEFINED)
+            } else {
+                Value::UNDEFINED
+            }),
+            (Native::WeakMapHas, Cell::WeakMap { entries, .. }) => {
+                Some(boolean(self.is_weak_key_value(key) && entries.get(key).is_some()))
+            }
+            (Native::WeakSetHas, Cell::WeakSet { .. }) => Some(boolean(
+                self.is_weak_key_value(key) && self.weak_set_entry_index(receiver, key).is_some(),
+            )),
             _ => None,
         }
+    }
+
+    /// `Map.prototype.set` of `map` with its `args`, which runs no guest code: the key's
+    /// entry takes the value, or a new entry is appended. `false`, with nothing written,
+    /// when `map` is no Map.
+    pub(super) fn map_set(&mut self, map: Value, args: &[Value]) -> bool {
+        if !matches!(self.heap.get(map), Some(Cell::Map { .. })) {
+            return false;
+        }
+        // Map.prototype.set stores -0 as +0 (`canonical_collection_key`).
+        let key = canonical_collection_key(args.first().copied().unwrap_or(Value::UNDEFINED));
+        let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let index = self.map_entry_index(map, key);
+        let key_hash = self.same_value_zero_hash(key);
+        let Some(Cell::Map { entries, .. }) = self.heap.get_mut(map) else {
+            unreachable!("a Map was checked above")
+        };
+        if let Some(index) = index {
+            entries.set_value(index, value);
+        } else {
+            entries.push((key, value), key_hash);
+        }
+        true
     }
 
     pub(super) fn map_entry_index(&self, map: Value, key: Value) -> Option<usize> {
@@ -1399,4 +1423,9 @@ pub(super) fn canonicalize_keyed_collection_key(key: Value) -> Value {
     } else {
         key
     }
+}
+
+/// CanonicalizeKeyedCollectionKey: a Map key or Set value of -0 is stored as +0.
+fn canonical_collection_key(key: Value) -> Value {
+    if key.as_number() == Some(0.0) { Value::integer(0) } else { key }
 }

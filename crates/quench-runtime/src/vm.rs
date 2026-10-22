@@ -647,15 +647,16 @@ const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
 const BOUND_THIS_KEY: &str = "\0quench:bound-this";
 const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
 const NO_FIELD_HOLDER: u32 = u32::MAX;
-/// A field site's read of an accessor on a prototype of a shaped receiver: it holds while
-/// the receiver keeps its shape and prototype and the chain to `holder` keeps the layout it
-/// was proved under, `holder`'s `slot` attributes carrying the getter.
+/// A field site's read of an accessor of a shaped receiver, its own or on a prototype: it
+/// holds while the receiver keeps its shape and prototype and the chain to `holder` keeps the
+/// layout it was proved under, `holder`'s `slot` attributes carrying the getter.
 #[derive(Clone, Copy)]
 struct AccessorFieldCache {
     receiver: u32,
     /// The receiver's prototype, where the chain to `holder` starts.
     prototype: Value,
-    /// The object holding the accessor, or `OWN_ACCESSOR` for the receiver itself.
+    /// The prototype holding the accessor, or `OWN_ACCESSOR` for the receiver itself, whose
+    /// own slot each receiver of the shape fills with its own accessor.
     holder: Value,
     slot: u16,
     /// The `prototype_layout_epoch` the chain was proved under.
@@ -1708,9 +1709,10 @@ pub(crate) struct Vm<H> {
     /// `NO_INHERITED_FIELD`.
     inherited_field_indices: Vec<u32>,
     inherited_field_caches: Vec<InheritedFieldCache>,
-    /// Accessor reads by field-cache index (`AccessorFieldCache`); cleared with the field
-    /// caches.
-    accessor_field_caches: FxHashMap<usize, AccessorFieldCache>,
+    /// Accessor reads by field-cache index (`AccessorFieldCache`), up to
+    /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes a site, oldest first, as an inherited
+    /// method's site sees one shape per subclass; cleared with the field caches.
+    accessor_field_caches: FxHashMap<usize, Vec<AccessorFieldCache>>,
     field_add_indices: Vec<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
@@ -1738,6 +1740,9 @@ pub(crate) struct Vm<H> {
     /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
     /// from shapes, so field-cache invalidation clears it.
     iterator_result_shape: Option<u32>,
+    /// The one `{ value, done }` result a lane iterator step reuses (`Vm::reused_iterator_result`),
+    /// `undefined` until the first; cleared with `iterator_result_shape`.
+    reused_iterator_result: Value,
     /// The shapes of a complete data and accessor property descriptor object
     /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
     /// field-cache invalidation clears them.
@@ -1795,6 +1800,9 @@ pub(crate) struct Vm<H> {
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
     direct_eval_var_program: Option<ProgramId>,
+    /// The Function-constructor programs this VM may still offer the host's compile cache
+    /// (`DYNAMIC_FUNCTIONS_KEPT`).
+    dynamic_functions_to_keep: u16,
     parameter_eval: bool,
     eval_script_context: bool,
     deferred_dependency_batch: bool,
@@ -2211,6 +2219,8 @@ impl<H: Host> Vm<H> {
         self.instantiate_global_declarations(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("initialized");
+        #[cfg(feature = "profile-allocator")]
+        self.report_allocator_if_enabled("initialized");
         let root = self.closure(program, 0, Value::NULL)?;
         let this = if program.is_module() {
             Value::UNDEFINED
@@ -2233,6 +2243,8 @@ impl<H: Host> Vm<H> {
     }
 
     fn report_execution(&mut self, program: &ResidualProgram) {
+        #[cfg(feature = "profile-allocator")]
+        self.report_allocator_if_enabled("complete");
         #[cfg(feature = "profile-gc-time")]
         self.report_gc_time_if_enabled();
         #[cfg(feature = "profile-aggregate")]
@@ -2269,6 +2281,12 @@ impl<H: Host> Vm<H> {
             .report(&self.heap, ProgramId::MAIN.raw(), program);
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("complete");
+    }
+    #[cfg(feature = "profile-allocator")]
+    fn report_allocator_if_enabled(&self, phase: &str) {
+        if std::env::var_os("QUENCH_ALLOCATOR_MEMORY").is_some() {
+            crate::report_allocator_memory(phase);
+        }
     }
     #[cfg(feature = "profile-gc-time")]
     fn report_gc_time_if_enabled(&self) {
@@ -2667,6 +2685,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
+        self.reused_iterator_result = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
         self.regexp_object_shapes = None;

@@ -43,7 +43,11 @@ pub fn report_allocator_memory(phase: &str) {
     }
 }
 
-#[cfg(all(target_os = "linux", target_env = "gnu", feature = "profile-memory"))]
+#[cfg(all(
+    target_os = "linux",
+    target_env = "gnu",
+    any(feature = "profile-memory", feature = "profile-allocator")
+))]
 pub fn report_allocator_memory(phase: &str) {
     #[repr(C)]
     struct MallInfo2 {
@@ -93,7 +97,11 @@ pub fn report_allocator_memory(phase: &str) {
     );
 }
 
-#[cfg(all(target_os = "linux", target_env = "gnu", feature = "profile-memory"))]
+#[cfg(all(
+    target_os = "linux",
+    target_env = "gnu",
+    any(feature = "profile-memory", feature = "profile-allocator")
+))]
 fn json_bytes(bytes: Option<usize>) -> String {
     bytes.map_or_else(|| "null".to_string(), |bytes| bytes.to_string())
 }
@@ -121,6 +129,10 @@ struct TimeValue {
 
 #[cfg(not(any(
     target_os = "macos",
-    all(target_os = "linux", target_env = "gnu", feature = "profile-memory")
+    all(
+        target_os = "linux",
+        target_env = "gnu",
+        any(feature = "profile-memory", feature = "profile-allocator")
+    )
 )))]
 pub fn report_allocator_memory(_: &str) {}

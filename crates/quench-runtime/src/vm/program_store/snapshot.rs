@@ -27,6 +27,10 @@ impl ProgramStore {
             jit_mapped_bytes: _,
             js_jit_diagnostics: _,
             js_jit_numeric_find_candidate: _,
+            // Process configuration a restoring store reads again, and its diagnostics.
+            js_jit_dataview_float64_enabled: _,
+            js_jit_dataview_float64_get_entries: _,
+            js_jit_dataview_float64_set_entries: _,
         } = self;
         if !owned_scripts.is_empty() {
             return Err(SnapshotError::unsupported("scripts an embedder compiled and holds"));
@@ -177,7 +181,7 @@ impl ProgramEntry {
         let residual = ResidualProgram::decode_snapshot(Rc::new(window), text, atoms)
             .map_err(|error| SnapshotError(format!("snapshot program: {error}")))?;
         let constants = reader.values()?;
-        let const_arrays = read_list(reader, |reader| Ok(if reader.bool()? { Some(Rc::new(reader.values()?)) } else { None }))?;
+        let const_arrays = read_list(reader, |reader| Ok(if reader.bool()? { Some(crate::heap::ArrayElements::from(reader.values()?)) } else { None }))?;
         let function_sources = Snap::unsnap(reader)?;
         let module_environment = Snap::unsnap(reader)?;
         let import_meta = Snap::unsnap(reader)?;
@@ -206,7 +210,7 @@ impl ProgramEntry {
         Ok(Self {
             regexp_literals: vec![None; residual.regexp_literal_sites.len()],
             lane_views: residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect(),
-            lane_deferred: vec![std::cell::Cell::new(false); residual.functions.len()],
+            lane_deferred: vec![std::cell::Cell::new(0); residual.functions.len()],
             residual,
             wasm_signatures: None,
             constants,

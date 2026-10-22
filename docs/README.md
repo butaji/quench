@@ -9,7 +9,7 @@
 - [Native Node host contracts](node-host-contracts.md)
 - [Shared array operation contracts](shared-array-contracts.md)
 - [V8-v7 commands](v8_v7.md)
-- [GC verification and experiment strategy](v2/gc-verification.md)
+- [GC verification, memory policy and experiment strategy](v2/gc-verification.md)
 - [JetStream 3 commands](jetstream3.md)
 - [Benchmark micros](../quench-bench/micros/README.md)
 
@@ -662,6 +662,12 @@ target/production/symbol-order target/production/coremark \
   train/KERNEL-no-jit.out... train/KERNEL-jit.out...
 ```
 
+An order names symbols with the profile's crate hashes, so a change that moves them disables
+it silently. `tools/check-link-order.sh BINARY ORDER` reports the share of the order's
+symbols the binary still has and fails below 90%. Check `quench-node`'s production build
+against `crates/quench-node/link/x86_64-linux.order` after manifest or dependency changes
+(TOD-171).
+
 Profiles go in priority order. Functions are laid out in first-appearance
 order, so the first profile's run touches one contiguous region and later
 profiles add only what earlier ones did not execute. With a compiled-mode
@@ -714,8 +720,13 @@ target/production/bolt-profile $PROFILED_BINARY bolt --order $ORDER \
 llvm-bolt $BINARY -o $BINARY-bolt -data=bolt/profile.fdata \
   -reorder-blocks=ext-tsp -split-functions -split-all-cold \
   -reorder-functions=user -function-order=bolt/function.order \
-  -skip-funcs-file=bolt/skip.funcs -use-gnu-stack
+  -skip-funcs-file=bolt/skip.funcs -use-gnu-stack -jump-tables=move
 ```
+
+`-jump-tables=move` lays the jump tables of hot code beside it, apart from the cold
+ones: in place, the `match` tables of the dispatch and the compiler sit among
+`.rodata`'s merged constants, and a run kept about 120 KB of them resident (V8-v7
+max RSS, bolted static x86_64, 2026-10-22: 20-160 KB lower on every fixture).
 
 `quench-node` registers its read-only file mappings with userfaultfd for
 asynchronous write protection at start (`resident_pages::map_touched_pages_only`,

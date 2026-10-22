@@ -306,13 +306,13 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.heap.array_mut(this) else {
             unreachable!("matched an array above");
         };
-        let taken = super::index::mutable_array_elements(object.elements_mut())
-            .splice(start..start + delete_count, items.iter().copied())
-            .collect::<Vec<_>>();
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        let taken = elements[start..start + delete_count].to_vec();
+        elements.splice(start..start + delete_count, &items);
         let Some(removed_object) = self.heap.array_mut(removed) else {
             unreachable!("matched an array above");
         };
-        *super::index::mutable_array_elements(removed_object.elements_mut()) = taken;
+        *removed_object.elements_mut() = taken.into();
         true
     }
 
@@ -796,8 +796,8 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn is_array(&mut self, p: &ResidualProgram, value: Value) -> Result<bool, JsError> {
-        if let Some(object) = self.heap.array(value) {
-            return Ok(!object.is_arguments_object());
+        if let Some(answer) = self.steady_is_array(value) {
+            return Ok(answer);
         }
         match self.heap.get(value) {
             Some(Cell::Proxy { handler, .. }) if handler.is_null() => {
@@ -806,6 +806,15 @@ impl<H: Host> Vm<H> {
             Some(Cell::Proxy { target, .. }) => self.is_array(p, *target),
             _ => Ok(false),
         }
+    }
+
+    /// IsArray of any value but a Proxy, which reads no state beyond the value's kind; `None`
+    /// for a Proxy, whose target (or revocation) `is_array` follows.
+    pub(super) fn steady_is_array(&self, value: Value) -> Option<bool> {
+        if let Some(object) = self.heap.array(value) {
+            return Some(!object.is_arguments_object());
+        }
+        (!matches!(self.heap.get(value), Some(Cell::Proxy { .. }))).then_some(false)
     }
 
     pub(super) fn array_relative_index(
