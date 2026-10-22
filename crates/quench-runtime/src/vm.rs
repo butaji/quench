@@ -673,6 +673,7 @@ const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
 #[derive(Clone, Copy)]
 struct InheritedFieldCache {
     receiver: u32,
+    atom: Atom,
     prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
     depth: u8,
     answer: InheritedFieldAnswer,
@@ -2255,8 +2256,9 @@ impl<H: Host> Vm<H> {
                 let id = ProgramId::from_raw(index as u32);
                 if let Some(residual) = self.programs.get(id) {
                     eprintln!(
-                        "{{\"kind\":\"quench-profile-program\",\"program_id\":{}}}",
+                        "{{\"kind\":\"quench-profile-program\",\"program_id\":{},\"source_name\":{:?}}}",
                         id.raw(),
+                        residual.source_name,
                     );
                     self.profile.report(&self.heap, id.raw(), &residual);
                 }
