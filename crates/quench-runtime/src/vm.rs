@@ -2213,6 +2213,8 @@ impl<H: Host> Vm<H> {
         self.instantiate_global_declarations(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("initialized");
+        #[cfg(feature = "profile-allocator")]
+        self.report_allocator_if_enabled("initialized");
         let root = self.closure(program, 0, Value::NULL)?;
         let this = if program.is_module() {
             Value::UNDEFINED
@@ -2235,6 +2237,8 @@ impl<H: Host> Vm<H> {
     }
 
     fn report_execution(&mut self, program: &ResidualProgram) {
+        #[cfg(feature = "profile-allocator")]
+        self.report_allocator_if_enabled("complete");
         #[cfg(feature = "profile-gc-time")]
         self.report_gc_time_if_enabled();
         #[cfg(feature = "profile-aggregate")]
@@ -2271,6 +2275,12 @@ impl<H: Host> Vm<H> {
             .report(&self.heap, ProgramId::MAIN.raw(), program);
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("complete");
+    }
+    #[cfg(feature = "profile-allocator")]
+    fn report_allocator_if_enabled(&self, phase: &str) {
+        if std::env::var_os("QUENCH_ALLOCATOR_MEMORY").is_some() {
+            crate::report_allocator_memory(phase);
+        }
     }
     #[cfg(feature = "profile-gc-time")]
     fn report_gc_time_if_enabled(&self) {
