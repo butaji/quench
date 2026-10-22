@@ -87,6 +87,16 @@ impl<H: Host> Runtime<H> {
         self.vm.set_execution_mode(mode);
     }
 
+    /// Choose how this runtime trades memory for speed; see [`crate::MemoryPolicy`]. Set it
+    /// at startup, before the program runs; a runtime that sets none uses the default.
+    pub fn set_memory_policy(&mut self, policy: crate::MemoryPolicy) {
+        self.vm.set_memory_policy(policy);
+    }
+
+    pub fn memory_policy(&self) -> crate::MemoryPolicy {
+        self.vm.memory_policy()
+    }
+
     /// Construct the Vm on this thread with an owned cancellation authority.
     pub fn new_with_execution_interrupt(host:H,interrupt:crate::ExecutionInterrupt)->Self { Self { vm:Vm::new_with_execution_interrupt(host,interrupt) } }
 

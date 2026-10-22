@@ -53,7 +53,7 @@ const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_
 // A sparse element is an index and a value in a hash table, at least this many dense slots;
 // a sparse array whose elements fill as many slots as its length turns dense.
 const SPARSE_ENTRY_SLOTS: usize = size_of::<(usize, Value)>() / size_of::<Value>();
-use pacing::pacing;
+pub use pacing::MemoryPolicy;
 #[inline(always)]
 fn payload_unit() -> usize {
     #[cfg(feature = "gc-tuning")]
@@ -64,14 +64,10 @@ fn payload_unit() -> usize {
 /// The fewest allocations after which a collection is full on a small heap: the first
 /// collection runs after the young minimum, and is full once the allocation cap has passed.
 #[cfg(test)]
-pub(crate) const FULL_COLLECTION_ALLOCATION_BOUND: usize = {
-    let pacing = pacing::PRODUCTION_PACING;
-    if pacing.minimum_young > pacing.minimum_allocation_cap {
-        pacing.minimum_young
-    } else {
-        pacing.minimum_allocation_cap
-    }
-};
+pub(crate) fn full_collection_allocation_bound(policy: MemoryPolicy) -> usize {
+    let pacing = policy.pacing();
+    pacing.minimum_young.max(pacing.minimum_allocation_cap)
+}
 /// Payload bytes beside a cell (string units, array elements) that weigh as one more
 /// allocation toward the next collection.
 #[cfg(not(feature = "gc-tuning"))]
@@ -415,6 +411,8 @@ pub(crate) struct Heap {
     live_after_full: usize,
     /// The next collection traces the whole heap.
     full_due: bool,
+    /// Selects the pacing table (`MemoryPolicy::pacing`); reset keeps it.
+    memory_policy: MemoryPolicy,
     pacing_state: pacing::PacingState,
     /// Host contexts of promises the sweep freed, for the host to release.
     abandoned_contexts: AbandonedHostContexts,
@@ -770,11 +768,25 @@ impl Heap {
             free_by_slab: Vec::with_capacity(12),
             free_slabs: Vec::with_capacity(12),
             free_slots: 0,
-            threshold: pacing().minimum_young,
-            max_threshold: pacing().minimum_young,
+            threshold: MemoryPolicy::default().pacing().minimum_young,
+            max_threshold: MemoryPolicy::default().pacing().minimum_young,
             external_collection_budget: MINIMUM_EXTERNAL_COLLECTION_BUDGET,
             ..Self::default()
         }
+    }
+    /// Selects the memory policy at startup, before the first collection: the next
+    /// collection runs after the policy's young minimum, and pacing follows its table.
+    pub(crate) fn set_memory_policy(&mut self, policy: MemoryPolicy) {
+        debug_assert_eq!(self.collections, 0, "the memory policy is chosen at startup");
+        self.memory_policy = policy;
+        self.threshold = self.pacing().minimum_young;
+        self.max_threshold = self.threshold;
+    }
+    pub(crate) fn memory_policy(&self) -> MemoryPolicy {
+        self.memory_policy
+    }
+    fn pacing(&self) -> pacing::GenerationalPacing {
+        self.memory_policy.pacing()
     }
     /// Keep the complete allocation census available to ownership tests.
     /// Explicit collection remains available; only threshold collection stops.
@@ -1493,12 +1505,12 @@ impl Heap {
         self.live_weight_after_previous = 0;
         self.live_weight_after_full = 0;
         self.old_live = 0;
-        self.threshold = pacing().minimum_young;
+        self.threshold = self.pacing().minimum_young;
         self.total_allocations = 0;
         self.collections = 0;
         self.peak_live = 0;
         self.peak_survivors = 0;
-        self.max_threshold = pacing().minimum_young;
+        self.max_threshold = self.pacing().minimum_young;
         self.properties.reset();
         self.remembered_marks.clear();
         self.remembered.clear();
@@ -1564,7 +1576,7 @@ impl Heap {
     }
     pub(crate) fn should_full_collect(&self) -> bool {
         self.full_due
-            || pacing().allocation_cap_reached(
+            || self.pacing().allocation_cap_reached(
                 self.live_after_full,
                 self.allocations_since_full,
                 self.pacing_state.cap_backoff,
@@ -2000,7 +2012,7 @@ impl Heap {
             self.live_after_full = live;
             self.live_weight_after_full = live_weight;
         }
-        let next = pacing().plan(
+        let next = self.pacing().plan(
             &mut self.pacing_state,
             pacing::CollectionOutcome {
                 full,

@@ -49,8 +49,14 @@ impl Heap {
         Ok(())
     }
 
-    pub(crate) fn read_snapshot(reader: &mut Reader<'_>, decoder: &mut CellDecoder<'_>) -> SnapshotResult<Self> {
+    /// A snapshot keeps no policy: the restored heap paces under the restoring runtime's.
+    pub(crate) fn read_snapshot(
+        reader: &mut Reader<'_>,
+        decoder: &mut CellDecoder<'_>,
+        policy: super::MemoryPolicy,
+    ) -> SnapshotResult<Self> {
         let mut heap = Self::new();
+        heap.set_memory_policy(policy);
         let slots = reader.len()?;
         for index in 0..slots {
             let cell = if reader.bool()? { Some(Cell::read_snapshot(reader, decoder)?) } else { None };
@@ -112,7 +118,7 @@ impl Heap {
         let live_weight = live + self.payload_bytes / payload_unit();
         self.live_weight_after_previous = live_weight;
         self.live_weight_after_full = live_weight;
-        self.threshold = pacing().young_budget(live);
+        self.threshold = self.pacing().young_budget(live);
         self.max_threshold = self.max_threshold.max(self.threshold);
         self.full_due = false;
     }
