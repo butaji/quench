@@ -2169,6 +2169,27 @@ impl CompiledProgram {
     }
 }
 
+/// With `QUENCH_WASM_JIT_PERF_MAP` set, names each compiled Wasm function's code for
+/// `perf` (`/tmp/perf-PID.map`) and writes the module's code to `/tmp/quench-jit-PID-BASE.bin`
+/// for disassembly at `BASE` (diagnostics only).
+fn write_perf_map(base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
+    if std::env::var_os("QUENCH_WASM_JIT_PERF_MAP").is_none() {
+        return;
+    }
+    use std::io::Write;
+    let pid = std::process::id();
+    if let Ok(mut map) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("/tmp/perf-{pid}.map"))
+    {
+        for &(offset, len, index) in spans {
+            let _ = writeln!(map, "{:x} {len:x} wasm-function-{index}", base + offset);
+        }
+    }
+    let _ = std::fs::write(format!("/tmp/quench-jit-{pid}-{base:x}.bin"), bytes);
+}
+
 /// Executable memory holding a program's machine code.
 pub(super) struct CodeMemory {
     pointer: *mut u8,
@@ -7572,6 +7593,7 @@ impl<H: Host> Vm<H> {
         }
         let mut bytes = Vec::new();
         let mut offsets = vec![None; count];
+        let mut spans = Vec::new();
         let mut entries = vec![None; count];
         let mut calls = Vec::new();
         let place = |bytes: &mut Vec<u8>, code: Vec<u8>| {
@@ -7626,8 +7648,10 @@ impl<H: Host> Vm<H> {
                 }
                 return None;
             }
+            let body_len = body.len();
             let offset = place(&mut bytes, body);
             offsets[index] = Some(offset);
+            spans.push((offset, body_len, index));
             calls.extend(function_calls.into_iter().map(|call| (offset, call)));
             let memory = MemoryArguments::of(fixed_base, guarded);
             let entry = analysis.compile_entry(&*isa, index, plans[index].as_ref()?, memory)?;
@@ -7649,6 +7673,7 @@ impl<H: Host> Vm<H> {
         let memory = CodeMemory::new(&bytes)?;
         let mapped_bytes = memory.length;
         let base = memory.pointer as usize;
+        write_perf_map(base, &bytes, &spans);
         let table: Box<[usize]> = offsets
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))

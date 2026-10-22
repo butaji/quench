@@ -51,7 +51,8 @@ extern "C" fn report() {
 }
 
 /// Per-function instruction census (`profile-lane-exits`): lane records dispatched and
-/// general-loop instructions stepped, by the function whose view or frame ran them.
+/// general-loop instructions stepped, by the function whose view or frame ran them, and the
+/// most dispatched records by function and instruction index.
 #[derive(Default)]
 struct FunctionCensus {
     /// Each lane view's record address range and its function's index, sorted by start.
@@ -62,6 +63,8 @@ struct FunctionCensus {
     general: Vec<u64>,
     general_keys: std::collections::HashMap<(u32, u32), usize>,
     last: (usize, usize, usize),
+    /// Dispatches by record address.
+    records: std::collections::HashMap<usize, u64>,
 }
 
 static FUNCTIONS: std::sync::Mutex<Option<FunctionCensus>> = std::sync::Mutex::new(None);
@@ -94,7 +97,12 @@ pub(super) fn register_view(start: usize, end: usize, label: String) {
 
 /// Count one dispatch of the lane record at `address`.
 pub(super) fn count_record(address: usize) {
+    REPORT_FUNCTIONS.call_once(|| {
+        // SAFETY: `report_functions` is a plain function that outlives the process.
+        unsafe { libc::atexit(report_functions) };
+    });
     with_functions(|census| {
+        *census.records.entry(address).or_default() += 1;
         let (start, end, index) = census.last;
         if address >= start && address < end {
             census.lane[index] += 1;
@@ -132,6 +140,8 @@ pub(super) fn count_general(label: impl FnOnce() -> String, key: (u32, u32)) {
 static REPORT_FUNCTIONS: std::sync::Once = std::sync::Once::new();
 /// Functions the per-function census lists, most instructions first.
 const REPORTED_FUNCTIONS: usize = 150;
+/// Records the record census lists, most dispatched first.
+const REPORTED_RECORDS: usize = 600;
 
 extern "C" fn report_functions() {
     with_functions(|census| {
@@ -144,6 +154,16 @@ extern "C" fn report_functions() {
         eprintln!("function census: {total} instructions, {general} general");
         for (sum, lane, general, label) in rows.into_iter().take(REPORTED_FUNCTIONS) {
             eprintln!("  {sum:>12} lane={lane:>11} general={general:>10} {label}");
+        }
+        let record_size = std::mem::size_of::<super::dispatch_fast::LaneInstruction>();
+        let mut records: Vec<_> = census.records.iter().map(|(address, count)| (*count, *address)).collect();
+        records.sort_unstable_by(|a, b| b.cmp(a));
+        eprintln!("record census:");
+        for (count, address) in records.into_iter().take(REPORTED_RECORDS) {
+            let at = census.views.partition_point(|view| view.0 <= address);
+            if let Some(&(start, _, index)) = at.checked_sub(1).and_then(|at| census.views.get(at)) {
+                eprintln!("  {count:>12} {} @{}", census.labels[index], (address - start) / record_size);
+            }
         }
     });
 }
