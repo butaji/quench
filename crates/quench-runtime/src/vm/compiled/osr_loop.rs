@@ -788,8 +788,10 @@ fn element_representation(instruction: &WideInstruction, observation: &Observati
 }
 
 /// The largest step and offset a counted loop's proof takes (`Affine`). Entry values are
-/// `i32`s and trip counts stay below 2^34, so with terms this small every `i64` the proof
-/// computes (`Lowering::proof`) stays below 2^60.
+/// `i32`s and trip counts stay below 2^34, so with terms this small a value's own part
+/// stays below 2^60; an invariant addend (`Term`) is an `i32` sum or a product of two such
+/// values, below 2^62.1, so every `i64` the proof computes (`Lowering::proof`) stays below
+/// 2^63.
 const MAX_AFFINE_TERM: i64 = 1 << 24;
 
 /// What an affine value of a counted loop's body counts from.
@@ -802,19 +804,38 @@ enum Base {
     Capture(usize),
     /// The register's value where the iteration starts, at the loop's header.
     Start(Register),
+    /// A loop-invariant sum or product (`CountedLoop::terms`), by its index.
+    Term(usize),
 }
 
-/// A value of a counted loop's body: its base's value in the iteration plus `offset`.
+/// A value every iteration of a counted loop computes alike from values the body never
+/// writes: the sum or the product of two invariant values, none of them a product, so the
+/// proof evaluates it once, exactly, from the values arriving at the header.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Term {
+    multiply: bool,
+    left: Affine,
+    right: Affine,
+}
+
+/// A value of a counted loop's body: its base's value in the iteration plus `offset`,
+/// plus the value of an invariant `addend` (a capture, a register the body never writes,
+/// or a `Term`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Affine {
     base: Base,
     offset: i64,
+    addend: Option<Base>,
 }
 
 impl Affine {
+    fn of(base: Base) -> Self {
+        Self { base, offset: 0, addend: None }
+    }
+
     fn plus(self, amount: i64) -> Option<Self> {
         let offset = self.offset.checked_add(amount)?;
-        (offset.abs() <= MAX_AFFINE_TERM).then_some(Self { base: self.base, offset })
+        (offset.abs() <= MAX_AFFINE_TERM).then_some(Self { offset, ..self })
     }
 }
 
@@ -834,6 +855,9 @@ enum Bound {
     Index(Register),
     /// The `i32` sum is exact, so the arithmetic needs no overflow guard.
     Int32,
+    /// The invariant product (`Term`) is an `i32` and no -0, so the multiplication needs no
+    /// guard.
+    Product,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -860,6 +884,8 @@ struct CountedLoop {
     /// Each register's change per iteration, for each register the body changes by a
     /// constant; a register the body never writes changes by zero.
     steps: std::collections::BTreeMap<Register, i64>,
+    /// The invariant sums and products `Base::Term` names.
+    terms: Vec<Term>,
     facts: Vec<Fact>,
 }
 
@@ -873,7 +899,7 @@ impl CountedLoop {
     fn base_step(&self, base: Base) -> i64 {
         match base {
             Base::Start(register) => self.steps.get(&register).copied().unwrap_or(0),
-            Base::Constant | Base::Capture(_) => 0,
+            Base::Constant | Base::Capture(_) | Base::Term(_) => 0,
         }
     }
 
@@ -936,13 +962,23 @@ fn counted_loop(
         return None;
     }
     let int32 = |web: Definition| representations[web] == Representation::Int32;
-    let constant = |number: f64| int32_number(number).then(|| Affine { base: Base::Constant, offset: number as i64 });
+    // The registers the body writes; any other register is invariant in it.
+    let written: BTreeSet<Register> = body.clone().filter_map(|pc| number_definition(at(pc))).collect();
+    let invariant = |value: &Affine| {
+        let base = |base: Base| match base {
+            Base::Start(register) => !written.contains(&register),
+            Base::Constant | Base::Capture(_) | Base::Term(_) => true,
+        };
+        base(value.base) && value.addend.is_none_or(base)
+    };
+    let mut terms: Vec<Term> = Vec::new();
+    let constant = |number: f64| int32_number(number).then(|| Affine { offset: number as i64, ..Affine::of(Base::Constant) });
     let mut state: BTreeMap<Register, Option<Affine>> = BTreeMap::new();
     let value = |state: &BTreeMap<Register, Option<Affine>>, register: Register| {
         state
             .get(&register)
             .copied()
-            .unwrap_or(Some(Affine { base: Base::Start(register), offset: 0 }))
+            .unwrap_or(Some(Affine::of(Base::Start(register))))
     };
     // Whether a source the instruction at `pc` reads is held as an `i32`, and its value.
     let source = |state: &BTreeMap<Register, Option<Affine>>, pc: u32, operand: Operand| match operand.kind()? {
@@ -970,7 +1006,7 @@ fn counted_loop(
             Op::LoadCapture => {
                 let slot = instruction.capture_slot();
                 let index = region.captures.iter().position(|capture| *capture == slot)?;
-                (captures[index] == Representation::Int32).then_some(Affine { base: Base::Capture(index), offset: 0 })
+                (captures[index] == Representation::Int32).then_some(Affine::of(Base::Capture(index)))
             }
             Op::Move | Op::ToNumeric => register(instruction.register_b()).1,
             Op::IncDec => {
@@ -985,20 +1021,46 @@ fn counted_loop(
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
                 let left = source(&state, pc, instruction.operand_b())?;
                 let right = source(&state, pc, instruction.operand_c())?;
-                let sum = match (arithmetic(instruction.binary_operator())?, left.1, right.1) {
-                    (Arithmetic::Float(FloatOperator::Add), Some(left), Some(right)) => match (left.base, right.base) {
-                        (_, Base::Constant) => left.plus(right.offset),
-                        (Base::Constant, _) => right.plus(left.offset),
+                let held = left.0 && right.0 && defined();
+                // A product of invariant values that are no products is a term.
+                let factor = |value: &Affine| {
+                    invariant(value)
+                        && ![Some(value.base), value.addend].into_iter().flatten().any(|base| {
+                            matches!(base, Base::Term(term) if terms[term].multiply)
+                        })
+                };
+                let operator = arithmetic(instruction.binary_operator())?;
+                let sum = match (operator, left.1, right.1) {
+                    (Arithmetic::Float(FloatOperator::Add), Some(left), Some(right)) => match (left, right) {
+                        (_, Affine { base: Base::Constant, addend: None, offset }) => left.plus(offset),
+                        (Affine { base: Base::Constant, addend: None, offset }, _) => right.plus(offset),
+                        // An invariant value folds into the other's addend.
+                        (_, Affine { base, addend: None, offset }) if left.addend.is_none() && invariant(&right) => {
+                            Affine { addend: Some(base), ..left }.plus(offset)
+                        }
+                        (Affine { base, addend: None, offset }, _) if right.addend.is_none() && invariant(&left) => {
+                            Affine { addend: Some(base), ..right }.plus(offset)
+                        }
                         _ => None,
                     },
                     (Arithmetic::Float(FloatOperator::Subtract), Some(left), Some(right))
-                        if right.base == Base::Constant =>
+                        if right.base == Base::Constant && right.addend.is_none() =>
                     {
                         left.plus(-right.offset)
                     }
+                    (Arithmetic::Float(FloatOperator::Multiply), Some(left), Some(right))
+                        if held && factor(&left) && factor(&right) =>
+                    {
+                        terms.push(Term { multiply: true, left, right });
+                        let value = Affine::of(Base::Term(terms.len() - 1));
+                        candidates.push(Fact { pc, value, bound: Bound::Product });
+                        Some(value)
+                    }
                     _ => None,
                 };
-                if let Some(value) = sum.filter(|_| left.0 && right.0 && defined()) {
+                if operator != Arithmetic::Float(FloatOperator::Multiply)
+                    && let Some(value) = sum.filter(|_| held)
+                {
                     candidates.push(Fact { pc, value, bound: Bound::Int32 });
                 }
                 sum
@@ -1028,29 +1090,40 @@ fn counted_loop(
             state.insert(register, result);
         }
     }
-    let written: BTreeSet<Register> = state.keys().copied().collect();
     let steps: BTreeMap<Register, i64> = state
         .iter()
         .filter_map(|(register, value)| match value {
-            Some(Affine { base: Base::Start(base), offset }) if base == register => Some((*register, *offset)),
+            Some(Affine { base: Base::Start(base), offset, addend: None }) if base == register => {
+                Some((*register, *offset))
+            }
             _ => None,
         })
         .collect();
     // How much a base changes per iteration, when it changes by a constant: a register the
     // body never writes does not change.
     let step = |base: Base| match base {
-        Base::Constant | Base::Capture(_) => Some(0),
+        Base::Constant | Base::Capture(_) | Base::Term(_) => Some(0),
         Base::Start(register) if !written.contains(&register) => Some(0),
         Base::Start(register) => steps.get(&register).copied().filter(|step| step.abs() <= MAX_AFFINE_TERM),
     };
-    // A base the proof reads at the header is an `i32` there.
-    let held = |base: Base| match base {
-        Base::Start(register) => int32(webs.read(region, header, register)),
-        Base::Constant | Base::Capture(_) => true,
-    };
+    // A base the proof reads at the header is an `i32` there; a term's values are, and its
+    // own values were found invariant when it was made.
+    fn held_base(base: Base, terms: &[Term], read: &dyn Fn(Register) -> bool) -> bool {
+        match base {
+            Base::Start(register) => read(register),
+            Base::Constant | Base::Capture(_) => true,
+            Base::Term(term) => [terms[term].left, terms[term].right].iter().all(|value| {
+                held_base(value.base, terms, read) && value.addend.is_none_or(|addend| held_base(addend, terms, read))
+            }),
+        }
+    }
+    let read = |register: Register| int32(webs.read(region, header, register));
+    let held = |base: Base| held_base(base, &terms, &read);
+    // An addend must not change across iterations.
+    let fixed = |value: &Affine| value.addend.is_none_or(|addend| step(addend) == Some(0) && held(addend));
     let (operator, (left_held, left), (right_held, right)) = tested?;
     let (left, right) = (left?, right?);
-    (left_held && right_held && held(left.base) && held(right.base)).then_some(())?;
+    (left_held && right_held && held(left.base) && held(right.base) && fixed(&left) && fixed(&right)).then_some(())?;
     // The induction variable is the side that moves; a relation with it on the right
     // reads mirrored.
     let (induction, bound, mirrored) = match (step(left.base)?, step(right.base)?) {
@@ -1074,7 +1147,7 @@ fn counted_loop(
     };
     let facts: Vec<Fact> = candidates
         .into_iter()
-        .filter(|fact| held(fact.value.base) && step(fact.value.base).is_some())
+        .filter(|fact| held(fact.value.base) && step(fact.value.base).is_some() && fixed(&fact.value))
         .collect();
     (!facts.is_empty()).then_some(())?;
     Some(CountedLoop {
@@ -1085,6 +1158,7 @@ fn counted_loop(
         relation,
         bound: bound.plus(adjustment)?,
         steps,
+        terms,
         facts,
     })
 }
@@ -1318,21 +1392,33 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// The `i64` value at a counted loop's header of a base the proof reads, which
     /// `counted_loop` found is held as an `i32` there.
-    fn start(&mut self, header: u32, base: Base) -> ir::Value {
+    fn start(&mut self, counted: &CountedLoop, base: Base) -> ir::Value {
         let value = match base {
             Base::Constant => return self.builder.ins().iconst(types::I64, 0),
             Base::Capture(index) => self.captures[index].value,
             Base::Start(register) => {
-                let web = self.webs.read(self.region, header, register);
+                let web = self.webs.read(self.region, counted.header, register);
                 self.web(web).value
+            }
+            Base::Term(term) => {
+                let Term { multiply, left, right } = counted.terms[term];
+                let (left, right) = (self.affine_start(counted, left), self.affine_start(counted, right));
+                return if multiply { self.builder.ins().imul(left, right) } else { self.builder.ins().iadd(left, right) };
             }
         };
         self.builder.ins().sextend(types::I64, value)
     }
 
-    fn affine_start(&mut self, header: u32, value: Affine) -> ir::Value {
-        let start = self.start(header, value.base);
-        self.builder.ins().iadd_imm_s(start, value.offset)
+    fn affine_start(&mut self, counted: &CountedLoop, value: Affine) -> ir::Value {
+        let start = self.start(counted, value.base);
+        let start = self.builder.ins().iadd_imm_s(start, value.offset);
+        match value.addend {
+            Some(addend) => {
+                let addend = self.start(counted, addend);
+                self.builder.ins().iadd(start, addend)
+            }
+            None => start,
+        }
     }
 
     /// The counted loop's preheader: runs its proof from the values arriving at the header
@@ -1351,9 +1437,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// runs for iterations `0..=trips` and one after it for `0..trips`; an affine value is
     /// monotonic in the iteration, so its extremes are at the first and last of them.
     fn proof(&mut self, counted: &CountedLoop) -> ir::Value {
-        let header = counted.header;
-        let tested = self.affine_start(header, counted.induction);
-        let bound = self.affine_start(header, counted.bound);
+        let tested = self.affine_start(counted, counted.induction);
+        let bound = self.affine_start(counted, counted.bound);
         let step = counted.base_step(counted.induction.base);
         let (trips, mut holds) = match (counted.relation, step > 0) {
             // Moving toward the bound, the test passes until the value crosses it.
@@ -1388,7 +1473,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let none = self.builder.ins().icmp_imm_s(IntCC::Equal, trips, 0);
         let trips_after = self.builder.ins().iadd_imm_s(trips, -1);
         for fact in &counted.facts {
-            let first = self.affine_start(header, fact.value);
+            let first = self.affine_start(counted, fact.value);
             let step = counted.base_step(fact.value.base);
             let last_iteration = if fact.pc < counted.test { trips } else { trips_after };
             let travel = self.builder.ins().imul_imm_s(last_iteration, step);
@@ -1406,6 +1491,21 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     self.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, low, i64::from(i32::MIN)),
                     self.builder.ins().icmp_imm_s(IntCC::SignedLessThanOrEqual, high, i64::from(i32::MAX)),
                 ),
+                Bound::Product => {
+                    // The product is invariant (`low` is `high`); a zero one is -0 when a
+                    // factor is negative.
+                    let Base::Term(term) = fact.value.base else { unreachable!("a product fact names its term") };
+                    let Term { left, right, .. } = counted.terms[term];
+                    let (left, right) = (self.affine_start(counted, left), self.affine_start(counted, right));
+                    let signs = self.builder.ins().bor(left, right);
+                    let nonnegative = self.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, signs, 0);
+                    let nonzero = self.builder.ins().icmp_imm_s(IntCC::NotEqual, low, 0);
+                    let signed_zero_free = self.builder.ins().bor(nonnegative, nonzero);
+                    let fits = self.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, low, i64::from(i32::MIN));
+                    let fits_high = self.builder.ins().icmp_imm_s(IntCC::SignedLessThanOrEqual, high, i64::from(i32::MAX));
+                    let fits = self.builder.ins().band(fits, fits_high);
+                    (fits, signed_zero_free)
+                }
             };
             let within = self.builder.ins().band(above, below);
             let within = if fact.pc < counted.test { within } else { self.builder.ins().bor(within, none) };
@@ -1822,6 +1922,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let (result, overflow) = match operator {
             FloatOperator::Add => self.builder.ins().sadd_overflow(left, right),
             FloatOperator::Subtract => self.builder.ins().ssub_overflow(left, right),
+            FloatOperator::Multiply if self.proved(pc) => return self.builder.ins().imul(left, right),
             FloatOperator::Multiply => {
                 let (product, overflow) = self.builder.ins().smul_overflow(left, right);
                 self.guard_int32(pc, overflow, Widening::Register(register));
