@@ -477,6 +477,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "emitterEmit" (3) => crate::modules::event_emitter_shared_vm::emit,
         method "emitterErrorInspector" (0) => crate::modules::events_shared_vm::error_inspector,
         method "emitterEmitListeners" (4) => crate::modules::event_emitter_shared_vm::emit_listeners,
+        method "emitterCaptureResult" (4) => crate::modules::event_emitter_shared_vm::capture_listener_result,
         method "emitterCaptureDefaultGet" (0) => crate::modules::event_constructor_shared_vm::default_get,
         method "emitterCaptureDefaultSet" (1) => crate::modules::event_constructor_shared_vm::default_set,
         method "emitterCaptureRejected" (1) => crate::modules::event_constructor_shared_vm::capture_rejected,
@@ -1488,6 +1489,10 @@ impl quench_runtime::Host for NodeHost {
         context: quench_runtime::HostExecutionContext,
     ) -> Vec<quench_runtime::RootId> {
         crate::modules::async_hooks_shared_vm::release_job_context(&self.shared_state, context.0)
+    }
+
+    fn release_promise_contexts(&mut self, contexts: &[quench_runtime::HostExecutionContext]) {
+        crate::modules::async_hooks_shared_vm::release_promise_contexts(&self.shared_state, contexts);
     }
 
     fn functions(&self) -> &[HostFunction<Self>] {

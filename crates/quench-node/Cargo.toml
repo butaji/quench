@@ -20,6 +20,7 @@ profile-memory = ["quench-runtime/profile-memory"]
 verify-replay = ["quench-runtime/verify-replay"]
 # Quench's size-classed small-object allocator as the global allocator (TOD-137).
 quench-alloc = ["dep:quench-alloc"]
+profile-allocator = ["quench-runtime/profile-allocator"]
 
 [dependencies]
 quench-js-check = { path = "../quench-js-check" }
