@@ -1058,7 +1058,7 @@ impl<H: Host> Vm<H> {
         if atom == self.length_atom
             && let Some(length) = self.own_array_length(object)
         {
-            return Some(Value::number(length as f64));
+            return Some(Value::length(length));
         }
         let object = self.object_data(object)?;
         let slot = self.shape_slot(object.shape(), atom)?;
@@ -1111,7 +1111,7 @@ impl<H: Host> Vm<H> {
         (atom == self.length_atom)
             .then(|| self.own_array_length(object))
             .flatten()
-            .map(|length| Value::number(length as f64))
+            .map(Value::length)
     }
 
     /// Probe own and holder entries using the shape pinned by the receiver.
