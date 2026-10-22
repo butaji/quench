@@ -320,6 +320,7 @@ impl<H: Host> Vm<H> {
             transitions,
             shape_slot_memo: _,
             plain_copy_shapes: _,
+            embedding_record_shapes: _,
             typed_array_geometry: _,
             symbol_write_proofs: _,
             symbol_load_proofs: _,

@@ -3620,7 +3620,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn transition_property_shape(&mut self, shape: u32, key: PropertyKey) -> u32 {
         self.transition_data_property_shape(shape, key, DEFAULT_DATA_ATTRIBUTES)
     }
-    fn transition_data_property_shape(
+    pub(super) fn transition_data_property_shape(
         &mut self,
         shape: u32,
         key: PropertyKey,
