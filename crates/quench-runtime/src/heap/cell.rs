@@ -2136,7 +2136,10 @@ impl Object {
     pub(crate) fn has_side_descriptors(&self) -> bool {
         self.extras().is_some_and(|extras| extras.side_descriptors)
     }
+    /// A prototype's side descriptors can name keys its shape lacks, which retires the
+    /// proofs (`prototype_layout_epoch`) that found them absent.
     pub(crate) fn mark_side_descriptors(&mut self) {
+        self.note_prototype_layout_change();
         self.extras_mut().side_descriptors = true;
     }
     pub(crate) fn is_raw_json(&self) -> bool {
@@ -2722,13 +2725,14 @@ impl EnvironmentSlots {
         };
         // Every slot the source does not list shares with `owner`, as the copy's do unless
         // they are fresh or reset.
-        let mut indexes: Vec<usize> = self
-            .sparse_indexes()
-            .chain(fresh.iter().chain(reset).map(|&slot| usize::from(slot)))
-            .filter(|&index| index < len)
-            .collect();
-        indexes.sort_unstable();
-        indexes.dedup();
+        // Each list is ascending (sparse entries by position, `fresh` and `reset` sorted), so
+        // their union is merged, never sorted.
+        let mut indexes = merge_ascending(
+            merge_ascending(self.sparse_indexes(), fresh.iter().map(|&slot| usize::from(slot)))
+                .into_iter(),
+            reset.iter().map(|&slot| usize::from(slot)),
+        );
+        indexes.truncate(indexes.partition_point(|&index| index < len));
         let shared = Value::shared_environment_slot(owner);
         let mut listed = Vec::with_capacity(indexes.len());
         for index in indexes {
@@ -3263,6 +3267,35 @@ impl Cell {
             Self::Iterator(iterator) => iterator.program_references(&mut visit),
             Self::AwaitState(state) => state.program_references(&mut visit),
             _ => {}
+        }
+    }
+}
+
+/// The union of two ascending index sequences, ascending and without repeats.
+fn merge_ascending(
+    left: impl Iterator<Item = usize>,
+    right: impl Iterator<Item = usize>,
+) -> Vec<usize> {
+    let (mut left, mut right) = (left.peekable(), right.peekable());
+    let mut merged = Vec::with_capacity(left.size_hint().0 + right.size_hint().0);
+    loop {
+        let next = match (left.peek().copied(), right.peek().copied()) {
+            (Some(l), Some(r)) if l <= r => {
+                left.next();
+                l
+            }
+            (_, Some(r)) => {
+                right.next();
+                r
+            }
+            (Some(l), None) => {
+                left.next();
+                l
+            }
+            (None, None) => return merged,
+        };
+        if merged.last() != Some(&next) {
+            merged.push(next);
         }
     }
 }

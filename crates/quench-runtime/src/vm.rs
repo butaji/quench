@@ -1,7 +1,6 @@
 mod compiled;
 mod js_compiled;
 mod jit_backend;
-mod loop_compiled;
 mod shape_transitions;
 mod snapshot;
 mod startup_intrinsics;
@@ -1740,6 +1739,9 @@ pub(crate) struct Vm<H> {
     /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
     /// from shapes, so field-cache invalidation clears it.
     iterator_result_shape: Option<u32>,
+    /// The one `{ value, done }` result a lane iterator step reuses (`Vm::reused_iterator_result`),
+    /// `undefined` until the first; cleared with `iterator_result_shape`.
+    reused_iterator_result: Value,
     /// The shapes of a complete data and accessor property descriptor object
     /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
     /// field-cache invalidation clears them.
@@ -1797,6 +1799,9 @@ pub(crate) struct Vm<H> {
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
     direct_eval_var_program: Option<ProgramId>,
+    /// The Function-constructor programs this VM may still offer the host's compile cache
+    /// (`DYNAMIC_FUNCTIONS_KEPT`).
+    dynamic_functions_to_keep: u16,
     parameter_eval: bool,
     eval_script_context: bool,
     deferred_dependency_batch: bool,
@@ -2679,6 +2684,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
+        self.reused_iterator_result = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
         self.regexp_object_shapes = None;

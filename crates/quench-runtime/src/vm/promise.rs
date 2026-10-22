@@ -2024,14 +2024,14 @@ impl<H: Host> Vm<H> {
         locals: Vec<(String, String)>,
     ) -> Option<Vec<(String, StaticModuleValue)>> {
         let residual = self.programs.get(program)?;
-        let root = residual.functions.first()?;
+        let slots = local_slots(residual.functions.first()?);
         locals
             .into_iter()
             .map(|(local, exported)| {
                 // A stored module shares the VM's atom ids, so the VM finds its local's atom
                 // without scanning the program's (and so the VM's) whole table.
                 let local_atom = self.lookup_atom(&local)?;
-                let slot = root.local_atoms.iter().position(|atom| *atom == local_atom)?;
+                let slot = *slots.get(&local_atom)?;
                 Some((
                     exported,
                     StaticModuleValue::Binding {
@@ -2799,9 +2799,10 @@ impl<H: Host> Vm<H> {
         let Some(root) = p.functions.first() else {
             return Ok(());
         };
+        let local_slots = local_slots(root);
         let mut slots = vec![Value::UNDEFINED; root.local_atoms.len()];
         for atom in &root.lexical_atoms {
-            if let Some(slot) = root.local_atoms.iter().position(|local| local == atom) {
+            if let Some(&slot) = local_slots.get(atom) {
                 slots[slot] = Value::DELETED;
             }
         }
@@ -2819,6 +2820,16 @@ impl<H: Host> Vm<H> {
         });
         self.programs.set_module_environment(program, environment);
 
+        // Each name's first function declared directly in the module body.
+        let mut root_functions = FxHashMap::default();
+        for (id, function) in p.functions.iter().enumerate().skip(1) {
+            let header = function.header();
+            if header.parent == Some(super::ROOT_FUNCTION_ID)
+                && let Some(name) = header.name
+            {
+                root_functions.entry(name).or_insert(id as u32);
+            }
+        }
         let hoisted_functions = p
             .module_link_plan
             .as_ref()
@@ -2829,18 +2840,8 @@ impl<H: Host> Vm<H> {
                 // once instead of every local's and function's text compared to it.
                 let binding = self.lookup_atom(binding)?;
                 let function_name = self.lookup_atom(function_name)?;
-                let slot = root.local_atoms.iter().position(|atom| *atom == binding)?;
-                let function = p
-                    .functions
-                    .iter()
-                    .enumerate()
-                    .skip(1)
-                    .find(|(_, function)| {
-                        let header = function.header();
-                        header.parent == Some(super::ROOT_FUNCTION_ID) && header.name == Some(function_name)
-                    })
-                    .map(|(id, _)| id as u32)?;
-                Some((slot, function))
+                let slot = *local_slots.get(&binding)?;
+                Some((slot, *root_functions.get(&function_name)?))
             })
             .collect::<Vec<_>>();
         for (slot, function) in hoisted_functions {
@@ -2878,6 +2879,7 @@ impl<H: Host> Vm<H> {
         let Some(root) = bindings.functions.first() else {
             return Ok(Vec::new());
         };
+        let local_slots = local_slots(root);
         let mut values = Vec::with_capacity(imports.len());
         // One import statement's bindings come together and name one module: it is resolved
         // (and its source read) once for them, and only the latest is kept, so the sources of
@@ -2895,11 +2897,7 @@ impl<H: Host> Vm<H> {
             let module = &resolved.insert((&import.source, module)).1;
             let local = self
                 .lookup_atom(&import.local)
-                .and_then(|atom| {
-                    root.local_atoms
-                        .iter()
-                        .position(|candidate| *candidate == atom)
-                })
+                .and_then(|atom| local_slots.get(&atom).copied())
                 .and_then(|slot| u16::try_from(slot).ok())
                 .ok_or_else(|| self.type_error(p, "module import slot is unavailable".into()))?;
             if import.phase == crate::bytecode::ModuleRequestPhase::Source {
@@ -5334,6 +5332,124 @@ impl<H: Host> Vm<H> {
         self.promise_resolve_for_constructor(p, self.intrinsic_promise_constructor(), value)
     }
 
+    /// `Promise.prototype.then` of a receiver whose species steps provably answer the
+    /// intrinsic `%Promise%` without running guest code (`promise_species_intrinsic`), made
+    /// without a frame for the lane: the reaction promise and `perform_promise_then`, as
+    /// `promise_then`'s intrinsic arm makes them. `None` leaves any other receiver, an
+    /// impure species read, or a lifecycle-observing host, whose hooks run guest code, to
+    /// the general call.
+    pub(super) fn lane_promise_then(
+        &mut self,
+        p: &ResidualProgram,
+        promise: Value,
+        on_fulfilled: Value,
+        on_rejected: Value,
+    ) -> Option<Value> {
+        if self.host.observes_promise_lifecycle()
+            || !self.is_promise(promise)
+            || !self.promise_species_intrinsic(promise)
+        {
+            return None;
+        }
+        // Nothing below runs guest code or collects, so the receiver and handlers stay
+        // live in the caller's registers, as `lane_new_array`'s arguments do.
+        let next = self.promise_object_with_parent(None).ok()?;
+        self.perform_promise_then(p, promise, on_fulfilled, on_rejected, next);
+        Some(next)
+    }
+
+    /// `Promise.resolve` of the intrinsic `%Promise%` receiver whose steps provably observe
+    /// nothing: a promise whose `constructor` reads as plain data to the receiver is
+    /// returned as is; any other value resolves a fresh promise as `promise_resolve_value`
+    /// resolves one, where its `then` also reads as plain data — fulfilled directly when
+    /// that `then` is not callable, else through the thenable job the general path would
+    /// enqueue. `None` leaves an impure read or a lifecycle-observing host to the general
+    /// call.
+    pub(super) fn lane_promise_resolve(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        value: Value,
+    ) -> Option<Value> {
+        if self.host.observes_promise_lifecycle()
+            || receiver != self.intrinsic_promise_constructor()
+        {
+            return None;
+        }
+        if self.is_promise(value) {
+            let constructor_atom = self.runtime_atoms.constructor;
+            let observed = self.plain_named_load(value, constructor_atom)?;
+            return (observed == receiver).then_some(value);
+        }
+        let then = if self.object_data(value).is_some() {
+            let then_atom = self.runtime_atoms.then;
+            self.plain_named_load(value, then_atom)?
+        } else {
+            Value::UNDEFINED
+        };
+        let promise = self.promise_object_with_parent(None).ok()?;
+        if self.is_function(then) {
+            let execution_context = self.host.capture_job_context(None);
+            self.realm.jobs.push_back(super::PendingJob::Thenable(ThenableJob {
+                realm: self.realm.globals,
+                then,
+                thenable: value,
+                promise,
+                execution_context,
+            }));
+        } else {
+            // A fresh promise has no reactions, so the settle enqueues nothing.
+            self.promise_settle(p, promise, PromiseState::Fulfilled, value).ok()?;
+        }
+        Some(promise)
+    }
+
+    /// Whether `promise`'s species steps provably answer the intrinsic `%Promise%`: its
+    /// `constructor` reads as plain data (`plain_named_load`) to that constructor — or to
+    /// `undefined`, which PromiseSpeciesConstructor answers with the intrinsic — and the
+    /// constructor's own `@@species` is still the intrinsic accessor, whose getter returns
+    /// its receiver. Both reads observe nothing, so a failed proof only leaves the
+    /// observable steps to the general path.
+    fn promise_species_intrinsic(&mut self, promise: Value) -> bool {
+        let constructor_atom = self.runtime_atoms.constructor;
+        let Some(constructor) = self.plain_named_load(promise, constructor_atom) else {
+            return false;
+        };
+        if constructor.is_undefined() {
+            return true;
+        }
+        if constructor != self.intrinsic_promise_constructor() {
+            return false;
+        }
+        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
+            return false;
+        };
+        let Some(data) = self.object_data(constructor) else {
+            return false;
+        };
+        if data.has_side_descriptors() {
+            return false;
+        }
+        let Some(slot) =
+            self.property_shape_slot(data.shape(), property_key::PropertyKey::symbol(species))
+        else {
+            return false;
+        };
+        let Some(attributes) = self.object_data(constructor).and_then(|data| self.slot_attributes(data, slot)) else {
+            return false;
+        };
+        attributes.accessor
+            && attributes.getter.is_some_and(|getter| {
+                matches!(
+                    self.heap.function(getter),
+                    Some(FunctionRecord {
+                        kind: FunctionKind::Native(Native::PromiseSpeciesGetter),
+                        ..
+                    })
+                )
+            })
+    }
+
     pub(super) fn promise_then(
         &mut self,
         p: &ResidualProgram,
@@ -5747,4 +5863,14 @@ impl PromiseRuntime {
     pub(super) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
         Ok(Self { last_rejection_id: reader.u64()?, ..Self::default() })
     }
+}
+
+/// The slot of each atom among a function's locals: the first slot naming it, as a scan from
+/// the first local finds it. Module linking looks up every import, export and hoisted binding.
+fn local_slots(function: &crate::bytecode::Function) -> FxHashMap<Atom, usize> {
+    let mut slots = FxHashMap::with_capacity_and_hasher(function.local_atoms.len(), Default::default());
+    for (slot, atom) in function.local_atoms.iter().enumerate() {
+        slots.entry(*atom).or_insert(slot);
+    }
+    slots
 }

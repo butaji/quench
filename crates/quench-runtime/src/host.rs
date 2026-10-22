@@ -97,7 +97,9 @@ pub trait Host {
     /// A collection has finished, or a full one is starting: a host may return memory the
     /// process no longer needs resident (its read-only pages), which nothing observable
     /// depends on. At these boundaries the code about to run differs from the code that ran.
-    fn at_collection_boundary(&mut self) {}
+    /// The runtime's memory policy says whether it should
+    /// (`MemoryPolicy::returns_pages_at_collections`).
+    fn at_collection_boundary(&mut self, _policy: crate::MemoryPolicy) {}
 
     /// A compiled host program kept across runs: the bytes `keep_compiled_program` was given
     /// for compiling `parts` (the program's text, in order) under `name` in this build. The
