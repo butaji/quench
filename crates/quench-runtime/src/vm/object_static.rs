@@ -5,6 +5,16 @@ use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    /// `Object.create(proto)` before its properties argument: an empty ordinary object
+    /// inheriting from `proto`, which runs no guest code; `None` when `proto` is neither an
+    /// object nor `null`.
+    pub(super) fn object_create(&mut self, proto: Value) -> Option<Value> {
+        if !proto.is_null() && self.object_data(proto).is_none() {
+            return None;
+        }
+        Some(self.heap.alloc(Cell::Object(Self::empty_object(proto))))
+    }
+
     pub(super) fn intrinsic_builtin_prototype(&mut self, native: Native) -> Value {
         self.realm
             .intrinsics
@@ -640,10 +650,9 @@ impl<H: Host> Vm<H> {
             }
             Native::ObjectCreate => {
                 let proto = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if !proto.is_null() && self.object_data(proto).is_none() {
+                let Some(object) = self.object_create(proto) else {
                     return Err(JsError("Object prototype is not an object".into()));
-                }
-                let object = self.heap.alloc(Cell::Object(Self::empty_object(proto)));
+                };
                 if let Some(descriptors) = args.get(1).copied()
                     && !descriptors.is_undefined()
                 {

@@ -786,18 +786,7 @@ impl<H: Host> Vm<H> {
                         Ok(entries.value_at(index))
                     }
                     Native::MapSet => {
-                        let key = args.first().copied().unwrap_or(Value::UNDEFINED);
-                        let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                        let index = self.map_entry_index(this, key);
-                        let key_hash = self.same_value_zero_hash(key);
-                        let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) else {
-                            unreachable!("receiver validated above")
-                        };
-                        if let Some(index) = index {
-                            entries.set_value(index, value);
-                        } else {
-                            entries.push((key, value), key_hash);
-                        }
+                        self.map_set(this, args);
                         Ok(this)
                     }
                     Native::MapHas => Ok(
@@ -1307,6 +1296,28 @@ impl<H: Host> Vm<H> {
             )),
             _ => None,
         }
+    }
+
+    /// `Map.prototype.set` of `map` with its `args`, which runs no guest code: the key's
+    /// entry takes the value, or a new entry is appended. `false`, with nothing written,
+    /// when `map` is no Map.
+    pub(super) fn map_set(&mut self, map: Value, args: &[Value]) -> bool {
+        if !matches!(self.heap.get(map), Some(Cell::Map { .. })) {
+            return false;
+        }
+        let key = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let index = self.map_entry_index(map, key);
+        let key_hash = self.same_value_zero_hash(key);
+        let Some(Cell::Map { entries, .. }) = self.heap.get_mut(map) else {
+            unreachable!("a Map was checked above")
+        };
+        if let Some(index) = index {
+            entries.set_value(index, value);
+        } else {
+            entries.push((key, value), key_hash);
+        }
+        true
     }
 
     pub(super) fn map_entry_index(&self, map: Value, key: Value) -> Option<usize> {
