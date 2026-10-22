@@ -357,6 +357,7 @@ impl<H: Host> Vm<H> {
             instanceof_constructor_layout: _,
             closure_shapes: _,
             iterator_result_shape: _,
+            reused_iterator_result: _,
             descriptor_shapes: _,
             descriptor_layout: _,
             regexp_object_shapes: _,
@@ -390,6 +391,8 @@ impl<H: Host> Vm<H> {
             construct_target,
             // Each process draws its own sequence (`fresh_random_seed`).
             random_state: _,
+            // Each process keeps its own budget.
+            dynamic_functions_to_keep: _,
         } = self;
         let Realm {
             globals,
@@ -505,13 +508,13 @@ impl<H: Host> Vm<H> {
                 return Ok(matcher.clone());
             }
             let matcher = Rc::new(
-                Self::compile_regexp(source, flags)
+                Self::compile_regexp(source, flags, super::regexp::PatternValidity::EarlyChecked)
                     .map_err(|error| SnapshotError(format!("snapshot regexp: {error:?}")))?,
             );
             matchers.insert(key, matcher.clone());
             Ok(matcher)
         };
-        self.heap = Heap::read_snapshot(&mut reader, &mut CellDecoder { regexp: &mut regexp })?;
+        self.heap = Heap::read_snapshot(&mut reader, &mut CellDecoder { regexp: &mut regexp }, self.heap.memory_policy())?;
         self.realm.globals = reader.value()?;
         self.realm.global_lexical_declarations = Snap::unsnap(&mut reader)?;
         self.realm.global_lexical_bindings = Snap::unsnap(&mut reader)?;

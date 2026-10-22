@@ -2024,14 +2024,14 @@ impl<H: Host> Vm<H> {
         locals: Vec<(String, String)>,
     ) -> Option<Vec<(String, StaticModuleValue)>> {
         let residual = self.programs.get(program)?;
-        let root = residual.functions.first()?;
+        let slots = local_slots(residual.functions.first()?);
         locals
             .into_iter()
             .map(|(local, exported)| {
                 // A stored module shares the VM's atom ids, so the VM finds its local's atom
                 // without scanning the program's (and so the VM's) whole table.
                 let local_atom = self.lookup_atom(&local)?;
-                let slot = root.local_atoms.iter().position(|atom| *atom == local_atom)?;
+                let slot = *slots.get(&local_atom)?;
                 Some((
                     exported,
                     StaticModuleValue::Binding {
@@ -2799,9 +2799,10 @@ impl<H: Host> Vm<H> {
         let Some(root) = p.functions.first() else {
             return Ok(());
         };
+        let local_slots = local_slots(root);
         let mut slots = vec![Value::UNDEFINED; root.local_atoms.len()];
         for atom in &root.lexical_atoms {
-            if let Some(slot) = root.local_atoms.iter().position(|local| local == atom) {
+            if let Some(&slot) = local_slots.get(atom) {
                 slots[slot] = Value::DELETED;
             }
         }
@@ -2819,6 +2820,16 @@ impl<H: Host> Vm<H> {
         });
         self.programs.set_module_environment(program, environment);
 
+        // Each name's first function declared directly in the module body.
+        let mut root_functions = FxHashMap::default();
+        for (id, function) in p.functions.iter().enumerate().skip(1) {
+            let header = function.header();
+            if header.parent == Some(super::ROOT_FUNCTION_ID)
+                && let Some(name) = header.name
+            {
+                root_functions.entry(name).or_insert(id as u32);
+            }
+        }
         let hoisted_functions = p
             .module_link_plan
             .as_ref()
@@ -2829,18 +2840,8 @@ impl<H: Host> Vm<H> {
                 // once instead of every local's and function's text compared to it.
                 let binding = self.lookup_atom(binding)?;
                 let function_name = self.lookup_atom(function_name)?;
-                let slot = root.local_atoms.iter().position(|atom| *atom == binding)?;
-                let function = p
-                    .functions
-                    .iter()
-                    .enumerate()
-                    .skip(1)
-                    .find(|(_, function)| {
-                        let header = function.header();
-                        header.parent == Some(super::ROOT_FUNCTION_ID) && header.name == Some(function_name)
-                    })
-                    .map(|(id, _)| id as u32)?;
-                Some((slot, function))
+                let slot = *local_slots.get(&binding)?;
+                Some((slot, *root_functions.get(&function_name)?))
             })
             .collect::<Vec<_>>();
         for (slot, function) in hoisted_functions {
@@ -2878,6 +2879,7 @@ impl<H: Host> Vm<H> {
         let Some(root) = bindings.functions.first() else {
             return Ok(Vec::new());
         };
+        let local_slots = local_slots(root);
         let mut values = Vec::with_capacity(imports.len());
         // One import statement's bindings come together and name one module: it is resolved
         // (and its source read) once for them, and only the latest is kept, so the sources of
@@ -2895,11 +2897,7 @@ impl<H: Host> Vm<H> {
             let module = &resolved.insert((&import.source, module)).1;
             let local = self
                 .lookup_atom(&import.local)
-                .and_then(|atom| {
-                    root.local_atoms
-                        .iter()
-                        .position(|candidate| *candidate == atom)
-                })
+                .and_then(|atom| local_slots.get(&atom).copied())
                 .and_then(|slot| u16::try_from(slot).ok())
                 .ok_or_else(|| self.type_error(p, "module import slot is unavailable".into()))?;
             if import.phase == crate::bytecode::ModuleRequestPhase::Source {
@@ -5154,7 +5152,7 @@ impl<H: Host> Vm<H> {
                 "dynamic import own keys result is not an array".into(),
             ));
         };
-        let keys = elements.as_ref().clone();
+        let keys = elements.to_vec();
         let mut module_type = None;
         for key in keys {
             let key_name = match self.heap.get(key) {
@@ -5747,4 +5745,14 @@ impl PromiseRuntime {
     pub(super) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
         Ok(Self { last_rejection_id: reader.u64()?, ..Self::default() })
     }
+}
+
+/// The slot of each atom among a function's locals: the first slot naming it, as a scan from
+/// the first local finds it. Module linking looks up every import, export and hoisted binding.
+fn local_slots(function: &crate::bytecode::Function) -> FxHashMap<Atom, usize> {
+    let mut slots = FxHashMap::with_capacity_and_hasher(function.local_atoms.len(), Default::default());
+    for (slot, atom) in function.local_atoms.iter().enumerate() {
+        slots.entry(*atom).or_insert(slot);
+    }
+    slots
 }

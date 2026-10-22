@@ -790,7 +790,7 @@ impl<H: Host> Vm<H> {
         self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                Rc::new(rest.to_vec()),
+                rest.to_vec(),
             ),
         })
     }
@@ -808,7 +808,7 @@ impl<H: Host> Vm<H> {
         let arguments = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.object_proto),
-                Rc::new(args.to_vec()),
+                args.to_vec(),
             ),
         });
         self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
@@ -1417,11 +1417,14 @@ impl<H: Host> Vm<H> {
                         let kind = base.and_then(|base| self.heap.get(base)).map_or("immediate", |cell| cell.profile_variant_name());
                         super::lane_exits::record_detail(format!("GetField {names} on {kind}"));
                     }
-                    if matches!(instruction.op(), Op::GetIndex | Op::SetIndex) {
-                        let (base, key) = if instruction.op() == Op::GetIndex {
-                            (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c()))
-                        } else {
-                            (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c())))
+                    if matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::DefineArrayElement) {
+                        let (base, key) = match instruction.op() {
+                            Op::GetIndex => (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c())),
+                            Op::SetIndex => (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c()))),
+                            _ => {
+                                let registers = &self.frames[frame].registers;
+                                (registers.get(usize::from(instruction.a())).copied(), registers.get(usize::from(instruction.register_b())).copied())
+                            }
                         };
                         let describe = |value: Option<Value>| match value {
                             None => "?".to_string(),
@@ -1445,7 +1448,8 @@ impl<H: Host> Vm<H> {
                                 None => "other".into(),
                             },
                         };
-                        super::lane_exits::record_detail(format!("{:?} kinds base={} key={}", instruction.op(), describe(base), describe(key)));
+                        let dense = base.and_then(|base| self.heap.array(base)).map(|array| (array.elements().len(), array.has_indexed_descriptors(), array.is_frozen()));
+                        super::lane_exits::record_detail(format!("{:?} kinds base={} key={} array={dense:?}", instruction.op(), describe(base), describe(key)));
                     }
                     if matches!(instruction.op(), Op::JumpBinaryFalse | Op::Binary) {
                         let constants = self.programs.constants(cursor.program);

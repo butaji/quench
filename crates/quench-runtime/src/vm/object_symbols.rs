@@ -18,7 +18,7 @@ impl<H: Host> Vm<H> {
     /// An array of `keys`. Allocation never collects, so the keys need no roots meanwhile.
     pub(super) fn own_keys_array(&mut self, keys: Vec<Value>) -> Value {
         self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), Rc::new(keys)),
+            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), keys),
         })
     }
 
@@ -246,7 +246,7 @@ impl<H: Host> Vm<H> {
         let excluded = self
             .heap
             .array_elements(exclusions)
-            .map_or_else(Vec::new, |elements| elements.as_ref().clone());
+            .map_or_else(Vec::new, |elements| elements.to_vec());
         self.copy_enumerable_properties(
             p,
             target,
