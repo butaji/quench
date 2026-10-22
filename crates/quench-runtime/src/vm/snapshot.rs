@@ -511,7 +511,7 @@ impl<H: Host> Vm<H> {
             matchers.insert(key, matcher.clone());
             Ok(matcher)
         };
-        self.heap = Heap::read_snapshot(&mut reader, &mut CellDecoder { regexp: &mut regexp })?;
+        self.heap = Heap::read_snapshot(&mut reader, &mut CellDecoder { regexp: &mut regexp }, self.heap.memory_policy())?;
         self.realm.globals = reader.value()?;
         self.realm.global_lexical_declarations = Snap::unsnap(&mut reader)?;
         self.realm.global_lexical_bindings = Snap::unsnap(&mut reader)?;
