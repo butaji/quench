@@ -1028,10 +1028,15 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
 /// indexed once rather than searched among every binding. Each name registers exactly one
 /// function (`operation_names_are_unique`).
 pub(crate) fn operation(name: &str) -> HostFunctionId {
-    static INDEX: std::sync::OnceLock<std::collections::HashMap<&'static str, u32>> =
+    static INDEX: std::sync::OnceLock<rustc_hash::FxHashMap<&'static str, u32>> =
         std::sync::OnceLock::new();
+    // Built in every process: hashed by FxHash and sized for every binding, it is neither
+    // rehashed as it grows nor SipHashed (2% of an empty script's instructions).
     let index = INDEX.get_or_init(|| {
-        let mut index = std::collections::HashMap::new();
+        let mut index = rustc_hash::FxHashMap::with_capacity_and_hasher(
+            bindings().len(),
+            Default::default(),
+        );
         for (position, binding) in bindings().iter().enumerate() {
             // A repeated name resolves to its first registration.
             index
