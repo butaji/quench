@@ -86,10 +86,10 @@ impl LaneInstruction {
     }
 }
 
-/// A loop the loop tier may run natively (`loop_compiled`): the region its backward jump
+/// A loop the shared compiler may run natively: the region its backward jump
 /// closes, the jump's distance to the header record, and the tier's state for it.
 pub(super) struct LoopSite {
-    region: super::loop_compiled::LoopRegion,
+    region: super::compiled::LoopRegion,
     jump: isize,
     /// Backward jumps taken before the region compiles, up to `LOOP_TIER_THRESHOLD`.
     taken: std::cell::Cell<u32>,
@@ -102,8 +102,8 @@ pub(super) struct LoopSite {
 /// were no `i32`, which the next compilation holds as `f64`s.
 #[derive(Default)]
 struct LoopTier {
-    code: Option<super::loop_compiled::CompiledLoop>,
-    widened: std::collections::BTreeSet<super::loop_compiled::Widening>,
+    code: Option<super::compiled::CompiledOsrRegion>,
+    widened: std::collections::BTreeSet<super::compiled::Widening>,
     compilations: u32,
 }
 
@@ -4546,9 +4546,9 @@ fn lane_loop_run<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     site: &LoopSite,
-    entry: &super::loop_compiled::LoopEntry,
+    entry: &super::compiled::LoopEntry,
 ) -> LoopContinuation {
-    use super::loop_compiled::LoopOutcome;
+    use super::compiled::LoopOutcome;
     let mut tier = site.tier.borrow_mut();
     let tier = &mut *tier;
     if tier.code.is_none() {
@@ -4563,13 +4563,13 @@ fn lane_loop_run<H: Host>(
                 array.elements().iter().take(LOOP_TIER_ELEMENT_SAMPLE).all(|value| value.as_int().is_some())
             })
         };
-        let observation = super::loop_compiled::Observation {
+        let observation = super::compiled::Observation {
             register: &|register| r.get(register),
             int32_elements: &int32_elements,
             captures: &captures,
             widened: &tier.widened,
         };
-        tier.code = super::loop_compiled::compile(&site.region, &observation);
+        tier.code = super::compiled::compile_osr_region(&site.region, &observation);
         if tier.code.is_none() {
             tier.compilations = LOOP_TIER_MAX_COMPILATIONS;
             return LoopContinuation::Jump;
@@ -4611,10 +4611,10 @@ fn lane_loop_entry<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     site: &LoopSite,
-) -> Option<super::loop_compiled::LoopEntry> {
+) -> Option<super::compiled::LoopEntry> {
     let vm = unsafe { vm(cx) };
     let region = &site.region;
-    let mut entry = super::loop_compiled::LoopEntry::new(vm.execution_interrupt.atomic_flag());
+    let mut entry = super::compiled::LoopEntry::new(vm.execution_interrupt.atomic_flag());
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
         if slots.is_null() {
@@ -11224,7 +11224,7 @@ fn derive_lane_view<H: Host>(
     }
 }
 
-/// Gives each backward `Jump` whose loop the loop tier admits (`loop_compiled::region`) the
+/// Gives each backward `Jump` whose loop the shared compiler admits (`analyze_osr_region`) the
 /// record that counts it and enters its native code (`lane_loop_jump`). Runs after every
 /// other pass, which read a jump record's distance from its operand.
 fn install_loop_sites<H: Host>(
@@ -11239,7 +11239,14 @@ fn install_loop_sites<H: Host>(
         .filter(|pc| records[*pc].handler == backward && decoded[*pc].op() == Op::Jump)
         .filter_map(|pc| {
             let header = decoded[pc].jump_target();
-            let region = super::loop_compiled::region(function, decoded, constants, live, header, pc as u32)?;
+            let region = super::compiled::analyze_osr_region(
+                function,
+                decoded,
+                constants,
+                live,
+                header,
+                pc as u32,
+            )?;
             Some((
                 pc,
                 LoopSite {
