@@ -1946,8 +1946,16 @@ impl<H: Host> Vm<H> {
         match self.field_miss_data_value(object, atom, site) {
             Some(value) => Ok(value),
             None => {
-                self.record_accessor_field_cache(object, atom, site);
-                self.get_property(p, object, atom)
+                // A getter the site's accessor entry answers is the `[[Get]]` result's whole
+                // computation: its call with the receiver, without walking the chain again.
+                let getter = self.cached_field_getter(object, atom, site).or_else(|| {
+                    self.record_accessor_field_cache(object, atom, site);
+                    self.cached_field_getter(object, atom, site)
+                });
+                match getter {
+                    Some(getter) => self.call_value(p, getter, object, &[]),
+                    None => self.get_property(p, object, atom),
+                }
             }
         }
     }
