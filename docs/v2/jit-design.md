@@ -1154,3 +1154,17 @@ large peer variation, so the sample does not establish a causal score or RSS
 win. Keep interpreting it as a low-risk local candidate while broader JIT
 coverage remains the larger opportunity. Reports are in
 `evidence/jit-jetstream3-2026-10-22/async-fs-native-dispatch-dedup/`.
+
+## V8-v7 native coverage census — 2026-10-22
+
+Current `QUENCH_JS_JIT_STATS=1` runs show native function entries on Crypto
+(3,195) and DeltaBlue (35,055 across three tiny functions); OSR executes
+4,730,536 regions on Crypto and 48,954 on NavierStokes. Richards has zero
+native entries and zero admitted OSR sites: its hot `runRichards` and
+`Scheduler` functions reject on unsupported shapes. Its scheduling workload
+uses mutable object fields and indirect calls, so the next broad compiler
+coverage work should prioritize guarded field access and cached calls with
+exact instruction-level interpreter fallback. This is coverage evidence, not
+a performance claim; the diagnostic runs overlapped release-feature builds,
+so their Score and wall-time outputs are excluded. Raw inputs/counters and
+method are in `evidence/jit-jetstream3-2026-10-22/v8-v7-native-coverage/`.
