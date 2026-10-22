@@ -89,6 +89,8 @@ impl<H: Host> Vm<H> {
             program_cache_layouts: Vec::new(),
             active_registers: std::ptr::null_mut(),
             lane_raised: None,
+            lane_deferred: None,
+            host_beside_activations: std::cell::OnceCell::new(),
             lane_returned: None,
             active_layout: Default::default(),
             active_constants: &[],
