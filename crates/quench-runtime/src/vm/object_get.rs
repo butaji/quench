@@ -560,16 +560,26 @@ impl<H: Host> Vm<H> {
         match self.heap.get(key)? {
             // A host-private symbol names only an own property, which the general path reads.
             Cell::Symbol(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate => {
-                self.plain_symbol_get(object, key)
+                self.plain_proved_get(object, PropertyKey::symbol(key))
             }
             _ => None,
         }
     }
 
-    /// `plain_property_get` of a symbol key, answered by the proof of where the walk from a
-    /// receiver of the same shape found it (`symbol_load_proofs`), or by `prove_symbol_load`.
+    /// `plain_named_get` with its walk proved (`plain_proved_get`), for callers that may record.
     #[inline]
-    fn plain_symbol_get(&mut self, object: Value, key: Value) -> Option<Value> {
+    pub(super) fn plain_named_load(&mut self, object: Value, atom: Atom) -> Option<Value> {
+        if !self.plain_named_key(atom) {
+            return None;
+        }
+        self.plain_proved_get(object, PropertyKey::string(atom))
+    }
+
+    /// `plain_property_get` of a symbol key or a key `plain_named_key` admits, answered by
+    /// the proof of where the walk from a receiver of the same shape found it
+    /// (`symbol_load_proofs`), or by `prove_symbol_load`.
+    #[inline]
+    fn plain_proved_get(&mut self, object: Value, key: PropertyKey) -> Option<Value> {
         use super::symbol_load_proof::SymbolLoadAnswer;
         let data = self.heap.ordinary_object(object)?;
         let epoch = crate::heap::prototype_layout_epoch();
@@ -606,7 +616,7 @@ impl<H: Host> Vm<H> {
         use super::symbol_load_proof::SymbolLoadAnswer;
         let data = self.heap.ordinary_object(object)?;
         let epoch = crate::heap::prototype_layout_epoch();
-        match self.symbol_load_proofs.answer(data.shape(), key, epoch)? {
+        match self.symbol_load_proofs.answer(data.shape(), PropertyKey::symbol(key), epoch)? {
             SymbolLoadAnswer::Getter { prototype, holder, slot }
                 if !data.has_side_descriptors() && data.proto() == prototype =>
             {
@@ -623,9 +633,9 @@ impl<H: Host> Vm<H> {
     /// to one advances the epoch and retires the proof.
     #[cold]
     #[inline(never)]
-    fn prove_symbol_load(&mut self, object: Value, key: Value, epoch: u64) -> Option<Value> {
+    fn prove_symbol_load(&mut self, object: Value, key: PropertyKey, epoch: u64) -> Option<Value> {
         use super::symbol_load_proof::SymbolLoadAnswer;
-        let symbol = PropertyKey::symbol(key);
+        let symbol = key;
         let data = self.heap.ordinary_object(object)?;
         let (shape, prototype) = (data.shape(), data.proto());
         let mut current = object;
@@ -692,7 +702,7 @@ impl<H: Host> Vm<H> {
     fn prove_symbol_chain(
         &mut self,
         shape: u32,
-        key: Value,
+        key: PropertyKey,
         epoch: u64,
         prototype: Value,
         depth: u8,
@@ -753,7 +763,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         receiver: Value,
     ) -> Result<Value, JsError> {
-        if let Some(value) = self.plain_named_get(object, atom) {
+        if let Some(value) = self.plain_named_load(object, atom) {
             return Ok(value);
         }
         let _stack = self.enter_stack()?;
