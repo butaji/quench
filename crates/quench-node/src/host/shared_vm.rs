@@ -1079,11 +1079,22 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::note_collection();
     }
 
-    /// The pages loading, linking and instantiating the module touched leave the resident set
-    /// before the code generator's join it, as compiling the module's bytecode does
-    /// (`compile_wasm`).
-    fn before_wasm_native_compilation(&mut self) {
+    /// The pages the program touched leave the resident set before the code generator's join
+    /// it, as compiling a module's bytecode does (`compile_wasm`): loading, linking and
+    /// instantiating a WebAssembly module, or the interpreter and the builtins a JavaScript
+    /// program ran. A JavaScript compile is the peak of a short numeric program (V8-v7
+    /// NavierStokes `--jit` under MemoryFirst, plain x86_64 build, 2026-10-22: max RSS
+    /// 10.84-10.94 -> 8.80-8.89 MB, Score within noise).
+    fn before_native_compilation(&mut self) {
         crate::host::resident_pages::release_read_only_pages();
+    }
+
+    /// The code generator's pages, and the allocator's pages its scratch memory freed, leave
+    /// the resident set before the program runs on (V8-v7 Crypto `--jit` under MemoryFirst,
+    /// plain x86_64 build, 2026-10-22: max RSS 6.82-6.84 -> 5.91 MB with the release before).
+    fn after_native_compilation(&mut self) {
+        crate::host::resident_pages::release_read_only_pages();
+        crate::host::resident_pages::release_free_heap_pages();
     }
 
     /// The snapshot is a tracked read-only mapping (`startup_snapshot::load_or_schedule`).
