@@ -205,3 +205,11 @@ It measured 228.1 renders/s / 29.30 MB, versus Node `--jitless` at 1,580.3 /
 the 20% RSS margin against Bun and narrowly misses Node, while throughput is
 still far behind both. This policy does not meet the combined performance
 target.
+
+A guarded fast path for non-global/non-sticky RegExp `.test` misses was screened
+on the 500-render React workload. It preserved output (2,498,000 bytes,
+checksum 41,826) but measured 179.2 renders/s and 35.76 MB RSS in the three
+round iteration screen. Because it did not show a throughput case worth a
+production comparison, the change was reverted. The local screen is
+`work/react-perf/react-regex-test-nomatch-iteration-3.json`; Linux RSS sampling
+is diagnostic only.
