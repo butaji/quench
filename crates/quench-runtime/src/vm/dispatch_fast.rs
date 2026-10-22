@@ -6583,6 +6583,34 @@ script_handler! {
 }
 
 script_handler! {
+    /// An iteration step (`lane_iteration_step`) of this realm's array iterator `next` over a
+    /// plain array (`Vm::step_present_array_value`): the step in place, with a result object
+    /// only the step's `done` and `value` reads observe (`Vm::reused_iterator_result`). Any
+    /// other step is the call it is.
+    fn lane_iterator_step<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let (method, iterator) = (r.get(i.b), r.get(i.c));
+        if !vm.steps_as_array_iterator(iterator, method) {
+            sibling!(lane_script_call::<H>, r, ip, Carried::script(cx))
+        }
+        let Some(result) = lane_array_iteration_result(vm, iterator) else {
+            sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, result);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+/// `lane_iterator_step`'s step and result, out of line: the first result allocates.
+#[inline(never)]
+fn lane_array_iteration_result<H: Host>(vm: &mut Vm<H>, iterator: Value) -> Option<Value> {
+    let step = vm.step_present_array_value(iterator)?;
+    let result = vm.reused_iterator_result(step.unwrap_or(Value::UNDEFINED), step.is_none());
+    note_allocation(vm);
+    Some(result)
+}
+
+script_handler! {
     /// A JavaScript `Call` of another program's frameless callee (`LaneStack::cross_targets`):
     /// its activation runs in the callee's program, which its return leaves
     /// (`Completion::Cross`). A site whose callee is no such target calls `lane_script_call`
@@ -10112,6 +10140,19 @@ fn lane_call_result_marked(
     LaneOperand { imm: imm | ImmediateLayout::LANE_CALL_RESULT_UNUSED_FLAG }
 }
 
+/// Whether the `Call` at `pc` is an iteration step: no arguments, its result checked by the
+/// `RequireIteratorResult` after it, as the compiler emits a for-of or destructuring step,
+/// whose result register only the step's own `done` and `value` reads take
+/// (`lane_iterator_step`).
+fn lane_iteration_step(decoded: &[WideInstruction], pc: usize) -> bool {
+    let call = decoded[pc];
+    call.result_flags() == 0
+        && ImmediateLayout::argument_count(call.imm()) == 0
+        && decoded.get(pc + 1).is_some_and(|next| {
+            next.op() == Op::RequireIteratorResult && next.register_b() == call.result_register()
+        })
+}
+
 /// A nested `GetField` whose only result flag stores its value to a field of `this` too
 /// (`lane_get_field_sink`).
 fn lane_sinks_field(instruction: WideInstruction) -> bool {
@@ -10285,6 +10326,11 @@ fn derive_lane_view<H: Host>(
                     } else {
                         lane_frame_arguments::<H, true> as Handler
                     },
+                    produces: false,
+                })
+            } else if op == Op::Call && lane_iteration_step(&decoded, pc) {
+                Some(LaneHandler {
+                    handler: lane_iterator_step::<H> as Handler,
                     produces: false,
                 })
             } else if op == Op::StoreEnvLocal && resolves_names {
