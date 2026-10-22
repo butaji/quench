@@ -8,17 +8,6 @@ const MMAP_THRESHOLD_BYTES: libc::c_int = 128 * 1024;
 /// The glibc tunable that, when set, already fixes the threshold.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 const MMAP_THRESHOLD_VARIABLE: &str = "MALLOC_MMAP_THRESHOLD_";
-/// Pinning the mmap threshold also pins glibc's trim threshold, which defaults to 128 KiB:
-/// once that much is free at the top of an arena it is returned (`MADV_DONTNEED` in a thread's
-/// arena) and faulted back in by the next allocations. A server freeing and reallocating
-/// stream chunks then spent its time in page faults (video route, 10 connections, 2026-10-22:
-/// ~600K minor faults per 6 s; express 38 -> 58 and fastify 36 -> 67 requests/s with this
-/// threshold, peak VmHWM within 1-4 MB). Freed memory below it stays in the arena for reuse.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-const TRIM_THRESHOLD_BYTES: libc::c_int = 16 * 1024 * 1024;
-/// The glibc variable that sets the trim threshold instead.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-const TRIM_THRESHOLD_VARIABLE: &str = "MALLOC_TRIM_THRESHOLD_";
 
 /// glibc's per-thread cache keeps freed small chunks out of its bins, where they neither merge
 /// with free neighbours nor serve other sizes, so the heap grows past them; it is turned off
@@ -134,13 +123,6 @@ fn main() -> std::process::ExitCode {
         // SAFETY: mallopt only adjusts allocator parameters; no allocation is in flight.
         unsafe {
             libc::mallopt(libc::M_MMAP_THRESHOLD, MMAP_THRESHOLD_BYTES);
-        }
-    }
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    if std::env::var_os(TRIM_THRESHOLD_VARIABLE).is_none() {
-        // SAFETY: as above.
-        unsafe {
-            libc::mallopt(libc::M_TRIM_THRESHOLD, TRIM_THRESHOLD_BYTES);
         }
     }
     match quench_node::shared_run::run_shared_cli(std::env::args().skip(1)) {

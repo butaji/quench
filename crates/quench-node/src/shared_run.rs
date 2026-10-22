@@ -22,6 +22,34 @@ pub const MEMORY_POLICY_ENV: &str = "QUENCH_MEMORY_POLICY";
 /// The CLI's form of `MEMORY_POLICY_ENV`, which takes precedence over it.
 const MEMORY_POLICY_FLAG: &str = "--memory-policy";
 
+/// Under the throughput policy (`MemoryPolicy::Throughput`), glibc's trim threshold is raised
+/// from its 128 KiB default, which pinning the mmap threshold (quench-node's `main`) also pins:
+/// once that much is free at the top of an arena it is returned (`MADV_DONTNEED` in a thread's
+/// arena) and faulted back in by the next allocations. A server freeing and reallocating
+/// stream chunks then spent its time in page faults (video route, 10 connections, 2026-10-22:
+/// ~600K minor faults per 6 s; express 38 -> 58 and fastify 36 -> 67 requests/s with this
+/// threshold, peak VmHWM within 1-4 MB). Freed memory below it stays in the arena for reuse.
+/// The memory-first policy keeps the default, which returns it.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+const TRIM_THRESHOLD_BYTES: libc::c_int = 16 * 1024 * 1024;
+/// The glibc variable that sets the trim threshold instead.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+const TRIM_THRESHOLD_VARIABLE: &str = "MALLOC_TRIM_THRESHOLD_";
+
+/// The allocator setting the process's `policy` takes, applied once when it is selected
+/// (`select_memory_policy`); an explicit `TRIM_THRESHOLD_VARIABLE` wins.
+fn apply_allocator_policy(policy: MemoryPolicy) {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    if policy == MemoryPolicy::Throughput && std::env::var_os(TRIM_THRESHOLD_VARIABLE).is_none() {
+        // SAFETY: mallopt only adjusts allocator parameters.
+        unsafe {
+            libc::mallopt(libc::M_TRIM_THRESHOLD, TRIM_THRESHOLD_BYTES);
+        }
+    }
+    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+    let _ = policy;
+}
+
 /// The process's memory policy. Every runtime the process starts (its entry's, a restore's
 /// replacement, its Workers') uses it: the pages a policy returns at collections
 /// (`resident_pages`) are the process's, not one runtime's. The first selection holds.
@@ -40,12 +68,19 @@ fn select_memory_policy(chosen: Option<&str>) -> Result<MemoryPolicy, String> {
             MEMORY_POLICY_ENV,
             name.to_str().ok_or_else(|| format!("{MEMORY_POLICY_ENV} is not valid Unicode"))?,
         ),
-        (None, None) => return Ok(*PROCESS_MEMORY_POLICY.get_or_init(MemoryPolicy::default)),
+        (None, None) => return Ok(*PROCESS_MEMORY_POLICY.get_or_init(|| {
+            let policy = MemoryPolicy::default();
+            apply_allocator_policy(policy);
+            policy
+        })),
     };
     let policy = MemoryPolicy::from_name(name).ok_or_else(|| {
         format!("{source}: unknown memory policy '{name}' (expected {})", memory_policy_names())
     })?;
-    Ok(*PROCESS_MEMORY_POLICY.get_or_init(|| policy))
+    Ok(*PROCESS_MEMORY_POLICY.get_or_init(|| {
+        apply_allocator_policy(policy);
+        policy
+    }))
 }
 
 fn memory_policy_names() -> String {
