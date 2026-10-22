@@ -721,8 +721,14 @@ mod tests {
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
         let fixture = directory.join("fixture.js");
 
-        let failure = run_case_process(&executable, &directory, &fixture, Duration::from_secs(5))
-            .unwrap_err();
+        let failure = run_case_process(
+            &executable,
+            &directory,
+            &fixture,
+            Duration::from_secs(5),
+            ExecutionMode::Interpreted,
+        )
+        .unwrap_err();
 
         assert_eq!(failure.len(), 131072);
         assert!(!failure.starts_with("timed_out"));
