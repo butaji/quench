@@ -1467,7 +1467,7 @@ impl quench_runtime::Host for NodeHost {
         // released as it ends (`scoped`) instead of piling up for the whole bootstrap.
         context.scoped(crate::modules::text_decoder_shared_vm::install_global)?;
         #[cfg(feature = "profile-memory")]
-        context.profile_memory_checkpoint("node_text_decoder");
+        { context.profile_memory_checkpoint("node_text_decoder"); crate::modules::process_shared_vm::malloc_checkpoint("node_text_decoder"); }
         context
             .host_mut()
             .shared_state()
@@ -1475,23 +1475,23 @@ impl quench_runtime::Host for NodeHost {
             .reset_cached_vm_roots();
         context.scoped(crate::modules::process_shared_vm::initialize)?;
         #[cfg(feature = "profile-memory")]
-        context.profile_memory_checkpoint("node_process");
+        { context.profile_memory_checkpoint("node_process"); crate::modules::process_shared_vm::malloc_checkpoint("node_process"); }
         crate::host::resident_pages::release_read_only_pages();
         context.scoped(|context| {
             crate::modules::events_shared_vm::initialize_targets(context)?;
             crate::modules::async_hook_registry_shared_vm::initialize(context).map(|_| ())
         })?;
         #[cfg(feature = "profile-memory")]
-        context.profile_memory_checkpoint("node_event_target_polyfill");
+        { context.profile_memory_checkpoint("node_event_target_polyfill"); crate::modules::process_shared_vm::malloc_checkpoint("node_event_target_polyfill"); }
         context.scoped(install_event_emitter)?;
         #[cfg(feature = "profile-memory")]
-        context.profile_memory_checkpoint("node_event_emitter_polyfill");
+        { context.profile_memory_checkpoint("node_event_emitter_polyfill"); crate::modules::process_shared_vm::malloc_checkpoint("node_event_emitter_polyfill"); }
         crate::host::resident_pages::release_read_only_pages();
         context.scoped(install_gc_global)?;
         context.scoped(crate::modules::timers_shared_vm::install_promisify_globals)?;
         commonjs::initialize(context)?;
         #[cfg(feature = "profile-memory")]
-        context.profile_memory_checkpoint("node_commonjs");
+        { context.profile_memory_checkpoint("node_commonjs"); crate::modules::process_shared_vm::malloc_checkpoint("node_commonjs"); }
         context.host_mut().bootstrapped = true;
         Ok(())
     }

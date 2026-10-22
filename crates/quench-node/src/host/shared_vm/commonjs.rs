@@ -298,10 +298,10 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     )?;
     context.release_root(initializer);
     #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_process_surface");
+    { context.profile_memory_checkpoint("node_process_surface"); crate::modules::process_shared_vm::malloc_checkpoint("node_process_surface"); }
     context.scoped(crate::modules::buffer_shared_vm::install_global)?;
     #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_buffer_global");
+    { context.profile_memory_checkpoint("node_buffer_global"); crate::modules::process_shared_vm::malloc_checkpoint("node_buffer_global"); }
     crate::host::resident_pages::release_read_only_pages();
     context.scoped(install_shared_web_globals)?;
     context.scoped(crate::modules::util_shared_vm::install_lazy_globals)?;
@@ -337,7 +337,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         context.call_rooted(seed_disposal_symbols, undefined, &[])?;
     }
     #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_primordials");
+    { context.profile_memory_checkpoint("node_primordials"); crate::modules::process_shared_vm::malloc_checkpoint("node_primordials"); }
     // Builtins built after this point see the intrinsics as they are now, whatever a
     // preload or the entry script does to them (`cached_builtin`).
     context.seal_startup_intrinsics();
@@ -348,7 +348,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.define_lazy_data_properties_rooted(global, &["console"], false, initializer)?;
     context.seal_startup_intrinsics();
     #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_console_global");
+    { context.profile_memory_checkpoint("node_console_global"); crate::modules::process_shared_vm::malloc_checkpoint("node_console_global"); }
     if context.host_mut().vfs_enabled() {
         // Feature bootstrap loads real builtins that capture these originals.
         // Seal its added globals only after the guarded initialization leaves.
@@ -389,7 +389,7 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
     context.scoped(initialize_cluster_worker)?;
     context.scoped(preload_modules)?;
     #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_preloads");
+    { context.profile_memory_checkpoint("node_preloads"); crate::modules::process_shared_vm::malloc_checkpoint("node_preloads"); }
     if context.host_mut().eval_builtin_globals {
         context.scoped(crate::modules::eval_globals_shared_vm::install)?;
     }
@@ -449,13 +449,13 @@ fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
     // and stream bridges here, without evaluating the superseded JS facade.
     cached_builtin(context, BuiltinModule::Fs)?;
     #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_vfs_fs_module");
+    { context.profile_memory_checkpoint("node_vfs_fs_module"); crate::modules::process_shared_vm::malloc_checkpoint("node_vfs_fs_module"); }
     let path = crate::modules::path_shared_vm::module(context)?;
     #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_vfs_path_module");
+    { context.profile_memory_checkpoint("node_vfs_path_module"); crate::modules::process_shared_vm::malloc_checkpoint("node_vfs_path_module"); }
     let stream = cached_builtin(context, BuiltinModule::Stream)?;
     #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_vfs_stream_module");
+    { context.profile_memory_checkpoint("node_vfs_stream_module"); crate::modules::process_shared_vm::malloc_checkpoint("node_vfs_stream_module"); }
     let install = context.evaluate_script_rooted(
         "(path, stream) => Object.defineProperties(globalThis, { __nodePath: { configurable: true, value: path }, __nodeStream: { configurable: true, value: stream }, __nodeFdPaths: { configurable: true, value: {} }, __quenchVfsFdHandles: { configurable: true, value: new Map() } })",
         "node:bootstrap/vfs-globals.js",
@@ -484,7 +484,7 @@ fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
         context.define_data_property_rooted(global, key, function, false, false, true)?;
     }
     #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_vfs_globals");
+    { context.profile_memory_checkpoint("node_vfs_globals"); crate::modules::process_shared_vm::malloc_checkpoint("node_vfs_globals"); }
 
     Ok(())
 }
