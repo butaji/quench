@@ -1,0 +1,3188 @@
+{
+  "schema": 16,
+  "suite": "jet-stream3",
+  "jit_mode": "no-jit",
+  "jit_diagnostics": false,
+  "jit_wasm_root": null,
+  "jit_wasm_root_only": false,
+  "jit_wasm_root_first": false,
+  "jit_wasm_selective": false,
+  "jit_wasm_memcpy_ab": false,
+  "jit_wasm_memcpy_raw_ab": false,
+  "jit_wasm_memcpy_early_ab": false,
+  "jit_wasm_compare_branch_ab": false,
+  "jit_wasm_affine_pair_ab": false,
+  "jit_wasm_reference_body_cache_ab": false,
+  "jit_wasm_memcpy_leaf_ab": false,
+  "jit_wasm_selective_ab": false,
+  "created_unix_ns": 1792662753003446085,
+  "rounds_requested": 11,
+  "timeout_ms": 600000,
+  "source_revision": "363f38f594d46c9dc175c71bb57cce1199c60bc6",
+  "source_dirty": true,
+  "corpus": {
+    "pinned_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux acfbe6f17cde 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "3c3527bbf0ab5ff4739ad6315c611a6652336603f6da9f6d6682c9f8ac663c66",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/tmp/quench-cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled",
+      "webassembly": true
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/bench-runtimes/bun/node_modules/@oven/bun-linux-x64/bin/bun",
+      "executable_sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+      "version": "1.4.2",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "0",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/tmp/quench-cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=0",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/bench-runtimes/bun/node_modules/@oven/bun-linux-x64/bin/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "webassembly": true
+    },
+    {
+      "name": "node",
+      "executable": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "executable_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+      "version": "v24.19.0",
+      "argv": [
+        "--jitless"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/tmp/quench-cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "-e",
+        "console.log(process.execArgv.includes('--jitless'))"
+      ],
+      "jit_proof": "command succeeded and reported \"true\": true",
+      "webassembly": false
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792524360887412696,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792524359981088811,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792524362115334866,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792524362115736207,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "selected_fixtures": [
+    "quench-bench/jetstream/json-parse-inspector"
+  ],
+  "fixtures": {
+    "quench-bench/jetstream/json-parse-inspector": {
+      "source": {
+        "path": "quench-bench/jetstream/json-parse-inspector",
+        "size_bytes": 4096,
+        "modified_unix_ns": 1792524363121554381,
+        "sha256": "4311c39dd7f2d2e7dac6bcc09189098605edde278c3f6eb1849ae72cac716de0"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 142.27,
+          "median_max_rss_bytes": 118910976,
+          "valid_samples": 11
+        },
+        "node": {
+          "median_score": 80.16,
+          "median_max_rss_bytes": 275304448,
+          "valid_samples": 11
+        },
+        "quench": {
+          "median_score": 59.14,
+          "median_max_rss_bytes": 95940608,
+          "valid_samples": 11
+        }
+      },
+      "unsupported_engines": {},
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1150883431,
+              "peak_rss_bytes": 124731392,
+              "score": 165.21,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 37747,
+              "page_reclaims": 37747,
+              "involuntary_context_switches": 94,
+              "host_before": {
+                "captured_unix_ns": 1792662756895712220,
+                "load_average": {
+                  "one_minute": 1.47,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662758054569591,
+                "load_average": {
+                  "one_minute": 1.47,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score               198.56 pts\njson-parse-inspector Worst-Score               127.20 pts\njson-parse-inspector Average-Score             178.53 pts\njson-parse-inspector Score                     165.21 pts\njson-parse-inspector First-Time                 25.18 ms \njson-parse-inspector Worst-Time                 39.31 ms \njson-parse-inspector Average-Time               28.01 ms \njson-parse-inspector Total-Time                 92.50 ms \njson-parse-inspector Wall-Time                1066.33 ms \n\nOverall:\nOverall First-Score                            198.56 pts\nOverall Worst-Score                            127.20 pts\nOverall Average-Score                          178.53 pts\nOverall First-Time                              25.18 ms \nOverall Worst-Time                              39.31 ms \nOverall Average-Time                            28.01 ms \n\nOverall Score                                  165.21 pts\nOverall Wall-Time                             1069.59 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1540553697,
+              "peak_rss_bytes": 276561920,
+              "score": 69.08,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 69805,
+              "page_reclaims": 69805,
+              "involuntary_context_switches": 26,
+              "host_before": {
+                "captured_unix_ns": 1792662758060867455,
+                "load_average": {
+                  "one_minute": 1.47,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662759610444520,
+                "load_average": {
+                  "one_minute": 1.47,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                52.58 pts\njson-parse-inspector Worst-Score                61.62 pts\njson-parse-inspector Average-Score             101.74 pts\njson-parse-inspector Score                      69.08 pts\njson-parse-inspector First-Time                 95.09 ms \njson-parse-inspector Worst-Time                 81.14 ms \njson-parse-inspector Average-Time               49.15 ms \njson-parse-inspector Total-Time                225.38 ms \njson-parse-inspector Wall-Time                1401.41 ms \n\nOverall:\nOverall First-Score                             52.58 pts\nOverall Worst-Score                             61.62 pts\nOverall Average-Score                          101.74 pts\nOverall First-Time                              95.09 ms \nOverall Worst-Time                              81.14 ms \nOverall Average-Time                            49.15 ms \n\nOverall Score                                   69.08 pts\nOverall Wall-Time                             1406.68 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 3401592193,
+              "peak_rss_bytes": 95797248,
+              "score": 57.17,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 94178,
+              "page_reclaims": 94167,
+              "involuntary_context_switches": 31,
+              "host_before": {
+                "captured_unix_ns": 1792662753477364317,
+                "load_average": {
+                  "one_minute": 1.51,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242345,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662756887512898,
+                "load_average": {
+                  "one_minute": 1.47,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                80.68 pts\njson-parse-inspector Worst-Score                35.84 pts\njson-parse-inspector Average-Score              64.61 pts\njson-parse-inspector Score                      57.17 pts\njson-parse-inspector First-Time                 61.97 ms \njson-parse-inspector Worst-Time                139.51 ms \njson-parse-inspector Average-Time               77.39 ms \njson-parse-inspector Total-Time                278.87 ms \njson-parse-inspector Wall-Time                3069.84 ms \n\nOverall:\nOverall First-Score                             80.68 pts\nOverall Worst-Score                             35.84 pts\nOverall Average-Score                           64.61 pts\nOverall First-Time                              61.97 ms \nOverall Worst-Time                             139.51 ms \nOverall Average-Time                            77.39 ms \n\nOverall Score                                   57.17 pts\nOverall Wall-Time                             3083.48 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 692432687,
+              "peak_rss_bytes": 118775808,
+              "score": 216.82,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 39438,
+              "page_reclaims": 39438,
+              "involuntary_context_switches": 81,
+              "host_before": {
+                "captured_unix_ns": 1792662759621407765,
+                "load_average": {
+                  "one_minute": 1.47,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662760321491018,
+                "load_average": {
+                  "one_minute": 1.47,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score               219.69 pts\njson-parse-inspector Worst-Score               191.04 pts\njson-parse-inspector Average-Score             242.86 pts\njson-parse-inspector Score                     216.82 pts\njson-parse-inspector First-Time                 22.76 ms \njson-parse-inspector Worst-Time                 26.17 ms \njson-parse-inspector Average-Time               20.59 ms \njson-parse-inspector Total-Time                 69.52 ms \njson-parse-inspector Wall-Time                 655.94 ms \n\nOverall:\nOverall First-Score                            219.69 pts\nOverall Worst-Score                            191.04 pts\nOverall Average-Score                          242.86 pts\nOverall First-Time                              22.76 ms \nOverall Worst-Time                              26.17 ms \nOverall Average-Time                            20.59 ms \n\nOverall Score                                  216.82 pts\nOverall Wall-Time                              657.65 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1351960505,
+              "peak_rss_bytes": 274808832,
+              "score": 82.57,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 69302,
+              "page_reclaims": 69302,
+              "involuntary_context_switches": 130,
+              "host_before": {
+                "captured_unix_ns": 1792662760328584755,
+                "load_average": {
+                  "one_minute": 1.47,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662761689557318,
+                "load_average": {
+                  "one_minute": 1.51,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.37
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                68.93 pts\njson-parse-inspector Worst-Score                68.43 pts\njson-parse-inspector Average-Score             119.33 pts\njson-parse-inspector Score                      82.57 pts\njson-parse-inspector First-Time                 72.54 ms \njson-parse-inspector Worst-Time                 73.06 ms \njson-parse-inspector Average-Time               41.90 ms \njson-parse-inspector Total-Time                187.50 ms \njson-parse-inspector Wall-Time                1215.32 ms \n\nOverall:\nOverall First-Score                             68.93 pts\nOverall Worst-Score                             68.43 pts\nOverall Average-Score                          119.33 pts\nOverall First-Time                              72.54 ms \nOverall Worst-Time                              73.06 ms \nOverall Average-Time                            41.90 ms \n\nOverall Score                                   82.57 pts\nOverall Wall-Time                             1218.92 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 3887011341,
+              "peak_rss_bytes": 95899648,
+              "score": 34.61,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 93883,
+              "page_reclaims": 93873,
+              "involuntary_context_switches": 186,
+              "host_before": {
+                "captured_unix_ns": 1792662761698551897,
+                "load_average": {
+                  "one_minute": 1.51,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.37
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662765598261770,
+                "load_average": {
+                  "one_minute": 1.51,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.37
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242396,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                31.28 pts\njson-parse-inspector Worst-Score                23.37 pts\njson-parse-inspector Average-Score              56.71 pts\njson-parse-inspector Score                      34.61 pts\njson-parse-inspector First-Time                159.83 ms \njson-parse-inspector Worst-Time                213.94 ms \njson-parse-inspector Average-Time               88.16 ms \njson-parse-inspector Total-Time                461.93 ms \njson-parse-inspector Wall-Time                3642.01 ms \n\nOverall:\nOverall First-Score                             31.28 pts\nOverall Worst-Score                             23.37 pts\nOverall Average-Score                           56.71 pts\nOverall First-Time                             159.83 ms \nOverall Worst-Time                             213.94 ms \nOverall Average-Time                            88.16 ms \n\nOverall Score                                   34.61 pts\nOverall Wall-Time                             3658.97 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 828847507,
+              "peak_rss_bytes": 118906880,
+              "score": 165.34,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 39341,
+              "page_reclaims": 39341,
+              "involuntary_context_switches": 69,
+              "host_before": {
+                "captured_unix_ns": 1792662772069002408,
+                "load_average": {
+                  "one_minute": 1.43,
+                  "five_minutes": 1.5,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662772914755696,
+                "load_average": {
+                  "one_minute": 1.43,
+                  "five_minutes": 1.5,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score               225.35 pts\njson-parse-inspector Worst-Score               104.06 pts\njson-parse-inspector Average-Score             192.76 pts\njson-parse-inspector Score                     165.34 pts\njson-parse-inspector First-Time                 22.19 ms \njson-parse-inspector Worst-Time                 48.05 ms \njson-parse-inspector Average-Time               25.94 ms \njson-parse-inspector Total-Time                 96.18 ms \njson-parse-inspector Wall-Time                 787.59 ms \n\nOverall:\nOverall First-Score                            225.35 pts\nOverall Worst-Score                            104.06 pts\nOverall Average-Score                          192.76 pts\nOverall First-Time                              22.19 ms \nOverall Worst-Time                              48.05 ms \nOverall Average-Time                            25.94 ms \n\nOverall Score                                  165.34 pts\nOverall Wall-Time                              789.61 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1781296304,
+              "peak_rss_bytes": 274333696,
+              "score": 60.32,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 69227,
+              "page_reclaims": 69227,
+              "involuntary_context_switches": 53,
+              "host_before": {
+                "captured_unix_ns": 1792662765605792147,
+                "load_average": {
+                  "one_minute": 1.51,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.37
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662767395065207,
+                "load_average": {
+                  "one_minute": 1.47,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                62.35 pts\njson-parse-inspector Worst-Score                39.53 pts\njson-parse-inspector Average-Score              89.05 pts\njson-parse-inspector Score                      60.32 pts\njson-parse-inspector First-Time                 80.19 ms \njson-parse-inspector Worst-Time                126.50 ms \njson-parse-inspector Average-Time               56.15 ms \njson-parse-inspector Total-Time                262.84 ms \njson-parse-inspector Wall-Time                1629.56 ms \n\nOverall:\nOverall First-Score                             62.35 pts\nOverall Worst-Score                             39.53 pts\nOverall Average-Score                           89.05 pts\nOverall First-Time                              80.19 ms \nOverall Worst-Time                             126.50 ms \nOverall Average-Time                            56.15 ms \n\nOverall Score                                   60.32 pts\nOverall Wall-Time                             1637.60 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 4644488317,
+              "peak_rss_bytes": 95793152,
+              "score": 40.67,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 93900,
+              "page_reclaims": 93890,
+              "involuntary_context_switches": 21,
+              "host_before": {
+                "captured_unix_ns": 1792662767404486992,
+                "load_average": {
+                  "one_minute": 1.47,
+                  "five_minutes": 1.51,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662772060290792,
+                "load_average": {
+                  "one_minute": 1.43,
+                  "five_minutes": 1.5,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                39.41 pts\njson-parse-inspector Worst-Score                37.78 pts\njson-parse-inspector Average-Score              45.19 pts\njson-parse-inspector Score                      40.67 pts\njson-parse-inspector First-Time                126.86 ms \njson-parse-inspector Worst-Time                132.35 ms \njson-parse-inspector Average-Time              110.65 ms \njson-parse-inspector Total-Time                369.87 ms \njson-parse-inspector Wall-Time                4404.04 ms \n\nOverall:\nOverall First-Score                             39.41 pts\nOverall Worst-Score                             37.78 pts\nOverall Average-Score                           45.19 pts\nOverall First-Time                             126.86 ms \nOverall Worst-Time                             132.35 ms \nOverall Average-Time                           110.65 ms \n\nOverall Score                                   40.67 pts\nOverall Wall-Time                             4420.13 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 783730754,
+              "peak_rss_bytes": 118775808,
+              "score": 183.5,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 37314,
+              "page_reclaims": 37314,
+              "involuntary_context_switches": 50,
+              "host_before": {
+                "captured_unix_ns": 1792662775119244262,
+                "load_average": {
+                  "one_minute": 1.43,
+                  "five_minutes": 1.5,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662775910842647,
+                "load_average": {
+                  "one_minute": 1.4,
+                  "five_minutes": 1.49,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score               240.79 pts\njson-parse-inspector Worst-Score               123.68 pts\njson-parse-inspector Average-Score             207.48 pts\njson-parse-inspector Score                     183.50 pts\njson-parse-inspector First-Time                 20.77 ms \njson-parse-inspector Worst-Time                 40.43 ms \njson-parse-inspector Average-Time               24.10 ms \njson-parse-inspector Total-Time                 85.29 ms \njson-parse-inspector Wall-Time                 743.98 ms \n\nOverall:\nOverall First-Score                            240.79 pts\nOverall Worst-Score                            123.68 pts\nOverall Average-Score                          207.48 pts\nOverall First-Time                              20.77 ms \nOverall Worst-Time                              40.43 ms \nOverall Average-Time                            24.10 ms \n\nOverall Score                                  183.50 pts\nOverall Wall-Time                              746.37 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1648133280,
+              "peak_rss_bytes": 275382272,
+              "score": 80.16,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 69423,
+              "page_reclaims": 69423,
+              "involuntary_context_switches": 28,
+              "host_before": {
+                "captured_unix_ns": 1792662775917786670,
+                "load_average": {
+                  "one_minute": 1.4,
+                  "five_minutes": 1.49,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662777578654080,
+                "load_average": {
+                  "one_minute": 1.4,
+                  "five_minutes": 1.49,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242448,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                62.00 pts\njson-parse-inspector Worst-Score                78.35 pts\njson-parse-inspector Average-Score             106.02 pts\njson-parse-inspector Score                      80.16 pts\njson-parse-inspector First-Time                 80.64 ms \njson-parse-inspector Worst-Time                 63.81 ms \njson-parse-inspector Average-Time               47.16 ms \njson-parse-inspector Total-Time                191.62 ms \njson-parse-inspector Wall-Time                1487.48 ms \n\nOverall:\nOverall First-Score                             62.00 pts\nOverall Worst-Score                             78.35 pts\nOverall Average-Score                          106.02 pts\nOverall First-Time                              80.64 ms \nOverall Worst-Time                              63.81 ms \nOverall Average-Time                            47.16 ms \n\nOverall Score                                   80.16 pts\nOverall Wall-Time                             1492.95 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2182850286,
+              "peak_rss_bytes": 96010240,
+              "score": 82.65,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 93597,
+              "page_reclaims": 93588,
+              "involuntary_context_switches": 13,
+              "host_before": {
+                "captured_unix_ns": 1792662772922838219,
+                "load_average": {
+                  "one_minute": 1.43,
+                  "five_minutes": 1.5,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662775112996425,
+                "load_average": {
+                  "one_minute": 1.43,
+                  "five_minutes": 1.5,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                77.49 pts\njson-parse-inspector Worst-Score                81.07 pts\njson-parse-inspector Average-Score              89.87 pts\njson-parse-inspector Score                      82.65 pts\njson-parse-inspector First-Time                 64.52 ms \njson-parse-inspector Worst-Time                 61.68 ms \njson-parse-inspector Average-Time               55.64 ms \njson-parse-inspector Total-Time                181.84 ms \njson-parse-inspector Wall-Time                2040.48 ms \n\nOverall:\nOverall First-Score                             77.49 pts\nOverall Worst-Score                             81.07 pts\nOverall Average-Score                           89.87 pts\nOverall First-Time                              64.52 ms \nOverall Worst-Time                              61.68 ms \nOverall Average-Time                            55.64 ms \n\nOverall Score                                   82.65 pts\nOverall Wall-Time                             2056.42 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 930773404,
+              "peak_rss_bytes": 118910976,
+              "score": 127.77,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 43897,
+              "page_reclaims": 43897,
+              "involuntary_context_switches": 59,
+              "host_before": {
+                "captured_unix_ns": 1792662777589095148,
+                "load_average": {
+                  "one_minute": 1.4,
+                  "five_minutes": 1.49,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.8,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662778575852805,
+                "load_average": {
+                  "one_minute": 1.4,
+                  "five_minutes": 1.49,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score               149.42 pts\njson-parse-inspector Worst-Score                86.36 pts\njson-parse-inspector Average-Score             161.63 pts\njson-parse-inspector Score                     127.77 pts\njson-parse-inspector First-Time                 33.46 ms \njson-parse-inspector Worst-Time                 57.90 ms \njson-parse-inspector Average-Time               30.93 ms \njson-parse-inspector Total-Time                122.29 ms \njson-parse-inspector Wall-Time                 885.06 ms \n\nOverall:\nOverall First-Score                            149.42 pts\nOverall Worst-Score                             86.36 pts\nOverall Average-Score                          161.63 pts\nOverall First-Time                              33.46 ms \nOverall Worst-Time                              57.90 ms \nOverall Average-Time                            30.93 ms \n\nOverall Score                                  127.77 pts\nOverall Wall-Time                              887.31 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1182088144,
+              "peak_rss_bytes": 275120128,
+              "score": 103.33,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 69382,
+              "page_reclaims": 69382,
+              "involuntary_context_switches": 40,
+              "host_before": {
+                "captured_unix_ns": 1792662778588734927,
+                "load_average": {
+                  "one_minute": 1.4,
+                  "five_minutes": 1.49,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662779780698036,
+                "load_average": {
+                  "one_minute": 1.4,
+                  "five_minutes": 1.49,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                93.84 pts\njson-parse-inspector Worst-Score                84.45 pts\njson-parse-inspector Average-Score             139.20 pts\njson-parse-inspector Score                     103.33 pts\njson-parse-inspector First-Time                 53.28 ms \njson-parse-inspector Worst-Time                 59.20 ms \njson-parse-inspector Average-Time               35.92 ms \njson-parse-inspector Total-Time                148.41 ms \njson-parse-inspector Wall-Time                1072.77 ms \n\nOverall:\nOverall First-Score                             93.84 pts\nOverall Worst-Score                             84.45 pts\nOverall Average-Score                          139.20 pts\nOverall First-Time                              53.28 ms \nOverall Worst-Time                              59.20 ms \nOverall Average-Time                            35.92 ms \n\nOverall Score                                  103.33 pts\nOverall Wall-Time                             1076.42 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 3560953882,
+              "peak_rss_bytes": 95940608,
+              "score": 54.61,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 93606,
+              "page_reclaims": 93597,
+              "involuntary_context_switches": 25,
+              "host_before": {
+                "captured_unix_ns": 1792662779787341344,
+                "load_average": {
+                  "one_minute": 1.4,
+                  "five_minutes": 1.49,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662783385581778,
+                "load_average": {
+                  "one_minute": 1.37,
+                  "five_minutes": 1.48,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                91.33 pts\njson-parse-inspector Worst-Score                28.06 pts\njson-parse-inspector Average-Score              63.54 pts\njson-parse-inspector Score                      54.61 pts\njson-parse-inspector First-Time                 54.75 ms \njson-parse-inspector Worst-Time                178.17 ms \njson-parse-inspector Average-Time               78.69 ms \njson-parse-inspector Total-Time                311.60 ms \njson-parse-inspector Wall-Time                3399.35 ms \n\nOverall:\nOverall First-Score                             91.33 pts\nOverall Worst-Score                             28.06 pts\nOverall Average-Score                           63.54 pts\nOverall First-Time                              54.75 ms \nOverall Worst-Time                             178.17 ms \nOverall Average-Time                            78.69 ms \n\nOverall Score                                   54.61 pts\nOverall Wall-Time                             3420.09 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 5,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1371186042,
+              "peak_rss_bytes": 120016896,
+              "score": 77.55,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 45805,
+              "page_reclaims": 45805,
+              "involuntary_context_switches": 196,
+              "host_before": {
+                "captured_unix_ns": 1792662787849211831,
+                "load_average": {
+                  "one_minute": 1.34,
+                  "five_minutes": 1.47,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662789227718463,
+                "load_average": {
+                  "one_minute": 1.34,
+                  "five_minutes": 1.47,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                69.22 pts\njson-parse-inspector Worst-Score                59.73 pts\njson-parse-inspector Average-Score             112.81 pts\njson-parse-inspector Score                      77.55 pts\njson-parse-inspector First-Time                 72.24 ms \njson-parse-inspector Worst-Time                 83.71 ms \njson-parse-inspector Average-Time               44.32 ms \njson-parse-inspector Total-Time                200.27 ms \njson-parse-inspector Wall-Time                1305.19 ms \n\nOverall:\nOverall First-Score                             69.22 pts\nOverall Worst-Score                             59.73 pts\nOverall Average-Score                          112.81 pts\nOverall First-Time                              72.24 ms \nOverall Worst-Time                              83.71 ms \nOverall Average-Time                            44.32 ms \n\nOverall Score                                   77.55 pts\nOverall Wall-Time                             1308.97 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1857797620,
+              "peak_rss_bytes": 274067456,
+              "score": 76.91,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 69181,
+              "page_reclaims": 69181,
+              "involuntary_context_switches": 49,
+              "host_before": {
+                "captured_unix_ns": 1792662783396713644,
+                "load_average": {
+                  "one_minute": 1.37,
+                  "five_minutes": 1.48,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 1.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662785266034104,
+                "load_average": {
+                  "one_minute": 1.37,
+                  "five_minutes": 1.48,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242485,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                98.08 pts\njson-parse-inspector Worst-Score                48.52 pts\njson-parse-inspector Average-Score              95.59 pts\njson-parse-inspector Score                      76.91 pts\njson-parse-inspector First-Time                 50.98 ms \njson-parse-inspector Worst-Time                103.04 ms \njson-parse-inspector Average-Time               52.31 ms \njson-parse-inspector Total-Time                206.33 ms \njson-parse-inspector Wall-Time                1709.72 ms \n\nOverall:\nOverall First-Score                             98.08 pts\nOverall Worst-Score                             48.52 pts\nOverall Average-Score                           95.59 pts\nOverall First-Time                              50.98 ms \nOverall Worst-Time                             103.04 ms \nOverall Average-Time                            52.31 ms \n\nOverall Score                                   76.91 pts\nOverall Wall-Time                             1713.82 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2553694202,
+              "peak_rss_bytes": 96010240,
+              "score": 83.19,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 93612,
+              "page_reclaims": 93603,
+              "involuntary_context_switches": 41,
+              "host_before": {
+                "captured_unix_ns": 1792662785277985466,
+                "load_average": {
+                  "one_minute": 1.37,
+                  "five_minutes": 1.48,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662787840844521,
+                "load_average": {
+                  "one_minute": 1.34,
+                  "five_minutes": 1.47,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                86.94 pts\njson-parse-inspector Worst-Score                75.76 pts\njson-parse-inspector Average-Score              87.41 pts\njson-parse-inspector Score                      83.19 pts\njson-parse-inspector First-Time                 57.51 ms \njson-parse-inspector Worst-Time                 66.00 ms \njson-parse-inspector Average-Time               57.20 ms \njson-parse-inspector Total-Time                180.71 ms \njson-parse-inspector Wall-Time                2399.45 ms \n\nOverall:\nOverall First-Score                             86.94 pts\nOverall Worst-Score                             75.76 pts\nOverall Average-Score                           87.41 pts\nOverall First-Time                              57.51 ms \nOverall Worst-Time                              66.00 ms \nOverall Average-Time                            57.20 ms \n\nOverall Score                                   83.19 pts\nOverall Wall-Time                             2415.41 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 6,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1098336271,
+              "peak_rss_bytes": 125726720,
+              "score": 130.28,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 40808,
+              "page_reclaims": 40808,
+              "involuntary_context_switches": 89,
+              "host_before": {
+                "captured_unix_ns": 1792662791763472758,
+                "load_average": {
+                  "one_minute": 1.31,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662792870102224,
+                "load_average": {
+                  "one_minute": 1.31,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score               138.14 pts\njson-parse-inspector Worst-Score               100.72 pts\njson-parse-inspector Average-Score             158.93 pts\njson-parse-inspector Score                     130.28 pts\njson-parse-inspector First-Time                 36.20 ms \njson-parse-inspector Worst-Time                 49.64 ms \njson-parse-inspector Average-Time               31.46 ms \njson-parse-inspector Total-Time                117.30 ms \njson-parse-inspector Wall-Time                1046.61 ms \n\nOverall:\nOverall First-Score                            138.14 pts\nOverall Worst-Score                            100.72 pts\nOverall Average-Score                          158.93 pts\nOverall First-Time                              36.20 ms \nOverall Worst-Time                              49.64 ms \nOverall Average-Time                            31.46 ms \n\nOverall Score                                  130.28 pts\nOverall Wall-Time                             1049.05 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1943231298,
+              "peak_rss_bytes": 275824640,
+              "score": 59.99,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 69639,
+              "page_reclaims": 69639,
+              "involuntary_context_switches": 32,
+              "host_before": {
+                "captured_unix_ns": 1792662792876146008,
+                "load_average": {
+                  "one_minute": 1.31,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662794843512905,
+                "load_average": {
+                  "one_minute": 1.31,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242526,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                78.47 pts\njson-parse-inspector Worst-Score                34.44 pts\njson-parse-inspector Average-Score              79.88 pts\njson-parse-inspector Score                      59.99 pts\njson-parse-inspector First-Time                 63.72 ms \njson-parse-inspector Worst-Time                145.18 ms \njson-parse-inspector Average-Time               62.60 ms \njson-parse-inspector Total-Time                271.49 ms \njson-parse-inspector Wall-Time                1630.57 ms \n\nOverall:\nOverall First-Score                             78.47 pts\nOverall Worst-Score                             34.44 pts\nOverall Average-Score                           79.88 pts\nOverall First-Time                              63.72 ms \nOverall Worst-Time                             145.18 ms \nOverall Average-Time                            62.60 ms \n\nOverall Score                                   59.99 pts\nOverall Wall-Time                             1636.90 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2511497145,
+              "peak_rss_bytes": 95940608,
+              "score": 75.05,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 93641,
+              "page_reclaims": 93632,
+              "involuntary_context_switches": 21,
+              "host_before": {
+                "captured_unix_ns": 1792662789234849543,
+                "load_average": {
+                  "one_minute": 1.34,
+                  "five_minutes": 1.47,
+                  "fifteen_minutes": 1.36
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662791757982130,
+                "load_average": {
+                  "one_minute": 1.31,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                83.39 pts\njson-parse-inspector Worst-Score                59.87 pts\njson-parse-inspector Average-Score              84.66 pts\njson-parse-inspector Score                      75.05 pts\njson-parse-inspector First-Time                 59.96 ms \njson-parse-inspector Worst-Time                 83.51 ms \njson-parse-inspector Average-Time               59.06 ms \njson-parse-inspector Total-Time                202.54 ms \njson-parse-inspector Wall-Time                2335.98 ms \n\nOverall:\nOverall First-Score                             83.39 pts\nOverall Worst-Score                             59.87 pts\nOverall Average-Score                           84.66 pts\nOverall First-Time                              59.96 ms \nOverall Worst-Time                              83.51 ms \nOverall Average-Time                            59.06 ms \n\nOverall Score                                   75.05 pts\nOverall Wall-Time                             2350.36 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 7,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1268421404,
+              "peak_rss_bytes": 126115840,
+              "score": 142.27,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 36863,
+              "page_reclaims": 36863,
+              "involuntary_context_switches": 22,
+              "host_before": {
+                "captured_unix_ns": 1792662794853723584,
+                "load_average": {
+                  "one_minute": 1.31,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662796134002542,
+                "load_average": {
+                  "one_minute": 1.28,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score               247.66 pts\njson-parse-inspector Worst-Score                74.27 pts\njson-parse-inspector Average-Score             156.54 pts\njson-parse-inspector Score                     142.27 pts\njson-parse-inspector First-Time                 20.19 ms \njson-parse-inspector Worst-Time                 67.32 ms \njson-parse-inspector Average-Time               31.94 ms \njson-parse-inspector Total-Time                119.45 ms \njson-parse-inspector Wall-Time                1009.97 ms \n\nOverall:\nOverall First-Score                            247.66 pts\nOverall Worst-Score                             74.27 pts\nOverall Average-Score                          156.54 pts\nOverall First-Time                              20.19 ms \nOverall Worst-Time                              67.32 ms \nOverall Average-Time                            31.94 ms \n\nOverall Score                                  142.27 pts\nOverall Wall-Time                             1012.46 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1179755920,
+              "peak_rss_bytes": 276049920,
+              "score": 107.62,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 69605,
+              "page_reclaims": 69605,
+              "involuntary_context_switches": 470,
+              "host_before": {
+                "captured_unix_ns": 1792662796146005611,
+                "load_average": {
+                  "one_minute": 1.28,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662797334284853,
+                "load_average": {
+                  "one_minute": 1.28,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score               110.24 pts\njson-parse-inspector Worst-Score                85.88 pts\njson-parse-inspector Average-Score             131.65 pts\njson-parse-inspector Score                     107.62 pts\njson-parse-inspector First-Time                 45.36 ms \njson-parse-inspector Worst-Time                 58.22 ms \njson-parse-inspector Average-Time               37.98 ms \njson-parse-inspector Total-Time                141.56 ms \njson-parse-inspector Wall-Time                1081.62 ms \n\nOverall:\nOverall First-Score                            110.24 pts\nOverall Worst-Score                             85.88 pts\nOverall Average-Score                          131.65 pts\nOverall First-Time                              45.36 ms \nOverall Worst-Time                              58.22 ms \nOverall Average-Time                            37.98 ms \n\nOverall Score                                  107.62 pts\nOverall Wall-Time                             1085.29 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 3026523069,
+              "peak_rss_bytes": 95875072,
+              "score": 52.38,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 93327,
+              "page_reclaims": 93318,
+              "involuntary_context_switches": 22,
+              "host_before": {
+                "captured_unix_ns": 1792662797344452528,
+                "load_average": {
+                  "one_minute": 1.28,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662800386672429,
+                "load_average": {
+                  "one_minute": 1.28,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                59.15 pts\njson-parse-inspector Worst-Score                36.71 pts\njson-parse-inspector Average-Score              66.18 pts\njson-parse-inspector Score                      52.38 pts\njson-parse-inspector First-Time                 84.54 ms \njson-parse-inspector Worst-Time                136.21 ms \njson-parse-inspector Average-Time               75.55 ms \njson-parse-inspector Total-Time                296.30 ms \njson-parse-inspector Wall-Time                2851.82 ms \n\nOverall:\nOverall First-Score                             59.15 pts\nOverall Worst-Score                             36.71 pts\nOverall Average-Score                           66.18 pts\nOverall First-Time                              84.54 ms \nOverall Worst-Time                             136.21 ms \nOverall Average-Time                            75.55 ms \n\nOverall Score                                   52.38 pts\nOverall Wall-Time                             2867.81 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 8,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 726342339,
+              "peak_rss_bytes": 118910976,
+              "score": 196.83,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 43030,
+              "page_reclaims": 43030,
+              "involuntary_context_switches": 92,
+              "host_before": {
+                "captured_unix_ns": 1792662804583690042,
+                "load_average": {
+                  "one_minute": 1.26,
+                  "five_minutes": 1.45,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662805317219828,
+                "load_average": {
+                  "one_minute": 1.26,
+                  "five_minutes": 1.45,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score               188.53 pts\njson-parse-inspector Worst-Score               174.38 pts\njson-parse-inspector Average-Score             231.93 pts\njson-parse-inspector Score                     196.83 pts\njson-parse-inspector First-Time                 26.52 ms \njson-parse-inspector Worst-Time                 28.67 ms \njson-parse-inspector Average-Time               21.56 ms \njson-parse-inspector Total-Time                 76.75 ms \njson-parse-inspector Wall-Time                 682.05 ms \n\nOverall:\nOverall First-Score                            188.53 pts\nOverall Worst-Score                            174.38 pts\nOverall Average-Score                          231.93 pts\nOverall First-Time                              26.52 ms \nOverall Worst-Time                              28.67 ms \nOverall Average-Time                            21.56 ms \n\nOverall Score                                  196.83 pts\nOverall Wall-Time                              684.29 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1518776152,
+              "peak_rss_bytes": 274350080,
+              "score": 82.88,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 69206,
+              "page_reclaims": 69206,
+              "involuntary_context_switches": 34,
+              "host_before": {
+                "captured_unix_ns": 1792662800401902523,
+                "load_average": {
+                  "one_minute": 1.28,
+                  "five_minutes": 1.46,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662801930838229,
+                "load_average": {
+                  "one_minute": 1.26,
+                  "five_minutes": 1.45,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                70.23 pts\njson-parse-inspector Worst-Score                72.58 pts\njson-parse-inspector Average-Score             111.70 pts\njson-parse-inspector Score                      82.88 pts\njson-parse-inspector First-Time                 71.19 ms \njson-parse-inspector Worst-Time                 68.89 ms \njson-parse-inspector Average-Time               44.76 ms \njson-parse-inspector Total-Time                184.84 ms \njson-parse-inspector Wall-Time                1352.36 ms \n\nOverall:\nOverall First-Score                             70.23 pts\nOverall Worst-Score                             72.58 pts\nOverall Average-Score                          111.70 pts\nOverall First-Time                              71.19 ms \nOverall Worst-Time                              68.89 ms \nOverall Average-Time                            44.76 ms \n\nOverall Score                                   82.88 pts\nOverall Wall-Time                             1360.75 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2625341431,
+              "peak_rss_bytes": 96026624,
+              "score": 69.72,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 93616,
+              "page_reclaims": 93607,
+              "involuntary_context_switches": 15,
+              "host_before": {
+                "captured_unix_ns": 1792662801938265159,
+                "load_average": {
+                  "one_minute": 1.26,
+                  "five_minutes": 1.45,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662804575881500,
+                "load_average": {
+                  "one_minute": 1.26,
+                  "five_minutes": 1.45,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242569,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                70.41 pts\njson-parse-inspector Worst-Score                64.44 pts\njson-parse-inspector Average-Score              74.70 pts\njson-parse-inspector Score                      69.72 pts\njson-parse-inspector First-Time                 71.01 ms \njson-parse-inspector Worst-Time                 77.59 ms \njson-parse-inspector Average-Time               66.94 ms \njson-parse-inspector Total-Time                215.54 ms \njson-parse-inspector Wall-Time                2472.19 ms \n\nOverall:\nOverall First-Score                             70.41 pts\nOverall Worst-Score                             64.44 pts\nOverall Average-Score                           74.70 pts\nOverall First-Time                              71.01 ms \nOverall Worst-Time                              77.59 ms \nOverall Average-Time                            66.94 ms \n\nOverall Score                                   69.72 pts\nOverall Wall-Time                             2484.99 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 9,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1243281104,
+              "peak_rss_bytes": 126173184,
+              "score": 83.41,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 39409,
+              "page_reclaims": 39409,
+              "involuntary_context_switches": 105,
+              "host_before": {
+                "captured_unix_ns": 1792662808201585092,
+                "load_average": {
+                  "one_minute": 1.24,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662809453166831,
+                "load_average": {
+                  "one_minute": 1.24,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score               283.07 pts\njson-parse-inspector Worst-Score                20.04 pts\njson-parse-inspector Average-Score             102.26 pts\njson-parse-inspector Score                      83.41 pts\njson-parse-inspector First-Time                 17.66 ms \njson-parse-inspector Worst-Time                249.45 ms \njson-parse-inspector Average-Time               48.89 ms \njson-parse-inspector Total-Time                316.01 ms \njson-parse-inspector Wall-Time                1196.43 ms \n\nOverall:\nOverall First-Score                            283.07 pts\nOverall Worst-Score                             20.04 pts\nOverall Average-Score                          102.26 pts\nOverall First-Time                              17.66 ms \nOverall Worst-Time                             249.45 ms \nOverall Average-Time                            48.89 ms \n\nOverall Score                                   83.41 pts\nOverall Wall-Time                             1198.35 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2062401393,
+              "peak_rss_bytes": 275644416,
+              "score": 46.61,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 69507,
+              "page_reclaims": 69507,
+              "involuntary_context_switches": 82,
+              "host_before": {
+                "captured_unix_ns": 1792662809459708227,
+                "load_average": {
+                  "one_minute": 1.24,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662811541647478,
+                "load_average": {
+                  "one_minute": 1.22,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score               104.59 pts\njson-parse-inspector Worst-Score                16.46 pts\njson-parse-inspector Average-Score              58.81 pts\njson-parse-inspector Score                      46.61 pts\njson-parse-inspector First-Time                 47.81 ms \njson-parse-inspector Worst-Time                303.76 ms \njson-parse-inspector Average-Time               85.02 ms \njson-parse-inspector Total-Time                436.59 ms \njson-parse-inspector Wall-Time                1933.66 ms \n\nOverall:\nOverall First-Score                            104.59 pts\nOverall Worst-Score                             16.46 pts\nOverall Average-Score                           58.81 pts\nOverall First-Time                              47.81 ms \nOverall Worst-Time                             303.76 ms \nOverall Average-Time                            85.02 ms \n\nOverall Score                                   46.61 pts\nOverall Wall-Time                             1936.63 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2839211762,
+              "peak_rss_bytes": 95895552,
+              "score": 64.08,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 93610,
+              "page_reclaims": 93601,
+              "involuntary_context_switches": 85,
+              "host_before": {
+                "captured_unix_ns": 1792662805325554507,
+                "load_average": {
+                  "one_minute": 1.26,
+                  "five_minutes": 1.45,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662808191649062,
+                "load_average": {
+                  "one_minute": 1.24,
+                  "five_minutes": 1.44,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242584,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                80.36 pts\njson-parse-inspector Worst-Score                46.95 pts\njson-parse-inspector Average-Score              69.74 pts\njson-parse-inspector Score                      64.08 pts\njson-parse-inspector First-Time                 62.22 ms \njson-parse-inspector Worst-Time                106.50 ms \njson-parse-inspector Average-Time               71.69 ms \njson-parse-inspector Total-Time                240.42 ms \njson-parse-inspector Wall-Time                2655.61 ms \n\nOverall:\nOverall First-Score                             80.36 pts\nOverall Worst-Score                             46.95 pts\nOverall Average-Score                           69.74 pts\nOverall First-Time                              62.22 ms \nOverall Worst-Time                             106.50 ms \nOverall Average-Time                            71.69 ms \n\nOverall Score                                   64.08 pts\nOverall Wall-Time                             2688.75 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 10,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1275292837,
+              "peak_rss_bytes": 115560448,
+              "score": 103.43,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 42974,
+              "page_reclaims": 42974,
+              "involuntary_context_switches": 249,
+              "host_before": {
+                "captured_unix_ns": 1792662811549223080,
+                "load_average": {
+                  "one_minute": 1.22,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662812833608054,
+                "load_average": {
+                  "one_minute": 1.22,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                87.40 pts\njson-parse-inspector Worst-Score                89.96 pts\njson-parse-inspector Average-Score             140.73 pts\njson-parse-inspector Score                     103.43 pts\njson-parse-inspector First-Time                 57.21 ms \njson-parse-inspector Worst-Time                 55.58 ms \njson-parse-inspector Average-Time               35.53 ms \njson-parse-inspector Total-Time                148.32 ms \njson-parse-inspector Wall-Time                1227.76 ms \n\nOverall:\nOverall First-Score                             87.40 pts\nOverall Worst-Score                             89.96 pts\nOverall Average-Score                          140.73 pts\nOverall First-Time                              57.21 ms \nOverall Worst-Time                              55.58 ms \nOverall Average-Time                            35.53 ms \n\nOverall Score                                  103.43 pts\nOverall Wall-Time                             1229.75 ms \n\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1207390099,
+              "peak_rss_bytes": 275304448,
+              "score": 104.85,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 69415,
+              "page_reclaims": 69415,
+              "involuntary_context_switches": 182,
+              "host_before": {
+                "captured_unix_ns": 1792662812840765269,
+                "load_average": {
+                  "one_minute": 1.22,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662814058639005,
+                "load_average": {
+                  "one_minute": 1.22,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score               104.24 pts\njson-parse-inspector Worst-Score                84.80 pts\njson-parse-inspector Average-Score             130.41 pts\njson-parse-inspector Score                     104.85 pts\njson-parse-inspector First-Time                 47.97 ms \njson-parse-inspector Worst-Time                 58.96 ms \njson-parse-inspector Average-Time               38.34 ms \njson-parse-inspector Total-Time                145.27 ms \njson-parse-inspector Wall-Time                1083.47 ms \n\nOverall:\nOverall First-Score                            104.24 pts\nOverall Worst-Score                             84.80 pts\nOverall Average-Score                          130.41 pts\nOverall First-Time                              47.97 ms \nOverall Worst-Time                              58.96 ms \nOverall Average-Time                            38.34 ms \n\nOverall Score                                  104.85 pts\nOverall Wall-Time                             1086.89 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2843862507,
+              "peak_rss_bytes": 96014336,
+              "score": 59.14,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 93641,
+              "page_reclaims": 93632,
+              "involuntary_context_switches": 38,
+              "host_before": {
+                "captured_unix_ns": 1792662814066719555,
+                "load_average": {
+                  "one_minute": 1.22,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.35
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792662816918295734,
+                "load_average": {
+                  "one_minute": 1.2,
+                  "five_minutes": 1.43,
+                  "fifteen_minutes": 1.34
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 242259,
+                    "cpu_percent": 2.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 251,
+                    "cpu_percent": 0.6,
+                    "command": "containerd"
+                  },
+                  {
+                    "pid": 201,
+                    "cpu_percent": 0.1,
+                    "command": "dockerd"
+                  },
+                  {
+                    "pid": 516,
+                    "cpu_percent": 0.1,
+                    "command": "codex"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "tail"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning json-parse-inspector:\njson-parse-inspector First-Score                69.18 pts\njson-parse-inspector Worst-Score                44.45 pts\njson-parse-inspector Average-Score              67.26 pts\njson-parse-inspector Score                      59.14 pts\njson-parse-inspector First-Time                 72.28 ms \njson-parse-inspector Worst-Time                112.48 ms \njson-parse-inspector Average-Time               74.34 ms \njson-parse-inspector Total-Time                259.09 ms \njson-parse-inspector Wall-Time                2621.95 ms \n\nOverall:\nOverall First-Score                             69.18 pts\nOverall Worst-Score                             44.45 pts\nOverall Average-Score                           67.26 pts\nOverall First-Time                              72.28 ms \nOverall Worst-Time                             112.48 ms \nOverall Average-Time                            74.34 ms \n\nOverall Score                                   59.14 pts\nOverall Wall-Time                             2641.35 ms \n\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}
