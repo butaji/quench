@@ -144,7 +144,7 @@ impl<H: Host> Vm<H> {
                     EnumerableOwnPropertyKind::KeyValue => self.heap.alloc(Cell::Array {
                         object: crate::heap::ArrayObject::new(
                             Self::empty_object(self.array_proto),
-                            Rc::new(vec![self.heap.root_value(*key).unwrap(), item]),
+                            vec![self.heap.root_value(*key).unwrap(), item],
                         ),
                     }),
                     EnumerableOwnPropertyKind::Key | EnumerableOwnPropertyKind::Value => item,
@@ -154,11 +154,11 @@ impl<H: Host> Vm<H> {
             let elements = properties
                 .iter()
                 .map(|root| self.heap.root_value(*root).unwrap())
-                .collect();
+                .collect::<Vec<_>>();
             Ok(self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
-                    Rc::new(elements),
+                    elements,
                 ),
             }))
         })();
@@ -178,11 +178,11 @@ impl<H: Host> Vm<H> {
             .object_own_key_values(p, object)?
             .into_iter()
             .filter(|key| self.heap.is_string(*key))
-            .collect();
+            .collect::<Vec<_>>();
         Ok(self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(values),
+                values,
             ),
         }))
     }

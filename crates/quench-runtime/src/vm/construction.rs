@@ -691,7 +691,7 @@ impl<H: Host> Vm<H> {
                         .and_then(|value| {
                             vm.heap
                                 .array_elements(value)
-                                .map(|elements| elements.as_ref().clone())
+                                .map(|elements| elements.to_vec())
                         })
                         .unwrap_or_default();
                     let mut arguments = bound_args;
@@ -1362,7 +1362,7 @@ impl<H: Host> Vm<H> {
             let array = self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(prototype),
-                    Rc::new(Vec::new()),
+                    Vec::new(),
                 ),
             });
             self.heap.sparse_set_length(array, length as usize);
@@ -1372,7 +1372,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(prototype),
-                Rc::new(args.to_vec()),
+                args.to_vec(),
             ),
         }))
     }

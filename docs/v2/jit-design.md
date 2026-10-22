@@ -955,3 +955,170 @@ An interleaved same-binary three-pair screen compared the path enabled and
 disabled. Disabled was faster in every pair (105.48 vs 126.62 s, 110.01 vs
 117.55 s, and 114.85 vs 127.91 s) with effectively unchanged RSS. The
 high-coverage loop therefore stays opt-in rather than shipping as the default.
+
+## Promise async-hooks context retention
+
+An allocation trace found a ~544 MiB async-hooks trigger map on Doxbee
+Promise workloads. Promise trigger contexts were retained after their Promise
+objects became unreachable. Trunk already gives a promise no context while
+nothing tracks promises (`create_promise_context`). For a tracked promise, the
+sweep that frees it now hands its context to `Host::release_promise_contexts`,
+apart from the reaction-job tokens it hands to `Host::release_job_context` (the
+host numbers the two independently), and the Node host drops its trigger entry;
+no collection walks the live promises. The measurement below was of the earlier
+v2-jit form of this fix, which collected the live promise contexts after each
+full collection.
+
+An uninstrumented three-round JetStream 3 run validated output and reduced
+median Quench peak RSS from 1,012 MB to 170 MB on `doxbee-promise`, and from
+1,053 MB to 258 MB on `doxbee-async`. Scores were 4.35 and 5.83. The older
+scores were 3.69 and 4.69, but sequential peer drift means the score changes
+are inconclusive; Quench remains much slower than Node and Bun. Raw data and
+method are in
+`evidence/jit-jetstream3-2026-10-21/async-hooks-promise-context-cleanup/`.
+
+A one-round Doxbee Promise JIT census found zero native entries across 10.8
+million function entries. The hottest `doxbee` and anonymous closure bodies
+were rejected as unsupported activation/function kinds; `runIteration` made
+one compile attempt but its loop includes calls, array mutation, and Promise
+aggregation. The measured branch/type-check sites do not establish redundant
+guards, so Boolean simplification is not the next target. Census data is in
+`evidence/jit-jetstream3-2026-10-21/doxbee-native-entry-census/`.
+
+A fast return for empty AsyncLocalStorage maps was screened in sequential
+three-round builds. Promise score moved upward while Async moved downward, with
+flat RSS and large peer timing drift. The change was reverted because the
+screen did not establish a matched win. Results are in
+`evidence/jit-jetstream3-2026-10-21/doxbee-empty-als-snapshot/`.
+
+The one-round `typescript-lib` diagnostic reinforces the same coverage issue:
+Quench scored 0.05 versus Node 1.45 and Bun 1.12, with 567 MiB versus about
+359 MiB peak RSS for both peers. Of 2,348 function rows, 2,178 were unsupported;
+the largest buckets were unsupported activation/function kinds (1,228 rows),
+unsupported opcodes/control flow (713), and the 256-instruction limit (117).
+The hottest rows include `forEach`, `checkSourceElement`, `findSourceFile`, and
+`bind`; these are interpreter-heavy loops and closure/call paths. The profile
+counted 28.9M entries but only 3.93M native entries, with 43 successful
+compilations. These are diagnostic results from one round. The raw profile is
+`evidence/jit-jetstream3-2026-10-21/full-suite-screen/typescript-lib-diagnostic-1round.json`.
+
+Increasing the instruction cap from 256 to 512 compiled two additional
+TypeScript helpers and raised native-entry counts by about 10%, but left the
+one-round score at 0.05. In three rounds the 512-cap screen scored 0.07 /
+565 MiB versus 0.08 / 564 MiB for the 256-cap binary. The cap increase was
+reverted: this additional native coverage did not improve score or RSS.
+Reports are in
+`evidence/jit-jetstream3-2026-10-21/typescript-jit-instruction-cap/`.
+
+A faster Fx hasher for internal Promise async-ID and job-token maps was also
+screened. Promise score rose from 3.07 to 3.60 while Async fell from 5.19 to
+3.22; only Async RSS improved (2.3%), and peer timings varied substantially.
+The hasher change was reverted because these sequential screens did not show a
+consistent score and memory win. Reports are in
+`evidence/jit-jetstream3-2026-10-21/doxbee-fxhash-context-map/`.
+
+## Guarded numeric hash-map lookup
+
+`_findKeyEntry` has an exact bytecode matcher for its 23-instruction linked
+entry loop. The fast helper is guarded at function entry, uses the existing
+field caches for the list and entry fields, and calls the already-compiled
+numeric `equals` target. On a guard miss, it leaves the frame untouched for
+ordinary interpretation. A 3-pair same-binary JetStream `hash-map` screen
+showed enabled median Score 2.93 versus 2.63 disabled, with sampled peak RSS
+74.17 MiB versus 74.06 MiB and median wall time 163.9 s versus 174.6 s. All
+three adjacent score pairs favored enabled. The helper is now enabled by
+default for eligible inputs; `QUENCH_JS_JIT_NUMERIC_FIND=0` retains the
+interpreter for A/B screens. The result is a fixture-specific screen, not
+qualification against Node/Bun or a suite-wide win. Raw reports and method
+are in `evidence/jit-jetstream3-2026-10-21/hash-map-numeric-find-screen/`.
+
+A separate matched three-round peer screen on this fixture measured Quench at
+2.83 Score / 73.99 MiB, Bun 1.4.3 at 165.97 / 83.56 MiB, and Node 24.19.0 at
+124.87 / 222.77 MiB. The numeric lookup change preserves the RSS advantage
+but does not close the score gap (Quench reaches 1.7% of Bun and 2.3% of
+Node). The next target is the interpreted `run` body: 58 instructions, 120
+entries and 111.7 seconds inclusive in the opt-in diagnostic, containing
+allocation, throwing, call and loop behavior. Boolean guard rewriting is not
+justified by its census. The report is in
+`evidence/jit-jetstream3-2026-10-21/hash-map-numeric-find-screen/peers-3round.json`.
+
+A second, twelve-round A/B tried caching and directly invoking the compiled
+Boolean `equals` entry inside `_findKeyEntry`, while retaining the code mapping
+owner. The raw entry lost overall: median Score 2.385 vs 2.515 through the
+existing `js_jit_compiled_call`, median wall time 174.9 vs 169.0 s, and RSS
+74.23 vs 74.19 MiB; only 3/6 adjacent score pairs favored it. The code path
+was reverted. This points away from per-equality dispatch lookup as the main
+score limit; next focus remains the interpreted `run` loop and its calls,
+allocations and collection behavior. The six-pair raw data are stored in
+`evidence/jit-jetstream3-2026-10-21/hash-map-numeric-find-screen/`.
+
+### Hash-map diagnostic attribution
+
+Reviewing the existing opt-in diagnostic report clarified the timing scope:
+`runIteration` has 32 entries and 175.968 seconds of inclusive interpreter
+time, while its child `run` has 120 entries and 111.730 seconds. These times
+overlap and must not be added. `computeHashCode` enters native code for all
+64.8 million recorded entries, and `equals` for 53,999,969 of 54 million.
+The numeric lookup helper takes its guarded fast path 53,999,968 times. Its
+3 ms `interpreter_inclusive_ns` value covers only ordinary interpreter
+completion and excludes that helper's native execution, so it is not a cost
+estimate for the lookup path. The evidence points to the effectful outer
+`run`/`runIteration` dispatch as the remaining measured opportunity; it does
+not justify a Boolean guard rewrite or another equality-call shortcut. Raw
+diagnostic source: `enabled-diagnostic-1round.json` in the same report
+directory. This is attribution from instrumented inclusive counters, not an
+exclusive CPU profile or an optimization result.
+
+The census initially missed functions that ran as lane activations because it
+counted only ordinary JIT frame entries. Opt-in diagnostics now report
+`lane_entries` separately and include them in `all_entry_native_coverage_ppm`.
+This exposes `get`, `_getEntry` and `put` as lane-only entries in the hash-map
+fixture, while preserving frame-entry coverage for native JIT functions. A
+follow-up tried invoking compiled numeric callees directly at lane call sites.
+The same-machine three-round A/B was a loss: control median 3.22 Score / 74.01
+MiB versus candidate 2.87 / 78.28 MiB, with all rounds output-equivalent. The
+fast path was removed. The census showed those callers already pass through
+native `computeHashCode` and `equals` entries, so this dispatcher shortcut was
+redundant and increased peak RSS. Reports and full per-round data are in
+`evidence/jit-jetstream3-2026-10-21/hash-map-lane-census/`.
+
+A second narrow experiment matched the Number/Number branch of the benchmark's
+`equals` bytecode and replaced its call with direct `f64` equality after both
+Number guards. The diagnostic confirmed 53,999,999 fast comparisons, but a
+same-binary three-round screen scored 4.09 versus 4.57 through the compiled
+`equals` call; RSS improved by 0.46 MiB and only 1/3 adjacent score pairs
+favored the direct comparison. It was removed because the score regressed.
+The original call remains the fallback and active path. Raw diagnostic and
+paired data are in the same evidence directory.
+
+### Async-fs Float64 DataView calls
+
+The JetStream `async-fs` fixture spends substantial time in `File.swapByteOrder`
+calling `DataView.getFloat64` and `setFloat64`. The lane fast path handles only
+primitive numeric offsets and values on fixed, ordinary, non-shared DataViews
+in compiled (`--jit`) mode; interpreted mode stays on its existing path. All
+coercion, bounds-error, detached, resizable, shared and unsupported buffer cases
+remain on the generic native implementation. The opt-in diagnostic counted
+8,204,080 fast gets and 8,204,080 fast sets in the fixture.
+
+The three-round same-binary screen scored 2.97 with the path disabled and 3.32
+enabled (11.8% higher median), with peak RSS effectively unchanged at 87.93
+and 87.92 MiB. Five interleaved one-round pairs favored the path in four of
+five pairs; the median paired Quench/Node score ratio improved 9.5%, which
+controls for substantial host variation visible in the Node and Bun scores.
+The feature remains far behind the JIT peers on this fixture: the same
+three-round screen measured Bun at 110.07 Score / 66.63 MiB and Node at 50.42 /
+206.71 MiB. The change is retained as a local win, not a JetStream victory.
+Reports and pair-level detail are in
+`evidence/jit-jetstream3-2026-10-21/async-fs-dataview-fast-lane/`.
+
+The follow-up fastens the common Boolean endianness argument check in this
+lane: Boolean arguments use `Value::as_bool`, while all other values retain
+general `ToBoolean` handling. Three-round control/candidate medians were 3.80
+and 3.94 Score, with 87.75 and 88.04 MiB peak RSS. In seven interleaved
+one-round Quench pairs, the candidate won six; the paired median and geometric
+mean Score ratios were 1.083 and 1.106, and median RSS ratio was 1.0014.
+Candidate-first pairs were added to check run-order bias. Peer scores varied
+sharply, so this supports a local async-fs improvement only; it is not a
+JetStream peer win or qualification. Reports and methodology are in
+`evidence/jit-jetstream3-2026-10-22/async-fs-dataview-boolean-fast-path/`.

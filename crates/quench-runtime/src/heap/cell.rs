@@ -1395,11 +1395,12 @@ impl Drop for Object {
 #[derive(Clone)]
 pub(crate) struct ArrayObject {
     object: Object,
-    elements: Rc<Vec<Value>>,
+    elements: super::ArrayElements,
 }
 
 impl ArrayObject {
-    pub(crate) fn new(mut object: Object, elements: Rc<Vec<Value>>) -> Self {
+    pub(crate) fn new(mut object: Object, elements: impl Into<super::ArrayElements>) -> Self {
+        let elements = elements.into();
         // Array objects keep named properties in the arena; a fresh object has none inline.
         let current = object.properties();
         object.meta |= OBJECT_ARRAY;
@@ -1417,11 +1418,11 @@ impl ArrayObject {
         Self { object, elements }
     }
 
-    pub(crate) fn elements(&self) -> &Rc<Vec<Value>> {
+    pub(crate) fn elements(&self) -> &super::ArrayElements {
         &self.elements
     }
 
-    pub(crate) fn elements_mut(&mut self) -> &mut Rc<Vec<Value>> {
+    pub(crate) fn elements_mut(&mut self) -> &mut super::ArrayElements {
         &mut self.elements
     }
 }
@@ -2135,7 +2136,10 @@ impl Object {
     pub(crate) fn has_side_descriptors(&self) -> bool {
         self.extras().is_some_and(|extras| extras.side_descriptors)
     }
+    /// A prototype's side descriptors can name keys its shape lacks, which retires the
+    /// proofs (`prototype_layout_epoch`) that found them absent.
     pub(crate) fn mark_side_descriptors(&mut self) {
+        self.note_prototype_layout_change();
         self.extras_mut().side_descriptors = true;
     }
     pub(crate) fn is_raw_json(&self) -> bool {

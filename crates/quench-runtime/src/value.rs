@@ -210,6 +210,22 @@ pub(crate) struct IntegerEncoding(u64);
 /// The tag bits an encoded i32 carries; compiled code encodes in place.
 pub(crate) const INTEGER_TAG_BITS: u64 = TAG_INT;
 
+/// The encoding facts compiled code tests and builds values with (`Value::number`,
+/// `Value::is_tagged`).
+pub(crate) struct ValueLayout;
+
+impl ValueLayout {
+    pub(crate) const TAG_MASK: u64 = TAG_MASK;
+    pub(crate) const INT_TAG: u64 = TAG_INT;
+    pub(crate) const DELETED_TAG: u64 = TAG_DELETED;
+    pub(crate) const CANONICAL_NAN: u64 = CANONICAL_NAN;
+    /// A tag field is the bits at and above this shift.
+    pub(crate) const TAG_SHIFT: u32 = TAG_SHIFT;
+    /// The first tag's field; a value is tagged when its field less this is at most the span.
+    pub(crate) const FIRST_TAG_FIELD: u64 = FIRST_TAG >> TAG_SHIFT;
+    pub(crate) const TAG_FIELD_SPAN: u64 = (LAST_TAG - FIRST_TAG) >> TAG_SHIFT;
+}
+
 impl IntegerEncoding {
     pub(crate) const TAG: Self = Self(TAG_INT);
 
