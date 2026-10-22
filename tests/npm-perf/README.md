@@ -286,3 +286,21 @@ Its report is `work/react-perf/react-rope-charcodeat-memory-first-max-young-16k-
 These results shift the next React work to the object-heavy call and interpreter
 path; string assembly experiments have not produced a combined speed and memory
 win. Linux RSS is diagnostic only.
+
+A follow-up allocator experiment kept empty-page list links in separate mmap
+metadata and used `MADV_DONTNEED` before reuse. The 3-round, 1,000-render
+memory-first screen preserved output (4,996,000 bytes, checksum 83793), but
+measured 203.5 renders/s / 30.88 MB sampled max RSS. The earlier pageout screen
+at the same 4K young cap measured 280.0 / 30.70 MB, so this design was rejected
+and its implementation reverted. The report is
+`work/react-perf/react-quench-alloc-dontneed-memory-first-max-young-4k-nojit-screen-3.json`.
+
+The subsequent call-path audit found that ordinary fast-lane calls already copy
+the common 0–4 arguments directly into lane frames; 92% of React's user calls
+fall in that range. Avoiding `CallArguments::from_slice` would mostly target the
+cold general fallback. The next no-JIT experiment will select a structural
+interpreter or allocation target from measured React lane profiles. Runtime
+research suggests profile-guided quickening for no-JIT and a broad one-pass
+baseline tier for the object-heavy React functions currently outside Quench's
+narrow compiled tier. Neither direction has yet demonstrated the required
+20% win.
