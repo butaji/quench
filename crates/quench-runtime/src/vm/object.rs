@@ -793,6 +793,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
+        self.reused_iterator_result = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
         self.regexp_object_shapes = None;
