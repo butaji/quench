@@ -6658,7 +6658,7 @@ script_handler! {
     /// statically, and a name no internal binding owns) takes `lane_load_global_name`; any
     /// other always takes the general path.
     #[inline(never)]
-    fn lane_load_name_first<>(cx, r, ip, i, view) {
+    fn lane_load_name_first<TYPEOF: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
@@ -6678,8 +6678,8 @@ script_handler! {
             && (!vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
                 || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&vm.atom_name(i.imm())));
         if global {
-            requicken(ip, lane_load_global_name::<H>);
-            sibling!(lane_load_global_name::<H>, r, ip, Carried::script(cx))
+            requicken(ip, lane_load_global_name::<H, TYPEOF>);
+            sibling!(lane_load_global_name::<H, TYPEOF>, r, ip, Carried::script(cx))
         }
         // An internal name of a built-in, which every lookup resolves before any scope.
         if statically && super::environment::internal_name_native(vm.atom_name(i.imm())).is_some() {
@@ -6710,7 +6710,7 @@ script_handler! {
     /// finds first there, else the global object's cached field (`Vm::cached_field_hit`).
     /// Any other read, including an uninitialized binding or a cache miss, takes the general
     /// path, which raises or caches it.
-    fn lane_load_global_name<>(cx, r, ip, i, view) {
+    fn lane_load_global_name<TYPEOF: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
@@ -6726,10 +6726,12 @@ script_handler! {
         let value = match vm.cached_field_hit(code, vm.realm.globals, i.c) {
             super::object::FieldCacheProbe::Hit(value) => value,
             // A global object no cache records (a dictionary shape) still answers a present
-            // data property through its shape walk; an absent name raises on the general path.
-            _ => match vm.plain_global_binding(atom) {
-                Some(value) => value,
-                None => return exit(ip),
+            // data property through its shape walk. An absent name is `undefined` to `typeof`
+            // and raises on the general path otherwise.
+            _ => match vm.plain_global_lookup(atom) {
+                Some(Some(value)) => value,
+                Some(None) if TYPEOF => Value::UNDEFINED,
+                _ => return exit(ip),
             },
         };
         r.set(i.a, value);
@@ -9922,7 +9924,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CallKnown => Some(lane_call_known::<H>),
         Op::Call => Some(lane_script_call::<H>),
         Op::Construct => Some(lane_script_construct::<H>),
-        Op::LoadName => Some(lane_load_name_first::<H>),
+        Op::LoadName => Some(lane_load_name_first::<H, false>),
+        Op::LoadNameTypeof => Some(lane_load_name_first::<H, true>),
         Op::MakeObject2 => Some(lane_make_object2::<H>),
         Op::MakeClosure => Some(lane_make_closure::<H>),
         Op::MakeObjectLiteral => Some(lane_make_object_literal::<H>),
