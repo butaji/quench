@@ -95,3 +95,15 @@ QUENCH_PROFILE_RETAIN_BYTECODE=1 ../../target/iteration/quench-node \
 The retain flag is diagnostic only: it keeps replayable function records so the
 report can include hot function names and instruction counts. Each
 `quench-profile-program` record includes its source name for attribution.
+
+The merged runtime has separate throughput and memory-first GC policies. Select
+the latter for a screen with `QUENCH_MEMORY_POLICY=memory-first`; the default is
+`throughput`. On the post-merge React SSR Linux pilot, raising memory-first's
+young budget from 1/64 to 1/1 increased Quench from 114.7 to 208.3 renders/s,
+with sampled max RSS moving from 30.37 to 31.20 MB in an initial five-round
+screen. An 11-round follow-up measured 194.9 renders/s and 30.74 MB, against
+Node `--jitless` at 1412.4 renders/s / 31.91 MB and Bun no-JIT at 1201.9 /
+37.02 MB. The 1/1 setting remains far slower than both runtimes and misses the
+20% RSS margin, so this is a partial improvement, not a win. A 2^18 young cap
+reduced the 1/1 screen's RSS slightly but also lowered throughput; the 2^17 cap
+remains selected. These Linux RSS samples are diagnostic, not qualification.
