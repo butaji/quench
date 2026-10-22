@@ -2,9 +2,11 @@
 
 ## Goal
 
-Make JIT mode in `quench-node` beat JIT-enabled Node and Bun on JetStream 3.0 Score while using less maximum RSS, first on the server-side JavaScript fixtures. Keep the interpreted mode as the default and preserve its results. Use one OXC frontend, one residual bytecode representation and the same `Vm`, heap and host APIs in both modes. TypeScript is erased by the existing frontend; Wasm keeps its current decoder and enters that same VM.
+Make `quench-node` score at least 20% above every measured peer on JetStream 3.0 in both no-JIT and JIT modes, while using less maximum RSS in JIT mode. These are separate performance goals: JIT tier work cannot improve no-JIT execution because no-JIT never enters compiled tiers. Keep the interpreted mode as the default and preserve its results. Use one OXC frontend, one residual bytecode representation and the same `Vm`, heap and host APIs in both modes. TypeScript is erased by the existing frontend; Wasm keeps its current decoder and enters that same VM.
 
-The pass condition is workload-specific and measured: stock JetStream validation, 11 or more matched rounds, and a paired 95% bootstrap interval showing Quench's score ratio above 1 and its maximum-RSS ratio below 1 against each available JIT-enabled bar. Qualify on Linux x86_64 and M4 separately. A single run is a screen, not a win. JetStream 3 contains both compute-heavy JavaScript and Wasm, so continue to its Wasm fixtures after the JavaScript tier has a useful measured path.
+The pass condition is measured on stock JetStream with 11 or more matched rounds: in each execution mode, the lower bound of the paired 95% bootstrap interval for Quench's suite score ratio must be at least 1.20 against every available peer. In JIT mode, the paired maximum-RSS ratio must also remain below 1 against each peer. Qualify on Linux x86_64 and M4 separately. A single run is a screen, not a win. JetStream 3 contains both compute-heavy JavaScript and Wasm, so continue to its Wasm fixtures after the JavaScript tier has a useful measured path.
+
+Track no-JIT independently through interpreter, allocation, garbage collection and host-call paths; compiled-tier coverage only contributes to the JIT objective. Existing historical screens are far from the new threshold (about 0.49× Bun's suite score in no-JIT and 0.058–0.085× the JIT peers in JIT), so architecture consolidation is enabling work rather than evidence of a near-term suite win. Rebaseline both modes on this branch before attributing any change, and rank follow-up work by hot execution coverage and paired score deltas.
 
 ## Unified execution architecture (active contract)
 
