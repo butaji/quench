@@ -824,9 +824,9 @@ fn loop_iterations_release_their_environments_and_eval_programs() {
 }
 
 #[test]
-fn property_sites_past_the_site_space_share_an_uncached_site() {
-    // Two passes over a line of sites larger than the 16-bit site space: the sites past it
-    // share one site, which alternately reads `a` and `b` from the same shape.
+fn property_sites_past_the_site_space_share_a_site_per_name() {
+    // Two passes over a line of sites larger than the 16-bit site space: the reads past the
+    // unique sites share one site per name, alternately `a` and `b` of the same shape.
     let sites = usize::from(u16::MAX) + 64;
     let reads = (0..sites)
         .map(|index| {
@@ -851,6 +851,32 @@ fn property_sites_past_the_site_space_share_an_uncached_site() {
     let total = vm.own_property(vm.realm.globals, name).unwrap();
     let expected = 2 * (sites / 2 * 3 + sites % 2);
     assert_eq!(total.as_number(), Some(expected as f64));
+}
+
+#[test]
+fn name_shared_sites_keep_loads_apart_from_stores() {
+    // Past the unique sites, a load of `a` from a read-only field and an inherited getter
+    // records entries a store of `a` must not take: the store fails or runs the setter.
+    let filler = (0..usize::from(crate::bytecode::UNIQUE_CACHE_SITES))
+        .map(|_| "o.z;")
+        .collect::<String>();
+    let source = format!(
+        "var o = {{ z: 0 }}; function filler() {{ {filler} }}\n\
+         var ro = Object.defineProperty({{}}, 'a', {{ value: 5, writable: false }});\n\
+         var calls = 0; var proto = {{ get a() {{ return 7; }}, set a(v) {{ calls += v; }} }};\n\
+         var child = Object.create(proto);\n\
+         function read(x) {{ return x.a; }} function write(x, v) {{ x.a = v; }}\n\
+         var seen = '';\n\
+         for (var i = 0; i < 4; i++) {{ seen += read(ro) + ',' + read(child) + ';'; write(ro, 9); write(child, 1); }}\n\
+         var result = seen + calls + ':' + ro.a + ':' + Object.keys(child).length;"
+    );
+    let program = Engine::specialize(&source, "name-shared-sites.js").unwrap();
+    assert_eq!(program.cache_sites, crate::bytecode::SHARED_UNCACHED_SITE + 1);
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("result");
+    let result = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(&*vm.to_string(&program, result).unwrap(), "5,7;5,7;5,7;5,7;4:5:0");
 }
 
 #[test]
@@ -10919,17 +10945,17 @@ fn js_jit_compiles_cached_numeric_kind_field_switches() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
-fn js_jit_lowers_guarded_numeric_field_reads_into_arithmetic() {
+fn js_jit_lowers_guarded_numeric_field_reads_from_nonzero_formal() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
-          function twice(node, scale) { return node.value * scale; }
+          function twice(scale, node) { return node.value * scale; }
           for (let index = 0; index < 40; index++) {
-            if (twice({value: index}, 2) !== index * 2) throw Error('numeric field result');
+            if (twice(2, {value: index}) !== index * 2) throw Error('numeric field result');
           }
           let reads = 0;
           const accessor = { get value() { reads++; return 7; } };
-          if (twice(accessor, 2) !== 14 || reads !== 1) throw Error('accessor fallback');
-          if (twice({value: '7'}, 2) !== 14) throw Error('cache replacement fallback');
+          if (twice(2, accessor) !== 14 || reads !== 1) throw Error('accessor fallback');
+          if (twice(2, {value: '7'}) !== 14) throw Error('cache replacement fallback');
         "#,
         "js-jit-guarded-field-arithmetic.js",
     ))
@@ -10956,6 +10982,10 @@ fn js_jit_lowers_guarded_numeric_field_reads_into_arithmetic() {
     };
     assert_eq!(compiled.numeric_field_inputs().len(), 1);
     assert_eq!(compiled.params(), 2);
+    assert_eq!(
+        compiled.numeric_field_inputs()[0].receiver,
+        super::js_compiled::JsJitFieldReceiver::Parameter(1)
+    );
     assert!(compiled.native_entries() >= 9);
 }
 

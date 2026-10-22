@@ -12,7 +12,6 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod snapshot;
-pub(crate) use snapshot::CellDecoder;
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
 /// changed: its shape, prototype or integrity changes, and at every collection, after which a
@@ -810,6 +809,9 @@ impl Native {
                 | Self::StringToUpperCase
                 | Self::StringToLowerCase
                 | Self::StringConcat
+                | Self::StringRepeat
+                | Self::StringPadStart
+                | Self::StringPadEnd
         )
     }
 
@@ -881,6 +883,23 @@ impl Native {
     /// call-forwarding natives push their target as a frame there (and run under a
     /// forwarding boundary), direct `eval` reads the calling instruction, and `with` entry
     /// and exit change the running frame's object environment.
+    /// Whether the native observes the frame stack only by calling guest code, capturing an
+    /// error's stack or making a collection due (`Host::host_function_runs_beside_activations`
+    /// for a host's), so a lane calls it with its activations frameless.
+    pub(crate) fn runs_beside_activations(self) -> bool {
+        matches!(
+            self,
+            Self::ObjectLiteralPrototype
+                | Self::ObjectKeys
+                | Self::ObjectDefineProperty
+                | Self::ObjectGetPrototypeOf
+                | Self::StringSplit
+                | Self::JsonStringify
+                | Self::ParseInt
+                | Self::ArrayShift
+        )
+    }
+
     pub(crate) fn runs_from_lane(self) -> bool {
         !matches!(
             self,
@@ -3010,7 +3029,20 @@ pub(crate) struct RegExpMeta {
     pub(crate) flags: crate::vm::RegExpFlags,
     // One constructor identity owns creation realm and legacy eligibility.
     pub(crate) legacy_constructor: RegExpLegacyOwner,
-    pub(crate) matcher: Rc<quench_regexp::Regex>,
+    pub(crate) matcher: RegExpMatcher,
+}
+
+/// A RegExp's compiled matcher, or none yet: a RegExp restored from a snapshot compiles its
+/// pattern on first use (`Vm::regexp_matcher`). A snapshot holds every pattern its builtins
+/// create, which a run seldom executes; compiling them all was 5% of restoring the preloaded
+/// startup snapshot (x86_64, 2026-10-22).
+#[derive(Clone, Default)]
+pub(crate) struct RegExpMatcher(pub(crate) std::cell::OnceCell<Rc<quench_regexp::Regex>>);
+
+impl RegExpMatcher {
+    pub(crate) fn compiled(matcher: Rc<quench_regexp::Regex>) -> Self {
+        Self(std::cell::OnceCell::from(matcher))
+    }
 }
 
 impl std::fmt::Debug for RegExpMeta {

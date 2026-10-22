@@ -1,6 +1,34 @@
 use smallvec::SmallVec;
 
 pub(crate) const INTRINSIC_REGEXP_BINDING: &str = "\0quench:intrinsic-regexp";
+
+/// The native an engine-internal intrinsic name stands for: a by-name read of it resolves to
+/// that native before consulting any binding (`Vm::intrinsic_name_value`), and no source
+/// identifier can spell it, so the read observes no scope.
+pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
+    use crate::heap::Native;
+    Some(match name {
+        "\0quench:dynamic-import" => Native::DynamicImport,
+        "\0quench:intrinsic-promise" => Native::Promise,
+        "\0quench:super-get" => Native::ReflectGet,
+        "\0quench:super-set" => Native::SuperSet,
+        "\0quench:super-base" => Native::ReflectGetPrototypeOf,
+        "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
+        "\0quench:object-define-property" => Native::ObjectDefineProperty,
+        "\0quench:object-freeze" => Native::ObjectFreeze,
+        // The iteration helpers each realm also installs on its global object.
+        "\0quench:iterator-close" => Native::IteratorClose,
+        "\0quench:for-in-keys" => Native::ForInKeys,
+        "\0quench:for-in-key-is-enumerable" => Native::ForInKeyIsEnumerable,
+        _ => return None,
+    })
+}
+
+/// Whether a by-name read of `name` is an intrinsic's (`intrinsic_name_native` or the RegExp
+/// intrinsic), which reads no binding.
+pub(crate) fn is_intrinsic_name(name: &str) -> bool {
+    name == INTRINSIC_REGEXP_BINDING || intrinsic_name_native(name).is_some()
+}
 /// The engine-internal global a `with` statement calls to enter its object scope.
 pub(crate) const WITH_ENTER_BINDING: &str = "\0quench:with-enter";
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
@@ -74,6 +102,16 @@ pub(crate) const RETURN_REGISTER: Register = 1 << 15;
 /// past the range this last one, for which the VM never records a cache entry, so those
 /// sites always take the uncached lookup.
 pub(crate) const SHARED_UNCACHED_SITE: u16 = u16::MAX - 1;
+/// The sites below `SHARED_UNCACHED_SITE` a program shares by property name once its
+/// `UNIQUE_CACHE_SITES` run out: every named load, or every named store, of one atom past
+/// that point names the same one (`Compiler::name_shared_cache_site`). A site's entries are
+/// right for its single atom whichever instruction records them; the loads and stores of a
+/// name keep separate sites, since a load's entry (a read-only field, an inherited holder)
+/// is no store's. TypeScript's 3.6 MB bundle runs out of unique sites before its node and
+/// symbol constructors, whose `this` field adds went uncached.
+pub(crate) const NAME_SHARED_CACHE_SITES: u16 = 8192;
+/// The sites a program numbers one per instruction, below the name-shared ones.
+pub(crate) const UNIQUE_CACHE_SITES: u16 = SHARED_UNCACHED_SITE - NAME_SHARED_CACHE_SITES;
 pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
 pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 pub(crate) const INLINE_OBJECT_SITE_ATOMS: usize = 2;
@@ -1840,7 +1878,9 @@ impl Function {
             || self.is_generator
             || self.is_class_constructor
             || self.derived_constructor
-            || self.class_initializer
+            // A field initializer or static block keeps its instance's implicit bindings; an
+            // arrow inside one (also `class_initializer`) binds none of its own.
+            || (self.class_initializer && !self.is_arrow)
             || self.instance_initializer.is_some()
             || self.inherited_with_scope
             || !self.binding_sites.is_empty()
@@ -1848,8 +1888,10 @@ impl Function {
                 matches!(
                     instruction.op(),
                     Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
-                ) && usize::try_from(instruction.atom_index())
-                    .is_ok_and(|atom| atom >= atoms.len() || atoms[atom].starts_with('\0'))
+                ) && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
+                    atom >= atoms.len()
+                        || atoms[atom].starts_with('\0') && !is_intrinsic_name(&atoms[atom])
+                })
                     || matches!(
                         instruction.op(),
                         Op::ResolveName
@@ -1947,9 +1989,9 @@ impl Function {
                 .count();
             // Plain but for an `arguments` binding.
             // An arrow's `this` is its environment's, which its activation binds
-            // (`Vm::lexical_activation_this`); one reaching `super` keeps its frame.
+            // (`Vm::lexical_activation_this`). One that reaches `super` reads a hidden name
+            // (`activation_binding_reads`) or its home as a capture, as any closure reads one.
             let ordinary = self.parent.is_some()
-                && !(self.is_arrow && self.super_home_atom.is_some())
                 && !self.derived_constructor
                 && !self.rest
                 && self.self_binding_slot.is_none()
@@ -2140,15 +2182,21 @@ impl Function {
         let Some(slot) = self.arguments_slot else {
             return false;
         };
+        let instructions = self.instructions().collect::<Vec<_>>();
+        // A mapped object's elements alias the parameters; its `length` does not, so a body
+        // that reads only `arguments.length` cannot observe the mapping.
+        let reads_only_length = instructions.iter().all(|instruction| {
+            instruction.op() == Op::ArgumentsLength
+                || !instruction.addressed_local_slots().any(|addressed| addressed == slot)
+        });
         if self.is_generator
             || self.is_async
-            || (self.arguments_are_mapped() && self.params != 0)
+            || (self.arguments_are_mapped() && self.params != 0 && !reads_only_length)
             || self.local_registers.iter().any(|entry| entry.local == slot)
             || self.has_dynamic_scope_access()
         {
             return false;
         }
-        let instructions = self.instructions().collect::<Vec<_>>();
         let mut forwarded = false;
         for (pc, instruction) in instructions.iter().enumerate() {
             if matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv) {
@@ -3201,6 +3249,11 @@ impl ResidualProgram {
 
     /// Decodes `encode_trusted`'s bytes into a program proven valid: this build's compiler
     /// output, which the host keys by build and whose checksum held.
+    /// `decode_trusted`, with the program's atoms named by `intern`'s ids.
+    pub(crate) fn decode_trusted_interned(bytes: KeptBytes, intern: &mut dyn FnMut(&str) -> u32) -> Result<Self, String> {
+        binary::decode_trusted_program_interned(bytes, intern)
+    }
+
     pub(crate) fn decode_trusted(bytes: KeptBytes) -> Result<Self, String> {
         let program = binary::decode_trusted_program(bytes)?;
         program.validated.establish();
