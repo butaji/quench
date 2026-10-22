@@ -117,12 +117,12 @@ impl<H: Host> Vm<H> {
         self.set_builtin_named(program, object, "keys", Native::ObjectKeys)?;
         self.global(
             program,
-            "\0quench:for-in-keys",
+            crate::bytecode::FOR_IN_KEYS_BINDING,
             self.native_value(Native::ForInKeys),
         )?;
         self.global(
             program,
-            "\0quench:for-in-key-is-enumerable",
+            crate::bytecode::FOR_IN_KEY_IS_ENUMERABLE_BINDING,
             self.native_value(Native::ForInKeyIsEnumerable),
         )?;
         let proxy = self.native_value(Native::Proxy);

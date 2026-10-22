@@ -6666,8 +6666,11 @@ script_handler! {
             .activations
             .last()
             .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+        // An internal name is no binding source text can declare, except the internal globals
+        // the realm installs on its global object, which a static lookup reads as any other.
         let global = vm.programs.unresolved_names_are_global(unsafe { (*cx).program }, function)
-            && !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
+            && (!vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
+                || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&vm.atom_name(i.imm())))
             && code.function_get(function as usize).is_some_and(|function| {
                 function.names_resolve_statically(code)
             });
@@ -7146,7 +7149,8 @@ fn lane_promise_native<H: Host>(
 /// (`Vm::plain_array_iterator_next`), which allocates its result, an object's own
 /// property query by a string key (`Vm::plain_own_property_query`), and a dense array's
 /// `splice` (`Vm::plain_array_splice`, which allocates the removed array), `unshift`
-/// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), `Object.hasOwn`,
+/// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), for-in's per-key
+/// check (`Vm::plain_for_in_key_is_enumerable`), `Object.hasOwn`,
 /// `Object.is`, `Number.isNaN` and `Symbol.for` of a string, and the Map and Set mutators on their own collections
 /// (`Vm::plain_collection_mutation`). `None` leaves any other
 /// call to `lane_call_native`.
@@ -7178,6 +7182,7 @@ fn lane_pure_native<H: Host>(
         }
         Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
         Native::ArrayShift => vm.plain_array_shift(receiver),
+        Native::ForInKeyIsEnumerable => vm.plain_for_in_key_is_enumerable(code, *args.first()?, *args.get(1)?),
         Native::ObjectHasOwn => vm.plain_own_property_query(
             code,
             Native::ObjectPrototypeHasOwnProperty,
