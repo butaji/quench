@@ -22,6 +22,7 @@ const TRACE_CALLBACK_WRAPPER: &str = r#"(function(complete, prefix, context, cal
 })"#;
 const CHANNEL_API_FACTORY: &str = r#"(function(api, traceNames, isPromise, SafeMap, SafeWeakMap) {
   const channels = new SafeMap();
+  const objectSetPrototypeOf = Object.setPrototypeOf;
   const channelStores = new SafeWeakMap();
   const promisePrototype = Promise.prototype;
   const promisePrototypeThen = promisePrototype.then;
@@ -45,21 +46,41 @@ const CHANNEL_API_FACTORY: &str = r#"(function(api, traceNames, isPromise, SafeM
   const restoreStores = (previous) => {
     for (const [store, value] of previous) store.enterWith(value);
   };
+  // As Node's `Channel` and `ActiveChannel`: a channel's prototype says whether it has a
+  // subscriber or bound store, derived after each change to either, so a read of
+  // `hasSubscribers` runs no lookup.
+  const markActivity = (channel) => {
+    const active = api.hasSubscribers(channel.name) || channelStores.get(channel).size > 0;
+    objectSetPrototypeOf(channel, active ? ActiveChannel.prototype : Channel.prototype);
+  };
   class Channel {
     constructor(name) {
       this.name = name;
       channelStores.set(this, new SafeMap());
+      channels.set(name, this);
     }
     get hasSubscribers() {
-      return api.hasSubscribers(this.name) || channelStores.get(this).size > 0;
+      return false;
     }
-    subscribe(callback) { return api.subscribe(this.name, callback); }
-    unsubscribe(callback) { return api.unsubscribe(this.name, callback); }
+    subscribe(callback) {
+      api.subscribe(this.name, callback);
+      markActivity(this);
+    }
+    unsubscribe(callback) {
+      const removed = api.unsubscribe(this.name, callback);
+      markActivity(this);
+      return removed;
+    }
     publish(message) { return api.publish(this.name, message); }
     bindStore(store, transform) {
       channelStores.get(this).set(store, transform);
+      markActivity(this);
     }
-    unbindStore(store) { return channelStores.get(this).delete(store); }
+    unbindStore(store) {
+      const removed = channelStores.get(this).delete(store);
+      markActivity(this);
+      return removed;
+    }
     withStoreScope(message = {}) {
       const previous = enterStores(this, message);
       let active = true;
@@ -87,16 +108,25 @@ const CHANNEL_API_FACTORY: &str = r#"(function(api, traceNames, isPromise, SafeM
       }
     }
   }
+  class ActiveChannel extends Channel {
+    get hasSubscribers() {
+      return true;
+    }
+  }
   function channel(name) {
     if (typeof name !== 'string') {
       throw new TypeError('The "name" argument must be of type string');
     }
-    let value = channels.get(name);
-    if (value === undefined) {
-      value = new Channel(name);
-      channels.set(name, value);
-    }
-    return value;
+    return channels.get(name) ?? new Channel(name);
+  }
+  function subscribe(name, callback) {
+    return channel(name).subscribe(callback);
+  }
+  function unsubscribe(name, callback) {
+    return channel(name).unsubscribe(callback);
+  }
+  function hasSubscribers(name) {
+    return channels.get(name)?.hasSubscribers ?? false;
   }
   class TracingChannel {
     constructor(name) {
@@ -105,7 +135,8 @@ const CHANNEL_API_FACTORY: &str = r#"(function(api, traceNames, isPromise, SafeM
       }
     }
     get hasSubscribers() {
-      return traceNames.some((event) => this[event].hasSubscribers);
+      return this.start.hasSubscribers || this.end.hasSubscribers || this.asyncStart.hasSubscribers ||
+        this.asyncEnd.hasSubscribers || this.error.hasSubscribers;
     }
     traceSync(callback, context = {}, thisArg, ...args) {
       if (!this.hasSubscribers) return Reflect.apply(callback, thisArg, args);
@@ -239,7 +270,7 @@ const CHANNEL_API_FACTORY: &str = r#"(function(api, traceNames, isPromise, SafeM
     }
     return new TracingChannel(name);
   }
-  return { Channel, channel, tracingChannel };
+  return { Channel, channel, tracingChannel, subscribe, unsubscribe, hasSubscribers };
 })"#;
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
@@ -253,15 +284,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         return Ok(module);
     }
     let module = context.object_rooted()?;
-    install_operation(context, module, "subscribe", "diagnosticsSubscribe")?;
-    install_operation(context, module, "unsubscribe", "diagnosticsUnsubscribe")?;
-    install_operation(
-        context,
-        module,
-        "hasSubscribers",
-        "diagnosticsHasSubscribers",
-    )?;
-    install_operation(context, module, "publish", "diagnosticsPublish")?;
+    // The host's subscriber lists, which channels publish through and HTTP reads.
+    let api = context.object_rooted()?;
+    install_operation(context, api, "subscribe", "diagnosticsSubscribe")?;
+    install_operation(context, api, "unsubscribe", "diagnosticsUnsubscribe")?;
+    install_operation(context, api, "hasSubscribers", "diagnosticsHasSubscribers")?;
+    install_operation(context, api, "publish", "diagnosticsPublish")?;
     let is_promise =
         context.host_function(crate::host::shared_vm::operation("diagnosticsIsPromise"))?;
     let factory = context
@@ -277,13 +305,14 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let safe_weak_map = property(context, primordials, "SafeWeakMap")?;
     let undefined = context.undefined();
     let channel_api = context.call_rooted(
-        factory, undefined, &[module, trace_names, is_promise, safe_map, safe_weak_map],
+        factory, undefined, &[api, trace_names, is_promise, safe_map, safe_weak_map],
     )?;
-    for name in ["Channel", "channel", "tracingChannel"] {
+    for name in ["Channel", "channel", "tracingChannel", "subscribe", "unsubscribe", "hasSubscribers"] {
         let value = property(context, channel_api, name)?;
         set(context, module, name, value)?;
     }
     context.release_root(trace_names);
+    context.release_root(api);
     context.release_root(channel_api);
     context.release_root(factory);
     let retained = context.retain(module)?;

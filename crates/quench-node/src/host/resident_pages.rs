@@ -71,8 +71,10 @@ pub fn release_read_only_pages() {
     }
     // Held while releasing, so no tracked mapping is unmapped meanwhile.
     if let Ok(mappings) = TRACKED_MAPPINGS.lock() {
-        for &(start, length) in mappings.iter() {
-            // SAFETY: a tracked mapping is a live, read-only private file mapping.
+        let spans = mappings.arena.as_ref().map(Arena::used).into_iter();
+        for (start, length) in spans.chain(mappings.outside.iter().copied()) {
+            // SAFETY: a tracked mapping is a live, read-only private file mapping, and the
+            // arena's used span holds only such mappings and reserved, inaccessible pages.
             unsafe {
                 libc::madvise(start as *mut libc::c_void, length, libc::MADV_DONTNEED);
             }
@@ -80,30 +82,118 @@ pub fn release_read_only_pages() {
     }
 }
 
-/// Read-only file mappings the host made after start-up (compile-cache entries), as start
-/// and length, released with the segments above.
+/// Read-only file mappings the host made after start-up (compile-cache entries), released with
+/// the segments above. They are mapped side by side in one reserved span (`Arena`), which a
+/// release discards with one call: a run that maps hundreds of entries otherwise made a call
+/// for each at every release (the chalk npm scenario, x86_64 VM, 2026-10-22: 21,900 madvise
+/// calls in a 78 ms run).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-static TRACKED_MAPPINGS: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mutex::new(Vec::new());
+static TRACKED_MAPPINGS: std::sync::Mutex<TrackedMappings> =
+    std::sync::Mutex::new(TrackedMappings { arena: None, inside: Vec::new(), outside: Vec::new() });
 
-/// Treats the read-only private file mapping at `start` as the segments above: faults map
-/// only the touched page, and releases discard its pages. Call `untrack_read_only_mapping`
-/// before unmapping it.
+/// The tracked mappings, as start and length: those in the arena and those mapped elsewhere
+/// once it was full or could not be reserved.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub fn track_read_only_mapping(start: usize, length: usize) {
-    // A mapping aligned to a huge page maps a whole huge folio of a cached file on one fault
-    // (a 5 MB startup snapshot was 4 MB resident after its records were first read).
-    // SAFETY: advice on a live mapping the caller owns; it changes only how faults map.
-    unsafe {
-        libc::madvise(start as *mut libc::c_void, length, libc::MADV_NOHUGEPAGE);
-    }
-    register_touched_pages_only(start, length);
-    if let Ok(mut mappings) = TRACKED_MAPPINGS.lock() {
-        mappings.push((start, length));
+struct TrackedMappings {
+    arena: Option<Arena>,
+    inside: Vec<(usize, usize)>,
+    outside: Vec<(usize, usize)>,
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+impl TrackedMappings {
+    fn contains(&self, start: usize, end: usize) -> bool {
+        self.inside.iter().chain(&self.outside).any(|&(mapping, length)| mapping <= start && end <= mapping + length)
     }
 }
 
-/// Releases the whole pages of `bytes` when they lie in a mapping `track_read_only_mapping`
-/// tracked; other bytes are left alone.
+/// Address space reserved inaccessible for the tracked mappings, filled from its start: a
+/// mapping replaces reserved pages, and an unmapped one is reserved again, never reused.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+struct Arena {
+    start: usize,
+    end: usize,
+    next: usize,
+}
+
+/// The arena's reserved address space. Reserving costs no memory, only addresses; a process
+/// that maps more falls back to mapping each entry on its own.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const ARENA_BYTES: usize = 1 << 32;
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+impl Arena {
+    fn reserve() -> Option<Self> {
+        // SAFETY: a fresh inaccessible anonymous reservation; nothing else uses its addresses.
+        let start = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                ARENA_BYTES,
+                libc::PROT_NONE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+                -1,
+                0,
+            )
+        };
+        (start != libc::MAP_FAILED).then(|| Self { start: start as usize, end: start as usize + ARENA_BYTES, next: start as usize })
+    }
+
+    /// The span its mappings have taken, as start and length.
+    fn used(&self) -> (usize, usize) {
+        (self.start, self.next - self.start)
+    }
+
+    fn holds(&self, address: usize) -> bool {
+        (self.start..self.end).contains(&address)
+    }
+}
+
+/// Maps `length` bytes of the open file `fd` read-only and private, a tracked mapping: faults
+/// map only the touched page, and releases discard its pages. It lies in the arena while it has room, elsewhere otherwise. None when mapping
+/// fails.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn map_read_only_file(fd: libc::c_int, length: usize) -> Option<usize> {
+    let mut mappings = TRACKED_MAPPINGS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if mappings.arena.is_none() {
+        mappings.arena = Arena::reserve();
+    }
+    let span = length.next_multiple_of(page_size());
+    let slot = mappings.arena.as_ref().filter(|arena| arena.end - arena.next >= span).map(|arena| arena.next);
+    // SAFETY: a read-only private mapping of an open file, either over reserved arena pages
+    // nothing else uses or at an address the kernel picks.
+    let address = unsafe {
+        libc::mmap(
+            slot.map_or(std::ptr::null_mut(), |slot| slot as *mut libc::c_void),
+            length,
+            libc::PROT_READ,
+            libc::MAP_PRIVATE | if slot.is_some() { libc::MAP_FIXED } else { 0 },
+            fd,
+            0,
+        )
+    };
+    if address == libc::MAP_FAILED {
+        return None;
+    }
+    let address = address as usize;
+    // A mapping aligned to a huge page maps a whole huge folio of a cached file on one fault
+    // (a 5 MB startup snapshot was 4 MB resident after its records were first read).
+    // SAFETY: advice on the live mapping just made; it changes only how faults map.
+    unsafe {
+        libc::madvise(address as *mut libc::c_void, length, libc::MADV_NOHUGEPAGE);
+    }
+    register_touched_pages_only(address, length);
+    match mappings.arena.as_mut().filter(|_| slot.is_some()) {
+        Some(arena) => {
+            arena.next += span;
+            mappings.inside.push((address, length));
+        }
+        None => mappings.outside.push((address, length)),
+    }
+    Some(address)
+}
+
+/// Releases the whole pages of `bytes` when they lie in a mapping `map_read_only_file`
+/// made; other bytes are left alone.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_tracked_bytes(bytes: &[u8]) {
     let page = page_size();
@@ -116,7 +206,7 @@ pub fn release_tracked_bytes(bytes: &[u8]) {
     let Ok(mappings) = TRACKED_MAPPINGS.lock() else {
         return;
     };
-    if mappings.iter().any(|&(mapping, length)| mapping <= start && end <= mapping + length) {
+    if mappings.contains(start, end) {
         // SAFETY: the range lies in a live, read-only private file mapping, whose discarded
         // pages fault back in from the file.
         unsafe {
@@ -125,14 +215,28 @@ pub fn release_tracked_bytes(bytes: &[u8]) {
     }
 }
 
-/// Unmaps a mapping `track_read_only_mapping` tracked, once no release can reach it.
+/// Unmaps a mapping `map_read_only_file` made, once no release can reach it.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn unmap_tracked_mapping(start: usize, length: usize) {
     let mut mappings = TRACKED_MAPPINGS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    mappings.retain(|&mapping| mapping != (start, length));
-    // SAFETY: the caller owns the mapping, and the held lock keeps releases off it.
+    mappings.inside.retain(|&mapping| mapping != (start, length));
+    mappings.outside.retain(|&mapping| mapping != (start, length));
+    let in_arena = mappings.arena.as_ref().is_some_and(|arena| arena.holds(start));
+    // SAFETY: the caller owns the mapping, and the held lock keeps releases off it. An arena
+    // mapping's pages are reserved again, so the arena's used span stays wholly mapped.
     unsafe {
-        libc::munmap(start as *mut libc::c_void, length);
+        if in_arena {
+            libc::mmap(
+                start as *mut libc::c_void,
+                length,
+                libc::PROT_NONE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE | libc::MAP_FIXED,
+                -1,
+                0,
+            );
+        } else {
+            libc::munmap(start as *mut libc::c_void, length);
+        }
     }
 }
 
@@ -147,7 +251,14 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_code_and_data() {
     release_read_only_pages();
-    for (start, end) in file_mappings(&[DATA_MAPPING]) {
+    // The tracked mappings were just released whole; only the others are paged out.
+    let tracked = |start: usize| {
+        TRACKED_MAPPINGS.lock().is_ok_and(|mappings| {
+            mappings.arena.as_ref().is_some_and(|arena| arena.holds(start))
+                || mappings.outside.iter().any(|&(mapping, _)| mapping == start)
+        })
+    };
+    for (start, end) in file_mappings(&[DATA_MAPPING]).into_iter().filter(|&(start, _)| !tracked(start)) {
         // SAFETY: paging out never changes a mapping's contents.
         unsafe {
             libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_PAGEOUT);
@@ -449,8 +560,12 @@ fn register_touched_pages_only(start: usize, length: usize) {
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn map_touched_pages_only() {}
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-pub fn track_read_only_mapping(_start: usize, _length: usize) {}
+#[cfg(all(unix, not(all(target_os = "linux", target_arch = "x86_64"))))]
+pub fn map_read_only_file(fd: libc::c_int, length: usize) -> Option<usize> {
+    // SAFETY: a fresh read-only private mapping of an open file.
+    let address = unsafe { libc::mmap(std::ptr::null_mut(), length, libc::PROT_READ, libc::MAP_PRIVATE, fd, 0) };
+    (address != libc::MAP_FAILED).then_some(address as usize)
+}
 
 #[cfg(all(unix, not(all(target_os = "linux", target_arch = "x86_64"))))]
 pub fn unmap_tracked_mapping(start: usize, length: usize) {
