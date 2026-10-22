@@ -3764,6 +3764,8 @@ fn lane_getter_activation<H: Host>(
     i: &LaneInstruction,
 ) -> Result<(Registers, Ip), Ip> {
     if !unsafe { (*cx).script_calls } {
+        #[cfg(feature = "profile-lane-exits")]
+        super::lane_exits::record_detail("getter decline script_calls".into());
         return Err(exit(ip));
     }
     // SAFETY: the context's program outlives the lane run.
@@ -3784,6 +3786,18 @@ fn lane_getter_activation<H: Host>(
         unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }.map(|base| (base, i.imm(), i.c))
     };
     let vm = unsafe { vm(cx) };
+    #[cfg(feature = "profile-lane-exits")]
+    if let Some((base, atom, cache)) = read
+        && vm.cached_field_getter(base, atom, vm.field_cache_index(cache)).is_none()
+    {
+        super::lane_exits::record_detail(format!(
+            "getter decline uncached {} recorded={}",
+            &code.atoms[atom as usize],
+            vm.field_site_getter(cache)
+        ));
+    } else if read.is_none() {
+        super::lane_exits::record_detail("getter decline base".into());
+    }
     let Some((base, getter)) = read.and_then(|(base, atom, cache)| {
         Some((base, vm.cached_field_getter(base, atom, vm.field_cache_index(cache))?))
     }) else {
@@ -3817,6 +3831,12 @@ fn lane_activate_getter<H: Host>(
         .map(|target| unsafe { *target })
         .filter(|target| target.entry == CallEntry::Activates && !lane_constructing(vm, getter))
     else {
+        #[cfg(feature = "profile-lane-exits")]
+        super::lane_exits::record_detail(format!(
+            "getter decline target cross={:?} constructing={}",
+            vm.cross_call_entry(getter).map(|target| unsafe { (*target).entry } as u8),
+            lane_constructing(vm, getter)
+        ));
         return Err(exit(ip));
     };
     let Some(this) = lane_call_this(vm, &target, base) else {
