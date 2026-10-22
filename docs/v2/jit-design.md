@@ -1117,3 +1117,23 @@ Candidate-first pairs were added to check run-order bias. Peer scores varied
 sharply, so this supports a local async-fs improvement only; it is not a
 JetStream peer win or qualification. Reports and methodology are in
 `evidence/jit-jetstream3-2026-10-22/async-fs-dataview-boolean-fast-path/`.
+
+A follow-up removed the unused body-pointer word from each Wasm
+indirect-call-site certificate in default mode, moving it to a separate array
+only for the opt-in body-cache experiment. The SQLite Wasm three-round screen
+validated both executables but did not show an RSS reduction (170,295,296 B
+control; 170,586,112 B candidate). The candidate patch was dropped because the
+8-byte-per-site saving was below useful peak-RSS resolution. Full reports are
+in `evidence/jit-jetstream3-2026-10-22/sqlite-reference-cache-compact/`.
+
+The async-fs native call dispatcher also previously read the same callee cell
+to check for `Function.prototype.call` and again to classify the native. A
+candidate now classifies the native once and reuses that value for all fast
+handlers, retaining generic fallback for other callees. Six interleaved
+one-round pairs all validated output. Median paired Quench Score ratio was
+1.073 (geometric mean 1.117), while Quench peak-RSS deltas had a median of
+zero. The same-run Bun/Node normalization had a 0.974 geometric mean due to
+large peer variation, so the sample does not establish a causal score or RSS
+win. Keep interpreting it as a low-risk local candidate while broader JIT
+coverage remains the larger opportunity. Reports are in
+`evidence/jit-jetstream3-2026-10-22/async-fs-native-dispatch-dedup/`.
