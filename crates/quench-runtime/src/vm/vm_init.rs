@@ -100,6 +100,7 @@ impl<H: Host> Vm<H> {
             profile: Profile,
             shape_slot_memo: Default::default(),
             plain_copy_shapes: Default::default(),
+            typed_array_geometry: Default::default(),
             function_name_shapes: Default::default(),
             symbol_write_proofs: Default::default(),
             symbol_load_proofs: Default::default(),

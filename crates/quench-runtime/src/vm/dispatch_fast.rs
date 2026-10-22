@@ -3924,6 +3924,12 @@ fn lane_cached_field<H: Host>(
 ) -> Option<Value> {
     let probe = {
         let vm = unsafe { vm(cx) };
+        // A typed array's geometry, which no field cache records (`AtomClass::VIRTUAL_FIELD`).
+        if vm.atom_class(atom).contains(super::object::AtomClass::VIRTUAL_FIELD)
+            && let Some(value) = vm.typed_array_geometry_read(object, atom)
+        {
+            return Some(value);
+        }
         vm.prepare_named_function_info_lookup(object, atom);
         vm.cached_field_hit(code, object, site)
     };
