@@ -172,7 +172,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn emit_with_exit(&mut self) {
-        let exit = self.load_name("\0quench:with-exit");
+        let exit = self.load_name(crate::bytecode::WITH_EXIT_BINDING);
         let ignored = self.reg();
         self.emit(Op::Call, ignored, exit, exit, 0);
     }
@@ -196,7 +196,7 @@ impl FunctionCompiler<'_, '_> {
             return;
         }
         let start = self.code.len() as u32;
-        let close_fn = self.load_name("\0quench:iterator-close");
+        let close_fn = self.load_name(crate::bytecode::ITERATOR_CLOSE_BINDING);
         let iterators = self.iterator_closures[target_depth..].to_vec();
         for closure in iterators.into_iter().rev() {
             let iterator = self.load_atom(closure.iterator);
@@ -223,7 +223,7 @@ impl FunctionCompiler<'_, '_> {
             return;
         }
         let start = self.code.len() as u32;
-        let close_fn = self.load_name("\0quench:iterator-close");
+        let close_fn = self.load_name(crate::bytecode::ITERATOR_CLOSE_BINDING);
         for closure in closures {
             let iterator = self.load_atom(closure.iterator);
             let ignored = self.reg();

@@ -655,7 +655,7 @@ impl<H: Host> Vm<H> {
         self.install_iterators(program)?;
         self.global(
             program,
-            "\0quench:iterator-close",
+            crate::bytecode::ITERATOR_CLOSE_BINDING,
             self.native_value(Native::IteratorClose),
         )?;
         self.global(program, "undefined", Value::UNDEFINED)?;
@@ -685,7 +685,7 @@ impl<H: Host> Vm<H> {
         )?;
         self.global(
             program,
-            "\0quench:with-exit",
+            crate::bytecode::WITH_EXIT_BINDING,
             self.native_value(Native::WithExit),
         )?;
         self.install_date(program)?;
