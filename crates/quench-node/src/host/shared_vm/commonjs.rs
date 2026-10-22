@@ -134,7 +134,9 @@ pub(super) fn require(
             | BuiltinModule::StringDecoder
             | BuiltinModule::WorkerThreads
             | BuiltinModule::Util
-            | BuiltinModule::ChildProcess),
+            | BuiltinModule::ChildProcess
+            | BuiltinModule::AsyncHooks
+            | BuiltinModule::Crypto),
         ) => {
             return cached_builtin(context, module);
         }
@@ -180,6 +182,8 @@ enum BuiltinModule {
     Url,
     Querystring,
     Events,
+    Crypto,
+    AsyncHooks,
 }
 
 impl BuiltinModule {
@@ -204,6 +208,8 @@ impl BuiltinModule {
             Self::Url => Some("url"),
             Self::Querystring => Some("querystring"),
             Self::Events => Some("events"),
+            Self::Crypto => Some("crypto"),
+            Self::AsyncHooks => Some("async_hooks"),
             Self::Process
             | Self::Assert
             | Self::AssertStrict
@@ -253,6 +259,10 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:querystring", BuiltinModule::Querystring),
     ("events", BuiltinModule::Events),
     ("node:events", BuiltinModule::Events),
+    ("crypto", BuiltinModule::Crypto),
+    ("node:crypto", BuiltinModule::Crypto),
+    ("async_hooks", BuiltinModule::AsyncHooks),
+    ("node:async_hooks", BuiltinModule::AsyncHooks),
 ];
 
 fn cached_builtin(
@@ -302,6 +312,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Url => crate::modules::url::shared_vm::module(context),
         BuiltinModule::Querystring => crate::modules::querystring::shared_vm::module(context),
         BuiltinModule::Events => crate::modules::events::shared_vm::module(context),
+        BuiltinModule::Crypto => crate::modules::crypto::shared_vm::module(context),
+        BuiltinModule::AsyncHooks => crate::modules::async_hooks::shared_vm::module(context),
         BuiltinModule::Util => crate::modules::util::shared_vm::module(context),
         BuiltinModule::ChildProcess => context.object_rooted(),
         BuiltinModule::Process
@@ -544,7 +556,7 @@ fn load(
                 } else {
                     text
                 };
-                let wrapper = context.evaluate_script_rooted(
+                let wrapper = context.evaluate_specialized_script_rooted(
                     &format!("{WRAPPER_PREFIX}{text}{WRAPPER_SUFFIX}"),
                     &key,
                 )?;

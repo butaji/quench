@@ -4,6 +4,8 @@
 //! consumers such as `assert` can derive equality from that one fact without
 //! exposing implementation fields to JavaScript enumeration.
 
+pub(crate) mod shared_vm;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 

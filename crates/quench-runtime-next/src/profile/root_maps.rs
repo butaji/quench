@@ -9,6 +9,15 @@ impl Profile {
 }
 
 pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
+    if profile.gc_frame_pcs.keys().any(|&(function, pc, _active)| {
+        program
+            .functions
+            .get(function as usize)
+            .is_none_or(|function| pc as usize > function.code.len())
+    }) {
+        eprint!(",\"root_maps\":null,\"root_maps_complete\":false");
+        return;
+    }
     let distinct: FxHashSet<_> = program.register_roots.iter().copied().collect();
     let runs = program
         .functions

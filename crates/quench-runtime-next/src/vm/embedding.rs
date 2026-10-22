@@ -46,6 +46,40 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    pub(crate) fn evaluate_embedding_specialized_script(
+        &mut self,
+        source: &str,
+        name: &str,
+    ) -> Result<Value, JsError> {
+        let parent = self.embedding_program()?;
+        let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
+            .map(|atom| self.atom_name(atom as u32).to_owned())
+            .collect::<Vec<_>>();
+        let mut residual = crate::Engine::specialize_eval_specialized_with_context(
+            source,
+            name,
+            &atom_prefix,
+            false,
+            crate::compile::EvalContext::default(),
+        )
+        .map_err(|diagnostics| {
+                let message = diagnostics
+                    .first()
+                    .map_or("invalid script source".to_owned(), ToString::to_string);
+                self.syntax_error_result(&parent, &message)
+                    .expect_err("script syntax errors must throw")
+            })?;
+        // Dynamic programs have independent compiler cache-site numbering,
+        // while the VM's inline-cache arrays are allocated for the startup
+        // program. Keep the specialization passes, but route dynamic property
+        // accesses through their generic path until caches are program scoped.
+        residual.specialized = false;
+        let Some(program_id) = self.store_dynamic_program(residual) else {
+            return Err(self.type_error(&parent, "dynamic program store is full".into()));
+        };
+        self.run_global_eval_program(&parent, program_id)
+    }
+
     pub(crate) fn parse_embedding_json(&mut self, source: &str) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
         let source = self.heap.alloc(Cell::String(source.into()));
@@ -84,6 +118,11 @@ impl<H: Host> Vm<H> {
     pub(crate) fn create_embedding_object(&mut self) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
         self.call_object_native(&program, Native::ObjectCreate, &[self.object_proto])
+    }
+
+    pub(crate) fn create_embedding_null_object(&mut self) -> Result<Value, JsError> {
+        let program = self.embedding_program()?;
+        self.call_object_native(&program, Native::ObjectCreate, &[Value::NULL])
     }
 
     pub(crate) fn embedding_value(&self, root: RootId) -> Result<Value, JsError> {
