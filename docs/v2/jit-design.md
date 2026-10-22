@@ -1168,3 +1168,26 @@ exact instruction-level interpreter fallback. This is coverage evidence, not
 a performance claim; the diagnostic runs overlapped release-feature builds,
 so their Score and wall-time outputs are excluded. Raw inputs/counters and
 method are in `evidence/jit-jetstream3-2026-10-22/v8-v7-native-coverage/`.
+
+## Bounded `new Array(number)` fast path screen — 2026-10-22
+
+A lane fast path plus direct dense-hole initialization looked promising in an
+initial Richards pair, but that control binary predated the source merge and
+was not comparable. Rebuilding the baseline at the candidate's exact base
+revision reversed the result: across 11 valid fixed-work rounds, outputs were
+identical, but candidate marginal work time was 5.9% slower by paired geometric
+mean (1.059 candidate/baseline), faster in only 2/11 rounds, and median RSS was
+effectively unchanged (12,066,816 vs 12,034,048 bytes). The experiment was
+removed. The runner could not collect IPC/cycle counters, so this remains a
+diagnostic screen; it does not measure JIT mode or qualify JetStream. Raw report
+and provenance are in
+`evidence/jit-jetstream3-2026-10-22/array-length-construction-ab/`.
+
+The next performance work should target suite-scale bottlenecks. Current JIT
+coverage is absent on Richards and sparse on TypeScript, so extend the shared
+compiler with general guarded field and inline-cache call denotations, then
+measure OSR coverage, compilation cost, code size and paired fixture scores.
+For no-JIT, old per-op instruction screens show large dispatch and allocation
+costs in object/closure creation, field/array operations and string/RegExp
+builtins; these need current profiles and fixture-level validation before
+choosing a hot path. No 20% runtime-level gain has been demonstrated yet.
