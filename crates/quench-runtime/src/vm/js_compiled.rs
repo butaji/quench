@@ -36,6 +36,7 @@ pub(super) struct JsJitFieldArgument {
 
 /// A field getter that can return a cached data-property value without
 /// interpreting its `GetField` and `Return` instructions.
+#[derive(Clone, Copy)]
 pub(super) struct JsJitFieldReturn {
     pub(super) cache_site: u16,
     pub(super) return_pc: usize,
@@ -3706,7 +3707,15 @@ fn numeric_operand(
 /// Cheap activation-level filter used before retaining hotness state. The
 /// bytecode scan remains deferred until the function actually crosses the
 /// statistical promotion gate.
+/// Whether the tier may compile `function` of `program`, its own: decided once per function,
+/// since its code and its program never change. Every frame entry and lane call of a function
+/// the tier has not tracked asks, and a fresh scan of its instructions each time had cost the
+/// semver npm scenario 4.6% more instructions in JIT mode than without it.
 pub(super) fn function_candidate(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
+    *function.js_tier_candidate.get_or_init(|| scanned_function_candidate(function, program))
+}
+
+fn scanned_function_candidate(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
     !function.code.is_empty()
         && function.code.len() <= MAX_INSTRUCTIONS
         && (function.wide.is_empty()
@@ -4033,5 +4042,42 @@ fn operand_value(
             Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
         }
         OperandKind::Field | OperandKind::Local => None,
+    }
+}
+
+/// What the tier finds in a function at its entries, before it has a compiled form: the shapes
+/// its candidate filters recognize. Each depends only on the function and its own program,
+/// which never change, so it is derived once per function (`ProgramStore::js_entry_facts`);
+/// re-deriving them at every entry of a function the tier watches had made JIT runs execute
+/// more instructions than interpreted ones (semver npm scenario +4.6%).
+pub(super) struct JsEntryFacts {
+    pub(super) numeric_find: Option<JsJitNumericFind>,
+    pub(super) field_return: Option<JsJitFieldReturn>,
+    pub(super) numeric_loop: bool,
+    pub(super) int32_bitwise: bool,
+    pub(super) int32_identity: bool,
+    pub(super) number_capture: Option<JsJitCaptureArgument>,
+    pub(super) numeric_capture: Option<smallvec::SmallVec<[JsJitCaptureArgument; MAX_CAPTURE_ARGUMENTS]>>,
+    pub(super) field_argument: Option<JsJitFieldArgument>,
+    pub(super) field_reject: bool,
+    pub(super) string_hash_loop: bool,
+    pub(super) string_transform: Option<JsJitStringTransform>,
+}
+
+impl JsEntryFacts {
+    pub(super) fn of(program: &ResidualProgram, function: &Function) -> Self {
+        Self {
+            numeric_find: numeric_find_candidate(function),
+            field_return: cached_this_field_return_candidate(function),
+            numeric_loop: has_numeric_loop_candidate(function),
+            int32_bitwise: has_int32_bitwise_candidate(program, function),
+            int32_identity: int32_identity_return_candidate(program, function).is_some(),
+            number_capture: number_capture_candidate(function),
+            numeric_capture: numeric_capture_candidate(function),
+            field_argument: cached_field_argument_candidate(function),
+            field_reject: is_field_reject_candidate(function),
+            string_hash_loop: has_string_hash_loop_candidate(program, function),
+            string_transform: string_transform_candidate(program, function),
+        }
     }
 }

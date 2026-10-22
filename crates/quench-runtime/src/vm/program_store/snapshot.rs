@@ -26,7 +26,6 @@ impl ProgramStore {
             jit_compiled_artifacts: _,
             jit_mapped_bytes: _,
             js_jit_diagnostics: _,
-            js_jit_numeric_find_candidate: _,
         } = self;
         if !owned_scripts.is_empty() {
             return Err(SnapshotError::unsupported("scripts an embedder compiled and holds"));
@@ -92,6 +91,7 @@ impl ProgramEntry {
             root_slots: _,
             module,
             lane_views: _,
+            js_entry_facts: _,
             lane_deferred: _,
             compiled: _,
             js_tiers: _,
@@ -206,6 +206,7 @@ impl ProgramEntry {
         Ok(Self {
             regexp_literals: vec![None; residual.regexp_literal_sites.len()],
             lane_views: super::LaneViews::default(),
+            js_entry_facts: super::JsEntryFactsTable::default(),
             lane_deferred: vec![std::cell::Cell::new(0); residual.functions.len()],
             residual,
             wasm_signatures: None,
