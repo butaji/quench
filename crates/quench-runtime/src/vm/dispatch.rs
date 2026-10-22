@@ -1584,14 +1584,26 @@ impl<H: Host> Vm<H> {
                         i.construct_arguments()
                 {
                     let callee = self.read(f, i.register_b());
-                    if let Some((id, env, this)) = self.inline_construct_target(p, f, callee) {
+                    if let Some((program, id, env, this)) = self.inline_construct_target(p, f, callee) {
                         let arguments: *const [Value] = self.register_window(f, window);
                         self.frames[f].pc = *pc;
                         self.frames[f].pc_is_resume = true;
                         self.construct_target = Some(ConstructionTarget { callee, new_target: callee });
+                        // A constructor of another program is pushed in its own, as
+                        // `push_in_loop_call` pushes a call; the loop's `PushFrame` saves and
+                        // restores the caller's.
+                        let caller_program = self.active_program;
+                        let callee_residual = if program == caller_program {
+                            None
+                        } else {
+                            self.programs.get(program)
+                        };
+                        if callee_residual.is_some() {
+                            self.set_active_program(program);
+                        }
                         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
                         let pushed = self.push_general_user_frame(
-                            p,
+                            callee_residual.as_deref().unwrap_or(p),
                             id,
                             env,
                             this,
@@ -1599,6 +1611,9 @@ impl<H: Host> Vm<H> {
                             CallContext::user_function(id, callee),
                         );
                         self.construct_target = None;
+                        if pushed.is_err() && callee_residual.is_some() {
+                            self.set_active_program(caller_program);
+                        }
                         return Ok(StepResult::PushFrame {
                             destination: i.result_register(),
                             call_guard: pushed?,
