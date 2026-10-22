@@ -891,8 +891,13 @@ fn for_of_iterator_cleanup_survives_body_temporaries() {
 }
 
 fn global_text(source: &str, name: &str) -> String {
+    global_text_under(crate::MemoryPolicy::default(), source, name)
+}
+
+fn global_text_under(policy: crate::MemoryPolicy, source: &str, name: &str) -> String {
     let program = Engine::specialize(source, "global-text.js").unwrap();
     let mut vm = Vm::new(SilentHost);
+    vm.set_memory_policy(policy);
     vm.execute(&program).unwrap();
     let name = vm.intern_atom(name);
     let value = vm.own_property(vm.realm.globals, name).unwrap();
@@ -1139,8 +1144,10 @@ fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
     // A job leaves the queue before it runs, so a value only its arguments held is
     // collectable while later jobs of the same drain still run: its cleanup is observed
     // inside the await loop instead of never. Each iteration allocates at least one cell,
-    // so the bound lets the drain pass the collection headroom several times.
-    let iterations = 4 * crate::heap::FULL_COLLECTION_ALLOCATION_BOUND;
+    // so the bound lets the drain pass the collection headroom several times. Memory-first
+    // pacing collects soonest, which keeps the drain short.
+    let policy = crate::MemoryPolicy::MemoryFirst;
+    let iterations = 4 * crate::heap::full_collection_allocation_bound(policy);
     let source = format!(
         "var finalized = false, registry = new FinalizationRegistry(function () {{ finalized = true; }});\n\
          function make() {{ var o = {{}}; registry.register(o, 0); return o; }}\n\
@@ -1151,7 +1158,7 @@ fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
            result = String(finalized);\n\
          }})();"
     );
-    assert_eq!(global_text(&source, "result"), "true");
+    assert_eq!(global_text_under(policy, &source, "result"), "true");
 }
 
 #[test]
