@@ -1,7 +1,7 @@
 # Current V8-v7 JIT native-coverage diagnostic
 
 This reruns the four stock V8-v7 workloads against clean source revision
-`2e728c23e8d9d0bca4c23752ea279f4332406ae6` with the production
+`2e728c23ec40f16c44f79f8ec151442110732ee1` with the production
 `quench-node` binary SHA-256
 `9b0b1e9621d3a3200db35d59b08e0d625409db4b23cf0ca16b442b8085418f56`.
 Inputs are the stock scripts archived in the sibling `v8-v7-native-coverage`
