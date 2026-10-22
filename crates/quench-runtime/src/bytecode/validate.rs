@@ -167,7 +167,8 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
         && !function.is_async
         && !function.is_generator
         && !function.derived_constructor
-        && !function.class_initializer
+        // An arrow inside an initializer owns its locals (`compile/arrow.rs`).
+        && !(function.class_initializer && !function.is_arrow)
         && function.simple_parameters
         && !function.rest
         && function.arguments_slot.is_none()
@@ -1258,6 +1259,7 @@ mod tests {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: vec![].into(),
             register_roots: crate::bytecode::RegisterRoots::new(root != u32::MAX),

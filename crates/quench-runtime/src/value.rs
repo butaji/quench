@@ -578,6 +578,10 @@ impl Value {
     /// the IsHTMLDDA function. `None` leaves another heap value to its cell.
     #[inline(always)]
     pub(crate) fn truthiness(self) -> Option<bool> {
+        // A boolean first, in one test: conditions mostly test comparison results.
+        if self.0 & !(Self::TRUE.0 ^ Self::FALSE.0) == Self::FALSE.0 {
+            return Some(self == Self::TRUE);
+        }
         if let Some(number) = self.as_number() {
             return Some(!(number == 0.0 || number.is_nan()));
         }

@@ -1207,3 +1207,117 @@ For no-JIT, old per-op instruction screens show large dispatch and allocation
 costs in object/closure creation, field/array operations and string/RegExp
 builtins; these need current profiles and fixture-level validation before
 choosing a hot path. No 20% runtime-level gain has been demonstrated yet.
+
+## Guarded multi-field numeric inputs — 2026-10-22
+
+The numeric denotation now accepts up to four cached reads from `this` or
+parameter zero in pure numeric regions. Each field cache is checked at entry;
+only numeric values enter native code, and any miss resumes the untouched frame
+in the lane. This is general bytecode metadata, not a function/source matcher.
+All 799 runtime library tests pass. The functional unit test enters native code
+for a two-field `this` method and confirms accessor and non-number fallback.
+
+The V8-v7 Richards diagnostic still reports zero native entries for
+`isHeldOrSuspended` (32 entries); the remaining unsupported combination is two
+field reads, numeric captures and a branch. One-round JetStream 3
+`typescript-lib` and `async-fs` diagnostic runs timed out at the 600-second
+per-engine limit before valid samples, so no score or RSS gain is established.
+The step is recorded as compiler coverage groundwork, not a performance win.
+Evidence and raw reports are in
+`evidence/jit-this-field-inputs-2026-10-22/`.
+
+## Research convergence and next gates — 2026-10-22
+
+The Linear sweep and VM research review agree on the next JIT gate: measure
+compiled coverage and rejection causes by time-weighted hot region, then extend
+general bytecode denotations for the operations those regions actually use.
+The current V8-v7 census has no native entries on Richards; the hash-map hot
+wrapper rejects `LoadNameCall` and `Call`, even though helper functions already
+receive many native entries. General effect-aware call and field/write paths
+with exact instruction-PC fallback are more promising than adding source or
+function recognizers. Retain native code only when matched suite measurements
+show a gain within code-size and RSS budgets.
+
+Research patterns that fit the shared-semantics architecture:
+
+- SpiderMonkey's [CacheIR](https://firefox-source-docs.mozilla.org/js/cacheir.html)
+  describes guarded operations once and lets execution tiers consume the same
+  recipes. For Quench, Rust macros should generate the lane and compiler views
+  from one semantic authority; effectful recipes must preserve observable order
+  and the exact fallback frame.
+- V8's [Maglev](https://v8.dev/blog/maglev) tracks type facts during graph
+  construction and records interpreter state at deoptimization points. This is
+  a useful model for eliminating checks only when prior guards prove the facts.
+- [Basic-block versioning](https://doi.org/10.4230/LIPIcs.ECOOP.2015.101) can
+  reuse type/shape facts across predecessor edges. It is a follow-up only if a
+  guard census shows repeated checks; cap per-block versions and generated
+  bytes, and invalidate facts across effectful calls and writes.
+- The 2025 [inline-cache evaluation](https://doi.org/10.22152/programming-journal.org/2025/10/6)
+  reports that fewer memory accesses did not imply faster execution in its
+  tested JavaScript AOT setting. It reinforces measuring target code and suite
+  score, rather than treating guard or lookup counts as a speed proxy.
+
+For no-JIT, TOD-121's measured plan remains around 0.656x Bun geomean and its
+grounded queued work reaches only about 0.74x. The `typescript-lib` census
+reports 10.5M+ property lookups per iteration at the shared uncached site after
+u16 site exhaustion. Widening or segmenting site IDs is a bounded experiment,
+but likely affects only a narrow workload slice. First run the existing
+`profile-lane-exits` census across parser, async and object-heavy workloads;
+then prioritize costs by total dispatched time. Large string/allocation
+representation changes remain research hypotheses until those profiles size
+their opportunity and the semantic costs.
+
+TOD-164's newer comments narrow another no-JIT lead. Survivor-only record
+sweeps and young-word-only minor sweeps are already merged; the latter measured
++2.7% on a five-pair GC-heavy JetStream screen, about -0.3% on V8-v7, and
+roughly neutral RSS. Stable-root/frame-watermark skipping was within noise and
+is deprioritized. `doxbee-promise` still merits attribution: about 20% of its
+measured callgrind instructions were in GC over four sampled iterations, but
+its 10,000 live promise chains may require most of that marking work. Before
+proposing another collector optimization, split minor/full collection counts,
+newly allocated and live young records, owner scans, and mark work per pending
+job. These measurements identify where to look; they do not establish another
+broad speedup.
+
+JetStream 3's [published methodology](https://webkit.org/blog/17899/introducing-the-jetstream-3-benchmark-suite/)
+uses repeated per-subtest measurements and suite aggregation. Papers and
+diagnostic counters above are leads only: neither the 1.20x score goal nor a
+20% broad no-JIT/JIT win is established by this research.
+
+## Effectful JS call-region ABI boundary
+
+The current JS native entry is deliberately primitive-valued; it cannot carry
+arbitrary tagged JS values or keep guest heap references live across collection.
+The first compiled call region therefore needs a VM-owned continuation context,
+not a wider raw-pointer callback. Before entering the shared dispatcher, write
+all live native values back as tagged values in GC-rooted frame registers and
+publish the exact instruction PC, resume state, and binding-site PC. The
+callback must reacquire VM/frame data by a stable frame identity after dispatch;
+it must not retain Rust references or slices into VM storage across a callout.
+
+The callback uses the existing instruction dispatcher as the semantic
+authority. It encodes the full `StepResult` and error outcome. Native execution
+may resume only when dispatch completed normally with `Continue`, the same
+program/function/frame remains active, and the continuation state matches the
+compiled map. `Return`, `Throw`, `PushFrame`, `TailCall`, yield, panic, and any
+other non-Continue result leave native code for the existing VM. A consumed call
+must never be retried at the old PC. Catch Rust panics inside any C ABI callback;
+no unwind may cross generated-code boundaries. Drop heap-derived type/shape
+facts across effectful calls and writes.
+
+Start with ordinary nonterminal `Call` over already-resolved callees, excluding
+direct or parameter eval, spread, tail calls, and terminal-return cases. Keep
+`LoadNameCall`, `with`, getters/proxies, constructors, and other effectful name
+resolution on the current fallback until their exact receiver, lookup, and
+error behavior is represented. This restriction is a pilot boundary, not a
+source/function recognizer: admission is derived from bytecode effects and
+explicit flags. Required tests cover receiver and argument order, non-callable
+and throwing callees, reentrant calls that collect while values are live,
+callee replacement, and exactly-once effects with fallback at the failing PC.
+
+This protocol is correctness and coverage groundwork. `runIteration` can check
+the ABI and output parity, but its observed call count does not make it a score
+target. Before choosing a hot site, record time-weighted compile rejection
+reasons, call-target/cache state, receiver-shape diversity, entries and
+callouts. A cache/guard hit is useful only if it reduces measured VM work; keep
+it only on matched production JetStream score and RSS data.

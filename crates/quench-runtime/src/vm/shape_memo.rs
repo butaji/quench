@@ -38,9 +38,21 @@ impl<K: Copy + Eq + Hash, V: Copy> Default for ShapeMemo<K, V> {
 /// entries, which then evict each other on every use.
 pub(super) fn direct_mapped_index(key: impl Hash, entries: usize) -> usize {
     debug_assert!(entries.is_power_of_two() && entries > 1);
+    direct_mapped_index_by_shift(key, direct_mapped_shift(entries))
+}
+
+/// The shift that keeps the top bits of a hash naming one of `entries`
+/// (`direct_mapped_index`), for a table that derives it once for its size.
+pub(super) const fn direct_mapped_shift(entries: usize) -> u32 {
+    u64::BITS - entries.trailing_zeros()
+}
+
+/// `direct_mapped_index` of a table whose size `shift` names (`direct_mapped_shift`).
+#[inline(always)]
+pub(super) fn direct_mapped_index_by_shift(key: impl Hash, shift: u32) -> usize {
     let mut hasher = rustc_hash::FxHasher::default();
     key.hash(&mut hasher);
-    (hasher.finish() >> (u64::BITS - entries.trailing_zeros())) as usize
+    (hasher.finish() >> shift) as usize
 }
 
 impl<K: Copy + Eq + Hash, V: Copy> ShapeMemo<K, V> {

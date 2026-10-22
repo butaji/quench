@@ -1685,23 +1685,7 @@ mod tests {
     use super::*;
     use wasmparser::Operator;
 
-    struct GcTestHost;
 
-    impl crate::Host for GcTestHost {
-        fn write_line(&mut self, _: &str) {}
-
-        fn clock_millis(&mut self) -> f64 {
-            0.0
-        }
-
-        fn globals(&self) -> &'static [crate::HostGlobal] {
-            const GLOBALS: &[crate::HostGlobal] = &[crate::HostGlobal {
-                name: "$262",
-                capability: crate::CapabilityId::CreateRealm,
-            }];
-            GLOBALS
-        }
-    }
 
     #[test]
     fn javascript_and_wasm_jit_share_one_vm_and_backend() {
@@ -3198,7 +3182,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut vm = Vm::new(GcTestHost);
+        let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
         let bootstrap =
             crate::Engine::specialize("void 0", "jit-indirect-gc-bootstrap.js").unwrap();

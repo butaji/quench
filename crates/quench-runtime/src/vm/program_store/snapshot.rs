@@ -26,7 +26,6 @@ impl ProgramStore {
             jit_compiled_artifacts: _,
             jit_mapped_bytes: _,
             js_jit_diagnostics: _,
-            js_jit_numeric_find_candidate: _,
             // Process configuration a restoring store reads again, and its diagnostics.
             js_jit_dataview_float64_enabled: _,
             js_jit_dataview_float64_get_entries: _,
@@ -96,6 +95,7 @@ impl ProgramEntry {
             root_slots: _,
             module,
             lane_views: _,
+            js_entry_facts: _,
             lane_deferred: _,
             compiled: _,
             js_tiers: _,
@@ -209,7 +209,8 @@ impl ProgramEntry {
         let residual = Rc::new(residual);
         Ok(Self {
             regexp_literals: vec![None; residual.regexp_literal_sites.len()],
-            lane_views: residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect(),
+            lane_views: super::LaneViews::default(),
+            js_entry_facts: super::JsEntryFactsTable::default(),
             lane_deferred: vec![std::cell::Cell::new(0); residual.functions.len()],
             residual,
             wasm_signatures: None,
