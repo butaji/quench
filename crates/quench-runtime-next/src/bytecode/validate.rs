@@ -8,8 +8,16 @@ fn register_in_bounds(register: u16, limit: u16, flags: u16) -> bool {
     register & !(REGISTER_MASK | flags) == 0 && register & REGISTER_MASK < limit
 }
 
-fn field_base_in_bounds(base: u16, limit: u16) -> bool {
-    base == FieldBase::THIS.0 || base == FieldBase::NESTED || base < REGISTER_MASK && base < limit
+fn field_base_in_bounds(base: u16, registers: u16, locals: u16) -> bool {
+    let base = FieldBase(base);
+    base == FieldBase::THIS
+        || base.0 == FieldBase::NESTED
+        || base
+            .local_index()
+            .is_some_and(|local| local < locals)
+        || base
+            .register_index()
+            .is_some_and(|register| register < registers)
 }
 
 fn operand_in_bounds(
@@ -116,7 +124,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
                     base,
                     cache_site,
                 }) => {
-                    field_base_in_bounds(base.0, bounds.registers)
+                    field_base_in_bounds(base.0, bounds.registers, bounds.locals)
                         && atom_in_bounds(atom, bounds.atoms)
                         && cache_in_bounds(cache_site, bounds.cache_sites)
                 }
@@ -501,7 +509,7 @@ impl ResidualProgram {
             }
         }
         for site in &self.field_sites {
-            if !field_base_in_bounds(site.base.0, REGISTER_MASK)
+            if !field_base_in_bounds(site.base.0, REGISTER_MASK, 0)
                 || !atom_in_bounds(site.first.0, self.atoms.len())
                 || !cache_in_bounds(site.first.1, self.cache_sites)
                 || site.second.is_some_and(|(atom, cache)| {

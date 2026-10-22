@@ -65,3 +65,9 @@ modules, a second 11-round Linux pilot is saved at
 It also verifies matching output, but Quench remains behind both comparators
 on throughput and maximum RSS. The earlier report remains as the pre-cache
 baseline.
+
+The compiler then fused `LoadLocal` followed by `GetField`, a frequent React
+rendering pair. The resulting 11-round pilot is saved at
+[`reports/react-no-jit-local-field-linux-11.json`](reports/react-no-jit-local-field-linux-11.json).
+It verifies matching output and improves Quench throughput in this Linux
+diagnostic, but the performance gap remains large and max RSS still loses.
