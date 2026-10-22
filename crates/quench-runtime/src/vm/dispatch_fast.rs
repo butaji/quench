@@ -2607,6 +2607,7 @@ lane_handler! {
             .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.plain_typed_element(base, key))
             .or_else(|| lane_string_element(vm, base, key))
+            .or_else(|| vm.string_index_element(base, key))
         else {
             return exit(ip);
         };
@@ -2646,6 +2647,7 @@ script_handler! {
             .or_else(|| lane_site_keyed_get(vm, ip, base, key))
             .or_else(|| vm.plain_typed_element(base, key))
             .or_else(|| lane_string_element(vm, base, key))
+            .or_else(|| vm.string_index_element(base, key))
         else {
             match lane_index_getter_activation(cx, r, ip, base, key) {
                 Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
@@ -7652,7 +7654,8 @@ fn lane_string_or_native_call<H: Host>(
 /// allocates its string, `Number`'s predicates, which coerce nothing
 /// (`number::number_predicate`), the global `isNaN` and `isFinite` of an argument whose
 /// ToNumber reads nothing (`Value::immediate_number`), `Boolean` called as a function, whose
-/// ToBoolean runs no guest code, and `ArrayBuffer.isView`. `None` leaves any other call to
+/// ToBoolean runs no guest code, `String` called with a string or an immediate primitive, and
+/// `ArrayBuffer.isView`. `None` leaves any other call to
 /// `lane_call_native`.
 #[inline(never)]
 fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, args: &[Value]) -> Option<Value> {
@@ -7669,6 +7672,17 @@ fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, arg
         }
         Native::ArrayBufferIsView => Some(Value::boolean(vm.is_array_buffer_view(argument))),
         Native::Boolean => Some(Value::boolean(vm.truthy(argument))),
+        // `String(value)` of a string is that string; of a primitive whose ToString reads no
+        // cell, its spelling (`coercion::immediate_to_string`).
+        Native::String if !args.is_empty() => {
+            if vm.heap.string(argument).is_some() {
+                return Some(argument);
+            }
+            let text = super::coercion::immediate_to_string(argument)?;
+            let value = vm.heap.alloc_string(super::wtf16::JsString::from_str(&text));
+            note_allocation(vm);
+            Some(value)
+        }
         Native::GlobalIsNaN | Native::GlobalIsFinite => {
             super::number::global_number_predicate(*native, argument.immediate_number()?).map(Value::boolean)
         }
