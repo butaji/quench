@@ -287,6 +287,13 @@ impl MemoryPolicy {
         matches!(self, Self::MemoryFirst)
     }
 
+    /// Whether a full collection gives back the empty capacity of the arrays that survive it
+    /// (`ArrayElements::trim_slack`): an array that grows again regrows by doubling, a cost
+    /// throughput does not pay.
+    pub const fn trims_slack_at_full_collections(self) -> bool {
+        matches!(self, Self::MemoryFirst)
+    }
+
     /// The policy's own pacing table.
     const fn table(self) -> GenerationalPacing {
         match self {
