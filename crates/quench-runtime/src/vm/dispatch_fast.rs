@@ -7108,8 +7108,10 @@ fn lane_promise_native<H: Host>(
 
 /// A native call whose common case runs no guest code and observes no frame, answered in
 /// place so the lane's activations need not become frames (`lane_call_native`): a dense
-/// array's `indexOf` (`Vm::dense_index_of`) and `String.fromCharCode` of Numbers, which
-/// allocates its string. `None` leaves any other call to `lane_call_native`.
+/// array's `indexOf` (`Vm::dense_index_of`), `String.fromCharCode` of Numbers, which
+/// allocates its string, and an array iterator's step over a plain array
+/// (`Vm::plain_array_iterator_next`), which allocates its result. `None` leaves any other
+/// call to `lane_call_native`.
 #[inline(never)]
 fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, args: &[Value]) -> Option<Value> {
     let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else {
@@ -7121,6 +7123,11 @@ fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, arg
             let text = vm.from_char_code_numbers(args)?;
             note_allocation(vm);
             Some(text)
+        }
+        Native::ArrayIteratorNext => {
+            let result = vm.plain_array_iterator_next(callee, receiver)?;
+            note_allocation(vm);
+            Some(result)
         }
         _ => None,
     }
