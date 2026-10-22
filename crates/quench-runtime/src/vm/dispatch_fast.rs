@@ -6666,10 +6666,9 @@ script_handler! {
     /// lexical binding shadows it (`Vm::names_resolve_to_global_object`: a function whose
     /// unresolved names are global (`ProgramStore::unresolved_names_are_global`) and resolve
     /// statically, and a name no internal binding owns) takes `lane_load_global_name`; any
-    /// other always takes the general path. A `LoadNameCall` (`CALL`) also writes the call's
-    /// receiver, `undefined` for a binding of the global object's environment.
+    /// other always takes the general path.
     #[inline(never)]
-    fn lane_load_name_first<CALL: bool>(cx, r, ip, i, view) {
+    fn lane_load_name_first<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
@@ -6684,8 +6683,8 @@ script_handler! {
                 function.names_resolve_statically(code)
             });
         if global {
-            requicken(ip, lane_load_global_name::<H, CALL>);
-            sibling!(lane_load_global_name::<H, CALL>, r, ip, Carried::script(cx))
+            requicken(ip, lane_load_global_name::<H>);
+            sibling!(lane_load_global_name::<H>, r, ip, Carried::script(cx))
         }
         requicken(ip, lane_exit::<H>);
         exit(ip)
@@ -6696,7 +6695,7 @@ script_handler! {
     /// A `LoadName` of a global object property (`lane_load_name_first`) that no global
     /// lexical binding shadows: the global object's cached field (`Vm::cached_field_hit`).
     /// Any other read, including a cache miss, takes the general path, which caches it.
-    fn lane_load_global_name<CALL: bool>(cx, r, ip, i, view) {
+    fn lane_load_global_name<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
@@ -6710,9 +6709,6 @@ script_handler! {
             return exit(ip);
         };
         r.set(i.a, value);
-        if CALL {
-            r.set(i.b, Value::UNDEFINED);
-        }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -9861,8 +9857,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CallKnown => Some(lane_call_known::<H>),
         Op::Call => Some(lane_script_call::<H>),
         Op::Construct => Some(lane_script_construct::<H>),
-        Op::LoadName => Some(lane_load_name_first::<H, false>),
-        Op::LoadNameCall => Some(lane_load_name_first::<H, true>),
+        Op::LoadName => Some(lane_load_name_first::<H>),
         Op::MakeObject2 => Some(lane_make_object2::<H>),
         Op::MakeClosure => Some(lane_make_closure::<H>),
         Op::MakeObjectLiteral => Some(lane_make_object_literal::<H>),
