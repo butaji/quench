@@ -51,7 +51,7 @@ impl<H: Host> Vm<H> {
             let state = self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
-                    Rc::new(vec![Value::number(*method as u8 as f64)]),
+                    vec![Value::number(*method as u8 as f64)],
                 ),
             });
             let function = self.native_with_env(Native::Test262Agent, state);

@@ -43,6 +43,10 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
 
+#[path = "compiled/osr_loop.rs"]
+mod osr_loop;
+pub(super) use osr_loop::{LoopEntry, LoopOutcome, LoopRegion, Observation, Widening};
+
 /// How the shared VM executes JavaScript and Wasm functions. Compiled code is
 /// lazy and falls back to the interpreter; both modes use the same VM, heap,
 /// frames and host APIs.
@@ -367,13 +371,13 @@ fn jit_emscripten_memcpy_leaf_enabled() -> bool {
         .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
 }
 
-/// Keep the numeric hash-map loop as an opt-in experiment until it has a
-/// matched score win.
+/// Run the guarded numeric hash-map loop by default. Set the environment
+/// variable to `0` to retain the interpreter path for A/B measurement.
 fn jit_numeric_find_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var(JIT_NUMERIC_FIND_ENV)
-            .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    *ENABLED.get_or_init(|| match std::env::var_os(JIT_NUMERIC_FIND_ENV) {
+        None => true,
+        Some(value) => matches!(value.to_str(), Some("1" | "true")),
     })
 }
 
@@ -2169,14 +2173,40 @@ impl CompiledProgram {
     }
 }
 
+/// With `QUENCH_WASM_JIT_PERF_MAP` set, names each compiled Wasm function's code for
+/// `perf` (`/tmp/perf-PID.map`) and writes the module's code to `/tmp/quench-jit-PID-BASE.bin`
+/// for disassembly at `BASE` (diagnostics only).
+fn write_perf_map(base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
+    if std::env::var_os("QUENCH_WASM_JIT_PERF_MAP").is_none() {
+        return;
+    }
+    use std::io::Write;
+    let pid = std::process::id();
+    if let Ok(mut map) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("/tmp/perf-{pid}.map"))
+    {
+        for &(offset, len, index) in spans {
+            let _ = writeln!(map, "{:x} {len:x} wasm-function-{index}", base + offset);
+        }
+    }
+    let _ = std::fs::write(format!("/tmp/quench-jit-{pid}-{base:x}.bin"), bytes);
+}
+
 /// Executable memory holding a program's machine code.
-struct CodeMemory {
+pub(super) struct CodeMemory {
     pointer: *mut u8,
     length: usize,
 }
 
 impl CodeMemory {
-    fn new(bytes: &[u8]) -> Option<Self> {
+    /// The first byte of the executable mapping.
+    pub(super) fn pointer(&self) -> *mut u8 {
+        self.pointer
+    }
+
+    pub(super) fn new(bytes: &[u8]) -> Option<Self> {
         let length = bytes.len().max(1);
         // `mmap` rounds to whole pages. Store that rounded length explicitly
         // so the JS tier's budget reflects its executable mappings.
@@ -2219,6 +2249,47 @@ impl Drop for CodeMemory {
         // SAFETY: the mapping this value owns.
         unsafe { libc::munmap(self.pointer.cast(), self.length) };
     }
+}
+
+/// A native OSR region published by the shared compiler. Its lowerer is private to this
+/// module; lanes only ask the region to run and inspect its exact-PC widening result.
+pub(super) struct CompiledOsrRegion(osr_loop::CompiledLoop);
+
+impl CompiledOsrRegion {
+    /// # Safety
+    /// `registers` and `entry` must describe the live activation guarded by the lane.
+    pub(super) unsafe fn run(
+        &self,
+        registers: *mut crate::value::Value,
+        entry: &LoopEntry,
+    ) -> LoopOutcome {
+        // SAFETY: the caller keeps the guarded activation and entry alive for this run.
+        unsafe { self.0.run(registers, entry) }
+    }
+
+    pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
+        self.0.widening(pc)
+    }
+}
+
+/// Analyze a loop candidate through the shared region compiler's OSR mode.
+pub(super) fn analyze_osr_region(
+    function: &Function,
+    decoded: &[WideInstruction],
+    constants: &[crate::value::Value],
+    live: Option<&[u64]>,
+    header: u32,
+    backedge: u32,
+) -> Option<LoopRegion> {
+    osr_loop::region(function, decoded, constants, live, header, backedge)
+}
+
+/// Compile one admitted OSR region and publish it through the shared executable-memory path.
+pub(super) fn compile_osr_region(
+    region: &LoopRegion,
+    observation: &Observation<'_>,
+) -> Option<CompiledOsrRegion> {
+    osr_loop::compile(region, observation).map(CompiledOsrRegion)
 }
 
 /// A guarded JavaScript numeric function compiled from a narrow residual
@@ -6717,9 +6788,48 @@ impl<H: Host> Vm<H> {
         {
             return Some(result);
         }
+        let field_increment_candidate = facts.field_increment;
+        let mut field_increment_diagnostic_entry_recorded = false;
+        if let Some(candidate) = field_increment_candidate {
+            let fixed_this = self.frames[frame].fixed_this;
+            if self.programs.js_jit_diagnostics_enabled() {
+                self.programs.record_js_jit_entry(
+                    program_id,
+                    function_id,
+                    false,
+                    function.params,
+                );
+                self.programs.record_js_jit_field_increment_candidate(
+                    program_id,
+                    function_id,
+                    fixed_this,
+                );
+                field_increment_diagnostic_entry_recorded = true;
+            }
+            if fixed_this
+                && self.cached_field_increment_hit(
+                    program,
+                    self.frames[frame].this,
+                    candidate.atom,
+                    candidate.read_cache_site,
+                    candidate.write_cache_site,
+                    candidate.decrement,
+                )
+            {
+                if self.programs.js_jit_diagnostics_enabled() {
+                    self.programs
+                        .record_js_jit_field_increment_entry(program_id, function_id);
+                }
+                return Some((
+                    candidate.return_pc,
+                    candidate.return_register,
+                    Value::UNDEFINED,
+                ));
+            }
+        }
         let field_return_candidate =
             facts.field_return;
-        let mut field_return_diagnostic_entry_recorded = false;
+        let mut field_return_diagnostic_entry_recorded = field_increment_diagnostic_entry_recorded;
         if let Some(candidate) = field_return_candidate {
             let fixed_this = self.frames[frame].fixed_this;
             if self.programs.js_jit_diagnostics_enabled() {
@@ -7523,6 +7633,7 @@ impl<H: Host> Vm<H> {
         }
         let mut bytes = Vec::new();
         let mut offsets = vec![None; count];
+        let mut spans = Vec::new();
         let mut entries = vec![None; count];
         let mut calls = Vec::new();
         let place = |bytes: &mut Vec<u8>, code: Vec<u8>| {
@@ -7577,8 +7688,10 @@ impl<H: Host> Vm<H> {
                 }
                 return None;
             }
+            let body_len = body.len();
             let offset = place(&mut bytes, body);
             offsets[index] = Some(offset);
+            spans.push((offset, body_len, index));
             calls.extend(function_calls.into_iter().map(|call| (offset, call)));
             let memory = MemoryArguments::of(fixed_base, guarded);
             let entry = analysis.compile_entry(&*isa, index, plans[index].as_ref()?, memory)?;
@@ -7600,6 +7713,7 @@ impl<H: Host> Vm<H> {
         let memory = CodeMemory::new(&bytes)?;
         let mapped_bytes = memory.length;
         let base = memory.pointer as usize;
+        write_perf_map(base, &bytes, &spans);
         let table: Box<[usize]> = offsets
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))

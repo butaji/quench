@@ -1,5 +1,10 @@
 use super::*;
 
+/// The forwarding layers `Vm::forwarded_call` peels from one call: an uncurried builtin is
+/// two (its bound `call`, then `call`); more is left to the general call path, which needs
+/// no bound since each layer there is a native call of its own.
+const CALL_FORWARDING_DEPTH: usize = 4;
+
 impl<H: Host> Vm<H> {
     pub(super) fn set_function_source(
         &mut self,
@@ -140,7 +145,7 @@ impl<H: Host> Vm<H> {
                 None => frame.locals[usize::from(parameter)],
             }
         });
-        let args = Rc::new(
+        let args = crate::heap::ArrayElements::from(
             reflected
                 .chain(frame.original_arguments.iter().copied())
                 .collect::<Vec<_>>(),
@@ -179,7 +184,7 @@ impl<H: Host> Vm<H> {
         let bound_args = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(args.get(1..).unwrap_or_default().to_vec()),
+                args.get(1..).unwrap_or_default().to_vec(),
             ),
         });
         self.set_property(env, args_atom, bound_args)?;
@@ -305,6 +310,40 @@ impl<H: Host> Vm<H> {
         let mut combined = bound_args.to_vec();
         combined.extend_from_slice(args);
         self.call_value(p, target, receiver, &combined)
+    }
+
+    /// The call a call of `callee` with `receiver` and `args` makes without an observable
+    /// step of its own: a bound function without bound arguments calls its target with its
+    /// bound `this` and the same arguments (ECMA-262 10.4.1.1), and `Function.prototype.call`
+    /// calls its receiver with the first argument as `this` and the rest (20.2.3.3), so an
+    /// uncurried builtin (`bind.bind(call)(f)`) calls `f`. `None` unless at least one such
+    /// layer was peeled within `CALL_FORWARDING_DEPTH`; the target may still be anything,
+    /// which the caller checks before making the call itself, and otherwise makes the
+    /// original call.
+    pub(super) fn forwarded_call<'a>(
+        &self,
+        mut callee: Value,
+        mut receiver: Value,
+        mut args: &'a [Value],
+    ) -> Option<(Value, Value, &'a [Value])> {
+        for depth in 0..CALL_FORWARDING_DEPTH {
+            match self.heap.function(callee) {
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) => {
+                    let (target, this, bound) = self.bound_function_parts(*env)?;
+                    if !bound.is_empty() {
+                        return None;
+                    }
+                    (callee, receiver) = (target, this);
+                }
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }) => {
+                    callee = receiver;
+                    receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
+                    args = args.get(1..).unwrap_or_default();
+                }
+                _ => return (depth != 0).then_some((callee, receiver, args)),
+            }
+        }
+        None
     }
 
     /// A bound function's target, bound `this` and bound arguments, read from the

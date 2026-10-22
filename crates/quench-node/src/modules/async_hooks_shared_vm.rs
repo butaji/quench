@@ -220,6 +220,11 @@ pub(crate) fn initialize_promise(
     promise: RootId,
     resource: quench_runtime::HostExecutionContext,
 ) -> Result<(), RootedError> {
+    // A promise is weakly tracked only while an init or destroy hook can observe it; its
+    // identity and job context need no record (`tracks_promise_lifecycle_resources`).
+    if !context.host_mut().shared_state().borrow().async_hooks.tracks_promise_lifecycle_resources() {
+        return Ok(());
+    }
     // A long run of promises can stay within one event-loop turn, where the turn-end prune
     // never comes: every new promise first prunes the table once a collection has run since
     // the last prune, so it holds only promises that may still be live.
@@ -257,7 +262,6 @@ fn prune_promise_resources(context: &mut NativeContext<'_, NodeHost>) -> Result<
         if context.resolve_host_weak_root(weak).is_none() {
             shared.borrow_mut().async_hooks.promise_resources.remove(&id);
             context.release_host_weak_root(weak);
-            shared.borrow_mut().async_hooks.context_triggers.remove(&id);
             queue_destroy(context, id)?;
         }
     }
@@ -310,6 +314,12 @@ pub(crate) fn promise_settled(
 /// Snapshot the currently visible stores under a fresh identity for one
 /// Promise job. Even an empty snapshot needs an identity so a later
 /// `enterWith` cannot mutate the context of the job that registered it.
+/// The async id of no resource, which a Promise job without one runs under.
+const NO_ASYNC_ID: u64 = 0;
+/// A Promise job captured with no resource while no promise hook observed it.
+const UNOBSERVED_JOB: JobContext =
+    JobContext { resource: None, execution: NO_ASYNC_ID, trigger: NO_ASYNC_ID as i64 };
+
 pub(crate) fn capture_job_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
     resource: Option<quench_runtime::HostExecutionContext>,
@@ -318,11 +328,18 @@ pub(crate) fn capture_job_context(
     let state = &mut shared.async_hooks;
     let token = state.next_job_id;
     state.next_job_id = token.checked_add(1).expect("private Promise job token space exhausted");
-    let execution = resource.map_or(state.identity.current_async_id(), |id| id.0);
-    let trigger = if resource.is_some() {
-        *state.context_triggers.get(&execution).expect("Promise resource trigger registered")
-    } else { state.identity.current_trigger_id() };
-    state.job_resources.insert(token, JobContext { resource: resource.map(|id| id.0), execution, trigger });
+    // Without a Promise hook a job has no async resource, and Node runs it with execution
+    // and trigger ids 0 (`executionAsyncId()` in a `then` callback).
+    // Only a job that differs from `UNOBSERVED_JOB` is recorded.
+    let (execution, trigger) = match resource {
+        Some(id) => (id.0, *state.context_triggers.get(&id.0).expect("Promise resource trigger registered")),
+        None if !state.tracks_promises() => (UNOBSERVED_JOB.execution, UNOBSERVED_JOB.trigger),
+        None => (state.identity.current_async_id(), state.identity.current_trigger_id()),
+    };
+    let job = JobContext { resource: resource.map(|id| id.0), execution, trigger };
+    if job != UNOBSERVED_JOB {
+        state.job_resources.insert(token, job);
+    }
     let source = state.identity.store_context();
     inherit_stores(state, source, StoreContext::Job(token));
     Some(token)
@@ -332,7 +349,7 @@ pub(crate) fn capture_job_context(
 /// Node's promise before/after hooks, a job running once a hook is installed gives its
 /// Promise one on demand, without an init event or destroy tracking.
 fn tracked_job(state: &mut super::async_hooks_state::SharedAsyncHooksState, token: u64) -> JobContext {
-    let job = *state.job_resources.get(&token).expect("live Promise job context");
+    let job = state.job_resources.get(&token).copied().unwrap_or(UNOBSERVED_JOB);
     if job.resource.is_some() || !state.tracks_promises() {
         return job;
     }
@@ -375,6 +392,19 @@ pub(crate) fn release_job_context(
 ) -> Vec<RootId> {
     shared_state.borrow_mut().async_hooks.job_resources.remove(&token);
     take_store_context(shared_state, StoreContext::Job(token))
+}
+
+/// Forget the triggers of collected promises (`create_promise_context`), observed or not: only
+/// a job capturing a live promise reads one. An observed promise's weak entry and destroy
+/// hook stay with `prune_promise_resources`.
+pub(crate) fn release_promise_contexts(
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
+    contexts: &[quench_runtime::HostExecutionContext],
+) {
+    let triggers = &mut shared_state.borrow_mut().async_hooks.context_triggers;
+    for context in contexts {
+        triggers.remove(&context.0);
+    }
 }
 
 /// Enter a named async identity and restore the previous identity on every
@@ -469,19 +499,13 @@ fn take_store_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>, async_id: StoreContext,
 ) -> Vec<RootId> {
     let mut shared = shared_state.borrow_mut();
-    let keys = shared
-        .async_hooks
-        .local_stores
-        .keys()
-        .filter_map(|(resource_id, local_id)| {
-            (*resource_id == async_id).then_some((*resource_id, *local_id))
-        })
-        .collect::<Vec<_>>();
-    keys.into_iter()
-        .filter_map(|key| {
-            let store = shared.async_hooks.local_stores.remove(&key)?;
-            shared.async_hooks.release_store(store).then_some(store)
-        })
+    if shared.async_hooks.local_stores.is_empty() {
+        return Vec::new();
+    }
+    let frame = shared.async_hooks.local_stores.remove(&async_id).unwrap_or_default();
+    frame
+        .into_iter()
+        .filter_map(|(_, store)| shared.async_hooks.release_store(store).then_some(store))
         .collect()
 }
 
@@ -492,20 +516,14 @@ fn inherit_stores(
 ) {
     let source_id = source_id.into();
     let target_id = target_id.into();
-    let inherited = async_hooks
-        .local_stores
-        .iter()
-        .filter_map(|((resource_id, local_id), store)| {
-            (*resource_id == source_id).then_some((*local_id, *store))
-        })
-        .collect::<Vec<_>>();
-    for (local_id, store) in inherited {
+    let Some(inherited) = async_hooks.local_stores.get(&source_id).cloned() else {
+        return;
+    };
+    for &(_, store) in &inherited {
         async_hooks.retain_store(store);
-        let previous = async_hooks
-            .local_stores
-            .insert((target_id, local_id), store);
-        debug_assert!(previous.is_none());
     }
+    let previous = async_hooks.local_stores.insert(target_id, inherited);
+    debug_assert!(previous.is_none());
 }
 
 pub(crate) struct ContextScope {
@@ -923,10 +941,14 @@ pub(crate) fn enter_with(
             .store_context();
         let mut shared = shared_state.borrow_mut();
         shared.async_hooks.enabled_local_storages.insert(local_id);
-        let previous = shared
-            .async_hooks
-            .local_stores
-            .insert((async_id, local_id), store);
+        let frame = shared.async_hooks.local_stores.entry(async_id).or_default();
+        let previous = match frame.iter_mut().find(|(candidate, _)| *candidate == local_id) {
+            Some((_, slot)) => Some(std::mem::replace(slot, store)),
+            None => {
+                frame.push((local_id, store));
+                None
+            }
+        };
         shared.async_hooks.retain_store(store);
         previous.filter(|previous| shared.async_hooks.release_store(*previous))
     };
@@ -950,8 +972,9 @@ pub(crate) fn get_store(
         shared
             .async_hooks
             .local_stores
-            .get(&(current_id, local_id))
-            .copied()
+            .get(&current_id)
+            .and_then(|frame| frame.iter().find(|(candidate, _)| *candidate == local_id))
+            .map(|&(_, store)| store)
     };
     Ok(store.unwrap_or_else(|| context.undefined()))
 }
@@ -967,19 +990,20 @@ pub(crate) fn disable_storage(
         let shared_state = context.host_mut().shared_state();
         let mut shared = shared_state.borrow_mut();
         shared.async_hooks.enabled_local_storages.remove(&local_id);
-        let keys = shared
-            .async_hooks
-            .local_stores
-            .keys()
-            .filter_map(|(resource_id, candidate)| {
-                (*candidate == local_id).then_some((*resource_id, *candidate))
-            })
-            .collect::<Vec<_>>();
-        keys.into_iter()
-            .filter_map(|key| {
-                let store = shared.async_hooks.local_stores.remove(&key)?;
-                shared.async_hooks.release_store(store).then_some(store)
-            })
+        let mut removed = Vec::new();
+        shared.async_hooks.local_stores.retain(|_, frame| {
+            frame.retain(|&(candidate, store)| {
+                let keep = candidate != local_id;
+                if !keep {
+                    removed.push(store);
+                }
+                keep
+            });
+            !frame.is_empty()
+        });
+        removed
+            .into_iter()
+            .filter(|store| shared.async_hooks.release_store(*store))
             .collect::<Vec<_>>()
     };
     for store in released {

@@ -43,6 +43,19 @@ pub(super) struct JsJitFieldReturn {
     pub(super) return_register: crate::bytecode::Register,
 }
 
+/// A strict postfix numeric update of one own field on `this`, followed by
+/// an undefined return. The VM guard handles ordinary writable data fields;
+/// all coercion, accessor, proxy, and strict-write cases stay interpreted.
+#[derive(Clone, Copy)]
+pub(super) struct JsJitThisFieldIncrement {
+    pub(super) atom: crate::bytecode::Atom,
+    pub(super) read_cache_site: u16,
+    pub(super) write_cache_site: u16,
+    pub(super) decrement: bool,
+    pub(super) return_pc: usize,
+    pub(super) return_register: crate::bytecode::Register,
+}
+
 /// A bounded numeric-only lowering of a linked entry lookup loop. Heap reads
 /// remain guarded by VM field caches and present own dense or sparse array
 /// data; any miss leaves the original frame at bytecode zero.
@@ -681,7 +694,10 @@ pub(super) fn cached_field_argument_candidate(function: &Function) -> Option<JsJ
 pub(super) fn cached_this_field_return_candidate(
     function: &Function,
 ) -> Option<JsJitFieldReturn> {
-    if function.params != 0 || function.code.len() != 4 || !function.handlers.is_empty() {
+    if function.params != 0
+        || !(2..=4).contains(&function.code.len())
+        || !function.handlers.is_empty()
+    {
         return None;
     }
     let get = function_instruction(function, 0)?;
@@ -706,6 +722,65 @@ pub(super) fn cached_this_field_return_candidate(
     Some(JsJitFieldReturn {
         cache_site,
         return_pc,
+        return_register: ret.register_a(),
+    })
+}
+
+pub(super) fn cached_this_field_increment_candidate(
+    program: &ResidualProgram,
+    function: &Function,
+) -> Option<JsJitThisFieldIncrement> {
+    if function.params != 0
+        || function.code.len() != 6
+        || !function.handlers.is_empty()
+        || !eligible(function, program)
+    {
+        return None;
+    }
+    let load_this = function_instruction(function, 0)?;
+    let get = function_instruction(function, 1)?;
+    let update = function_instruction(function, 2)?;
+    let set = function_instruction(function, 3)?;
+    let load_undefined = function_instruction(function, 4)?;
+    let ret = function_instruction(function, 5)?;
+    if load_this.op() != Op::LoadThis
+        || get.op() != Op::GetField
+        || get.returns_from_frame()
+        || get.writes_current_this()
+        || get.result_flags() != 0
+        || update.op() != Op::IncDec
+        || update.returns_from_frame()
+        || update.result_flags() != 0
+        || update.register_b() != get.result_register()
+        || set.op() != Op::SetThisFieldStrict
+        || set.register_a() != update.result_register()
+        || load_undefined.op() != Op::LoadConst
+        || load_undefined.returns_from_frame()
+        || load_undefined.result_flags() != 0
+        || ret.op() != Op::Return
+        || ret.result_flags() != 0
+        || ret.register_a() != load_undefined.result_register()
+        || !matches!(program.constants.get(load_undefined.constant_index()), Some(Constant::Undefined))
+    {
+        return None;
+    }
+    let FieldLookup::Atom {
+        atom,
+        base,
+        cache_site: read_cache_site,
+    } = get.field_lookup()?
+    else {
+        return None;
+    };
+    if base.register_index() != Some(load_this.result_register()) || set.atom_index() != atom {
+        return None;
+    }
+    Some(JsJitThisFieldIncrement {
+        atom,
+        read_cache_site,
+        write_cache_site: set.cache_site_index(),
+        decrement: update.boolean_flag()?,
+        return_pc: 5,
         return_register: ret.register_a(),
     })
 }
@@ -874,42 +949,37 @@ pub(super) fn string_transform_candidate(
     let name = function.name.or(function.inferred_name)?;
     match &program.atoms[name as usize] {
         "escapeLeadingUnderscores"
-            if function.code.len() == 19
+            if function.code.len() == 14
                 && function.code.iter().map(|i| i.as_wide().op()).eq([
                     Op::GetField,
-                    Op::Binary,
-                    Op::Move,
-                    Op::JumpFalse,
+                    Op::JumpBinaryFalse,
                     Op::GetField,
                     Op::LoadConst,
                     Op::Call,
-                    Op::Binary,
-                    Op::Move,
-                    Op::JumpFalse,
+                    Op::JumpBinaryFalse,
                     Op::GetField,
                     Op::LoadConst,
                     Op::Call,
-                    Op::Binary,
-                    Op::JumpFalse,
+                    Op::JumpBinaryFalse,
                     Op::Binary,
                     Op::Return,
                     Op::LoadConst,
                     Op::Return,
                 ])
                 && field_name(program, function, 0) == Some("length")
-                && field_name(program, function, 4) == Some("charCodeAt")
-                && field_name(program, function, 10) == Some("charCodeAt")
-                && function.code[15].as_wide().binary_operator()
+                && field_name(program, function, 2) == Some("charCodeAt")
+                && field_name(program, function, 6) == Some("charCodeAt")
+                && function.code[10].as_wide().binary_operator()
                     == oxc_ast::ast::BinaryOperator::Addition as u32 =>
         {
             Some(JsJitStringTransform::PrefixUnderscore)
         }
         "unescapeLeadingUnderscores" if unescape_leading_underscores_shape(function)
                 && field_name(program, function, 1) == Some("length")
-                && field_name(program, function, 6) == Some("charCodeAt")
-                && field_name(program, function, 13) == Some("charCodeAt")
-                && field_name(program, function, 20) == Some("charCodeAt")
-                && field_name(program, function, 26) == Some("substr") =>
+                && field_name(program, function, 4) == Some("charCodeAt")
+                && field_name(program, function, 9) == Some("charCodeAt")
+                && field_name(program, function, 14) == Some("charCodeAt")
+                && field_name(program, function, 19) == Some("substr") =>
         {
             Some(JsJitStringTransform::RemoveLeadingUnderscore)
         }
@@ -921,12 +991,13 @@ pub(super) fn string_transform_candidate(
 /// through a frame slot or through the register frame-register promotion gave it (`Move`s),
 /// and its final `return id` either reloading the parameter or naming its register.
 fn unescape_leading_underscores_shape(function: &Function) -> bool {
-    use Op::{Binary, Call, GetField, JumpFalse, LoadConst, Move, Return};
-    const BODY: [Op; 29] = [
-        Move, GetField, Binary, Move, JumpFalse,
-        Move, GetField, LoadConst, Call, Binary, Move, JumpFalse,
-        Move, GetField, LoadConst, Call, Binary, Move, JumpFalse,
-        Move, GetField, LoadConst, Call, Binary, JumpFalse,
+    use Op::{Call, GetField, JumpBinaryFalse, LoadConst, Move, Return};
+    // Each `&&` operand of the test is its own compare-and-branch (`FunctionCompiler::condition`).
+    const BODY: [Op; 22] = [
+        Move, GetField, JumpBinaryFalse,
+        Move, GetField, LoadConst, Call, JumpBinaryFalse,
+        Move, GetField, LoadConst, Call, JumpBinaryFalse,
+        Move, GetField, LoadConst, Call, JumpBinaryFalse,
         Move, GetField, LoadConst, Call,
     ];
     let ops = function.code.iter().map(|instruction| match instruction.as_wide().op() {
@@ -2391,6 +2462,11 @@ fn compile_numeric_with_captures(
     }
 
     let params = usize::from(function.params);
+    // A field read at entry is supplied by the VM's guarded monomorphic
+    // cache. The native region sees only its numeric data-property value;
+    // cache misses, accessors and non-numeric values stay in the interpreter.
+    let field_argument = cached_field_argument_candidate(function)
+        .filter(|candidate| candidate.entry_pc == 0);
     let isa = super::jit_backend::target_isa("speed", true)?;
 
     let mut signature = ir::Signature::new(isa.default_call_conv());
@@ -2411,6 +2487,11 @@ fn compile_numeric_with_captures(
     // promoted parameter locals in registers 0..params.
     let mut registers = vec![None; usize::from(function.registers)];
     for (index, register) in registers.iter_mut().take(params).enumerate() {
+        if field_argument.is_some() && index == 0 {
+            // Parameter zero is the object used by the guarded GetField, not
+            // a numeric value inside the native region.
+            continue;
+        }
         let offset = i32::try_from(index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
         *register = Some(builder.ins().load(
             types::F64,
@@ -2427,6 +2508,30 @@ fn compile_numeric_with_captures(
         }
         let instruction = packed.as_wide();
         let result = match instruction.op() {
+            Op::GetField => {
+                let candidate = field_argument?;
+                if pc != candidate.entry_pc
+                    || instruction.returns_from_frame()
+                    || instruction.result_flags() != 0
+                    || instruction.writes_current_this()
+                    || !matches!(
+                        instruction.field_lookup(),
+                        Some(FieldLookup::Atom {
+                            base: FieldBase(0),
+                            cache_site,
+                            ..
+                        }) if cache_site == candidate.cache_site
+                    )
+                {
+                    return None;
+                }
+                Some(builder.ins().load(
+                    types::F64,
+                    ir::MemFlagsData::trusted(),
+                    arguments,
+                    0,
+                ))
+            }
             Op::LoadConst => {
                 if instruction.returns_from_frame() || instruction.result_flags() != 0 {
                     return None;
@@ -2565,7 +2670,7 @@ fn compile_numeric_with_captures(
         code,
         params,
         result: JsJitResultKind::Number,
-        field_argument: None,
+        field_argument,
         capture_arguments: captures.to_vec(),
     })
 }
@@ -4052,6 +4157,7 @@ fn operand_value(
 /// more instructions than interpreted ones (semver npm scenario +4.6%).
 pub(super) struct JsEntryFacts {
     pub(super) numeric_find: Option<JsJitNumericFind>,
+    pub(super) field_increment: Option<JsJitThisFieldIncrement>,
     pub(super) field_return: Option<JsJitFieldReturn>,
     pub(super) numeric_loop: bool,
     pub(super) int32_bitwise: bool,
@@ -4068,6 +4174,7 @@ impl JsEntryFacts {
     pub(super) fn of(program: &ResidualProgram, function: &Function) -> Self {
         Self {
             numeric_find: numeric_find_candidate(function),
+            field_increment: cached_this_field_increment_candidate(program, function),
             field_return: cached_this_field_return_candidate(function),
             numeric_loop: has_numeric_loop_candidate(function),
             int32_bitwise: has_int32_bitwise_candidate(program, function),

@@ -94,7 +94,7 @@ impl<H: Host> Vm<H> {
             let keys = self
                 .heap
                 .array_elements(array)
-                .map_or_else(Vec::new, |elements| elements.as_ref().clone());
+                .map_or_else(Vec::new, |elements| elements.to_vec());
             return Ok(AggregateInput::Keyed {
                 keys: keys.into_iter().map(|key| self.heap.root(key)).collect(),
                 position: 0,
@@ -462,14 +462,15 @@ impl<H: Host> Vm<H> {
             }));
     }
 
-    /// NewPromiseReactionJob's body for a reaction the queue holds directly.
+    /// NewPromiseReactionJob's body for a reaction the queue holds directly. The job's realm
+    /// stays current after it: the job queue decides when to leave it.
     pub(super) fn run_promise_reaction(
         &mut self,
         p: &ResidualProgram,
         reaction: PromiseJob,
     ) -> Result<(), JsError> {
         let value = reaction.value;
-        let previous_global = self.switch_realm_global(reaction.realm);
+        self.switch_realm_global(reaction.realm);
         let previous_context = reaction
             .execution_context
             .map(|context| self.host.enter_job_context(context))
@@ -518,7 +519,6 @@ impl<H: Host> Vm<H> {
         if let Some(context) = reaction.execution_context {
             self.release_job_context(context);
         }
-        self.switch_realm_global(previous_global);
         outcome.and(after).map(|_| ())
     }
 
@@ -610,16 +610,14 @@ impl<H: Host> Vm<H> {
         Ok(Value::UNDEFINED)
     }
 
-    pub(super) fn promise_thenable_job(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {
-        let job = self
-            .active_native_callable()
-            .ok_or_else(|| JsError("Promise thenable job without callback".into()))?;
-        let thenable = self
-            .realm
-            .promise
-            .thenable_jobs
-            .remove(&job)
-            .ok_or_else(|| JsError("stale Promise thenable job".into()))?;
+    /// NewPromiseResolveThenableJob's body. The job's realm stays current after it, as a
+    /// reaction job's does.
+    pub(super) fn run_thenable_job(
+        &mut self,
+        p: &ResidualProgram,
+        thenable: super::promise::ThenableJob,
+    ) -> Result<(), JsError> {
+        self.switch_realm_global(thenable.realm);
         let previous_context = thenable
             .execution_context
             .and_then(|context| self.host.enter_job_context(context));
@@ -656,6 +654,6 @@ impl<H: Host> Vm<H> {
         if let Some(context) = thenable.execution_context {
             self.release_job_context(context);
         }
-        outcome.and_then(|value| after.map(|()| value))
+        outcome.and(after)
     }
 }

@@ -29,7 +29,7 @@ const CODE_MAPPING: &str = "r-xp";
 /// A release and the refaults of the code a run touches again after it cost about 1.2 ms
 /// (about 730 pages at 1.7 µs, the lodash npm scenario, x86_64 VM, 2026-10-19). Releases after
 /// library loads (`release_read_only_pages_after_load`) and at compilations' phase boundaries
-/// (`release_at_compile_phase_boundary`) each come at most once per this interval,
+/// (`at_compile_phase`) each come at most once per this interval,
 /// which bounds that cost to about 1% of a run's time: loads that follow each other faster run
 /// the same loader and compiler code, which a release would only refault (semver scenario
 /// 926 -> 741 ms). Collections keep releasing at each boundary (`at_collection_boundary`):
@@ -158,28 +158,69 @@ pub fn release_read_only_code_and_data() {
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_code_and_data() {}
 
-/// When a compilation's phase boundary last released pages.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-static LAST_COMPILE_RELEASE: std::sync::Mutex<Option<std::time::Instant>> =
-    std::sync::Mutex::new(None);
+/// The host's action at a compilation's phase boundaries (`set_compile_phase_boundary`), each
+/// at most once per `LOAD_RELEASE_INTERVAL`. Code generation pages code and data out
+/// (`release_read_only_code_and_data`); compilations that follow it quickly (functions a
+/// program builds at run time with `new Function`, `eval` or `vm`) run the same parser and
+/// code generator, which a release would only refault, and each release reads the whole
+/// mapping table (7% of the `@testing-library/dom` npm scenario's instructions). A first call
+/// releases the read-only pages, timed apart from the collections' releases, which come far
+/// more often: a run that reports its result once at the end first calls its reporting code
+/// then, at its heap's peak, with the code it ran since the last collection resident (V8-v7
+/// RegExp).
+pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
+    match phase {
+        quench_runtime::CompilePhase::CodeGeneration => {
+            release_once_per_interval(CompileRelease::CodeGeneration, release_read_only_code_and_data)
+        }
+        quench_runtime::CompilePhase::FirstCall => {
+            release_once_per_interval(CompileRelease::FirstCall, release_read_only_pages)
+        }
+    }
+}
 
-/// `release_read_only_code_and_data` at a compilation's phase boundary
-/// (`quench_runtime::set_compile_phase_boundary`), at most once per `LOAD_RELEASE_INTERVAL`.
-/// The first compilation, the entry's, releases there; compilations that follow it quickly
-/// (functions a program builds at run time with `new Function`, `eval` or `vm`) run the same
-/// parser and code generator, which a release would only refault, and each release reads the
-/// whole mapping table (7% of the `@testing-library/dom` npm scenario's instructions).
+/// The compile-phase releases timed apart from each other (`at_compile_phase`).
+#[derive(Clone, Copy)]
+enum CompileRelease {
+    CodeGeneration,
+    FirstCall,
+}
+
+/// When each compile-phase release last ran, indexed by `CompileRelease`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub fn release_at_compile_phase_boundary() {
-    let Ok(mut last) = LAST_COMPILE_RELEASE.lock() else {
+static LAST_COMPILE_RELEASES: std::sync::Mutex<[Option<std::time::Instant>; 2]> =
+    std::sync::Mutex::new([None; 2]);
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn release_once_per_interval(release: CompileRelease, action: fn()) {
+    let Ok(mut releases) = LAST_COMPILE_RELEASES.lock() else {
         return;
     };
+    let last = &mut releases[release as usize];
     if last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL) {
         return;
     }
     *last = Some(std::time::Instant::now());
-    drop(last);
+    drop(releases);
+    action();
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+fn release_once_per_interval(_: CompileRelease, _: fn()) {}
+
+/// Releases before the entry's compilation, the start-up peak, and lets its own code
+/// generation boundary release again whatever `LOAD_RELEASE_INTERVAL` says: only the
+/// parser's and compiler's pages, not the bootstrap's, need be resident across it, and the
+/// parser's not across its code generation. A bootstrap compilation within the interval had
+/// held that boundary (V8-v7 max RSS, entry compiled with the bootstrap cached, bolted static
+/// x86_64, 2026-10-22: Crypto 3100-3276 -> 2704-3052 KiB, RayTrace 2996 -> 2764, Richards
+/// 2812 -> 2484).
+pub fn release_before_entry_compile() {
     release_read_only_code_and_data();
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    if let Ok(mut releases) = LAST_COMPILE_RELEASES.lock() {
+        releases[CompileRelease::CodeGeneration as usize] = None;
+    }
 }
 
 /// The page-aligned address ranges of the segments above, from the loader's own table: every
@@ -371,9 +412,14 @@ static TOUCHED_PAGES_ONLY: std::sync::atomic::AtomicI32 = std::sync::atomic::Ato
 const NO_FD: libc::c_int = -1;
 
 /// Registers the mapping at `start` for write protection, which turns off fault-around in it
-/// (`map_touched_pages_only`); nothing when no descriptor is open.
+/// (`map_touched_pages_only`); nothing when no descriptor is open. The kernel registers whole
+/// pages only, and a mapping spans its last partial page, so `length` is rounded up to it: a
+/// compile-cache entry is mapped at its file's length, and with that length every
+/// registration had failed, so reading one record faulted in the whole entry (V8-v7 RegExp's
+/// 266 KiB, while its heap was at its peak).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn register_touched_pages_only(start: usize, length: usize) {
+    let length = length.next_multiple_of(page_size());
     /// `struct uffdio_register` from `<linux/userfaultfd.h>`.
     #[repr(C)]
     struct UffdioRegister {

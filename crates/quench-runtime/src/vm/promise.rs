@@ -1004,6 +1004,8 @@ pub(super) struct PromiseJob {
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct ThenableJob {
+    /// The realm the job runs in: the one current when the thenable resolved its promise.
+    pub(super) realm: Value,
     pub(super) then: Value,
     pub(super) thenable: Value,
     pub(super) promise: Value,
@@ -1077,7 +1079,6 @@ pub(super) struct DynamicImportJob {
 pub(super) struct PromiseRuntime {
     pub(super) rejection_notifications: VecDeque<RejectionNotification>,
     pub(super) last_rejection_id: u64,
-    pub(super) thenable_jobs: FxHashMap<Value, ThenableJob>,
     pub(super) finally_handler_callbacks: FxHashMap<Value, FinallyHandlerCallback>,
     pub(super) finally_continuation_callbacks: FxHashMap<Value, FinallyContinuationCallback>,
     pub(super) aggregates: FxHashMap<Value, AggregateRecord>,
@@ -1086,6 +1087,9 @@ pub(super) struct PromiseRuntime {
     pub(super) modules: FxHashMap<String, ModuleRecord>,
     pub(super) dynamic_import_jobs: Vec<DynamicImportJob>,
     pub(super) async_module_order: VecDeque<String>,
+    /// A promise an async-evaluating module waits on has settled since module advancement
+    /// last completed modules.
+    pub(super) async_module_settled: bool,
     pub(super) module_sources: FxHashMap<ModuleIdentity, Value>,
     pub(super) waiting_static_modules: Vec<ModuleSource>,
     pub(super) active_native: Vec<super::activation::NativeActivation>,
@@ -1105,7 +1109,6 @@ impl PromiseRuntime {
                 }
             };
         }
-        edges!(self.thenable_jobs, |job| [job.then, job.thenable, job.promise]);
         edges!(self.finally_handler_callbacks, |callback| [
             callback.handler,
             callback.constructor
@@ -1415,6 +1418,7 @@ impl<H: Host> Vm<H> {
                 rejection: PromiseRejectionState::Unobserved,
                 rejection_id: None,
                 host_context,
+                module_evaluation: false,
             },
         });
         if let Some(identity) = host_context {
@@ -1637,7 +1641,6 @@ impl<H: Host> Vm<H> {
                 self.promise_aggregate(p, this, args, AggregateMode::AllSettledKeyed)
             }
             Native::PromiseAny => self.promise_aggregate(p, this, args, AggregateMode::Any),
-            Native::PromiseThenableJob => self.promise_thenable_job(p),
             Native::PromiseAggregateJob => {
                 self.promise_aggregate_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
@@ -2109,6 +2112,7 @@ impl<H: Host> Vm<H> {
                 };
                 record.begin_async_evaluation(namespace);
                 record.track_evaluation_promise(promise);
+                self.watch_module_evaluation(promise);
                 self.realm
                     .promise
                     .async_module_order
@@ -3954,6 +3958,24 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    /// Whether module advancement after a job has work: the queues the advancement drains.
+    pub(super) fn module_jobs_pending(&self) -> bool {
+        let promise = &self.realm.promise;
+        !promise.dynamic_import_jobs.is_empty()
+            || !promise.waiting_static_modules.is_empty()
+            || promise.async_module_settled
+    }
+
+    /// Marks `promise` as one a module's async evaluation waits on; module advancement
+    /// becomes due when it settles, or now if it already has.
+    fn watch_module_evaluation(&mut self, promise: Value) {
+        let settled = self.promise_record_mut(promise).is_none_or(|record| {
+            record.module_evaluation = true;
+            record.state != PromiseState::Pending
+        });
+        self.realm.promise.async_module_settled |= settled;
+    }
+
     pub(super) fn advance_static_module_jobs(
         &mut self,
         p: &ResidualProgram,
@@ -3981,24 +4003,38 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    /// Async-evaluating modules whose evaluation promise has settled: the ones module
+    /// advancement completes, as (key, promise, namespace).
+    fn settled_async_modules(&self) -> impl Iterator<Item = (&String, Value, Value)> + '_ {
+        self.realm.promise.async_module_order.iter().filter_map(|key| {
+            let module = self.realm.promise.modules.get(key)?;
+            if module.phase() != ModulePhase::EvaluatingAsync {
+                return None;
+            }
+            let promise = module.evaluation_promise()?;
+            let settled = self
+                .promise_record(promise)
+                .is_some_and(|record| record.state != PromiseState::Pending);
+            settled.then_some((key, promise, module.pending_namespace()?))
+        })
+    }
+
     fn settle_pending_async_modules(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
-        let pending = self
-            .realm
-            .promise
-            .async_module_order
-            .iter()
-            .filter_map(|key| {
-                let module = self.realm.promise.modules.get(key)?;
-                (module.phase() == ModulePhase::EvaluatingAsync).then(|| {
-                    Some((
-                        key.clone(),
-                        module.evaluation_promise()?,
-                        module.pending_namespace()?,
-                    ))
-                })?
-            })
+        if !std::mem::take(&mut self.realm.promise.async_module_settled) {
+            return Ok(());
+        }
+        let completed = self.complete_settled_async_modules(p);
+        // A failed completion leaves the rest due.
+        self.realm.promise.async_module_settled |= completed.is_err();
+        completed
+    }
+
+    fn complete_settled_async_modules(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        let settled = self
+            .settled_async_modules()
+            .map(|(key, promise, namespace)| (key.clone(), promise, namespace))
             .collect::<Vec<_>>();
-        for (key, promise, namespace) in pending {
+        for (key, promise, namespace) in settled {
             let Some(record) = self.promise_record(promise).cloned() else {
                 continue;
             };
@@ -4193,6 +4229,7 @@ impl<H: Host> Vm<H> {
                         ));
                     };
                     module_record.track_evaluation_promise(evaluation);
+                    self.watch_module_evaluation(evaluation);
                 } else if pending {
                     self.drain_jobs_until_promise(&residual, evaluation)?;
                 }
@@ -5115,7 +5152,7 @@ impl<H: Host> Vm<H> {
                 "dynamic import own keys result is not an array".into(),
             ));
         };
-        let keys = elements.as_ref().clone();
+        let keys = elements.to_vec();
         let mut module_type = None;
         for key in keys {
             let key_name = match self.heap.get(key) {
@@ -5274,17 +5311,16 @@ impl<H: Host> Vm<H> {
         if !self.is_function(then) {
             return self.promise_settle(p, promise, PromiseState::Fulfilled, value);
         }
-        let job = self.native_with_env(Native::PromiseThenableJob, Value::NULL);
-        self.realm.promise.thenable_jobs.insert(
-            job,
-            ThenableJob {
-                then,
-                thenable: value,
-                promise,
-                execution_context: self.host.capture_job_context(self.promise_record(promise).and_then(|record| record.host_context)),
-            },
-        );
-        self.enqueue_job(job, vec![]);
+        let execution_context = self
+            .host
+            .capture_job_context(self.promise_record(promise).and_then(|record| record.host_context));
+        self.realm.jobs.push_back(super::PendingJob::Thenable(ThenableJob {
+            realm: self.realm.globals,
+            then,
+            thenable: value,
+            promise,
+            execution_context,
+        }));
         Ok(())
     }
 
@@ -5294,6 +5330,124 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<Value, JsError> {
         self.promise_resolve_for_constructor(p, self.intrinsic_promise_constructor(), value)
+    }
+
+    /// `Promise.prototype.then` of a receiver whose species steps provably answer the
+    /// intrinsic `%Promise%` without running guest code (`promise_species_intrinsic`), made
+    /// without a frame for the lane: the reaction promise and `perform_promise_then`, as
+    /// `promise_then`'s intrinsic arm makes them. `None` leaves any other receiver, an
+    /// impure species read, or a lifecycle-observing host, whose hooks run guest code, to
+    /// the general call.
+    pub(super) fn lane_promise_then(
+        &mut self,
+        p: &ResidualProgram,
+        promise: Value,
+        on_fulfilled: Value,
+        on_rejected: Value,
+    ) -> Option<Value> {
+        if self.host.observes_promise_lifecycle()
+            || !self.is_promise(promise)
+            || !self.promise_species_intrinsic(promise)
+        {
+            return None;
+        }
+        // Nothing below runs guest code or collects, so the receiver and handlers stay
+        // live in the caller's registers, as `lane_new_array`'s arguments do.
+        let next = self.promise_object_with_parent(None).ok()?;
+        self.perform_promise_then(p, promise, on_fulfilled, on_rejected, next);
+        Some(next)
+    }
+
+    /// `Promise.resolve` of the intrinsic `%Promise%` receiver whose steps provably observe
+    /// nothing: a promise whose `constructor` reads as plain data to the receiver is
+    /// returned as is; any other value resolves a fresh promise as `promise_resolve_value`
+    /// resolves one, where its `then` also reads as plain data — fulfilled directly when
+    /// that `then` is not callable, else through the thenable job the general path would
+    /// enqueue. `None` leaves an impure read or a lifecycle-observing host to the general
+    /// call.
+    pub(super) fn lane_promise_resolve(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        value: Value,
+    ) -> Option<Value> {
+        if self.host.observes_promise_lifecycle()
+            || receiver != self.intrinsic_promise_constructor()
+        {
+            return None;
+        }
+        if self.is_promise(value) {
+            let constructor_atom = self.runtime_atoms.constructor;
+            let observed = self.plain_named_load(value, constructor_atom)?;
+            return (observed == receiver).then_some(value);
+        }
+        let then = if self.object_data(value).is_some() {
+            let then_atom = self.runtime_atoms.then;
+            self.plain_named_load(value, then_atom)?
+        } else {
+            Value::UNDEFINED
+        };
+        let promise = self.promise_object_with_parent(None).ok()?;
+        if self.is_function(then) {
+            let execution_context = self.host.capture_job_context(None);
+            self.realm.jobs.push_back(super::PendingJob::Thenable(ThenableJob {
+                realm: self.realm.globals,
+                then,
+                thenable: value,
+                promise,
+                execution_context,
+            }));
+        } else {
+            // A fresh promise has no reactions, so the settle enqueues nothing.
+            self.promise_settle(p, promise, PromiseState::Fulfilled, value).ok()?;
+        }
+        Some(promise)
+    }
+
+    /// Whether `promise`'s species steps provably answer the intrinsic `%Promise%`: its
+    /// `constructor` reads as plain data (`plain_named_load`) to that constructor — or to
+    /// `undefined`, which PromiseSpeciesConstructor answers with the intrinsic — and the
+    /// constructor's own `@@species` is still the intrinsic accessor, whose getter returns
+    /// its receiver. Both reads observe nothing, so a failed proof only leaves the
+    /// observable steps to the general path.
+    fn promise_species_intrinsic(&mut self, promise: Value) -> bool {
+        let constructor_atom = self.runtime_atoms.constructor;
+        let Some(constructor) = self.plain_named_load(promise, constructor_atom) else {
+            return false;
+        };
+        if constructor.is_undefined() {
+            return true;
+        }
+        if constructor != self.intrinsic_promise_constructor() {
+            return false;
+        }
+        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
+            return false;
+        };
+        let Some(data) = self.object_data(constructor) else {
+            return false;
+        };
+        if data.has_side_descriptors() {
+            return false;
+        }
+        let Some(slot) =
+            self.property_shape_slot(data.shape(), property_key::PropertyKey::symbol(species))
+        else {
+            return false;
+        };
+        let Some(attributes) = self.object_data(constructor).and_then(|data| self.slot_attributes(data, slot)) else {
+            return false;
+        };
+        attributes.accessor
+            && attributes.getter.is_some_and(|getter| {
+                matches!(
+                    self.heap.function(getter),
+                    Some(FunctionRecord {
+                        kind: FunctionKind::Native(Native::PromiseSpeciesGetter),
+                        ..
+                    })
+                )
+            })
     }
 
     pub(super) fn promise_then(
@@ -5676,7 +5830,6 @@ impl PromiseRuntime {
         let Self {
             rejection_notifications,
             last_rejection_id,
-            thenable_jobs,
             finally_handler_callbacks,
             finally_continuation_callbacks,
             aggregates,
@@ -5688,15 +5841,16 @@ impl PromiseRuntime {
             module_sources,
             waiting_static_modules,
             active_native,
+            async_module_settled,
         } = self;
         let pending = [
             ("a rejection notification", rejection_notifications.is_empty()),
-            ("a thenable job", thenable_jobs.is_empty()),
             ("a finally callback", finally_handler_callbacks.is_empty() && finally_continuation_callbacks.is_empty()),
             ("a promise combinator", aggregates.is_empty() && aggregate_jobs.is_empty()),
             ("a reaction capability", reaction_capabilities.is_empty()),
             ("a module record", modules.is_empty() && async_module_order.is_empty() && module_sources.is_empty()),
             ("a module load", dynamic_import_jobs.is_empty() && waiting_static_modules.is_empty()),
+            ("a settled async module", !async_module_settled),
             ("a native activation", active_native.is_empty()),
         ];
         if let Some((what, _)) = pending.iter().find(|(_, empty)| !empty) {

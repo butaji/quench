@@ -522,7 +522,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         || input.jit_wasm_memcpy_leaf_ab
         || input.jit_wasm_selective_ab
     {
-        let config = selected_diagnostic_ab_config(
+        let mut config = selected_diagnostic_ab_config(
             input.jit_wasm_memcpy_ab,
             input.jit_wasm_memcpy_raw_ab,
             input.jit_wasm_compare_branch_ab,
@@ -532,6 +532,14 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             input.jit_wasm_memcpy_leaf_ab,
             input.jit_wasm_selective_ab,
         )?;
+        if input.jit_wasm_reference_body_cache_ab
+            && input.fixtures.len() == 1
+            && input.fixtures.keys().next().is_some_and(|path| {
+                path.ends_with("/sqlite3-wasm")
+            })
+        {
+            config.fixture_name = "sqlite3-wasm";
+        }
         validate_diagnostic_ab(&input, config)?;
         return run_diagnostic_ab_analysis(&input, &input_path, output_path.as_deref(), config);
     }

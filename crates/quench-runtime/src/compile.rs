@@ -264,6 +264,35 @@ pub(crate) struct EvalRegExpLiteral {
     pub(crate) span: Range<usize>,
     pub(crate) flags: String,
 }
+
+/// The first characters, past white space, `/*…*/` and `//` comments and opening
+/// parentheses, after which a Script of one parenthesized regular expression literal may
+/// still begin: the literal's own `/`, and the starts of the comments this scan leaves to
+/// the parser (Annex B's `<!--` and `-->`, and a hashbang `#!`).
+const SINGLE_REGEXP_LITERAL_STARTS: [u8; 4] = [b'/', b'<', b'-', b'#'];
+
+/// Whether `source` may be a Script of one (possibly parenthesized) regular expression
+/// literal, which `Engine::eval_single_regexp_literal` then parses to decide: false only when
+/// the first token past white space, ordinary comments and `(` is something else. Skipping
+/// Rust's white space, which is ECMAScript's plus U+0085 and less U+FEFF, as well as U+FEFF,
+/// keeps the test an over-approximation: it rejects no source the parse would accept.
+fn may_begin_single_regexp_literal(source: &str) -> bool {
+    let mut rest = source;
+    loop {
+        rest = rest.trim_start_matches(|character: char| character.is_whitespace() || character == '\u{FEFF}');
+        if let Some(after) = rest.strip_prefix("/*") {
+            let Some(end) = after.find("*/") else { return true };
+            rest = &after[end + "*/".len()..];
+        } else if let Some(after) = rest.strip_prefix("//") {
+            let Some(end) = after.find(['\n', '\r', '\u{2028}', '\u{2029}']) else { return true };
+            rest = &after[end..];
+        } else if let Some(after) = rest.strip_prefix('(') {
+            rest = after;
+        } else {
+            return rest.bytes().next().is_some_and(|first| SINGLE_REGEXP_LITERAL_STARTS.contains(&first));
+        }
+    }
+}
 pub(crate) enum StaticModuleThrow {
     Value(Constant),
     Error {
@@ -324,6 +353,9 @@ impl Engine {
     }
 
     pub(crate) fn eval_single_regexp_literal(source: &str) -> Option<EvalRegExpLiteral> {
+        if !may_begin_single_regexp_literal(source) {
+            return None;
+        }
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
         if stack::validate_parsed(&parsed).is_err() {
@@ -1014,7 +1046,7 @@ impl Engine {
         // spans still address `normalized`, retaining exact nested function source.
         drop(semantic);
         // Parsing and analysis are done; the code generator's work starts here.
-        compile_phase_boundary();
+        compile_phase_boundary(CompilePhase::CodeGeneration);
         let eval_context = if let ParsedProgramShape::Eval(context, _) = expected_shape {
             if wrapped_eval {
                 let body = eval_method_body(&mut parsed.program, ordinary_private_context)
@@ -1105,19 +1137,29 @@ impl Engine {
     }
 }
 
-/// What a compilation does between parsing and code generation, set once by the embedding:
-/// a host may return the parser's read-only pages there, so they and the code generator's are
-/// not resident together at a compilation's peak.
-static COMPILE_PHASE_BOUNDARY: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+/// A point in compilation where the code about to run differs from the code that ran, which
+/// an embedding may act on (`set_compile_phase_boundary`), as a host returns read-only pages
+/// the next phase does not touch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompilePhase {
+    /// A compilation has parsed and analysed its source; its code generation starts.
+    CodeGeneration,
+    /// A function compiles, or decodes from its program's kept bytes, on its first call: code
+    /// that has not run before is about to.
+    FirstCall,
+}
 
-/// Sets the action a compilation takes once it has parsed its source; the first call wins.
-pub fn set_compile_phase_boundary(action: fn()) {
+/// What a compilation does at each `CompilePhase`, set once by the embedding.
+static COMPILE_PHASE_BOUNDARY: std::sync::OnceLock<fn(CompilePhase)> = std::sync::OnceLock::new();
+
+/// Sets the action a compilation takes at each `CompilePhase`; the first call wins.
+pub fn set_compile_phase_boundary(action: fn(CompilePhase)) {
     let _ = COMPILE_PHASE_BOUNDARY.set(action);
 }
 
-fn compile_phase_boundary() {
+pub(crate) fn compile_phase_boundary(phase: CompilePhase) {
     if let Some(action) = COMPILE_PHASE_BOUNDARY.get() {
-        action();
+        action(phase);
     }
 }
 
@@ -2054,6 +2096,11 @@ impl<'a> Compiler<'a> {
     /// every function nested in it, resolves names statically, inside no function that may
     /// give it binding sites: its layout then depends on nothing compiled after it.
     fn finish_early(&mut self, id: u32) {
+        #[cfg(feature = "profile-aggregate")]
+        if std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some() {
+            // A function-level profile needs each replayable function's instruction records.
+            return;
+        }
         if !self.replayable_source || self.dynamic_binding_scopes != 0 {
             return;
         }
@@ -3198,7 +3245,8 @@ impl<'a> Compiler<'a> {
             && !options.class_initializer
             && !options.implicit_super
             && options.with_depth == 0
-            && self.eval_context.is_none()
+            // A nested function's own parameters and locals are its own in eval code and host
+            // scripts too: names it does not declare resolve as they would without promotion.
             && !dynamic_eval;
         let (promoted_local_slots, clobbered_local_slots) = self.promoted_local_plan(
             promote_plain_locals,

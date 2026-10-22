@@ -79,6 +79,14 @@ enum LegacyRegExpMatch {
         input: JsString,
         matched: quench_regexp::Match,
     },
+    /// The match `matcher` finds in `input` from `start`, where a match is known to begin:
+    /// found again only when a static is read (`resolve_regexp_legacy_match`), as most
+    /// matches' statics are never read.
+    Pending {
+        input: JsString,
+        matcher: Rc<quench_regexp::Regex>,
+        start: usize,
+    },
     Invalid,
 }
 
@@ -139,6 +147,9 @@ enum RegExpConstructorInput {
 /// prototype, is reread.
 #[derive(Clone, Copy)]
 pub(super) struct RegExpBuiltinLayout {
+    /// The realm whose `RegExp.prototype` (`prototype_object`) the proof was made for.
+    realm: Value,
+    prototype_object: Value,
     receiver: u32,
     prototype: u32,
     exec_slot: u32,
@@ -149,6 +160,9 @@ pub(super) struct RegExpBuiltinLayout {
 /// attributes, so the proof holds while both match; the slot's value is reread.
 #[derive(Clone, Copy)]
 pub(super) struct RegExpSymbolLayout {
+    /// The realm whose `RegExp.prototype` (`prototype_object`) the proof was made for.
+    realm: Value,
+    prototype_object: Value,
     symbol: Value,
     receiver: u32,
     prototype: u32,
@@ -665,15 +679,12 @@ impl<H: Host> Vm<H> {
             return None;
         }
         if !global {
-            let slot = self.regexp_last_index_slot(receiver)?;
-            self.heap
-                .property_get(self.object_data(receiver)?, slot)?
-                .as_number()?;
+            self.regexp_last_index_value(receiver)?.1.as_number()?;
         }
-        let Some(Cell::RegExp { matcher, .. }) = self.heap.get(receiver) else {
+        let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
             return None;
         };
-        Some((Rc::clone(matcher), flags))
+        Some((Rc::clone(&meta.matcher), flags))
     }
 
     /// `GetMethod(receiver, symbol)` for a RegExp `receiver` whose shape and prototype's
@@ -687,44 +698,39 @@ impl<H: Host> Vm<H> {
         if !matches!(self.heap.get(receiver), Some(Cell::RegExp { .. })) {
             return None;
         }
-        let prototype = self
-            .realm
-            .intrinsics
-            .regexp_intrinsics
-            .get(&self.realm.globals)?
-            .prototype;
         let receiver_data = self.object_data(receiver)?;
-        if receiver_data.proto() != prototype {
+        let (proto, receiver_shape) = (receiver_data.proto(), receiver_data.shape());
+        let realm = self.realm.globals;
+        // A recorded proof names its realm's prototype, so a match needs no intrinsics lookup.
+        if let Some(layout) = self.regexp_symbol_layouts.iter().find(|layout| {
+            layout.symbol == symbol && layout.realm == realm && layout.prototype_object == proto
+                && layout.receiver == receiver_shape
+        }) && let (slot, Some(prototype_data)) = (layout.slot as usize, self.object_data(proto))
+            && prototype_data.shape() == layout.prototype
+        {
+            return self.heap.property_get(prototype_data, slot);
+        }
+        let prototype = self.realm.intrinsics.regexp_intrinsics.get(&realm)?.prototype;
+        if proto != prototype {
             return None;
         }
-        let receiver_shape = receiver_data.shape();
         let prototype_shape = self.object_data(prototype)?.shape();
-        let proven = self.regexp_symbol_layouts.iter().find(|layout| {
-            layout.symbol == symbol
-                && layout.receiver == receiver_shape
-                && layout.prototype == prototype_shape
-        });
-        let slot = match proven {
-            Some(layout) => layout.slot as usize,
-            None => {
-                let slot =
-                    self.verify_regexp_symbol_layout(receiver, prototype, symbol)?;
-                // A changed prototype shape invalidates every proof made against the old one.
-                self.regexp_symbol_layouts
-                    .retain(|layout| layout.prototype == prototype_shape);
-                remember_shape_proof(
-                    &mut self.regexp_symbol_layouts,
-                    REGEXP_SYMBOL_LAYOUTS * REGEXP_RECEIVER_SHAPES,
-                    RegExpSymbolLayout {
-                        symbol,
-                        receiver: receiver_shape,
-                        prototype: prototype_shape,
-                        slot: slot as u32,
-                    },
-                );
-                slot
-            }
-        };
+        let slot = self.verify_regexp_symbol_layout(receiver, prototype, symbol)?;
+        // A changed prototype shape invalidates every proof this realm made against the old one.
+        self.regexp_symbol_layouts
+            .retain(|layout| layout.realm != realm || layout.prototype == prototype_shape);
+        remember_shape_proof(
+            &mut self.regexp_symbol_layouts,
+            REGEXP_SYMBOL_LAYOUTS * REGEXP_RECEIVER_SHAPES,
+            RegExpSymbolLayout {
+                realm,
+                prototype_object: prototype,
+                symbol,
+                receiver: receiver_shape,
+                prototype: prototype_shape,
+                slot: slot as u32,
+            },
+        );
         self.heap.property_get(self.object_data(prototype)?, slot)
     }
 
@@ -757,40 +763,39 @@ impl<H: Host> Vm<H> {
     /// flag accessor, and the prototype's accessors are the builtins. Returns the prototype
     /// and the slot of its `exec`, whose value the caller still reads.
     fn regexp_builtin_layout_proof(&mut self, receiver: Value) -> Option<(Value, usize)> {
-        let prototype = self
-            .realm
-            .intrinsics
-            .regexp_intrinsics
-            .get(&self.realm.globals)?
-            .prototype;
         let receiver_data = self.object_data(receiver)?;
-        if receiver_data.proto() != prototype {
+        let (proto, receiver_shape) = (receiver_data.proto(), receiver_data.shape());
+        let realm = self.realm.globals;
+        // A recorded proof names its realm's prototype, so a match needs no intrinsics lookup.
+        let proto_shape = self.object_data(proto).map(|data| data.shape());
+        if let Some(layout) = self.regexp_builtin_layouts.iter().find(|layout| {
+            layout.realm == realm
+                && layout.prototype_object == proto
+                && layout.receiver == receiver_shape
+                && Some(layout.prototype) == proto_shape
+        }) {
+            return Some((proto, layout.exec_slot as usize));
+        }
+        let prototype = self.realm.intrinsics.regexp_intrinsics.get(&realm)?.prototype;
+        if proto != prototype {
             return None;
         }
-        let receiver_shape = receiver_data.shape();
         let prototype_shape = self.object_data(prototype)?.shape();
-        let proven = self.regexp_builtin_layouts.iter().find(|layout| {
-            layout.receiver == receiver_shape && layout.prototype == prototype_shape
-        });
-        let exec_slot = match proven {
-            Some(layout) => layout.exec_slot as usize,
-            None => {
-                let exec_slot = self.verify_regexp_builtin_layout(receiver, prototype)?;
-                // A changed prototype shape invalidates every proof made against the old one.
-                self.regexp_builtin_layouts
-                    .retain(|layout| layout.prototype == prototype_shape);
-                remember_shape_proof(
-                    &mut self.regexp_builtin_layouts,
-                    REGEXP_RECEIVER_SHAPES,
-                    RegExpBuiltinLayout {
-                        receiver: receiver_shape,
-                        prototype: prototype_shape,
-                        exec_slot: exec_slot as u32,
-                    },
-                );
-                exec_slot
-            }
-        };
+        let exec_slot = self.verify_regexp_builtin_layout(receiver, prototype)?;
+        // A changed prototype shape invalidates every proof this realm made against the old one.
+        self.regexp_builtin_layouts
+            .retain(|layout| layout.realm != realm || layout.prototype == prototype_shape);
+        remember_shape_proof(
+            &mut self.regexp_builtin_layouts,
+            REGEXP_RECEIVER_SHAPES,
+            RegExpBuiltinLayout {
+                realm,
+                prototype_object: prototype,
+                receiver: receiver_shape,
+                prototype: prototype_shape,
+                exec_slot: exec_slot as u32,
+            },
+        );
         Some((prototype, exec_slot))
     }
 
@@ -851,6 +856,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The slot of `receiver`'s own writable data `lastIndex`, proven once per receiver shape.
+    #[inline(always)]
     fn regexp_last_index_slot(&mut self, receiver: Value) -> Option<usize> {
         let shape = self.object_data(receiver)?.shape();
         if let Some(&(_, slot)) = self
@@ -860,6 +866,29 @@ impl<H: Host> Vm<H> {
         {
             return Some(slot as usize);
         }
+        self.regexp_last_index_slot_miss(receiver, shape)
+    }
+
+    /// The own writable data `lastIndex` of the RegExp `receiver`: its slot
+    /// (`regexp_last_index_slot`) and value, read through one lookup of the RegExp's cell.
+    #[inline(always)]
+    fn regexp_last_index_value(&mut self, receiver: Value) -> Option<(usize, Value)> {
+        let Some(Cell::RegExp { object, .. }) = self.heap.get(receiver) else {
+            return None;
+        };
+        let shape = object.shape();
+        if let Some(&(_, slot)) = self.regexp_last_index_layouts.iter().find(|(cached, _)| *cached == shape) {
+            return Some((slot as usize, self.heap.property_get(object, slot as usize)?));
+        }
+        let slot = self.regexp_last_index_slot_miss(receiver, shape)?;
+        Some((slot, self.heap.property_get(self.object_data(receiver)?, slot)?))
+    }
+
+    /// `regexp_last_index_slot` of a shape the layout cache does not hold: the slot of an own
+    /// writable data `lastIndex`, cached for `shape`. Out of line, so the hit saves nothing.
+    #[cold]
+    #[inline(never)]
+    fn regexp_last_index_slot_miss(&mut self, receiver: Value, shape: u32) -> Option<usize> {
         let key = PropertyKey::string(self.runtime_atoms.last_index);
         let (_, slot) = self.object_property_slot(receiver, key)?;
         let attributes = self.property_attributes(receiver, key)?;
@@ -979,18 +1008,25 @@ impl<H: Host> Vm<H> {
                 {
                     return Rc::clone(subject);
                 }
-                let subject = quench_regexp::Subject::short_ascii(text.as_str());
                 if let Some(slot) = self.regexp_short_subject.as_mut()
                     && let Some(reused) = Rc::get_mut(slot)
                 {
-                    *reused = subject;
+                    reused.respell_short_ascii(text.as_str());
                     return Rc::clone(slot);
                 }
-                let subject = Rc::new(subject);
+                let subject = Rc::new(quench_regexp::Subject::short_ascii(text.as_str()));
                 self.regexp_short_subject = Some(Rc::clone(&subject));
                 return subject;
             }
             FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) | FlatUnits::Wide(_) => &*flat,
+            // A matcher subject owns whole wide storage, so a slice's run is copied into one;
+            // it is not kept, as nothing else holds that copy to find it by.
+            FlatUnits::WideSlice(_) => {
+                let crate::vm::wtf16::Units::Wide(units) = flat.view() else {
+                    unreachable!("a wide slice views wide units")
+                };
+                return Rc::new(quench_regexp::Subject::new(Rc::from(units)));
+            }
         };
         let cached = self.regexp_subjects.iter().position(|subject| match text {
             FlatUnits::Wide(units) => subject.is_text_of(units),
@@ -998,22 +1034,31 @@ impl<H: Host> Vm<H> {
                 .shared_ascii()
                 .is_some_and(|(text, range)| subject.is_ascii_text_of(text, &range)),
         });
-        let subject = match cached {
-            // The most recent subject again: the cache keeps its order.
-            Some(0) => return Rc::clone(&self.regexp_subjects[0]),
-            Some(position) => self.regexp_subjects.remove(position),
-            None => Rc::new(match text {
-                FlatUnits::Wide(units) => quench_regexp::Subject::new(Rc::clone(units)),
-                ascii => {
-                    let (text, range) =
-                        ascii.shared_ascii().expect("short subjects returned above");
-                    quench_regexp::Subject::from_ascii(Rc::clone(text), range)
-                }
-            }),
+        // The cache is ordered by recency: a hit moves to the front, and a miss takes the
+        // least recent entry's place, reusing its allocation when no match holds it.
+        if let Some(position) = cached {
+            self.regexp_subjects[..=position].rotate_right(1);
+            return Rc::clone(&self.regexp_subjects[0]);
+        }
+        let fresh = match text {
+            // Wide storage always holds a non-ASCII unit (`FlatUnits::Wide`).
+            FlatUnits::Wide(units) => quench_regexp::Subject::from_non_ascii(Rc::clone(units)),
+            ascii => {
+                let (text, range) = ascii.shared_ascii().expect("short subjects returned above");
+                quench_regexp::Subject::from_ascii(Rc::clone(text), range)
+            }
         };
-        self.regexp_subjects.insert(0, Rc::clone(&subject));
-        self.regexp_subjects.truncate(REGEXP_SUBJECT_CACHE_ENTRIES);
-        subject
+        if self.regexp_subjects.len() < REGEXP_SUBJECT_CACHE_ENTRIES {
+            self.regexp_subjects.push(Rc::new(fresh));
+        } else {
+            let least_recent = self.regexp_subjects.last_mut().expect("the cache is full");
+            match Rc::get_mut(least_recent) {
+                Some(reused) => *reused = fresh,
+                None => *least_recent = Rc::new(fresh),
+            }
+        }
+        self.regexp_subjects.rotate_right(1);
+        Rc::clone(&self.regexp_subjects[0])
     }
 
     /// `RegExp.prototype[@@replace]` for a receiver whose exec, flags and lastIndex are its
@@ -1029,7 +1074,7 @@ impl<H: Host> Vm<H> {
         input: &JsString,
         input_value: Value,
         replacement: FastReplacement<'_>,
-        matcher: &quench_regexp::Regex,
+        matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
         result_used: bool,
     ) -> Result<Value, JsError> {
@@ -1109,7 +1154,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Every match of a global builtin exec loop from index 0, as RegExpBuiltinExec leaves
-    /// them: lastIndex reset before and after, sticky matches contiguous, and an empty
+    /// them: lastIndex 0 before and after, sticky matches contiguous, and an empty
     /// match advancing the search by one string index.
     fn regexp_global_matches<T>(
         &mut self,
@@ -1137,7 +1182,9 @@ impl<H: Host> Vm<H> {
             };
             matches.push(found);
         }
-        self.store_regexp_last_index(p, receiver, Value::number(0.0))?;
+        // The exec loop leaves lastIndex 0 after its failing match, the value stored above:
+        // the matcher runs no guest code, and lastIndex is an own data property (a
+        // non-writable one made that store throw), so a second store observes nothing.
         Ok(matches)
     }
 
@@ -1153,28 +1200,29 @@ impl<H: Host> Vm<H> {
         input: &JsString,
         subject: &quench_regexp::Subject,
         template: &JsString,
-        matcher: &quench_regexp::Regex,
+        matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
         result_used: bool,
     ) -> Result<Value, JsError> {
         let (ranges, last) = if flags.contains(RegExpFlags::GLOBAL) {
+            let searcher = matcher.range_searcher(subject);
             let ranges = self.regexp_global_matches(
                 p,
                 receiver,
                 input,
                 flags,
-                |start| matcher.find_range_in_subject(subject, start),
+                |start| searcher.find(start),
                 Range::clone,
             )?;
-            let last = ranges
-                .last()
-                .and_then(|range| matcher.find_in_subject(subject, range.start).next());
+            // Only the last match's captures are observable, through the legacy statics,
+            // which find it again from its start if they are read.
+            let last = ranges.last().map(|range| Err(range.start));
             (ranges, last)
         } else {
             let found = matcher.find_in_subject(subject, 0).next();
             (
                 found.iter().map(|found| found.range.clone()).collect(),
-                found,
+                found.map(Ok),
             )
         };
         let Some(last) = last else {
@@ -1183,7 +1231,10 @@ impl<H: Host> Vm<H> {
             }
             return Ok(self.heap.alloc_string(input.clone()));
         };
-        self.record_regexp_legacy_match(receiver, input.clone(), last)?;
+        match last {
+            Ok(found) => self.record_regexp_legacy_match(receiver, input.clone(), found)?,
+            Err(start) => self.record_regexp_legacy_pending(receiver, input.clone(), matcher, start)?,
+        }
         // Nothing reads the result: building it runs no guest code, so only its one
         // observable outcome, a length past the limit raising, needs the length.
         if !result_used {
@@ -1370,6 +1421,23 @@ impl<H: Host> Vm<H> {
                 }
                 let input =
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                // An object limit's conversion runs guest code, which may change what the
+                // splitter constructed before it would observe (`exec` on its prototype).
+                let limit_arg = args.get(1).copied();
+                let limit_runs_guest_code = limit_arg.is_some_and(|limit| vm.is_object_like(limit));
+                if let Some((matcher, flags)) = (!limit_runs_guest_code)
+                    .then(|| vm.regexp_unobservable_splitter(receiver, &input))
+                    .flatten()
+                {
+                    let limit = vm.regexp_split_limit(p, limit_arg)?;
+                    let array = vm.new_array(Vec::new());
+                    if limit == 0 {
+                        return Ok(array);
+                    }
+                    return vm.with_call_roots([array], |vm| {
+                        vm.regexp_split_builtin(receiver, &matcher, &input, array, limit, flags.unicode_mode())
+                    });
+                }
                 let constructor = vm.regexp_species_constructor(p, receiver)?;
                 let (unicode, splitter) = vm.with_call_roots([constructor], |vm| {
                     let mut flags = vm.regexp_flags_text(p, receiver)?;
@@ -1466,9 +1534,10 @@ impl<H: Host> Vm<H> {
     /// `exec` data property on that prototype. While no guest code runs, that resolution
     /// cannot change.
     fn regexp_builtin_exec_matcher(&self, regexp: Value) -> Option<Rc<quench_regexp::Regex>> {
-        let Some(Cell::RegExp { matcher, .. }) = self.heap.get(regexp) else {
+        let Some(Cell::RegExp { meta, .. }) = self.heap.get(regexp) else {
             return None;
         };
+        let matcher = &meta.matcher;
         let intrinsics = self
             .realm
             .intrinsics
@@ -1562,6 +1631,51 @@ impl<H: Host> Vm<H> {
             self.record_regexp_legacy_match(splitter, input.clone(), matched)?;
         }
         Ok(array)
+    }
+
+    /// The matcher and flags of the splitter `@@split` would construct for `receiver` over the
+    /// non-empty `input`, when constructing it is unobservable and the splitter would behave
+    /// as `receiver`'s own builtin matcher with `y`: the receiver's exec, flags and flag
+    /// accessors are builtin (`regexp_builtin_receiver_matcher`), `SpeciesConstructor`
+    /// resolves through the prototype's data `constructor` to this realm's `RegExp` and its
+    /// builtin `@@species` getter, `IsRegExp` reads a data `@@match`, and the receiver's
+    /// legacy owner is that constructor, the owner a splitter it constructs gets. The splitter
+    /// never escapes, so the split runs with the receiver in its place
+    /// (`regexp_split_builtin`). The caller takes it only for a limit whose conversion runs no
+    /// guest code, since the spec constructs the splitter before converting the limit.
+    fn regexp_unobservable_splitter(
+        &mut self,
+        receiver: Value,
+        input: &JsString,
+    ) -> Option<(Rc<quench_regexp::Regex>, RegExpFlags)> {
+        if input.units().len() == 0 {
+            return None;
+        }
+        let intrinsic = self.regexp_intrinsic_constructor();
+        let owner = match self.heap.get(receiver) {
+            Some(Cell::RegExp { meta, .. }) => meta.legacy_constructor,
+            _ => return None,
+        };
+        if !matches!(owner, crate::heap::RegExpLegacyOwner::Enabled(constructor) if constructor == intrinsic) {
+            return None;
+        }
+        let matched = self.regexp_builtin_receiver_matcher(receiver)?;
+        let match_symbol = self.well_known_symbols.get(WellKnownSymbol::Match)?;
+        self.regexp_proven_symbol_method(receiver, match_symbol)?;
+        let constructor_atom = self.intern_atom("constructor");
+        let constructor_key = PropertyKey::string(constructor_atom);
+        let prototype = self.object_data(receiver)?.proto();
+        let constructor_is_intrinsic = self.property_attributes(receiver, constructor_key).is_none()
+            && self
+                .property_attributes(prototype, constructor_key)
+                .is_some_and(|attributes| !attributes.accessor)
+            && self.own_property(prototype, constructor_atom) == Some(intrinsic);
+        let species = self.well_known_symbols.get(WellKnownSymbol::Species)?;
+        let species_is_builtin = self
+            .property_attributes(intrinsic, PropertyKey::symbol(species))
+            .and_then(|attributes| attributes.accessor.then_some(attributes.getter).flatten())
+            .is_some_and(|getter| self.is_native_function(getter, Native::RegExpSpecies));
+        (constructor_is_intrinsic && species_is_builtin).then_some(matched)
     }
 
     fn regexp_species_constructor(
@@ -1790,12 +1904,12 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         receiver: Value,
         input: &JsString,
-        matcher: &quench_regexp::Regex,
+        matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
     ) -> Result<Value, JsError> {
         let subject = self.regexp_subject(input);
-        // Only the last match's captures are observable (the legacy statics), so the rest
-        // keep their ranges alone; the last is found again from its start for its captures.
+        // Only the last match's captures are observable (the legacy statics), so every match
+        // keeps its range alone; the statics find the last again from its start if read.
         let ranges = self.regexp_global_matches(
             p,
             receiver,
@@ -1807,11 +1921,7 @@ impl<H: Host> Vm<H> {
         let Some(last) = ranges.last() else {
             return Ok(Value::NULL);
         };
-        let last = matcher
-            .find_in_subject(&subject, last.start)
-            .next()
-            .expect("a match is found again from its own start");
-        self.record_regexp_legacy_match(receiver, input.clone(), last)?;
+        self.record_regexp_legacy_pending(receiver, input.clone(), matcher, last.start)?;
         let matched = ranges
             .into_iter()
             .map(|range| self.heap.alloc_string(input.substring(range)))
@@ -1930,6 +2040,7 @@ impl<H: Host> Vm<H> {
             .and_then(Value::as_number)
             .ok_or_else(|| JsError("missing RegExp legacy property selector".into()))?
             as Atom;
+        self.resolve_regexp_legacy_match();
         let name = self.atom_name(selector);
         let state = self
             .realm
@@ -1943,6 +2054,7 @@ impl<H: Host> Vm<H> {
             match &state.legacy_match {
                 LegacyRegExpMatch::Invalid => None,
                 LegacyRegExpMatch::Empty => Some(JsString::from_units(&[])),
+                LegacyRegExpMatch::Pending { .. } => unreachable!("resolved above"),
                 LegacyRegExpMatch::Matched { input, matched } => {
                     let range = match name {
                         "lastMatch" | "$&" => Some(matched.range.clone()),
@@ -2157,27 +2269,6 @@ impl<H: Host> Vm<H> {
             .constant(program, site.flags_constant as usize)
             .filter(|value| self.heap.string(*value).is_some())
             .ok_or_else(|| JsError::validation("RegExp literal flags are not a string".into()))?;
-        let matcher = match self.programs.regexp_literal_matcher(program, site_index) {
-            Some(matcher) => matcher,
-            None => {
-                let flags = self.heap.string(flags_text).expect("checked above").host_string().to_owned();
-                let matcher = self
-                    .cached_regexp_matcher(&source, &flags, PatternValidity::EarlyChecked)
-                    .map_err(|error| Rc::<str>::from(error.to_string()));
-                if !self
-                    .programs
-                    .cache_regexp_literal_matcher(program, site_index, matcher.clone())
-                {
-                    return Err(JsError::validation(
-                        "RegExp literal cache site is invalid".into(),
-                    ));
-                }
-                matcher
-            }
-        }
-        .map_err(|message| JsError(message.to_string().into()))?;
-        let flags =
-            RegExpFlags::validated(self.heap.string(flags_text).expect("checked above").host_string());
         let (prototype, constructor) = self
             .realm
             .intrinsics
@@ -2185,13 +2276,39 @@ impl<H: Host> Vm<H> {
             .get(&self.realm.globals)
             .map(|intrinsics| (intrinsics.prototype, intrinsics.constructor))
             .expect("RegExp intrinsics are installed for the active realm");
-        self.regexp_from_matcher(
-            prototype,
-            source,
-            flags,
-            matcher,
-            crate::heap::RegExpLegacyOwner::Enabled(constructor),
-        )
+        let owner = crate::heap::RegExpLegacyOwner::Enabled(constructor);
+        let meta = match self.programs.regexp_literal_meta(program, site_index) {
+            Some(meta) => meta,
+            None => {
+                let flags = self.heap.string(flags_text).expect("checked above").host_string().to_owned();
+                let meta = self
+                    .cached_regexp_matcher(&source, &flags, PatternValidity::EarlyChecked)
+                    .map(|matcher| {
+                        Rc::new(crate::heap::RegExpMeta {
+                            source: source.clone(),
+                            flags: RegExpFlags::validated(&flags),
+                            legacy_constructor: owner,
+                            matcher,
+                        })
+                    })
+                    .map_err(|error| Rc::<str>::from(error.to_string()));
+                if !self.programs.cache_regexp_literal_meta(program, site_index, meta.clone()) {
+                    return Err(JsError::validation(
+                        "RegExp literal cache site is invalid".into(),
+                    ));
+                }
+                meta
+            }
+        }
+        .map_err(|message| JsError(message.to_string().into()))?;
+        // A site's record names the realm it was first evaluated in; another realm's
+        // evaluation owns a record of its own.
+        let meta = if meta.legacy_constructor.constructor() == constructor {
+            meta
+        } else {
+            Rc::new(crate::heap::RegExpMeta { legacy_constructor: owner, ..(*meta).clone() })
+        };
+        self.regexp_from_meta(prototype, meta)
     }
 
     pub(super) fn regexp_from_matcher(
@@ -2202,14 +2319,19 @@ impl<H: Host> Vm<H> {
         matcher: Rc<quench_regexp::Regex>,
         legacy_constructor: crate::heap::RegExpLegacyOwner,
     ) -> Result<Value, JsError> {
+        let meta = Rc::new(crate::heap::RegExpMeta { source, flags, legacy_constructor, matcher });
+        self.regexp_from_meta(prototype, meta)
+    }
+
+    /// A new RegExp object of `prototype` with the record `meta`.
+    fn regexp_from_meta(
+        &mut self,
+        prototype: Value,
+        meta: Rc<crate::heap::RegExpMeta>,
+    ) -> Result<Value, JsError> {
         let object = self.heap.alloc(Cell::RegExp {
             object: Box::new(Self::empty_object(prototype)),
-            meta: Box::new(crate::heap::RegExpMeta {
-                source,
-                flags,
-                legacy_constructor,
-            }),
-            matcher,
+            meta,
         });
         // Every new RegExp object starts in the same shape, so the `lastIndex` definition the
         // first one recorded applies again.
@@ -2285,17 +2407,14 @@ impl<H: Host> Vm<H> {
                         return vm.syntax_error_result(p, message).map(|_| Value::UNDEFINED);
                     }
                 };
-                let Some(Cell::RegExp {
-                    meta,
-                    matcher: current_matcher,
-                    ..
-                }) = vm.heap.get_mut(receiver)
-                else {
+                let Some(Cell::RegExp { meta, .. }) = vm.heap.get_mut(receiver) else {
                     unreachable!("RegExp receiver slot was validated before compilation")
                 };
+                // The record may be a literal site's, shared with its other objects.
+                let meta = Rc::make_mut(meta);
                 meta.source = source;
                 meta.flags = RegExpFlags::validated(&flags);
-                *current_matcher = matcher;
+                meta.matcher = matcher;
                 let last_index = vm.intern_atom("lastIndex");
                 vm.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
                 Ok(receiver)
@@ -2406,8 +2525,8 @@ impl<H: Host> Vm<H> {
         known_slot: Option<usize>,
     ) -> Result<Option<quench_regexp::Match>, JsError> {
         let (regex, stateful, sticky) = match self.heap.get(this) {
-            Some(Cell::RegExp { matcher, meta, .. }) => (
-                Rc::clone(matcher),
+            Some(Cell::RegExp { meta, .. }) => (
+                Rc::clone(&meta.matcher),
                 meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY)),
                 meta.flags.contains(RegExpFlags::STICKY),
             ),
@@ -2425,8 +2544,13 @@ impl<H: Host> Vm<H> {
             }
             None => vm.store_regexp_last_index(p, this, value),
         };
-        if stateful && start > input.units().len() {
-            store(self, Value::number(0.0))?;
+        let units = input.units();
+        if (stateful && start > units.len())
+            || regex.excludes_search(units.len(), start, (start < units.len()).then(|| units.at(start)))
+        {
+            if stateful {
+                store(self, Value::number(0.0))?;
+            }
             return Ok(None);
         }
         let subject = self.regexp_subject(input);
@@ -2448,7 +2572,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `RegExp.prototype.exec` or `test` when the call runs no guest code and raises
-    /// nothing, so it observes no frame (`lane_call_native`): a RegExp receiver, a string
+    /// nothing, so it observes no frame (`lane_regexp_call`): a RegExp receiver, a string
     /// subject, an own writable data `lastIndex` holding a Number (`regexp_last_index_slot`,
     /// so its conversion and any store run no guest code), and for `test` the builtin `exec`
     /// (`regexp_builtin_exec_matcher`). The call is the native's own; `None` leaves any other
@@ -2468,10 +2592,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let slot = self.regexp_last_index_slot(receiver)?;
-        let last_index = self
-            .object_data(receiver)
-            .and_then(|object| self.heap.property_get(object, slot))?;
+        let (slot, last_index) = self.regexp_last_index_value(receiver)?;
         if last_index.as_number().is_none()
             || (native == Native::RegExpTest && self.regexp_builtin_exec_matcher(receiver).is_none())
         {
@@ -2485,7 +2606,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `String.prototype.replace(regexp, string)` when the call runs no guest code, so it
-    /// observes no frame (`lane_call_native`): a string receiver and replacement, and a
+    /// observes no frame (`lane_regexp_call`): a string receiver and replacement, and a
     /// RegExp whose `@@replace` is this realm's builtin (`regexp_proven_symbol_method`) and
     /// whose exec, flags and lastIndex are builtin (`regexp_builtin_receiver_matcher`).
     /// Those make the native's steps the builtin `@@replace`'s fast path, which this runs;
@@ -2612,7 +2733,7 @@ impl<H: Host> Vm<H> {
             let groups = vm.regexp_groups_object(&named, input.units())?;
             let index = Value::number(matched.range.start as f64);
             let input_value = vm.string_value_from(argument, &input);
-            let array = crate::heap::ArrayObject::new(Self::empty_object(vm.array_proto), Rc::new(values));
+            let array = crate::heap::ArrayObject::new(Self::empty_object(vm.array_proto), values);
             let result = match vm.regexp_result_layout() {
                 // The recorded layout: the array is allocated with its properties, by the
                 // same storage steps `initialize_regexp_result` takes on the published cell.
@@ -2727,12 +2848,56 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    /// Finds a pending legacy match (`LegacyRegExpMatch::Pending`) again, so the statics
+    /// read its captures.
+    fn resolve_regexp_legacy_match(&mut self) {
+        let Some(LegacyRegExpMatch::Pending { input, matcher, start }) = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&self.realm.globals)
+            .map(|state| state.legacy_match.clone())
+        else {
+            return;
+        };
+        let subject = self.regexp_subject(&input);
+        let matched = matcher
+            .find_in_subject(&subject, start)
+            .next()
+            .expect("a pending legacy match begins at its start");
+        if let Some(state) = self.realm.intrinsics.regexp_intrinsics.get_mut(&self.realm.globals) {
+            state.legacy_match = LegacyRegExpMatch::Matched { input, matched };
+        }
+    }
+
     /// The legacy `RegExp` static state a successful builtin exec of `this` leaves behind.
     fn record_regexp_legacy_match(
         &mut self,
         this: Value,
         input: JsString,
         matched: quench_regexp::Match,
+    ) -> Result<(), JsError> {
+        self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Matched { input, matched })
+    }
+
+    /// `record_regexp_legacy_match` for the match `matcher` finds from `start`, found again
+    /// only if a static is read.
+    fn record_regexp_legacy_pending(
+        &mut self,
+        this: Value,
+        input: JsString,
+        matcher: &Rc<quench_regexp::Regex>,
+        start: usize,
+    ) -> Result<(), JsError> {
+        let matcher = Rc::clone(matcher);
+        self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Pending { input, matcher, start })
+    }
+
+    fn record_regexp_legacy(
+        &mut self,
+        this: Value,
+        input: JsString,
+        matched: impl FnOnce(JsString) -> LegacyRegExpMatch,
     ) -> Result<(), JsError> {
         let owner = match self.heap.get(this) {
             Some(Cell::RegExp { meta, .. }) => meta.legacy_constructor,
@@ -2749,7 +2914,7 @@ impl<H: Host> Vm<H> {
             match owner {
                 crate::heap::RegExpLegacyOwner::Enabled(_) => {
                     state.legacy_input = Some(input.clone());
-                    state.legacy_match = LegacyRegExpMatch::Matched { input, matched };
+                    state.legacy_match = matched(input);
                 }
                 crate::heap::RegExpLegacyOwner::Disabled(_) => {
                     state.legacy_input = None;
@@ -2798,7 +2963,7 @@ impl<H: Host> Vm<H> {
         let indices = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(entries),
+                entries,
             ),
         });
         let groups = if !named.is_empty() {
@@ -2830,7 +2995,7 @@ impl<H: Host> Vm<H> {
         self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(pair.into()),
+                pair,
             ),
         })
     }
@@ -3219,7 +3384,7 @@ impl crate::snapshot::Snap for RegExpIntrinsics {
         writer.bool(match legacy_match {
             LegacyRegExpMatch::Empty => false,
             LegacyRegExpMatch::Invalid => true,
-            LegacyRegExpMatch::Matched { .. } => {
+            LegacyRegExpMatch::Matched { .. } | LegacyRegExpMatch::Pending { .. } => {
                 return Err(crate::snapshot::SnapshotError::unsupported("legacy RegExp match data"));
             }
         });

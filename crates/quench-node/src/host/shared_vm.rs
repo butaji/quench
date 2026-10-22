@@ -10,6 +10,21 @@ pub(crate) mod esm_wasm;
 pub(crate) mod policy_projection;
 pub(crate) use commonjs::source_kind;
 
+thread_local! {
+    /// The import resolver, kept as `commonjs::with_commonjs_resolver` keeps the require one.
+    static IMPORT_RESOLVER: oxc_resolver::Resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+        extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
+        main_files: vec!["index".into()],
+        condition_names: vec!["node".into(), "import".into(), "default".into()],
+        ..Default::default()
+    });
+}
+
+/// Runs `use_resolver` with the resolver of an ES module's imports.
+pub(crate) fn with_import_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver::Resolver) -> R) -> R {
+    IMPORT_RESOLVER.with(use_resolver)
+}
+
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
         method "workerConstruct" (1) => crate::modules::worker_threads_shared_vm::construct,
@@ -462,6 +477,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "emitterEmit" (3) => crate::modules::event_emitter_shared_vm::emit,
         method "emitterErrorInspector" (0) => crate::modules::events_shared_vm::error_inspector,
         method "emitterEmitListeners" (4) => crate::modules::event_emitter_shared_vm::emit_listeners,
+        method "emitterCaptureResult" (4) => crate::modules::event_emitter_shared_vm::capture_listener_result,
         method "emitterCaptureDefaultGet" (0) => crate::modules::event_constructor_shared_vm::default_get,
         method "emitterCaptureDefaultSet" (1) => crate::modules::event_constructor_shared_vm::default_set,
         method "emitterCaptureRejected" (1) => crate::modules::event_constructor_shared_vm::capture_rejected,
@@ -1037,6 +1053,13 @@ impl quench_runtime::Host for NodeHost {
         self.shared_state.borrow().async_hooks.tracks_promises()
     }
 
+    /// A job boundary prunes tracked Promise resources and runs before/after hooks; with
+    /// no Promise tracked and no hook tracking them, it does neither
+    /// (`async_hooks_shared_vm::promise_job_boundary`).
+    fn observes_promise_job_boundaries(&self) -> bool {
+        self.shared_state.borrow().async_hooks.observes_job_boundaries()
+    }
+
     /// The code a run touched since the last collection leaves the resident set after each
     /// collection, and before a full one; what still runs comes back from the page cache. The
     /// collector's code and the program's are then resident one at a time, and the program's
@@ -1045,10 +1068,14 @@ impl quench_runtime::Host for NodeHost {
     /// Splay 39800 -> 38988 KiB with the release before full collections).
     /// The allocator's free pages, which the collection's sweep just freed, leave with them
     /// (V8-v7 max RSS, static x86_64 unbolted, 2026-10-19: RegExp 6772-7044 -> 6664-6772 KiB,
-    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged).
-    fn at_collection_boundary(&mut self) {
-        crate::host::resident_pages::release_read_only_pages();
-        crate::host::resident_pages::release_free_heap_pages();
+    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged). Only under a policy that
+    /// returns pages at collections (memory-first); every policy counts the collection for
+    /// the release before output (`resident_pages::note_collection`).
+    fn at_collection_boundary(&mut self, policy: quench_runtime::MemoryPolicy) {
+        if policy.returns_pages_at_collections() {
+            crate::host::resident_pages::release_read_only_pages();
+            crate::host::resident_pages::release_free_heap_pages();
+        }
         crate::host::resident_pages::note_collection();
     }
 
@@ -1072,6 +1099,20 @@ impl quench_runtime::Host for NodeHost {
             entry.store(bytes);
         }
     }
+    /// A decoded program after bootstrap (the entry and its modules, a builtin or library
+    /// module loaded on first use) releases what loading it touched, as its compilation would
+    /// have at its phase boundary: with the compile cache warm, a run otherwise reaches no
+    /// release between bootstrap and its first collection (CoreMark as a Wasm ES module,
+    /// static x86_64 unbolted, 2026-10-21: max RSS 4404 -> 3412 KiB; through
+    /// `WebAssembly.instantiate`, 4920 -> 4016). Bootstrap's own programs decode back to back,
+    /// where a release after each only refaulted the same loader code (an empty script's run
+    /// 11 -> 18 ms).
+    fn cached_program_decoded(&mut self) {
+        if self.bootstrapped {
+            crate::host::resident_pages::release_read_only_code_and_data();
+        }
+    }
+
     fn proper_tail_calls(&self) -> bool {
         false
     }
@@ -1375,6 +1416,10 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::async_hooks_shared_vm::release_job_context(&self.shared_state, context.0)
     }
 
+    fn release_promise_contexts(&mut self, contexts: &[quench_runtime::HostExecutionContext]) {
+        crate::modules::async_hooks_shared_vm::release_promise_contexts(&self.shared_state, contexts);
+    }
+
     fn functions(&self) -> &[HostFunction<Self>] {
         bindings()
     }
@@ -1410,6 +1455,7 @@ impl quench_runtime::Host for NodeHost {
         commonjs::initialize(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_commonjs");
+        context.host_mut().bootstrapped = true;
         Ok(())
     }
 
@@ -1417,7 +1463,9 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_read_only_pages();
         context.scoped(crate::modules::process_shared_vm::refresh_identity)?;
         context.scoped(crate::modules::performance_binding_shared_vm::refresh_time_origins)?;
-        commonjs::finish_initialize(context)
+        commonjs::finish_initialize(context)?;
+        context.host_mut().bootstrapped = true;
+        Ok(())
     }
 }
 
