@@ -308,7 +308,30 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
         return;
     };
     let last = &mut releases[release as usize];
-    if last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL) {
+    // Measurement only: QUENCH_FIRST_CALL_INTERVAL_MS overrides the first-call interval.
+    let interval = match release {
+        CompileRelease::FirstCall => std::env::var("QUENCH_FIRST_CALL_INTERVAL_MS")
+            .ok()
+            .and_then(|ms| ms.parse().ok())
+            .map(std::time::Duration::from_millis)
+            .unwrap_or(LOAD_RELEASE_INTERVAL),
+        CompileRelease::CodeGeneration => LOAD_RELEASE_INTERVAL,
+    };
+    if std::env::var_os("QUENCH_COUNT_RELEASES").is_some() {
+        eprintln!("compile-release {} {:?}", release as usize, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_micros()).unwrap_or(0));
+    }
+    // Measurement only: QUENCH_FIRST_CALL_DOUBLING releases at the 1st, 2nd, 4th, ... first call.
+    if matches!(release, CompileRelease::FirstCall) && std::env::var_os("QUENCH_FIRST_CALL_DOUBLING").is_some() {
+        static FIRST_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let count = FIRST_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if count.is_power_of_two() {
+            *last = Some(std::time::Instant::now());
+            drop(releases);
+            action();
+        }
+        return;
+    }
+    if last.is_some_and(|last| last.elapsed() < interval) {
         return;
     }
     *last = Some(std::time::Instant::now());

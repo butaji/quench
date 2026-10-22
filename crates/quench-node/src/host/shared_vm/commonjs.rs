@@ -2872,6 +2872,21 @@ const getLinkedBinding = () => ({});
                     crate::host::resident_pages::release_read_only_code_and_data();
                     crate::host::resident_pages::release_free_heap_pages();
                     crate::host::resident_pages::quench_entry_compiled();
+                    // Measurement only: QUENCH_EARLY_RELEASE="5,10" releases read-only pages
+                    // at those milliseconds after the entry starts, from a timer thread.
+                    if let Ok(times) = std::env::var("QUENCH_EARLY_RELEASE") {
+                        let times: Vec<u64> = times.split(',').filter_map(|t| t.parse().ok()).collect();
+                        std::thread::spawn(move || {
+                            let start = std::time::Instant::now();
+                            for t in times {
+                                let at = std::time::Duration::from_millis(t);
+                                if let Some(wait) = at.checked_sub(start.elapsed()) {
+                                    std::thread::sleep(wait);
+                                }
+                                crate::host::resident_pages::release_read_only_pages();
+                            }
+                        });
+                    }
                 } else if in_node_internal {
                     crate::host::resident_pages::release_read_only_pages_after_load();
                 }
