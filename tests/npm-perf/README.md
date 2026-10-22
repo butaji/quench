@@ -14,11 +14,15 @@ every engine. Package versions and transitive dependencies are pinned in
 
 Install the pinned packages and build Quench from the repository root:
 
+The production build uses the repository's general PGO corpus; install the
+toolchain's `llvm-tools` component if `tools/pgo-build.sh` cannot find
+`llvm-profdata`.
+
 ```sh
 cd tests/npm-perf
 npm ci
 cd ../..
-cargo build --profile production -p quench-node --bin quench-node
+tools/pgo-build.sh production
 ```
 
 Run the no-JIT diagnostic or qualification from `tests/npm-perf`:
@@ -48,6 +52,11 @@ node run-workload.mjs react-ssr jit 11 ../../target/react-jit-linux.json
 JIT phase rows use `quench-node --jit` and the default JIT-enabled Node and Bun
 engines. Linux runs are diagnostic; retain the host, version, output and RSS
 details with each comparison.
+
+For a same-run Quench build comparison, set `QUENCH_CONTROL_BIN` to a second
+`quench-node` binary. The runner interleaves both Quench binaries with Node
+and Bun and records the control binary hash separately. This helps distinguish
+small PGO or code-change effects from host load drift across separate reports.
 
 Winning means at least 20% higher throughput and at least 20% lower maximum
 RSS than both Node and Bun in the active phase. Compare the throughput and RSS
@@ -304,3 +313,15 @@ research suggests profile-guided quickening for no-JIT and a broad one-pass
 baseline tier for the object-heavy React functions currently outside Quench's
 narrow compiled tier. Neither direction has yet demonstrated the required
 20% win.
+
+The workload build instructions now use the repository's general PGO production
+build (`tools/pgo-build.sh production`); its corpus excludes the scored engine
+benchmarks. An interleaved 11-round comparison of that binary and a clean
+system-allocator build used the same memory-first, 32,768 young-cap settings.
+PGO measured 276.8 renders/s / 26.28 MB versus the clean build at 229.7 /
+28.75 MB, with matching 24,980,000-byte output and checksum 414318. PGO improves
+Quench's throughput 20.5% and RSS 8.6% against the clean binary, and its RSS is
+27.4% below Node and 29.7% below Bun. It remains far slower than both engines:
+1,639.3 renders/s for Node and 1,509.2 for Bun. The paired report is
+`work/react-perf/react-pgo-vs-clean-paired-memory-first-max-young-32k-nojit-11.json`.
+Linux RSS sampling is diagnostic, not qualification.
