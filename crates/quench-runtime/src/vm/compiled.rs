@@ -2301,6 +2301,7 @@ pub(super) struct CompiledJsFunction {
     mapped_bytes: usize,
     return_constants: Vec<(u32, u32)>,
     field_argument: Option<super::js_compiled::JsJitFieldArgument>,
+    numeric_field_inputs: Vec<super::js_compiled::JsJitNumericFieldInput>,
     capture_argument: Option<super::js_compiled::JsJitCaptureArgument>,
     capture_arguments: Vec<super::js_compiled::JsJitCaptureArgument>,
     #[cfg(test)]
@@ -2363,6 +2364,7 @@ impl CompiledJsFunction {
         let code = CodeMemory::new(&artifact.code)?;
         let mapped_bytes = code.length;
         let field_argument = artifact.field_argument;
+        let numeric_field_inputs = artifact.numeric_field_inputs;
         let capture_arguments = artifact.capture_arguments;
         let (entry, return_constants, capture_argument) = match artifact.result {
             super::js_compiled::JsJitResultKind::Number => {
@@ -2508,6 +2510,7 @@ impl CompiledJsFunction {
             mapped_bytes,
             return_constants,
             field_argument,
+            numeric_field_inputs,
             capture_argument,
             capture_arguments,
             #[cfg(test)]
@@ -2525,6 +2528,10 @@ impl CompiledJsFunction {
 
     pub(super) fn field_argument(&self) -> Option<super::js_compiled::JsJitFieldArgument> {
         self.field_argument
+    }
+
+    pub(super) fn numeric_field_inputs(&self) -> &[super::js_compiled::JsJitNumericFieldInput] {
+        &self.numeric_field_inputs
     }
 
     fn uses_numeric_field_argument(&self) -> bool {
@@ -6922,6 +6929,19 @@ impl<H: Host> Vm<H> {
         let params = usize::from(function.params);
         let registers = self.frames[frame].registers.get(..params)?.to_vec();
         let first_argument = registers.first().copied();
+        let mut numeric_field_inputs: smallvec::SmallVec<
+            [super::js_compiled::JsJitNumericFieldInput; 4],
+        > = smallvec::SmallVec::new();
+        if let Some(compiled) = compiled_tier {
+            numeric_field_inputs.extend_from_slice(compiled.numeric_field_inputs());
+        } else if let Some(inputs) =
+            super::js_compiled::cached_numeric_field_inputs_candidate(function)
+        {
+            numeric_field_inputs = inputs;
+        }
+        let parameter_zero_is_field = numeric_field_inputs.iter().any(|input| {
+            input.receiver == super::js_compiled::JsJitFieldReceiver::ParameterZero
+        });
         let numeric_field_argument = match compiled_tier {
             Some(compiled) if compiled.uses_numeric_field_argument() => compiled.field_argument(),
             Some(_) => None,
@@ -6930,7 +6950,10 @@ impl<H: Host> Vm<H> {
         let field_argument_uses_numeric_abi = numeric_field_argument.is_some();
         let field_argument = numeric_field_argument.or_else(|| match compiled_tier {
             Some(compiled) => compiled.field_argument(),
-            None => super::js_compiled::cached_field_argument_candidate(function),
+            None if numeric_field_inputs.is_empty() => {
+                super::js_compiled::cached_field_argument_candidate(function)
+            }
+            None => None,
         });
         let field_reject_candidate = match compiled_tier {
             Some(compiled) => compiled.is_field_reject(),
@@ -6938,7 +6961,11 @@ impl<H: Host> Vm<H> {
         };
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
-        for value in registers.iter().copied() {
+        for (index, value) in registers.iter().copied().enumerate() {
+            if index == 0 && parameter_zero_is_field {
+                arguments.push(0.0);
+                continue;
+            }
             match value.as_number() {
                 Some(value) => arguments.push(value),
                 None => {
@@ -6960,6 +6987,41 @@ impl<H: Host> Vm<H> {
             arguments.extend(capture_values.iter().copied());
         } else {
             numeric = false;
+        }
+        if !numeric_field_inputs.is_empty() {
+            for input in numeric_field_inputs.iter().copied() {
+                let receiver = match input.receiver {
+                    super::js_compiled::JsJitFieldReceiver::This => {
+                        if !self.frames[frame].fixed_this {
+                            numeric = false;
+                            break;
+                        }
+                        self.frames[frame].this
+                    }
+                    super::js_compiled::JsJitFieldReceiver::ParameterZero => {
+                        let Some(receiver) = first_argument else {
+                            numeric = false;
+                            break;
+                        };
+                        receiver
+                    }
+                };
+                match self.cached_field_hit(program, receiver, input.cache_site) {
+                    super::object::FieldCacheProbe::Hit(value) => {
+                        if let Some(value) = value.as_number() {
+                            arguments.push(value);
+                        } else {
+                            numeric = false;
+                            break;
+                        }
+                    }
+                    super::object::FieldCacheProbe::OrdinaryMiss
+                    | super::object::FieldCacheProbe::Ineligible => {
+                        numeric = false;
+                        break;
+                    }
+                }
+            }
         }
         if let Some(field_argument) = field_argument {
             let receiver = first_argument?;
@@ -7120,7 +7182,10 @@ impl<H: Host> Vm<H> {
                     program_id,
                     function_id,
                     numeric,
-                    (numeric && (numeric_loop_candidate || field_argument.is_some()))
+                    (numeric
+                        && (numeric_loop_candidate
+                            || field_argument.is_some()
+                            || !numeric_field_inputs.is_empty()))
                         || int32_identity_candidate
                         || (field_reject_candidate && arguments.len() == 1)
                         || capture_number.is_some()
@@ -7346,6 +7411,7 @@ impl<H: Host> Vm<H> {
         // captures. Those artifacts must use the ordinary frame-entry path,
         // where the capture guards and ABI values are assembled together.
         if compiled.field_argument().is_some()
+            || !compiled.numeric_field_inputs().is_empty()
             || compiled.is_capture_number()
             || !compiled.capture_arguments().is_empty()
             || compiled.is_string_transform()
