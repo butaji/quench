@@ -234,6 +234,11 @@ impl<H: Host> Vm<H> {
     // Keep the exact native-info transition separate from that common path.
     #[inline(never)]
     fn prepare_function_info_prototypes(&mut self, mut object: Value, atom: Atom, name: bool) {
+        // Only a function on the chain prepares anything, so a chain without one (a Buffer's
+        // `length`) needs none of the property lookups below.
+        if !self.chain_reaches_function(object) {
+            return;
+        }
         let receiver = object;
         while let Some(data) = self.object_data(object) {
             if self.proxy_parts(object).is_some() { return; }
@@ -257,6 +262,21 @@ impl<H: Host> Vm<H> {
             if self.property_attributes(object, PropertyKey::string(atom)).is_some_and(|attributes| attributes.accessor) { return; }
             object = data.proto();
         }
+    }
+
+    /// Whether the prototype chain from `object` holds a function before it ends or reaches a
+    /// proxy, where `prepare_function_info_prototypes` stops.
+    fn chain_reaches_function(&self, mut object: Value) -> bool {
+        while let Some(data) = self.object_data(object) {
+            if self.proxy_parts(object).is_some() {
+                return false;
+            }
+            if self.heap.is_function_value(object) {
+                return true;
+            }
+            object = data.proto();
+        }
+        false
     }
 
     pub(super) fn original_function_name(&self, function: Value) -> Option<Atom> {
