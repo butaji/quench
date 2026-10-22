@@ -2542,14 +2542,7 @@ fn lane_index_getter_activation<H: Host>(
     let Some(getter) = vm.proved_symbol_getter(base, key) else {
         return Err(exit(ip));
     };
-    let Some(target) = lane_script_target(cx, getter).filter(|target| !target.forwards()) else {
-        return Err(exit(ip));
-    };
-    let Some(this) = lane_call_this(vm, &target, base) else {
-        return Err(exit(ip));
-    };
-    let no_arguments = ActivationArguments::Kept(std::ptr::NonNull::dangling().as_ptr(), 0);
-    lane_activate_keeping::<H, false>(cx, r, ip, target, no_arguments, this, false, None)
+    lane_activate_getter(cx, r, ip, getter, base)
 }
 
 script_handler! {
@@ -3570,24 +3563,66 @@ fn lane_getter_activation<H: Host>(
     ip: Ip,
     i: &LaneInstruction,
 ) -> Result<(Registers, Ip), Ip> {
-    if !unsafe { (*cx).script_calls } || i.b == crate::bytecode::FieldBase::NESTED {
+    if !unsafe { (*cx).script_calls } {
         return Err(exit(ip));
     }
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    // The object the getter's read is of and its site: a nested site's second field is read
+    // of the value its first, cached read gives.
+    let read = if i.b == crate::bytecode::FieldBase::NESTED {
+        code.field_sites.get(i.imm() as usize).copied().and_then(|site| {
+            let base = unsafe { lane_field_base(cx, r, site.base) }?;
+            match site.second {
+                Some((atom, cache)) => {
+                    Some((lane_cached_field(cx, code, base, site.first.0, site.first.1)?, atom, cache))
+                }
+                None => Some((base, site.first.0, site.first.1)),
+            }
+        })
+    } else {
+        unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }.map(|base| (base, i.imm(), i.c))
+    };
     let vm = unsafe { vm(cx) };
-    let Some(base) = (unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }) else {
+    let Some((base, getter)) = read.and_then(|(base, atom, cache)| {
+        Some((base, vm.cached_field_getter(base, atom, vm.field_cache_index(cache))?))
+    }) else {
         return Err(exit(ip));
     };
-    let Some(getter) = vm.cached_field_getter(base, i.imm(), vm.field_cache_index(i.c)) else {
-        return Err(exit(ip));
-    };
-    let Some(target) = lane_script_target(cx, getter).filter(|target| !target.forwards()) else {
+    lane_activate_getter(cx, r, ip, getter, base)
+}
+
+/// The activation of `getter` with receiver `base` and no arguments for the read record at
+/// `ip`, whose completion is the read's value: a frameless target of the running program, or
+/// another program's plain activation (`Vm::cross_call_entry`), which runs in its program.
+/// `Err` carries the record to continue at: the general path for any other getter.
+fn lane_activate_getter<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    getter: Value,
+    base: Value,
+) -> Result<(Registers, Ip), Ip> {
+    let vm = unsafe { vm(cx) };
+    let no_arguments = ActivationArguments::Kept(std::ptr::NonNull::dangling().as_ptr(), 0);
+    if let Some(target) = lane_script_target(cx, getter).filter(|target| !target.forwards()) {
+        let Some(this) = lane_call_this(vm, &target, base) else {
+            return Err(exit(ip));
+        };
+        return lane_activate_keeping::<H, false>(cx, r, ip, target, no_arguments, this, false, None);
+    }
+    // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
+    let Some(target) = vm
+        .cross_call_entry(getter)
+        .map(|target| unsafe { *target })
+        .filter(|target| target.entry == CallEntry::Activates && !lane_constructing(vm, getter))
+    else {
         return Err(exit(ip));
     };
     let Some(this) = lane_call_this(vm, &target, base) else {
         return Err(exit(ip));
     };
-    let no_arguments = ActivationArguments::Kept(std::ptr::NonNull::dangling().as_ptr(), 0);
-    lane_activate_keeping::<H, false>(cx, r, ip, target, no_arguments, this, false, None)
+    lane_activate_keeping::<H, true>(cx, r, ip, target, no_arguments, this, false, None)
 }
 
 /// A `GetField` record's value where caches answer it (`lane_cached_field`): one read of a
