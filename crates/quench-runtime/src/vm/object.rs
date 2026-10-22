@@ -1683,6 +1683,14 @@ impl<H: Host> Vm<H> {
             )
             | None => None,
         };
+        if matches!(legacy_cell, Some(Cell::TypedArray { .. }))
+            && self.atom_class(atom).contains(AtomClass::VIRTUAL_FIELD)
+        {
+            if let Some(value) = self.typed_array_geometry_read(object, atom) {
+                return Ok(value);
+            }
+            return self.finish_field_cache_read(p, object, atom, FieldCacheRead::Generic);
+        }
         let lookup = match legacy_cell {
             Some(Cell::Proxy { .. }) => FieldCacheRead::Proxy,
             Some(cell) if self.specialized && p.specialized => {
@@ -2111,7 +2119,8 @@ impl<H: Host> Vm<H> {
 
     /// What native accessor `getter` returns for `this` where its call is a read of the
     /// receiver's internal slots that cannot throw for it, running no guest code and
-    /// allocating nothing: a typed array's, DataView's, Map's or Set's size accessors. `None`
+    /// allocating nothing: a typed array's geometry and buffer, or a DataView's, Map's or
+    /// Set's size accessors. `None`
     /// for any other getter or receiver, whose call the general path makes.
     pub(super) fn pure_native_getter_value(&self, getter: Value, this: Value) -> Option<Value> {
         let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = self.heap.function(getter) else {
@@ -2120,7 +2129,8 @@ impl<H: Host> Vm<H> {
         match *native {
             Native::TypedArrayLengthGetter
             | Native::TypedArrayByteLengthGetter
-            | Native::TypedArrayByteOffsetGetter => self.typed_array_getter_value(*native, this),
+            | Native::TypedArrayByteOffsetGetter
+            | Native::TypedArrayBufferGetter => self.typed_array_getter_value(*native, this),
             Native::DataViewByteLengthGetter | Native::DataViewByteOffsetGetter => {
                 let (buffer, offset, length) = self.data_view_view(this)?;
                 if self.array_buffer_out_of_bounds(buffer, offset, length) {
