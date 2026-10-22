@@ -6586,6 +6586,8 @@ impl<H: Host> Vm<H> {
         self.execution_mode = mode;
     }
 
+    /// Tests of whole-module compilation select it apart from the environment.
+    #[cfg(test)]
     pub(crate) fn set_wasm_compilation(&mut self, compilation: WasmCompilation) {
         self.wasm_compilation = compilation;
     }
