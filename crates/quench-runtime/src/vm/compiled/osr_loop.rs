@@ -1637,9 +1637,15 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn boxed_float64(&mut self, number: ir::Value) -> ir::Value {
         let truncated = self.builder.ins().trunc(number);
         let integral = self.builder.ins().fcmp(FloatCC::Equal, truncated, number);
-        let fractional_block = self.builder.create_block();
+        // Boxing on an exit's path (`write_back`) is as cold as the exit, so its blocks are
+        // laid out after the hot code too, not between a loop body's blocks.
+        let cold = self
+            .builder
+            .current_block()
+            .is_some_and(|block| self.builder.func.layout.is_cold(block));
+        let fractional_block = if cold { self.cold_block() } else { self.builder.create_block() };
         let integral_block = self.cold_block();
-        let join = self.builder.create_block();
+        let join = if cold { self.cold_block() } else { self.builder.create_block() };
         self.builder.append_block_param(join, types::I64);
         self.builder.ins().brif(integral, integral_block, &[], fractional_block, &[]);
         self.builder.switch_to_block(fractional_block);
