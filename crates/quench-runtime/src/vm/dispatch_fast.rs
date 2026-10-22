@@ -4163,15 +4163,12 @@ fn lane_field_add<H: Host>(
 
 script_handler! {
     /// `SetField` or `SetFieldStrict` at a site that adds a property to records of one shape
-    /// (`lane_set_field_miss`): the cached add alone (`Vm::primary_field_add_hit`). Any other
-    /// write moves the record to the general cached write, which makes it.
+    /// (`lane_set_field_miss`): the proved add inline (`Vm::proved_field_add_hit`), else the
+    /// cached add alone, out of line (`lane_set_field_add_any`).
     fn lane_set_object_field_add<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
-        if !lane_field_add(vm, code, r.get(i.b), i) {
-            requicken(ip, lane_set_object_field::<H>);
-            sibling!(lane_set_object_field::<H>, r, ip, Carried::script(cx))
+        if !vm.proved_field_add_hit(r.get(i.b), i.imm(), r.get(i.a), i.c) {
+            sibling!(lane_set_field_add_any::<H, false>, r, ip, Carried::script(cx))
         }
         // Adding a property can allocate.
         note_allocation(vm);
@@ -4182,13 +4179,35 @@ script_handler! {
 script_handler! {
     /// `lane_set_object_field_add` for `SetThisField` and `SetThisFieldStrict`.
     fn lane_set_this_field_add<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let added = unsafe { lane_fixed_this(cx) }.is_some_and(|this| vm.proved_field_add_hit(this, i.imm(), r.get(i.a), i.c));
+        if !added {
+            sibling!(lane_set_field_add_any::<H, true>, r, ip, Carried::script(cx))
+        }
+        // Adding a property can allocate.
+        note_allocation(vm);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// An add record's add past a proved one (`lane_set_object_field_add`,
+    /// `lane_set_this_field_add`): the cached add (`Vm::primary_field_add_hit`), which may
+    /// prove the chain or move storage. Any other write moves the record to the general
+    /// cached write (`lane_set_object_field`, `lane_set_this_field`), which makes it.
+    #[inline(never)]
+    fn lane_set_field_add_any<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
-        let added = unsafe { lane_fixed_this(cx) }.is_some_and(|this| lane_field_add(vm, code, this, i));
-        if !added {
-            requicken(ip, lane_set_this_field::<H>);
-            sibling!(lane_set_this_field::<H>, r, ip, Carried::script(cx))
+        let object = if THIS { unsafe { lane_fixed_this(cx) } } else { Some(r.get(i.b)) };
+        if !object.is_some_and(|object| lane_field_add(vm, code, object, i)) {
+            let general: Handler = if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> };
+            requicken(ip, general);
+            if THIS {
+                sibling!(lane_set_this_field::<H>, r, ip, Carried::script(cx))
+            }
+            sibling!(lane_set_object_field::<H>, r, ip, Carried::script(cx))
         }
         // Adding a property can allocate.
         note_allocation(vm);
@@ -4425,30 +4444,30 @@ lane_handler! {
     }
 }
 
-/// The nullish constant a `lane_jump_nullish_false` record compares against, in its `c`
-/// field.
+/// The nullish test of a `lane_jump_nullish_false` instantiation (`NULLISH`): strict
+/// identity with `null` or with `undefined`, or loose equality with either.
 const NULLISH_NULL: u16 = 0;
 const NULLISH_UNDEFINED: u16 = 1;
+const NULLISH_LOOSE: u16 = 2;
 
 script_handler! {
     /// `lane_jump_binary_false` of a register under an equality operator against a `null` or
     /// `undefined` constant, decoded when the view was derived
-    /// (`specialize_register_operands`): strict equality is identity with the constant; loose
-    /// equality holds for `null` and `undefined`, and among other values only for
-    /// [[IsHTMLDDA]] objects (`Vm::identity_equality`).
-    fn lane_jump_nullish_false<BACKWARD: bool>(cx, r, ip, i, view) {
+    /// (`specialize_register_operands`) into the instantiation's negation and `NULLISH` test:
+    /// strict equality is identity with the constant; loose equality holds for `null` and
+    /// `undefined`, and among other values only for [[IsHTMLDDA]] objects
+    /// (`Vm::identity_equality`).
+    fn lane_jump_nullish_false<BACKWARD: bool, NEGATED: bool, NULLISH: u16>(cx, r, ip, i, view) {
         let value = r.get(i.b);
-        let Some((strict, negated)) = super::operations::equality_operator(u32::from(i.a)) else {
-            return exit(ip);
+        let equal = match NULLISH {
+            NULLISH_NULL => value == Value::NULL,
+            NULLISH_UNDEFINED => value == Value::UNDEFINED,
+            _ if value.is_heap() && !value.is_record() => {
+                sibling!(lane_jump_nullish_cell::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
+            }
+            _ => value.is_null() || value.is_undefined(),
         };
-        let equal = if strict {
-            value == if i.c == NULLISH_NULL { Value::NULL } else { Value::UNDEFINED }
-        } else if value.is_heap() && !value.is_record() {
-            sibling!(lane_jump_nullish_cell::<H, BACKWARD>, r, ip, Carried::script(cx))
-        } else {
-            value.is_null() || value.is_undefined()
-        };
-        if equal == negated {
+        if equal == NEGATED {
             return lane_jump(cx, r, ip, BACKWARD, Carried::script(cx), None);
         }
         next!(cx, r, following(ip), Carried::script(cx))
@@ -4459,14 +4478,10 @@ script_handler! {
     /// `lane_jump_binary_false` of a register under strict equality against a boolean
     /// constant (`specialize_register_operands`), the `x !== false` truthiness test of
     /// compiled code: a boolean strictly equals only itself, which has one encoding, so the
-    /// test is the register's identity with the constant `c` names.
-    fn lane_jump_boolean_false<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some((true, negated)) = super::operations::equality_operator(u32::from(i.a)) else {
-            return exit(ip);
-        };
-        let constant = if i.c == STRICT_BOOLEAN_TRUE { Value::TRUE } else { Value::FALSE };
-        let equal = r.get(i.b) == constant;
-        if equal == negated {
+    /// test is the register's identity with the instantiation's constant (`TRUE`).
+    fn lane_jump_boolean_false<BACKWARD: bool, NEGATED: bool, TRUE: bool>(cx, r, ip, i, view) {
+        let equal = r.get(i.b) == if TRUE { Value::TRUE } else { Value::FALSE };
+        if equal == NEGATED {
             return lane_jump(cx, r, ip, BACKWARD, Carried::script(cx), None);
         }
         next!(cx, r, following(ip), Carried::script(cx))
@@ -4474,38 +4489,64 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_jump_binary_false` of two registers under `===` or `!==`
+    /// `lane_jump_binary_false` of two registers under `===` (`!==` where `NEGATED`)
     /// (`specialize_register_operands`): strict equality runs no guest code, so the lane
-    /// decides every pair (`Vm::strict_equal`) without the general relation chain.
-    fn lane_jump_strict_equal_false<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some((true, negated)) = super::operations::equality_operator(u32::from(i.a)) else {
-            return exit(ip);
+    /// decides every pair (`Vm::strict_equal`) without the general relation chain. Values
+    /// outside the heap compare as numbers or by identity, and a heap value equals only
+    /// itself among them, inline; two distinct heap values, which may be equal strings or
+    /// BigInts, take `lane_jump_strict_equal_cells`.
+    fn lane_jump_strict_equal_false<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
+        let (left, right) = (r.get(i.b), r.get(i.c));
+        let equal = match (left.as_number(), right.as_number()) {
+            (Some(left), Some(right)) => left == right,
+            _ if left == right => true,
+            _ if left.is_heap() && right.is_heap() => {
+                sibling!(lane_jump_strict_equal_cells::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
+            }
+            _ => false,
         };
-        let equal = unsafe { vm(cx) }.strict_equal(r.get(i.b), r.get(i.c));
-        if equal == negated {
+        if equal == NEGATED {
             return lane_jump(cx, r, ip, BACKWARD, Carried::script(cx), None);
         }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
-/// The boolean a `lane_jump_boolean_false` record compares against, in its `c` field.
-const STRICT_BOOLEAN_FALSE: u16 = 0;
-const STRICT_BOOLEAN_TRUE: u16 = 1;
+script_handler! {
+    /// `lane_jump_strict_equal_false` of two distinct heap values (`Vm::strict_equal`); out
+    /// of line, so the common tests make no call.
+    #[inline(never)]
+    fn lane_jump_strict_equal_cells<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
+        if unsafe { vm(cx) }.strict_equal(r.get(i.b), r.get(i.c)) == NEGATED {
+            return lane_jump(cx, r, ip, BACKWARD, Carried::script(cx), None);
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
 
 script_handler! {
     /// `lane_jump_nullish_false`'s loose test of a heap value outside the records, which only
     /// an [[IsHTMLDDA]] object passes; out of line, so the common tests make no call.
     #[inline(never)]
-    fn lane_jump_nullish_cell<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some((_, negated)) = super::operations::equality_operator(u32::from(i.a)) else {
-            return exit(ip);
-        };
-        if unsafe { vm(cx) }.is_html_dda(r.get(i.b)) == negated {
+    fn lane_jump_nullish_cell<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
+        if unsafe { vm(cx) }.is_html_dda(r.get(i.b)) == NEGATED {
             return lane_jump(cx, r, ip, BACKWARD, Carried::script(cx), None);
         }
         next!(cx, r, following(ip), Carried::script(cx))
     }
+}
+
+/// The instantiation of an equality jump-test handler for its direction and negation, the
+/// const-generic prefix the view decodes from the record (`specialize_register_operands`).
+macro_rules! equality_test_handler {
+    ($handler:ident::<$host:ident $(, $rest:tt)*>, $backward:expr, $negated:expr) => {
+        match ($backward, $negated) {
+            (false, false) => $handler::<$host, false, false $(, $rest)*> as Handler,
+            (false, true) => $handler::<$host, false, true $(, $rest)*> as Handler,
+            (true, false) => $handler::<$host, true, false $(, $rest)*> as Handler,
+            (true, true) => $handler::<$host, true, true $(, $rest)*> as Handler,
+        }
+    };
 }
 
 /// The tests the general loop decides past Number comparison without running guest code:
@@ -7680,6 +7721,8 @@ script_handler! {
             && i.a & crate::bytecode::RETURN_REGISTER == 0
             && let Some(this) = lane_planned_construction(vm, callee, r, i)
         {
+            // Later runs of the site try the plan first.
+            requicken(ip, lane_planned_construct::<H>);
             // Allocating the receiver can make a collection due.
             note_allocation(vm);
             r.set(i.a, this);
@@ -7725,6 +7768,29 @@ script_handler! {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
             Err(next) => next,
         }
+    }
+}
+
+script_handler! {
+    /// `lane_script_construct` at a site into a register whose construction was planned
+    /// (`lane_planned_construction`), which `lane_script_construct` moves it to: the plan of
+    /// the callee alone, without resolving its call target. A plan exists only for a callee
+    /// whose target constructs by its initializer stores, which its function fixes, and while
+    /// it holds the finished object is what the activation would make. Any other construction
+    /// moves the record back to `lane_script_construct`.
+    fn lane_planned_construct<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
+            return exit(ip);
+        }
+        let Some(this) = lane_planned_construction(vm, r.get(i.b), r, i) else {
+            requicken(ip, lane_script_construct::<H>);
+            sibling!(lane_script_construct::<H>, r, ip, Carried::script(cx))
+        };
+        // Allocating the receiver can make a collection due.
+        note_allocation(vm);
+        r.set(i.a, this);
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
@@ -8657,7 +8723,8 @@ fn lane_planned_construction<H: Host>(
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<Value> {
-    let plan = holding_construct_plan(vm, callee)?;
+    // The plan in place: the allocation borrows the heap beside it, not a copy.
+    let plan = &vm.lane_stack.construct_plans[holding_construct_plan_index(vm, callee)?];
     let argc = ImmediateLayout::argument_count(i.imm());
     // Parameter `k` is argument `k`, or undefined when not passed.
     Some(plan.allocate(&mut vm.heap, |parameter| {
@@ -8675,11 +8742,18 @@ fn construct_plan_index(callee: Value) -> Option<usize> {
 /// `prototype`, from which the receiver's template is derived.
 #[inline(always)]
 fn holding_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -> Option<ConstructPlan> {
-    let plan = vm.lane_stack.construct_plans[construct_plan_index(callee)?];
+    holding_construct_plan_index(vm, callee).map(|index| vm.lane_stack.construct_plans[index])
+}
+
+/// The construct plan cache index of `callee`'s plan while it holds (`holding_construct_plan`).
+#[inline(always)]
+fn holding_construct_plan_index<H: Host>(vm: &Vm<H>, callee: Value) -> Option<usize> {
+    let index = construct_plan_index(callee)?;
+    let plan = &vm.lane_stack.construct_plans[index];
     (plan.callee == callee
         && plan.epoch == crate::heap::prototype_layout_epoch()
         && vm.function_prototype_in_layout(callee, plan.callee_layout) == Some(plan.prototype))
-    .then_some(plan)
+    .then_some(index)
 }
 
 /// The receiver `Vm::inline_construct_receiver` allocates for a constructor that forwards its
@@ -11431,49 +11505,35 @@ fn specialize_register_operands<H: Host>(
             record.c = right.payload();
             continue;
         }
-        let nullish = (right_kind == Constant && record.handler != get_index)
-            .then(|| constants.get(usize::from(right.payload())))
-            .flatten()
-            .and_then(|constant| match *constant {
-                Value::NULL => Some(NULLISH_NULL),
-                Value::UNDEFINED => Some(NULLISH_UNDEFINED),
-                _ => None,
-            })
-            .filter(|_| {
-                super::operations::equality_operator(u32::from(instruction.a())).is_some()
-            });
-        if let Some(constant) = nullish {
-            let handler: Handler = if backward {
-                lane_jump_nullish_false::<H, true>
-            } else {
-                lane_jump_nullish_false::<H, false>
+        let equality = (record.handler != get_index)
+            .then(|| super::operations::equality_operator(u32::from(instruction.a())))
+            .flatten();
+        let constant = (right_kind == Constant)
+            .then(|| constants.get(usize::from(right.payload())).copied())
+            .flatten();
+        let nullish = equality.zip(constant).and_then(|((strict, negated), constant)| {
+            let test = match constant {
+                Value::NULL | Value::UNDEFINED if !strict => NULLISH_LOOSE,
+                Value::NULL => NULLISH_NULL,
+                Value::UNDEFINED => NULLISH_UNDEFINED,
+                _ => return None,
             };
+            Some(match test {
+                NULLISH_NULL => equality_test_handler!(lane_jump_nullish_false::<H, NULLISH_NULL>, backward, negated),
+                NULLISH_UNDEFINED => {
+                    equality_test_handler!(lane_jump_nullish_false::<H, NULLISH_UNDEFINED>, backward, negated)
+                }
+                _ => equality_test_handler!(lane_jump_nullish_false::<H, NULLISH_LOOSE>, backward, negated),
+            })
+        });
+        let boolean = equality.zip(constant).and_then(|((strict, negated), constant)| match constant {
+            Value::TRUE if strict => Some(equality_test_handler!(lane_jump_boolean_false::<H, true>, backward, negated)),
+            Value::FALSE if strict => Some(equality_test_handler!(lane_jump_boolean_false::<H, false>, backward, negated)),
+            _ => None,
+        });
+        if let Some(handler) = nullish.or(boolean) {
             record.handler = handler as *const ();
             record.b = left.payload();
-            record.c = constant;
-            continue;
-        }
-        let boolean = (right_kind == Constant && record.handler != get_index)
-            .then(|| constants.get(usize::from(right.payload())))
-            .flatten()
-            .and_then(|constant| match *constant {
-                Value::TRUE => Some(STRICT_BOOLEAN_TRUE),
-                Value::FALSE => Some(STRICT_BOOLEAN_FALSE),
-                _ => None,
-            })
-            .filter(|_| {
-                super::operations::equality_operator(u32::from(instruction.a()))
-                    .is_some_and(|(strict, _)| strict)
-            });
-        if let Some(constant) = boolean {
-            let handler: Handler = if backward {
-                lane_jump_boolean_false::<H, true>
-            } else {
-                lane_jump_boolean_false::<H, false>
-            };
-            record.handler = handler as *const ();
-            record.b = left.payload();
-            record.c = constant;
             continue;
         }
         if right_kind == Constant
@@ -11510,17 +11570,10 @@ fn specialize_register_operands<H: Host>(
         if right_kind != Register {
             continue;
         }
-        let strict = record.handler != get_index
-            && super::operations::equality_operator(u32::from(instruction.a()))
-                .is_some_and(|(strict, _)| strict);
         let handler: Handler = if record.handler == get_index {
             lane_get_index_registers::<H>
-        } else if strict {
-            if backward {
-                lane_jump_strict_equal_false::<H, true>
-            } else {
-                lane_jump_strict_equal_false::<H, false>
-            }
+        } else if let Some((true, negated)) = equality {
+            equality_test_handler!(lane_jump_strict_equal_false::<H>, backward, negated)
         } else {
             relation_jump_handler::<H, false>(u32::from(instruction.a()), backward)
         };
