@@ -312,6 +312,8 @@ measured on the same binary and lost.
 | transients (compile) | Read-only pages released before every native compile (Wasm, JS function, OSR region); read-only and free malloc pages after every JS compile: `--jit` max RSS −1 to −3.5 MB on five fixtures | `tod137-jit-compile-release-…` (TOD-185) |
 | retention (strings) | Regexp replace reads a rope through one unkept flattening: RegExp −0.5 to −0.6 MB | `tod137-replace-unkept-…` (TOD-184) |
 | live × overhead | Record families with narrow inline slots, COW array elements, narrow arena vectors (TOD-147/148/162/166/168/170) | earlier evidence on those issues |
+| start-up state (VM) | Direct-mapped memos (shape, atom, symbol proof, private home, function name, enumerable keys) allocate on first record, out of line: V8-v7 max RSS −48 to −254 KiB, Score within the A/A floor | `tod137-lazy-memo-tables-…` |
+| start-up state (host) | Host operations found by a sorted name index | `tod21-operation-index-…` |
 
 ### 8.2 Measured and rejected (same-binary A/B)
 
@@ -325,6 +327,7 @@ measured on the same binary and lost.
 | Trim array slack at full collections | No max RSS gain; the tails stay in malloc's arena | `tod137-array-slack-trim-…` |
 | Load and compile-phase release interval 0–20 ms under MemoryFirst | Max RSS unchanged (0.616–0.620 of Throughput) | session sweep, TOD-137 comment |
 | `single_pass` register allocation, `opt_level=none` for the JIT | −1.6 / −0.5 MB on NavierStokes, Score ÷3 / −20% | TOD-110 comment |
+| Allocate the memos on first record with the allocation inlined | DeltaBlue `--jit` −8% over 20 alternating runs; making it cold restored the speed | `tod137-lazy-memo-tables-…` |
 | Charge property-arena growth toward the next collection | Max RSS 0.619 → 0.617 of Throughput (RegExp −0.2 MB), Score −1.6% | branch `meas-gc-charge-arena`, TOD-137 comment |
 
 ### 8.3 Where the peak is now (MemoryFirst, no JIT)
