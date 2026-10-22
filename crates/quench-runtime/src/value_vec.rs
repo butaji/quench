@@ -376,6 +376,9 @@ impl ValueArena {
         }
     }
 
+    /// Append `value` past `vector`'s values, which an add of one property makes. Inline:
+    /// an append that fits its range is the store alone; growing is out of line.
+    #[inline(always)]
     pub(crate) fn push(&mut self, vector: &mut ValueVec, value: Value) {
         debug_assert!(!vector.has_inline_property_storage());
         let len = self.len(*vector);
@@ -386,7 +389,7 @@ impl ValueArena {
                 .insert(len as u32, value);
             return;
         }
-        if len == self.capacity(*vector) {
+        if len == Self::ordered_capacity(*vector, len) {
             self.grow(vector, MAX_ARENA_START);
             if vector.is_dictionary() {
                 self.dictionaries
@@ -561,6 +564,7 @@ impl ValueArena {
         )
     }
 
+    #[inline(never)]
     fn grow(&mut self, vector: &mut ValueVec, max_start: usize) {
         let len = self.len(*vector);
         let capacity = self.capacity(*vector);
@@ -615,13 +619,14 @@ impl ValueArena {
         if vector.is_dictionary() {
             return self.dictionaries[&vector.dictionary_id()].capacity();
         }
-        Self::flat_capacity(vector, self.len(vector))
+        Self::ordered_capacity(vector, self.len(vector))
     }
 
-    /// The capacity of the arena range of `vector`, an arena vector outside dictionary
-    /// storage of `len` values: derived from its length, so it needs no stored word.
+    /// The capacity of the range of an ordered (neither inline nor dictionary) `vector` of
+    /// `len` values: ranges are allocated at powers of two from `MIN_CAPACITY`, and an empty
+    /// vector without a range has none.
     #[inline(always)]
-    fn flat_capacity(vector: ValueVec, len: usize) -> usize {
+    fn ordered_capacity(vector: ValueVec, len: usize) -> usize {
         match (len, vector.start() != EMPTY_START as usize) {
             (0, false) => 0,
             (0, true) => MIN_CAPACITY,
@@ -633,7 +638,7 @@ impl ValueArena {
     /// for one more value without moving its range (`push`'s `grow`).
     #[inline(always)]
     pub(crate) fn appends_in_place(vector: ValueVec, len: usize) -> bool {
-        len < Self::flat_capacity(vector, len)
+        len < Self::ordered_capacity(vector, len)
     }
 
     /// `push` of `value` to `vector` of `len` values where `appends_in_place` holds: the

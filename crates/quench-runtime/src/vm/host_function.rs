@@ -257,24 +257,34 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    /// The host operation index a host function's `environment` names (`create_host_function`):
+    /// the number itself, or its `HostEnvironmentSlot::Operation` slot.
+    pub(super) fn host_operation_index(&self, environment: Value) -> Option<u32> {
+        environment
+            .as_number()
+            .or_else(|| {
+                self.heap
+                    .environment_slot(environment, HostEnvironmentSlot::Operation as usize)
+                    .and_then(Value::as_number)
+            })
+            .filter(|value| {
+                value.is_finite() && value.fract() == 0.0 && *value >= 0.0 && *value <= f64::from(u32::MAX)
+            })
+            .map(|value| value as u32)
+    }
+
+    /// The declared name of host function `function`, for diagnostics.
+    #[cfg(feature = "profile-lane-exits")]
+    pub(super) fn host_function_name(&self, function: Value) -> Option<&'static str> {
+        let index = self.host_operation_index(self.heap.function(function)?.env)?;
+        self.host.functions().get(index as usize).map(|binding| binding.name)
+    }
+
     fn run_host_function(&mut self, receiver: Value, args: &[Value]) -> Result<Value, JsError> {
         let index = self
             .active_native_env()
-            .and_then(|environment| {
-                environment.as_number().or_else(|| {
-                    self.heap
-                        .environment_slot(environment, HostEnvironmentSlot::Operation as usize)
-                        .and_then(Value::as_number)
-                })
-            })
-            .filter(|value| {
-                value.is_finite()
-                    && value.fract() == 0.0
-                    && *value >= 0.0
-                    && *value <= f64::from(u32::MAX)
-            })
-            .ok_or_else(|| JsError("invalid host function environment".into()))?
-            as u32;
+            .and_then(|environment| self.host_operation_index(environment))
+            .ok_or_else(|| JsError("invalid host function environment".into()))?;
         let callback = self
             .host
             .functions()
