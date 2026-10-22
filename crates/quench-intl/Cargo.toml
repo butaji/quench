@@ -5,6 +5,10 @@ edition = "2021"
 license = "MIT"
 description = "Shared engine-independent internationalization algorithms for Quench"
 
+[lib]
+# No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
+doctest = false
+
 [dependencies]
 chrono-tz = "0.10"
 fixed_decimal = "0.7.2"

@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
-exclude = ["vendor/oxc-regular-expression"]
+# The vendored oxc crates are patches ([patch.crates-io]), not members: as members their
+# dev-dependencies (oxc_ast "serialize") would join `--workspace` feature resolution and
+# rebuild the oxc, regexp and runtime graph under a second feature set.
+exclude = ["vendor/oxc-parser", "vendor/oxc-regular-expression"]
 members = [
     "quench-bench",
     "crates/quench-js-check",
@@ -9,7 +12,6 @@ members = [
     "crates/quench-runtime",
     "crates/quench-stack",
     "crates/quench-alloc",
-    "vendor/oxc-parser",
     "crates/quench-regexp",
     "crates/quench-intl",
     "crates/quench-temporal",
@@ -39,23 +41,12 @@ split-debuginfo = "unpacked"
 incremental = true
 codegen-units = 256
 
-[profile.test]
-opt-level = 0
-debug = 0
-split-debuginfo = "unpacked"
-incremental = true
-codegen-units = 256
-
 [profile.release]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
 panic = "abort"
-
-[profile.release-thin]
-inherits = "release"
-lto = "thin"
 
 # Fast optimized execution for iterative conformance work, without whole-
 # program LTO invalidating the incremental build graph after each runtime edit.
@@ -89,9 +80,6 @@ panic = "abort"
 lto = "thin"
 codegen-units = 1
 rpath = false
-
-[profile.bench-throughput]
-inherits = "production"
 
 # Optimized measurements with full address-to-source attribution. DWARF makes
 # samples explainable; operation counts still come from explicit counters.

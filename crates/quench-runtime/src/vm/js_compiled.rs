@@ -24,6 +24,8 @@ pub(super) struct JsJitArtifact {
     pub(super) result: JsJitResultKind,
     /// A cached data property on parameter zero supplies the native numeric input.
     pub(super) field_argument: Option<JsJitFieldArgument>,
+    /// Cached data properties read from `this` or parameter zero in numeric regions.
+    pub(super) numeric_field_inputs: Vec<JsJitNumericFieldInput>,
     /// Numeric lexical captures are appended after formal parameters in the ABI.
     pub(super) capture_arguments: Vec<JsJitCaptureArgument>,
 }
@@ -32,6 +34,19 @@ pub(super) struct JsJitArtifact {
 pub(super) struct JsJitFieldArgument {
     pub(super) cache_site: u16,
     pub(super) entry_pc: usize,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct JsJitNumericFieldInput {
+    pub(super) cache_site: u16,
+    pub(super) pc: usize,
+    pub(super) receiver: JsJitFieldReceiver,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum JsJitFieldReceiver {
+    This,
+    Parameter(u16),
 }
 
 /// A field getter that can return a cached data-property value without
@@ -115,6 +130,7 @@ const MAX_REGISTERS: usize = 256;
 const MAX_CODE_BYTES: usize = 64 * 1024;
 const MAX_PARAMETERS: usize = 8;
 const MAX_CAPTURE_ARGUMENTS: usize = 4;
+const MAX_NUMERIC_FIELD_INPUTS: usize = 4;
 
 /// Compile `function_id` when all reachable behavior is represented by the
 /// supported straight-line bytecode subset. Every unsupported shape is left
@@ -440,6 +456,7 @@ fn compile_int32_identity(function_id: u32, return_pc: u32) -> Option<JsJitArtif
         params: 1,
         result: JsJitResultKind::Int32Identity(return_pc),
         field_argument: None,
+        numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
     })
 }
@@ -609,6 +626,7 @@ fn compile_capture_number(
         params: 0,
         result: JsJitResultKind::CaptureNumber(capture),
         field_argument: None,
+        numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
     })
 }
@@ -684,6 +702,118 @@ pub(super) fn cached_field_argument_candidate(function: &Function) -> Option<JsJ
         cache_site,
         entry_pc,
     })
+}
+
+/// Find one cached field read in a side-effect-free numeric region. The object
+/// is formal parameter zero; the field value is appended to the numeric ABI
+/// after parameters and captures. Control flow and effectful opcodes are left
+/// to their existing denotations.
+pub(super) fn cached_numeric_field_argument_candidate(
+    function: &Function,
+) -> Option<JsJitFieldArgument> {
+    if function.params == 0 {
+        return None;
+    }
+    let mut candidate = None;
+    for (pc, packed) in function.code.iter().copied().enumerate() {
+        if packed.is_wide() {
+            return None;
+        }
+        let instruction = packed.as_wide();
+        if instruction.op() == Op::GetField {
+            if instruction.returns_from_frame()
+                || instruction.result_flags() != 0
+                || instruction.writes_current_this()
+                || candidate.is_some()
+            {
+                return None;
+            }
+            let FieldLookup::Atom {
+                base: FieldBase(0),
+                cache_site,
+                ..
+            } = instruction.field_lookup()?
+            else {
+                return None;
+            };
+            candidate = Some(JsJitFieldArgument {
+                cache_site,
+                entry_pc: pc,
+            });
+        } else if !matches!(
+            instruction.op(),
+            Op::LoadConst
+                | Op::Move
+                | Op::LoadCapture
+                | Op::Binary
+                | Op::NumericAdd
+                | Op::NumericMultiply
+                | Op::Return
+        ) {
+            return None;
+        }
+    }
+    candidate
+}
+
+/// Collect cached reads from `this` and parameter zero in a straight-line
+/// numeric region. Field values are guarded and supplied as separate ABI
+/// inputs, so native code never holds a guest heap reference.
+pub(super) fn cached_numeric_field_inputs_candidate(
+    function: &Function,
+) -> Option<smallvec::SmallVec<[JsJitNumericFieldInput; MAX_NUMERIC_FIELD_INPUTS]>> {
+    let mut inputs: smallvec::SmallVec<[_; MAX_NUMERIC_FIELD_INPUTS]> =
+        smallvec::SmallVec::new();
+    for (pc, packed) in function.code.iter().copied().enumerate() {
+        if packed.is_wide() {
+            return None;
+        }
+        let instruction = packed.as_wide();
+        if instruction.op() == Op::GetField {
+            if instruction.returns_from_frame()
+                || instruction.result_flags() != 0
+                || instruction.writes_current_this()
+            {
+                return None;
+            }
+            let FieldLookup::Atom {
+                base, cache_site, ..
+            } = instruction.field_lookup()?
+            else {
+                return None;
+            };
+            let receiver = if base == FieldBase::THIS {
+                JsJitFieldReceiver::This
+            } else if let Some(parameter) = base
+                .register_index()
+                .filter(|parameter| *parameter < function.params)
+            {
+                JsJitFieldReceiver::Parameter(parameter)
+            } else {
+                return None;
+            };
+            inputs.push(JsJitNumericFieldInput {
+                cache_site,
+                pc,
+                receiver,
+            });
+            if inputs.len() > MAX_NUMERIC_FIELD_INPUTS {
+                return None;
+            }
+        } else if !matches!(
+            instruction.op(),
+            Op::LoadConst
+                | Op::Move
+                | Op::LoadCapture
+                | Op::Binary
+                | Op::NumericAdd
+                | Op::NumericMultiply
+                | Op::Return
+        ) {
+            return None;
+        }
+    }
+    (!inputs.is_empty()).then_some(inputs)
 }
 
 /// Recognize a direct field getter. The first instruction is an unconditional
@@ -1437,6 +1567,7 @@ fn compile_string_hash_loop(
         params: 1,
         result: JsJitResultKind::StringHashLoop,
         field_argument: None,
+        numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
     })
 }
@@ -1549,6 +1680,7 @@ fn compile_string_transform(
         params: 1,
         result: JsJitResultKind::StringTransform(transform),
         field_argument: None,
+        numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
     })
 }
@@ -2213,6 +2345,7 @@ fn compile_number_domain_boolean_tree(
         params,
         result: JsJitResultKind::Boolean,
         field_argument,
+        numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
     })
 }
@@ -2465,8 +2598,12 @@ fn compile_numeric_with_captures(
     // A field read at entry is supplied by the VM's guarded monomorphic
     // cache. The native region sees only its numeric data-property value;
     // cache misses, accessors and non-numeric values stay in the interpreter.
-    let field_argument = cached_field_argument_candidate(function)
-        .filter(|candidate| candidate.entry_pc == 0);
+    let numeric_field_inputs = cached_numeric_field_inputs_candidate(function);
+    let field_argument = if numeric_field_inputs.is_some() {
+        None
+    } else {
+        cached_numeric_field_argument_candidate(function)
+    };
     let isa = super::jit_backend::target_isa("speed", true)?;
 
     let mut signature = ir::Signature::new(isa.default_call_conv());
@@ -2487,9 +2624,14 @@ fn compile_numeric_with_captures(
     // promoted parameter locals in registers 0..params.
     let mut registers = vec![None; usize::from(function.registers)];
     for (index, register) in registers.iter_mut().take(params).enumerate() {
-        if field_argument.is_some() && index == 0 {
-            // Parameter zero is the object used by the guarded GetField, not
-            // a numeric value inside the native region.
+        if numeric_field_inputs.as_ref().is_some_and(|inputs| {
+            inputs.iter().any(|input| {
+                input.receiver == JsJitFieldReceiver::Parameter(index as u16)
+            })
+        })
+        {
+            // The object receiver is supplied through its guarded field value,
+            // not interpreted as a numeric argument by native code.
             continue;
         }
         let offset = i32::try_from(index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
@@ -2509,27 +2651,38 @@ fn compile_numeric_with_captures(
         let instruction = packed.as_wide();
         let result = match instruction.op() {
             Op::GetField => {
-                let candidate = field_argument?;
-                if pc != candidate.entry_pc
-                    || instruction.returns_from_frame()
+                let inputs = numeric_field_inputs.as_ref()?;
+                let (field_index, candidate) = inputs
+                    .iter()
+                    .enumerate()
+                    .find(|(_, candidate)| candidate.pc == pc)?;
+                if instruction.returns_from_frame()
                     || instruction.result_flags() != 0
                     || instruction.writes_current_this()
-                    || !matches!(
-                        instruction.field_lookup(),
-                        Some(FieldLookup::Atom {
-                            base: FieldBase(0),
-                            cache_site,
-                            ..
-                        }) if cache_site == candidate.cache_site
-                    )
                 {
                     return None;
                 }
+                let expected_base = match candidate.receiver {
+                    JsJitFieldReceiver::This => FieldBase::THIS,
+                    JsJitFieldReceiver::Parameter(parameter) => FieldBase(parameter),
+                };
+                if !matches!(
+                    instruction.field_lookup(),
+                    Some(FieldLookup::Atom { base, cache_site, .. })
+                        if base == expected_base && cache_site == candidate.cache_site
+                ) {
+                    return None;
+                }
+                let field_argument_index = params
+                    .checked_add(captures.len())?
+                    .checked_add(field_index)?;
+                let field_offset =
+                    i32::try_from(field_argument_index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
                 Some(builder.ins().load(
                     types::F64,
                     ir::MemFlagsData::trusted(),
                     arguments,
-                    0,
+                    field_offset,
                 ))
             }
             Op::LoadConst => {
@@ -2671,6 +2824,7 @@ fn compile_numeric_with_captures(
         params,
         result: JsJitResultKind::Number,
         field_argument,
+        numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.into_vec()),
         capture_arguments: captures.to_vec(),
     })
 }
@@ -3306,6 +3460,7 @@ fn compile_numeric_loop(
         params,
         result: JsJitResultKind::NumberInterruptible,
         field_argument: None,
+        numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
     })
 }
@@ -3694,6 +3849,7 @@ fn compile_string_branches(
         params,
         result: JsJitResultKind::StringReturnPc(return_sites),
         field_argument: None,
+        numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
     })
 }
@@ -4029,6 +4185,7 @@ fn compile_field_reject(
             resume_value,
         },
         field_argument: Some(field_argument),
+        numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
     })
 }
@@ -4165,6 +4322,9 @@ pub(super) struct JsEntryFacts {
     pub(super) number_capture: Option<JsJitCaptureArgument>,
     pub(super) numeric_capture: Option<smallvec::SmallVec<[JsJitCaptureArgument; MAX_CAPTURE_ARGUMENTS]>>,
     pub(super) field_argument: Option<JsJitFieldArgument>,
+    pub(super) numeric_field_argument: Option<JsJitFieldArgument>,
+    pub(super) numeric_field_inputs:
+        Option<smallvec::SmallVec<[JsJitNumericFieldInput; MAX_NUMERIC_FIELD_INPUTS]>>,
     pub(super) field_reject: bool,
     pub(super) string_hash_loop: bool,
     pub(super) string_transform: Option<JsJitStringTransform>,
@@ -4182,6 +4342,8 @@ impl JsEntryFacts {
             number_capture: number_capture_candidate(function),
             numeric_capture: numeric_capture_candidate(function),
             field_argument: cached_field_argument_candidate(function),
+            numeric_field_argument: cached_numeric_field_argument_candidate(function),
+            numeric_field_inputs: cached_numeric_field_inputs_candidate(function),
             field_reject: is_field_reject_candidate(function),
             string_hash_loop: has_string_hash_loop_candidate(program, function),
             string_transform: string_transform_candidate(program, function),

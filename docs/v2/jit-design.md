@@ -1207,3 +1207,67 @@ For no-JIT, old per-op instruction screens show large dispatch and allocation
 costs in object/closure creation, field/array operations and string/RegExp
 builtins; these need current profiles and fixture-level validation before
 choosing a hot path. No 20% runtime-level gain has been demonstrated yet.
+
+## Guarded multi-field numeric inputs — 2026-10-22
+
+The numeric denotation now accepts up to four cached reads from `this` or
+parameter zero in pure numeric regions. Each field cache is checked at entry;
+only numeric values enter native code, and any miss resumes the untouched frame
+in the lane. This is general bytecode metadata, not a function/source matcher.
+All 799 runtime library tests pass. The functional unit test enters native code
+for a two-field `this` method and confirms accessor and non-number fallback.
+
+The V8-v7 Richards diagnostic still reports zero native entries for
+`isHeldOrSuspended` (32 entries); the remaining unsupported combination is two
+field reads, numeric captures and a branch. One-round JetStream 3
+`typescript-lib` and `async-fs` diagnostic runs timed out at the 600-second
+per-engine limit before valid samples, so no score or RSS gain is established.
+The step is recorded as compiler coverage groundwork, not a performance win.
+Evidence and raw reports are in
+`evidence/jit-this-field-inputs-2026-10-22/`.
+
+## Research convergence and next gates — 2026-10-22
+
+The Linear sweep and VM research review agree on the next JIT gate: measure
+compiled coverage and rejection causes by time-weighted hot region, then extend
+general bytecode denotations for the operations those regions actually use.
+The current V8-v7 census has no native entries on Richards; the hash-map hot
+wrapper rejects `LoadNameCall` and `Call`, even though helper functions already
+receive many native entries. General effect-aware call and field/write paths
+with exact instruction-PC fallback are more promising than adding source or
+function recognizers. Retain native code only when matched suite measurements
+show a gain within code-size and RSS budgets.
+
+Research patterns that fit the shared-semantics architecture:
+
+- SpiderMonkey's [CacheIR](https://firefox-source-docs.mozilla.org/js/cacheir.html)
+  describes guarded operations once and lets execution tiers consume the same
+  recipes. For Quench, Rust macros should generate the lane and compiler views
+  from one semantic authority; effectful recipes must preserve observable order
+  and the exact fallback frame.
+- V8's [Maglev](https://v8.dev/blog/maglev) tracks type facts during graph
+  construction and records interpreter state at deoptimization points. This is
+  a useful model for eliminating checks only when prior guards prove the facts.
+- [Basic-block versioning](https://doi.org/10.4230/LIPIcs.ECOOP.2015.101) can
+  reuse type/shape facts across predecessor edges. It is a follow-up only if a
+  guard census shows repeated checks; cap per-block versions and generated
+  bytes, and invalidate facts across effectful calls and writes.
+- The 2025 [inline-cache evaluation](https://doi.org/10.22152/programming-journal.org/2025/10/6)
+  reports that fewer memory accesses did not imply faster execution in its
+  tested JavaScript AOT setting. It reinforces measuring target code and suite
+  score, rather than treating guard or lookup counts as a speed proxy.
+
+For no-JIT, TOD-121's measured plan remains around 0.656x Bun geomean and its
+grounded queued work reaches only about 0.74x. The `typescript-lib` census
+reports 10.5M+ property lookups per iteration at the shared uncached site after
+u16 site exhaustion. Widening or segmenting site IDs is a bounded experiment,
+but likely affects only a narrow workload slice. First run the existing
+`profile-lane-exits` census across parser, async and object-heavy workloads;
+then prioritize costs by total dispatched time. Large string/allocation
+representation changes remain research hypotheses until those profiles size
+their opportunity and the semantic costs.
+
+JetStream 3's [published methodology](https://webkit.org/blog/17899/introducing-the-jetstream-3-benchmark-suite/)
+uses repeated per-subtest measurements and suite aggregation. Papers and
+diagnostic counters above are leads only: neither the 1.20x score goal nor a
+20% broad no-JIT/JIT win is established by this research.

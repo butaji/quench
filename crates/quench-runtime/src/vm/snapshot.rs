@@ -296,7 +296,6 @@ impl<H: Host> Vm<H> {
             frame_pool: _,
             lane_stack: _,
             execution_mode: _,
-            wasm_compilation: _,
             execution_interrupt: _,
             wasm_reference_epoch: _,
             active_call_roots,
@@ -335,7 +334,6 @@ impl<H: Host> Vm<H> {
             array_index_atoms: _,
             atom_sequence,
             regexp_subjects: _,
-            regexp_short_subject: _,
             regexp_matchers: _,
             atom_classes: _,
             dynamic_strings: _,
@@ -394,6 +392,8 @@ impl<H: Host> Vm<H> {
             random_state: _,
             // Each process keeps its own budget.
             dynamic_functions_to_keep: _,
+            lane_deferred: _,
+            host_beside_activations: _,
         } = self;
         let Realm {
             globals,

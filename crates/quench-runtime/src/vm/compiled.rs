@@ -341,26 +341,8 @@ fn jit_root_override() -> Result<Option<usize>, ()> {
         .map_err(|_| ())
 }
 
-/// How compiled execution compiles a Wasm module. `HotFunctions` starts every function in
-/// the interpreter and compiles a root once its entries reach the promotion threshold
-/// (`WASM_JIT_PROMOTION_ENTRIES`); `WholeModule` compiles the module at its first call. A
-/// module a program loads and calls briefly paid for compiling all of it: the source-map npm
-/// scenario under --jit ran 101 -> 152 ms whole-module and 98 ms hot-functions (x86_64 VM,
-/// 2026-10-22).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum WasmCompilation {
-    HotFunctions,
-    WholeModule,
-}
-
-impl WasmCompilation {
-    /// `HotFunctions` unless `JIT_WASM_SELECTIVE_ENV` turns it off.
-    pub(super) fn from_environment() -> Self {
-        match std::env::var(JIT_WASM_SELECTIVE_ENV).as_deref() {
-            Ok("0" | "false") => Self::WholeModule,
-            _ => Self::HotFunctions,
-        }
-    }
+fn jit_wasm_selective_enabled() -> bool {
+    std::env::var(JIT_WASM_SELECTIVE_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
 }
 
 fn jit_direct_compare_branches_enabled() -> bool {
@@ -614,13 +596,18 @@ struct CallContext {
 
 impl CallContext {
     /// A nested native entry shares the caller's instance and callout state,
-    /// but needs its own stack budget, guard-resume stack pointer and raised
-    /// completion, as a nested `run_compiled` invocation would.
+    /// but needs its own guard-resume stack pointer and raised completion, as a
+    /// nested `run_compiled` invocation would. Its stack limit is never below
+    /// the caller's: recursion through the callout (a runaway `call_indirect`)
+    /// spends the outermost entry's budget and traps as exhausted, rather than
+    /// taking a fresh budget at each level until the native stack overflows.
     fn nested_entry(&self) -> Self {
         let marker = 0u8;
         let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
         Self {
-            stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
+            stack_limit: self
+                .stack_limit
+                .max(stack_pointer.saturating_sub(COMPILED_STACK_BUDGET)),
             interrupt: self.interrupt,
             table: self.table,
             vm: self.vm,
@@ -2319,6 +2306,7 @@ pub(super) struct CompiledJsFunction {
     mapped_bytes: usize,
     return_constants: Vec<(u32, u32)>,
     field_argument: Option<super::js_compiled::JsJitFieldArgument>,
+    numeric_field_inputs: Vec<super::js_compiled::JsJitNumericFieldInput>,
     capture_argument: Option<super::js_compiled::JsJitCaptureArgument>,
     capture_arguments: Vec<super::js_compiled::JsJitCaptureArgument>,
     #[cfg(test)]
@@ -2381,6 +2369,7 @@ impl CompiledJsFunction {
         let code = CodeMemory::new(&artifact.code)?;
         let mapped_bytes = code.length;
         let field_argument = artifact.field_argument;
+        let numeric_field_inputs = artifact.numeric_field_inputs;
         let capture_arguments = artifact.capture_arguments;
         let (entry, return_constants, capture_argument) = match artifact.result {
             super::js_compiled::JsJitResultKind::Number => {
@@ -2526,6 +2515,7 @@ impl CompiledJsFunction {
             mapped_bytes,
             return_constants,
             field_argument,
+            numeric_field_inputs,
             capture_argument,
             capture_arguments,
             #[cfg(test)]
@@ -2543,6 +2533,14 @@ impl CompiledJsFunction {
 
     pub(super) fn field_argument(&self) -> Option<super::js_compiled::JsJitFieldArgument> {
         self.field_argument
+    }
+
+    pub(super) fn numeric_field_inputs(&self) -> &[super::js_compiled::JsJitNumericFieldInput] {
+        &self.numeric_field_inputs
+    }
+
+    fn uses_numeric_field_argument(&self) -> bool {
+        self.field_argument.is_some() && matches!(self.entry, CompiledJsEntry::Number(_))
     }
 
     fn capture_argument(&self) -> Option<super::js_compiled::JsJitCaptureArgument> {
@@ -6586,12 +6584,6 @@ impl<H: Host> Vm<H> {
         self.execution_mode = mode;
     }
 
-    /// Tests of whole-module compilation select it apart from the environment.
-    #[cfg(test)]
-    pub(crate) fn set_wasm_compilation(&mut self, compilation: WasmCompilation) {
-        self.wasm_compilation = compilation;
-    }
-
     pub(crate) fn execution_mode(&self) -> ExecutionMode {
         self.execution_mode
     }
@@ -6935,19 +6927,44 @@ impl<H: Host> Vm<H> {
         });
 
         let params = usize::from(function.params);
-        let registers = self.frames[frame].registers.get(..params)?;
+        let registers = self.frames[frame].registers.get(..params)?.to_vec();
         let first_argument = registers.first().copied();
-        let field_argument = match compiled_tier {
-            Some(compiled) => compiled.field_argument(),
-            None => facts.field_argument,
+        let mut numeric_field_inputs: smallvec::SmallVec<
+            [super::js_compiled::JsJitNumericFieldInput; 4],
+        > = smallvec::SmallVec::new();
+        if let Some(compiled) = compiled_tier {
+            numeric_field_inputs.extend_from_slice(compiled.numeric_field_inputs());
+        } else if let Some(inputs) = &facts.numeric_field_inputs {
+            numeric_field_inputs.extend_from_slice(inputs);
+        }
+        let is_field_receiver_parameter = |parameter: usize| {
+            numeric_field_inputs.iter().any(|input| {
+                input.receiver
+                    == super::js_compiled::JsJitFieldReceiver::Parameter(parameter as u16)
+            })
         };
+        let numeric_field_argument = match compiled_tier {
+            Some(compiled) if compiled.uses_numeric_field_argument() => compiled.field_argument(),
+            Some(_) => None,
+            None => facts.numeric_field_argument,
+        };
+        let field_argument_uses_numeric_abi = numeric_field_argument.is_some();
+        let field_argument = numeric_field_argument.or_else(|| match compiled_tier {
+            Some(compiled) => compiled.field_argument(),
+            None if numeric_field_inputs.is_empty() => facts.field_argument,
+            None => None,
+        });
         let field_reject_candidate = match compiled_tier {
             Some(compiled) => compiled.is_field_reject(),
             None => facts.field_reject,
         };
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
-        for value in registers {
+        for (index, value) in registers.iter().copied().enumerate() {
+            if is_field_receiver_parameter(index) {
+                arguments.push(0.0);
+                continue;
+            }
             match value.as_number() {
                 Some(value) => arguments.push(value),
                 None => {
@@ -6970,20 +6987,90 @@ impl<H: Host> Vm<H> {
         } else {
             numeric = false;
         }
+        if !numeric_field_inputs.is_empty() {
+            for input in numeric_field_inputs.iter().copied() {
+                let receiver = match input.receiver {
+                    super::js_compiled::JsJitFieldReceiver::This => {
+                        if !self.frames[frame].fixed_this {
+                            numeric = false;
+                            break;
+                        }
+                        self.frames[frame].this
+                    }
+                    super::js_compiled::JsJitFieldReceiver::Parameter(parameter) => {
+                        let Some(receiver) = registers.get(usize::from(parameter)).copied() else {
+                            numeric = false;
+                            break;
+                        };
+                        receiver
+                    }
+                };
+                match self.cached_field_hit(program, receiver, input.cache_site) {
+                    super::object::FieldCacheProbe::Hit(value) => {
+                        if let Some(value) = value.as_number() {
+                            arguments.push(value);
+                        } else {
+                            numeric = false;
+                            break;
+                        }
+                    }
+                    super::object::FieldCacheProbe::OrdinaryMiss
+                    | super::object::FieldCacheProbe::Ineligible => {
+                        numeric = false;
+                        break;
+                    }
+                }
+            }
+        }
         if let Some(field_argument) = field_argument {
             let receiver = first_argument?;
             arguments.clear();
-            numeric = false;
-            if let super::object::FieldCacheProbe::Hit(value) =
-                self.cached_field_hit(program, receiver, field_argument.cache_site)
-            {
-                if let Some(number) = value.as_number() {
-                    arguments.push(number);
-                    numeric = true;
-                } else if field_reject_candidate {
-                    // Strict inequality against a Number is true for every non-Number
-                    // value. NaN therefore takes the guarded early-return path.
-                    arguments.push(f64::NAN);
+            if !field_argument_uses_numeric_abi {
+                numeric = false;
+                if let super::object::FieldCacheProbe::Hit(value) =
+                    self.cached_field_hit(program, receiver, field_argument.cache_site)
+                {
+                    if let Some(value) = value.as_number() {
+                        arguments.push(value);
+                        numeric = true;
+                    } else if field_reject_candidate {
+                        // Strict inequality against a Number is true for every
+                        // non-Number value, so NaN takes the guarded early return.
+                        arguments.push(f64::NAN);
+                    }
+                } else {
+                    arguments.clear();
+                }
+            } else {
+                numeric = true;
+                // Preserve numeric arguments after the receiver. The compiler
+                // keeps the object's ABI slot as a placeholder, then appends
+                // the guarded field value after parameters and captures.
+                for (index, value) in registers.iter().copied().enumerate() {
+                    if index == 0 {
+                        arguments.push(0.0);
+                    } else if let Some(value) = value.as_number() {
+                        arguments.push(value);
+                    } else {
+                        numeric = false;
+                        break;
+                    }
+                }
+                if captures_numeric {
+                    arguments.extend(capture_values.iter().copied());
+                } else {
+                    numeric = false;
+                }
+                if let super::object::FieldCacheProbe::Hit(value) =
+                    self.cached_field_hit(program, receiver, field_argument.cache_site)
+                {
+                    if let Some(number) = value.as_number() {
+                        arguments.push(number);
+                    } else {
+                        numeric = false;
+                    }
+                } else {
+                    numeric = false;
                 }
             }
         }
@@ -7094,7 +7181,10 @@ impl<H: Host> Vm<H> {
                     program_id,
                     function_id,
                     numeric,
-                    (numeric && (numeric_loop_candidate || field_argument.is_some()))
+                    (numeric
+                        && (numeric_loop_candidate
+                            || field_argument.is_some()
+                            || !numeric_field_inputs.is_empty()))
                         || int32_identity_candidate
                         || (field_reject_candidate && arguments.len() == 1)
                         || capture_number.is_some()
@@ -7113,7 +7203,9 @@ impl<H: Host> Vm<H> {
                     .programs
                     .js_jit_diagnostics_enabled()
                     .then(std::time::Instant::now);
+                self.host.before_native_compilation();
                 let artifact = super::js_compiled::compile(&residual, function_id);
+                self.host.after_native_compilation();
                 let artifact_failed = artifact.is_none();
                 let compile_rejection = artifact_failed.then(|| {
                     super::js_compiled::candidate_rejection_reason(&residual, function_id)
@@ -7320,6 +7412,7 @@ impl<H: Host> Vm<H> {
         // captures. Those artifacts must use the ordinary frame-entry path,
         // where the capture guards and ABI values are assembled together.
         if compiled.field_argument().is_some()
+            || !compiled.numeric_field_inputs().is_empty()
             || compiled.is_capture_number()
             || !compiled.capture_arguments().is_empty()
             || compiled.is_string_transform()
@@ -7991,7 +8084,7 @@ impl<H: Host> Vm<H> {
                     .residual(program)
                     .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
                 {
-                    self.host.before_wasm_native_compilation();
+                    self.host.before_native_compilation();
                 }
                 if wasm_root_only || wasm_root_first {
                     // This explicit diagnostic mode compiles only the
@@ -8031,7 +8124,7 @@ impl<H: Host> Vm<H> {
                     }
                     self.programs.set_compiled(program, compiled.clone());
                     self.programs.compiled(program).flatten()
-                } else if self.wasm_compilation == WasmCompilation::HotFunctions
+                } else if jit_wasm_selective_enabled()
                     && self
                         .programs
                         .residual(program)
@@ -9024,7 +9117,6 @@ mod tests {
         for direct in [false, true] {
             let mut vm = Vm::new(crate::SystemHost);
             vm.set_execution_mode(ExecutionMode::Compiled);
-            vm.set_wasm_compilation(crate::vm::compiled::WasmCompilation::WholeModule);
             for (function_index, left, right, expected) in cases {
                 let function = module
                     .select_function(function_index)
