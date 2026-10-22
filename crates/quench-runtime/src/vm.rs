@@ -1648,6 +1648,12 @@ pub(crate) struct Vm<H> {
     /// The error of a call the lane made in place (`dispatch_fast::lane_call_native`), which
     /// the general loop raises at that call's instruction once the lane exits there.
     lane_raised: Option<JsError>,
+    /// A lane native call running with its activations still frameless
+    /// (`Native::runs_beside_activations`), which the first observer of the frame stack makes
+    /// frames (`materialize_deferred_lane`).
+    lane_deferred: Option<dispatch_fast::DeferredLaneCall>,
+    /// Per host function, `Host::host_function_runs_beside_activations`, derived on first use.
+    host_beside_activations: std::cell::OnceCell<Box<[bool]>>,
     /// The completion a frame's own call record returns, made by a lane activation
     /// (`dispatch_fast::lane_frame_return`), which the general loop returns from the frame
     /// at that instruction once the lane exits there.
@@ -2971,6 +2977,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         target: Option<CallTarget>,
     ) -> Result<Value, JsError> {
+        // Guest code observes the frame stack.
+        self.materialize_deferred_lane();
         if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
             return self.proxy_call(p, callee, this, args);
         }
