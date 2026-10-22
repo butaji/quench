@@ -324,6 +324,9 @@ pub(crate) struct Transport {
     sockets: HashMap<u64, SharedSocket>,
     connecting: HashMap<u64, ConnectingSocket>,
     closing_sockets: VecDeque<(CloseTarget, ClosingSocket)>,
+    /// Where socket reads land before their bytes are copied out (`poll_sockets`), zeroed
+    /// once: a fresh one zeroed its `TCP_READ_CHUNK` bytes at every poll.
+    read_buffer: Box<[u8]>,
 }
 
 pub(crate) enum RawStream {
@@ -607,6 +610,7 @@ impl Transport {
             sockets: HashMap::new(),
             connecting: HashMap::new(),
             closing_sockets: VecDeque::new(),
+            read_buffer: vec![0; TCP_READ_CHUNK].into_boxed_slice(),
         }
     }
 
@@ -1174,7 +1178,7 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
     let mut events = Vec::new();
     let mut terminal = Vec::new();
     let ids = transport.sockets.keys().copied().collect::<Vec<_>>();
-    let mut buffer = [0; TCP_READ_CHUNK];
+    let buffer = &mut transport.read_buffer;
     for id in ids {
         let Some(socket) = transport.sockets.get_mut(&id) else {
             continue;
@@ -1269,7 +1273,7 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
         let mut ended = false;
         let mut failure = None;
         while !socket.read_ended {
-            match socket.stream.read(&mut buffer) {
+            match socket.stream.read(buffer) {
                 Ok(0) => {
                     ended = true;
                     socket.read_ended = true;
@@ -2930,7 +2934,7 @@ pub(crate) fn listener_is_tcp(transport:&Transport,id:u64)->bool {
 impl Transport {
     pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
         use crate::host::startup_snapshot::{require_quiescent, HostSnap};
-        let Self { native_tcp_connecting, native_tcp_unbound, next_id, listeners, sockets, connecting, closing_sockets } = self;
+        let Self { native_tcp_connecting, native_tcp_unbound, next_id, listeners, sockets, connecting, closing_sockets, read_buffer: _ } = self;
         require_quiescent(
             native_tcp_connecting.is_empty()
                 && native_tcp_unbound.is_empty()

@@ -1048,6 +1048,22 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
     HostFunctionId(*index.get(name).expect("registered Node operation"))
 }
 
+/// The host operations that run beside a lane's frameless activations
+/// (`host_function_runs_beside_activations`).
+const BESIDE_ACTIVATIONS: &[&str] = &[
+    "emitterListenerCount",
+    "emitterEmitListeners",
+    "bufferBindingByteLengthUtf8",
+    "nextTick",
+    "httpResponseGetHeader",
+    "httpResponseSetHeader",
+    "httpResponseWrite",
+    "httpResponseWriteHead",
+    "httpResponseFinish",
+    "stringDecoderDecode",
+    "markAsUncloneable",
+];
+
 impl quench_runtime::Host for NodeHost {
     fn observes_promise_lifecycle(&self) -> bool {
         self.shared_state.borrow().async_hooks.tracks_promises()
@@ -1079,11 +1095,22 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::note_collection();
     }
 
-    /// The pages loading, linking and instantiating the module touched leave the resident set
-    /// before the code generator's join it, as compiling the module's bytecode does
-    /// (`compile_wasm`).
-    fn before_wasm_native_compilation(&mut self) {
+    /// The pages the program touched leave the resident set before the code generator's join
+    /// it, as compiling a module's bytecode does (`compile_wasm`): loading, linking and
+    /// instantiating a WebAssembly module, or the interpreter and the builtins a JavaScript
+    /// program ran. A JavaScript compile is the peak of a short numeric program (V8-v7
+    /// NavierStokes `--jit` under MemoryFirst, plain x86_64 build, 2026-10-22: max RSS
+    /// 10.84-10.94 -> 8.80-8.89 MB, Score within noise).
+    fn before_native_compilation(&mut self) {
         crate::host::resident_pages::release_read_only_pages();
+    }
+
+    /// The code generator's pages, and the allocator's pages its scratch memory freed, leave
+    /// the resident set before the program runs on (V8-v7 Crypto `--jit` under MemoryFirst,
+    /// plain x86_64 build, 2026-10-22: max RSS 6.82-6.84 -> 5.91 MB with the release before).
+    fn after_native_compilation(&mut self) {
+        crate::host::resident_pages::release_read_only_pages();
+        crate::host::resident_pages::release_free_heap_pages();
     }
 
     /// The snapshot is a tracked read-only mapping (`startup_snapshot::load_or_schedule`).
@@ -1106,10 +1133,13 @@ impl quench_runtime::Host for NodeHost {
     /// static x86_64 unbolted, 2026-10-21: max RSS 4404 -> 3412 KiB; through
     /// `WebAssembly.instantiate`, 4920 -> 4016). Bootstrap's own programs decode back to back,
     /// where a release after each only refaulted the same loader code (an empty script's run
-    /// 11 -> 18 ms).
+    /// 11 -> 18 ms). Decodes after bootstrap release at most once per interval, as code
+    /// generation does (`resident_pages::at_compile_phase`): an npm package decodes hundreds
+    /// of modules back to back, and a release after each paged out every mapping again
+    /// (lodash scenario, x86_64 VM, 2026-10-22: 45,700 madvise calls, 87 -> 372 ms).
     fn cached_program_decoded(&mut self) {
         if self.bootstrapped {
-            crate::host::resident_pages::release_read_only_code_and_data();
+            crate::host::resident_pages::at_compile_phase(quench_runtime::CompilePhase::CodeGeneration);
         }
     }
 
@@ -1422,6 +1452,13 @@ impl quench_runtime::Host for NodeHost {
 
     fn functions(&self) -> &[HostFunction<Self>] {
         bindings()
+    }
+
+    /// The host operations a lane calls beside its frameless activations: each reads no
+    /// frame, only argument values and host state, and enters guest code, if at all, through
+    /// the runtime's calls (`Host::host_function_runs_beside_activations`).
+    fn host_function_runs_beside_activations(&self, index: usize) -> bool {
+        bindings().get(index).is_some_and(|binding| BESIDE_ACTIVATIONS.contains(&binding.name))
     }
 
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {

@@ -676,6 +676,8 @@ struct InheritedFieldCache {
     atom: Atom,
     prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
     depth: u8,
+    /// Whether a function may stand on the chain (`Vm::function_links_answer` of the name).
+    function_links: bool,
     answer: InheritedFieldAnswer,
     /// The `prototype_layout_epoch` under which a walk last proved the chain from
     /// `proved_prototype` up to `proved_holder`, its last recorded prototype, or
@@ -732,7 +734,9 @@ struct FieldAddCache {
     /// The `prototype_layout_epoch` under which a walk last proved the chain from
     /// `proved_prototype`, or `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
     proved_epoch: u64,
-    proved_prototype: Value,
+    /// The receiver's prototype link the proof holds for, compared undecoded; a collection
+    /// advances the epoch, so it never outlives the record it names.
+    proved_prototype: ProtoLink,
 }
 /// A `FieldAddCache::proved_epoch` no epoch reaches: the chain is unproven.
 const NO_PROVED_EPOCH: u64 = u64::MAX;
@@ -745,10 +749,16 @@ impl FieldAddCache {
         prototype_depth: 0,
         prototype_shapes: [NO_FIELD_RECEIVER; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
         proved_epoch: NO_PROVED_EPOCH,
-        proved_prototype: Value::UNDEFINED,
+        proved_prototype: ProtoLink::NULL,
     };
     fn prototype_shapes(&self) -> &[u32] {
         &self.prototype_shapes[..usize::from(self.prototype_depth)]
+    }
+    /// Whether the chain proof (`proved_epoch`, `proved_prototype`) holds for a receiver
+    /// whose prototype `link` names: then the chain needs no walk.
+    #[inline(always)]
+    fn proof_holds(&self, link: ProtoLink) -> bool {
+        self.proved_epoch == crate::heap::prototype_layout_epoch() && self.proved_prototype == link
     }
 }
 /// The add transitions one site remembers, oldest first.
@@ -764,7 +774,8 @@ impl FieldAddCacheSet {
     };
     #[inline(always)]
     fn find(&self, source_shape: u32, atom: Atom) -> Option<&FieldAddCache> {
-        self.entries[..usize::from(self.len)]
+        // SAFETY: `insert` keeps `len` within the entries.
+        unsafe { self.entries.get_unchecked(..usize::from(self.len)) }
             .iter()
             .find(|cache| cache.source_shape == source_shape && cache.atom == atom)
     }
@@ -1643,6 +1654,12 @@ pub(crate) struct Vm<H> {
     /// The error of a call the lane made in place (`dispatch_fast::lane_call_native`), which
     /// the general loop raises at that call's instruction once the lane exits there.
     lane_raised: Option<JsError>,
+    /// A lane native call running with its activations still frameless
+    /// (`Native::runs_beside_activations`), which the first observer of the frame stack makes
+    /// frames (`materialize_deferred_lane`).
+    lane_deferred: Option<dispatch_fast::DeferredLaneCall>,
+    /// Per host function, `Host::host_function_runs_beside_activations`, derived on first use.
+    host_beside_activations: std::cell::OnceCell<Box<[bool]>>,
     /// The completion a frame's own call record returns, made by a lane activation
     /// (`dispatch_fast::lane_frame_return`), which the general loop returns from the frame
     /// at that instruction once the lane exits there.
@@ -1682,12 +1699,9 @@ pub(crate) struct Vm<H> {
     /// Every atom name in id order (`atom_text`, then the names the VM appends), shared by
     /// the dynamic and module programs whose atoms are a prefix of the VM's.
     atom_sequence: Rc<crate::bytecode::AtomSequence>,
-    /// The strings most recently matched by a RegExp, most recent first, each prepared once
-    /// for repeated matching (`Vm::regexp_subject`).
+    /// The strings most recently matched by a RegExp whose search decodes them, most recent
+    /// first, each prepared once for repeated matching (`Vm::regexp_subject`).
     regexp_subjects: Vec<Rc<quench_regexp::Subject>>,
-    /// The last short subject matched, recognized by content and otherwise reused in place
-    /// once no match holds it (`Vm::regexp_subject`).
-    regexp_short_subject: Option<Rc<quench_regexp::Subject>>,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
@@ -1954,6 +1968,18 @@ impl<H: Host> Vm<H> {
     }
     pub(crate) fn release_root(&mut self, root: RootId) -> bool {
         self.heap.release_root(root)
+    }
+    pub(crate) fn root_scoped(&mut self, value: Value) -> RootId {
+        self.heap.root_scoped(value)
+    }
+    pub(crate) fn scoped_root_height(&self) -> usize {
+        self.heap.scoped_root_height()
+    }
+    pub(crate) fn release_root_scope(&mut self, height: usize) {
+        self.heap.release_root_scope(height);
+    }
+    pub(crate) fn release_root_scope_keeping(&mut self, height: usize, keep: &[RootId]) {
+        self.heap.release_root_scope_keeping(height, keep);
     }
     pub(super) fn instantiate_global_declarations(
         &mut self,
@@ -2615,7 +2641,6 @@ impl<H: Host> Vm<H> {
         self.array_index_atoms.clear();
         self.atom_classes.clear();
         self.regexp_subjects.clear();
-        self.regexp_short_subject = None;
         self.regexp_matchers.clear();
         self.atom_classes
             .resize_with(self.atom_text.len(), Default::default);
@@ -2718,7 +2743,7 @@ impl<H: Host> Vm<H> {
         self.install_builtins(program, scope)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins");
-        self.initialize_host(program)?;
+        self.initialize_host()?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("host_bootstrap");
         Ok(())
@@ -2966,6 +2991,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         target: Option<CallTarget>,
     ) -> Result<Value, JsError> {
+        // Guest code observes the frame stack.
+        self.materialize_deferred_lane();
         if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
             return self.proxy_call(p, callee, this, args);
         }

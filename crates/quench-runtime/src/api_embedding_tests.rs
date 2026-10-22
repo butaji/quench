@@ -1,36 +1,18 @@
 use super::*;
-use crate::{CapabilityId, Engine, HostGlobal, ResidualProgram};
-use std::{cell::RefCell, rc::Rc};
+use crate::{Engine, ResidualProgram};
+use crate::test_host::TestHost;
 
-#[derive(Clone, Default)]
-struct Capture(Rc<RefCell<Vec<String>>>);
 
-impl Host for Capture {
-    fn write_line(&mut self, text: &str) {
-        self.0.borrow_mut().push(text.into());
-    }
 
-    fn clock_millis(&mut self) -> f64 {
-        0.0
-    }
-
-    fn globals(&self) -> &'static [HostGlobal] {
-        &[HostGlobal {
-            name: "$262",
-            capability: CapabilityId::CreateRealm,
-        }]
-    }
-}
-
-fn initialized(source: &str) -> (Runtime<Capture>, ResidualProgram, Capture) {
-    let host = Capture::default();
+fn initialized(source: &str) -> (Runtime<TestHost>, ResidualProgram, TestHost) {
+    let host = TestHost::default().with_test262();
     let mut runtime = Runtime::new(host.clone());
     let program = Engine::specialize(source, "embedding.js").unwrap();
     runtime.execute(&program).unwrap();
     (runtime, program, host)
 }
 
-fn property(runtime: &mut Runtime<Capture>, object: RootId, name: &str) -> RootId {
+fn property(runtime: &mut Runtime<TestHost>, object: RootId, name: &str) -> RootId {
     let key = runtime.string_rooted(name);
     let result = runtime.get_property_rooted(object, key).unwrap();
     assert!(runtime.release_root(key));
@@ -49,7 +31,7 @@ fn invalid_inputs_are_rejected_before_guest_effects() {
     let key = property(&mut runtime, global, "key");
     let callback = property(&mut runtime, global, "callback");
     let receiver = runtime.root(Value::UNDEFINED);
-    let mut other = Runtime::new(Capture::default());
+    let mut other = Runtime::new(TestHost::default().with_test262());
     let foreign = other.root(Value::UNDEFINED);
     let stale = runtime.root(Value::UNDEFINED);
     assert!(runtime.release_root(stale));
@@ -93,7 +75,7 @@ fn invalid_inputs_are_rejected_before_guest_effects() {
             assert_eq!(error.to_string(), "released or foreign embedding root");
         }
     }
-    assert!(host.0.borrow().is_empty());
+    assert!(host.lines().is_empty());
     assert!(runtime.root_is_live(replacement));
     runtime.get_property_rooted(target, key).unwrap();
     assert!(
@@ -103,7 +85,7 @@ fn invalid_inputs_are_rejected_before_guest_effects() {
     );
     runtime.call_rooted(callback, receiver, &[]).unwrap();
     assert_eq!(
-        host.0.borrow().as_slice(),
+        host.lines().as_slice(),
         ["key", "get", "key", "set", "call"]
     );
 }
@@ -306,7 +288,7 @@ fn host_calls_use_callable_program_ownership_and_restore_the_realm() {
 
 #[test]
 fn initialization_and_reset_bound_embedding_roots() {
-    let mut runtime = Runtime::new(Capture::default());
+    let mut runtime = Runtime::new(TestHost::default().with_test262());
     assert!(runtime.global_root().is_err());
     let pre_execution = runtime.string_rooted("before initialization");
     let undefined = runtime.root(Value::UNDEFINED);
@@ -374,7 +356,7 @@ fn rooted_subtraction_uses_guest_coercion_and_retains_abrupt_completions() {
     let right = property(&mut runtime, global, "right");
     let result = runtime.subtract_rooted(left, right).unwrap();
     assert_eq!(runtime.rooted_value(result).unwrap().as_number(), Some(5.0));
-    assert_eq!(host.0.borrow().as_slice(), ["left", "right"]);
+    assert_eq!(host.lines().as_slice(), ["left", "right"]);
     let abrupt = property(&mut runtime, global, "abrupt");
     let thrown = property(&mut runtime, global, "thrown");
     let error = runtime.subtract_rooted(abrupt, right).unwrap_err();
@@ -409,5 +391,5 @@ fn heap_memory_census_tracks_rooted_records_and_collection_without_guest_hooks()
     let collected = runtime.heap_memory_composition();
     assert!(collected.object_headers < allocated.object_headers);
     assert_eq!(collected.cell_counts.iter().sum::<usize>(), collected.occupied_slots);
-    assert!(host.0.borrow().is_empty());
+    assert!(host.lines().is_empty());
 }
