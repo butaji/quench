@@ -7035,7 +7035,7 @@ fn lane_string_or_native_call<H: Host>(
     if let Some(value) = vm.pure_string_method_call(code, callee, receiver, args) {
         return Some(value);
     }
-    if let Some(value) = lane_pure_native(vm, callee, receiver, args) {
+    if let Some(value) = lane_pure_native(vm, code, callee, receiver, args) {
         return Some(value);
     }
     if let Some(value) = lane_promise_native(vm, code, callee, receiver, args) {
@@ -7110,10 +7110,17 @@ fn lane_promise_native<H: Host>(
 /// place so the lane's activations need not become frames (`lane_call_native`): a dense
 /// array's `indexOf` (`Vm::dense_index_of`), `String.fromCharCode` of Numbers, which
 /// allocates its string, and an array iterator's step over a plain array
-/// (`Vm::plain_array_iterator_next`), which allocates its result. `None` leaves any other
+/// (`Vm::plain_array_iterator_next`), which allocates its result, and an object's own
+/// property query by a string key (`Vm::plain_own_property_query`). `None` leaves any other
 /// call to `lane_call_native`.
 #[inline(never)]
-fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, args: &[Value]) -> Option<Value> {
+fn lane_pure_native<H: Host>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    callee: Value,
+    receiver: Value,
+    args: &[Value],
+) -> Option<Value> {
     let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else {
         return None;
     };
@@ -7123,6 +7130,9 @@ fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, arg
             let text = vm.from_char_code_numbers(args)?;
             note_allocation(vm);
             Some(text)
+        }
+        Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
+            vm.plain_own_property_query(code, *native, receiver, *args.first()?)
         }
         Native::ArrayIteratorNext => {
             let result = vm.plain_array_iterator_next(callee, receiver)?;
