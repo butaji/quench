@@ -341,8 +341,26 @@ fn jit_root_override() -> Result<Option<usize>, ()> {
         .map_err(|_| ())
 }
 
-fn jit_wasm_selective_enabled() -> bool {
-    std::env::var(JIT_WASM_SELECTIVE_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+/// How compiled execution compiles a Wasm module. `HotFunctions` starts every function in
+/// the interpreter and compiles a root once its entries reach the promotion threshold
+/// (`WASM_JIT_PROMOTION_ENTRIES`); `WholeModule` compiles the module at its first call. A
+/// module a program loads and calls briefly paid for compiling all of it: the source-map npm
+/// scenario under --jit ran 101 -> 152 ms whole-module and 98 ms hot-functions (x86_64 VM,
+/// 2026-10-22).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WasmCompilation {
+    HotFunctions,
+    WholeModule,
+}
+
+impl WasmCompilation {
+    /// `HotFunctions` unless `JIT_WASM_SELECTIVE_ENV` turns it off.
+    pub(super) fn from_environment() -> Self {
+        match std::env::var(JIT_WASM_SELECTIVE_ENV).as_deref() {
+            Ok("0" | "false") => Self::WholeModule,
+            _ => Self::HotFunctions,
+        }
+    }
 }
 
 fn jit_direct_compare_branches_enabled() -> bool {
@@ -6579,6 +6597,12 @@ impl<H: Host> Vm<H> {
         self.execution_mode = mode;
     }
 
+    /// Tests of whole-module compilation select it apart from the environment.
+    #[cfg(test)]
+    pub(crate) fn set_wasm_compilation(&mut self, compilation: WasmCompilation) {
+        self.wasm_compilation = compilation;
+    }
+
     pub(crate) fn execution_mode(&self) -> ExecutionMode {
         self.execution_mode
     }
@@ -8119,7 +8143,7 @@ impl<H: Host> Vm<H> {
                     }
                     self.programs.set_compiled(program, compiled.clone());
                     self.programs.compiled(program).flatten()
-                } else if jit_wasm_selective_enabled()
+                } else if self.wasm_compilation == WasmCompilation::HotFunctions
                     && self
                         .programs
                         .residual(program)
@@ -9112,6 +9136,7 @@ mod tests {
         for direct in [false, true] {
             let mut vm = Vm::new(crate::SystemHost);
             vm.set_execution_mode(ExecutionMode::Compiled);
+            vm.set_wasm_compilation(crate::vm::compiled::WasmCompilation::WholeModule);
             for (function_index, left, right, expected) in cases {
                 let function = module
                     .select_function(function_index)
