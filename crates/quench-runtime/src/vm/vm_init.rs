@@ -70,7 +70,7 @@ impl<H: Host> Vm<H> {
             atom_strings: FxHashMap::default(),
             stable_roots_changed: true,
             shared_natives: Default::default(),
-            frames: vec![],
+            frames: Default::default(),
             native_stack_frames: vec![],
             native_root_lists: vec![],
             gc_root_count: 0,

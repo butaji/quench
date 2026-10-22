@@ -225,6 +225,7 @@ pub use value_serializer::{
 };
 pub(crate) use value_serializer::{ReadHooks, WriteHooks};
 use wtf16::JsString;
+mod frame_stack;
 #[cfg(test)]
 mod tests;
 pub(super) struct Frame {
@@ -1614,7 +1615,7 @@ pub(crate) struct Vm<H> {
     /// The function values in `natives`. One native serves every realm, so it runs in the
     /// realm of its caller rather than switching to the creator's.
     shared_natives: FxHashSet<Value>,
-    frames: Vec<Box<Frame>>,
+    frames: frame_stack::FrameStack,
     native_stack_frames: Vec<(usize, String)>,
     /// Emptied root lists of finished native calls, reused by the next `NativeContext`.
     pub(crate) native_root_lists: Vec<Vec<RootId>>,

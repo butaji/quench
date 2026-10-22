@@ -723,7 +723,7 @@ impl<H: Host> Vm<H> {
         roots.extend(self.symbol_registry.values().copied());
         roots.extend(self.well_known_symbols.values());
         roots.extend(self.typeof_names);
-        roots.extend(self.frames.iter().flat_map(|frame| {
+        roots.extend(self.frames.to_trace(full).iter().flat_map(|frame| {
             // A missing map means the function uses a register form
             // the liveness pass cannot represent; keep the safe
             // conservative scan for that activation.
@@ -753,6 +753,7 @@ impl<H: Host> Vm<H> {
         }));
         roots.extend(external_roots);
         self.gc_root_count = roots.len();
+        self.frames.collected();
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
             let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
