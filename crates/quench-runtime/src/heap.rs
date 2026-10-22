@@ -3052,6 +3052,36 @@ impl Heap {
         self.note_object_slots(object, slot + 1);
     }
 
+    /// `record_property_add_at` out of line, for an add whose storage moves or whose store
+    /// the write barrier logs, so a caller's plain appends keep their code call-free.
+    #[inline(never)]
+    pub(crate) fn record_property_add_moving(&mut self, object: Value, slot: usize, value: Value, shape: u32) {
+        self.record_property_add_at(object, slot, value, shape);
+    }
+
+    /// `record_property_add_at` of an add the record admits as a plain append
+    /// (`Object::admits_plain_append`): the store into storage that does not move. A store
+    /// the write barrier would log is left to the caller (`false`, nothing changed), as for
+    /// `record_property_set_flat`, so this one makes no call.
+    #[inline(always)]
+    pub(crate) fn record_property_append_plain(&mut self, record_id: u32, slot: usize, value: Value, shape: u32) -> bool {
+        if self.object_records.store_logs(record_id, value) {
+            return false;
+        }
+        let Self {
+            object_records,
+            properties,
+            ..
+        } = &mut *self;
+        // SAFETY: the caller read the record from a direct-object Value; `&mut self` is
+        // exclusive, and the barrier logs nothing for this store.
+        let data = unsafe { object_records.get_live_mut_unbarriered(record_id) };
+        data.append_plain(properties, slot, value, shape);
+        #[cfg(feature = "profile-memory")]
+        self.note_object_slots(Value::direct_object(record_id), slot + 1);
+        true
+    }
+
     #[cfg(feature = "profile-memory")]
     pub(crate) fn set_memory_allocation_site(&mut self, program: u32, function: u32, pc: usize) {
         self.memory_profile
