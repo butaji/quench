@@ -4095,15 +4095,12 @@ fn lane_field_add<H: Host>(
 
 script_handler! {
     /// `SetField` or `SetFieldStrict` at a site that adds a property to records of one shape
-    /// (`lane_set_field_miss`): the cached add alone (`Vm::primary_field_add_hit`). Any other
-    /// write moves the record to the general cached write, which makes it.
+    /// (`lane_set_field_miss`): the proved add inline (`Vm::proved_field_add_hit`), else the
+    /// cached add alone, out of line (`lane_set_field_add_any`).
     fn lane_set_object_field_add<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
-        if !lane_field_add(vm, code, r.get(i.b), i) {
-            requicken(ip, lane_set_object_field::<H>);
-            sibling!(lane_set_object_field::<H>, r, ip, Carried::script(cx))
+        if !vm.proved_field_add_hit(r.get(i.b), i.imm(), r.get(i.a), i.c) {
+            sibling!(lane_set_field_add_any::<H, false>, r, ip, Carried::script(cx))
         }
         // Adding a property can allocate.
         note_allocation(vm);
@@ -4114,13 +4111,35 @@ script_handler! {
 script_handler! {
     /// `lane_set_object_field_add` for `SetThisField` and `SetThisFieldStrict`.
     fn lane_set_this_field_add<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let added = unsafe { lane_fixed_this(cx) }.is_some_and(|this| vm.proved_field_add_hit(this, i.imm(), r.get(i.a), i.c));
+        if !added {
+            sibling!(lane_set_field_add_any::<H, true>, r, ip, Carried::script(cx))
+        }
+        // Adding a property can allocate.
+        note_allocation(vm);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// An add record's add past a proved one (`lane_set_object_field_add`,
+    /// `lane_set_this_field_add`): the cached add (`Vm::primary_field_add_hit`), which may
+    /// prove the chain or move storage. Any other write moves the record to the general
+    /// cached write (`lane_set_object_field`, `lane_set_this_field`), which makes it.
+    #[inline(never)]
+    fn lane_set_field_add_any<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
-        let added = unsafe { lane_fixed_this(cx) }.is_some_and(|this| lane_field_add(vm, code, this, i));
-        if !added {
-            requicken(ip, lane_set_this_field::<H>);
-            sibling!(lane_set_this_field::<H>, r, ip, Carried::script(cx))
+        let object = if THIS { unsafe { lane_fixed_this(cx) } } else { Some(r.get(i.b)) };
+        if !object.is_some_and(|object| lane_field_add(vm, code, object, i)) {
+            let general: Handler = if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> };
+            requicken(ip, general);
+            if THIS {
+                sibling!(lane_set_this_field::<H>, r, ip, Carried::script(cx))
+            }
+            sibling!(lane_set_object_field::<H>, r, ip, Carried::script(cx))
         }
         // Adding a property can allocate.
         note_allocation(vm);
