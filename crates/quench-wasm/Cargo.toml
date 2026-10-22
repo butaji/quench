@@ -5,6 +5,10 @@ edition = "2021"
 description = "WebAssembly frontend for Quench: parse, validate, and wast scoring"
 license = "MIT"
 
+[lib]
+# No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
+doctest = false
+
 [dependencies]
 quench-runtime = { path = "../quench-runtime" }
 wasmparser = "0.247"
