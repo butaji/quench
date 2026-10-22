@@ -18,13 +18,16 @@ use quench_test262::ratchet::{
     RATCHET_SCHEMA_VERSION,
 };
 use quench_test262::waivers::{Adjudication, Waivers};
+use quench_runtime::ExecutionMode;
 use quench_test262::{
-    discover_js_files, resolve_stages, HarnessCache, ResolvedStage, StageReport, Test262Runner,
-    Test262RuntimeHost, TestOutcome,
+    discover_js_files, execution_mode_name, resolve_stages, take_execution_mode, HarnessCache,
+    ResolvedStage, StageReport, Test262Runner, Test262RuntimeHost, TestOutcome, JIT_FLAG,
 };
 use wait_timeout::ChildExt;
 
 const DEFAULT_REPORT: &str = "target/test262-report.json";
+/// A compiled run's report, kept beside the interpreter's so neither overwrites the other.
+const DEFAULT_JIT_REPORT: &str = "target/test262-report-jit.json";
 const METADATA_TEST_BASENAMES: [&str; 4] = [
     "name.js",
     "length.js",
@@ -60,11 +63,12 @@ fn main() -> ExitCode {
 }
 
 fn run() -> ExitCode {
-    let args = env::args().skip(1).collect::<Vec<_>>();
+    let mut args = env::args().skip(1).collect::<Vec<_>>();
+    let mode = take_execution_mode(&mut args);
     let freeze_expected = match args.as_slice() {
         [] => false,
         [option] if option == "--freeze-expected-pass-set" => true,
-        _ => return fail("usage: run-all [--freeze-expected-pass-set]".into()),
+        _ => return fail(format!("usage: run-all [{JIT_FLAG}] [--freeze-expected-pass-set]")),
     };
     let root = env::var_os("TEST262_DIR")
         .map(PathBuf::from)
@@ -100,7 +104,7 @@ fn run() -> ExitCode {
         Ok(waivers) => waivers,
         Err(error) => return fail(error),
     };
-    let outcomes = match run_parallel_cases(&executable, &root, &files, timeout) {
+    let outcomes = match run_parallel_cases(&executable, &root, &files, timeout, mode) {
         Ok(outcomes) => outcomes,
         Err(error) => return fail(error),
     };
@@ -112,12 +116,13 @@ fn run() -> ExitCode {
         Err(error) => return fail(error),
     };
     if let Err(error) = write_report(
-        &report, discovered, &root, &stages, &files, &outcomes, &waivers, &ratchet, timeout,
+        &report, discovered, &root, &stages, &files, &outcomes, &waivers, &ratchet, timeout, mode,
     ) {
         return fail(error);
     }
     println!(
-        "passed={} waived={} failed={} total={} discovered={discovered} ratchet={}",
+        "mode={} passed={} waived={} failed={} total={} discovered={discovered} ratchet={}",
+        execution_mode_name(mode),
         report.passed,
         report.waived.len(),
         report.failures.len(),
@@ -147,6 +152,7 @@ fn run_parallel_cases(
     root: &Path,
     files: &[PathBuf],
     timeout: Duration,
+    mode: ExecutionMode,
 ) -> Result<Vec<Result<(), String>>, String> {
     let cursor = AtomicUsize::new(0);
     let completed = AtomicUsize::new(0);
@@ -164,7 +170,7 @@ fn run_parallel_cases(
                     let Some(path) = files.get(index) else {
                         break;
                     };
-                    let result = run_case_process(executable, root, path, timeout);
+                    let result = run_case_process(executable, root, path, timeout, mode);
                     outcomes.lock().expect("case results poisoned")[index] = Some(result);
                     let count = completed.fetch_add(1, Ordering::Relaxed) + 1;
                     if count % 100 == 0 || count == files.len() {
@@ -241,13 +247,15 @@ fn required_timeout_ms() -> Result<u64, String> {
 }
 
 fn run_case_entry() -> ExitCode {
-    let Some(path) = env::args_os().nth(2).map(PathBuf::from) else {
+    let mut args = env::args_os().skip(2).collect::<Vec<_>>();
+    let mode = take_execution_mode(&mut args);
+    let Some(path) = args.into_iter().next().map(PathBuf::from) else {
         return fail("--case requires a test path".into());
     };
     let root = env::var_os("TEST262_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("tests/test262"));
-    let mut runner = Test262Runner::new(Test262RuntimeHost::default());
+    let mut runner = Test262Runner::new(Test262RuntimeHost::new(mode));
     let mut harness = HarnessCache::new(root.join("harness"));
     // The bare failure is the case outcome, as run-stages' worker reports it.
     match runner.run_file_with_cache(path, &mut harness) {
@@ -264,9 +272,11 @@ fn run_case_process(
     root: &Path,
     path: &Path,
     timeout: Duration,
+    mode: ExecutionMode,
 ) -> Result<(), String> {
     let mut child = Command::new(executable)
         .arg("--case")
+        .args((mode == ExecutionMode::Compiled).then_some(JIT_FLAG))
         .arg(path)
         .env("TEST262_DIR", root)
         .stdout(Stdio::null())
@@ -355,10 +365,15 @@ fn write_report(
     waivers: &Waivers,
     ratchet: &RatchetResult,
     timeout: Duration,
+    mode: ExecutionMode,
 ) -> Result<(), String> {
+    let default_report = match mode {
+        ExecutionMode::Interpreted => DEFAULT_REPORT,
+        ExecutionMode::Compiled => DEFAULT_JIT_REPORT,
+    };
     let path = env::var_os("TEST262_REPORT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_REPORT));
+        .unwrap_or_else(|| PathBuf::from(default_report));
     let test_root = root.join("test");
     let failures = report
         .failures
@@ -424,6 +439,7 @@ fn write_report(
             "host": format!("{}-{}", env::consts::OS, env::consts::ARCH),
             "timeout_ms": timeout.as_millis(),
             "jobs": worker_jobs(),
+            "execution_mode": execution_mode_name(mode),
         },
         "discovered": discovered,
         "total": report.total,
