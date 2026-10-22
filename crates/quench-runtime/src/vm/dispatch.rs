@@ -74,6 +74,14 @@ impl<H: Host> Vm<H> {
         }
         let callee = self.read(f, i.register_b());
         let target = self.in_loop_call_target(p, callee)?;
+        #[cfg(feature = "profile-lane-exits")]
+        super::lane_exits::call_target(
+            self.active_program.raw(),
+            self.frames[f].function,
+            pc as u32,
+            callee,
+            target.1,
+        );
         self.profile.call_source(0);
         let window = i.call_window();
         // Collection happens only at back edges, tail calls and explicit host safepoints, none
