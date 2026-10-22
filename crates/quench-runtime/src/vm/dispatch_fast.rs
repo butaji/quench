@@ -8428,7 +8428,7 @@ fn lane_string_or_native_call<H: Host>(
     if let Some(value) = vm.pure_string_method_call(code, callee, receiver, args) {
         return Some(value);
     }
-    if let Some(value) = lane_pure_native(vm, callee, receiver, args) {
+    if let Some(value) = lane_pure_native(vm, code, callee, receiver, args) {
         return Some(value);
     }
     if let Some(value) = lane_promise_native(vm, code, callee, receiver, args) {
@@ -8505,11 +8505,22 @@ fn lane_promise_native<H: Host>(
 /// allocates its string, `Number`'s predicates, which coerce nothing
 /// (`number::number_predicate`), the global `isNaN` and `isFinite` of an argument whose
 /// ToNumber reads nothing (`Value::immediate_number`), `Boolean` called as a function, whose
-/// ToBoolean runs no guest code, `String` called with a string or an immediate primitive, and
-/// `ArrayBuffer.isView`. `None` leaves any other call to
-/// `lane_call_native`.
+/// ToBoolean runs no guest code, `String` called with a string or an immediate primitive,
+/// `ArrayBuffer.isView`, an array iterator's step over a plain array
+/// (`Vm::plain_array_iterator_next`), which allocates its result, an object's own
+/// property query by a string key (`Vm::plain_own_property_query`), and a dense array's
+/// `splice` (`Vm::plain_array_splice`, which allocates the removed array), `unshift`
+/// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), `Object.hasOwn`,
+/// `Object.is`, and the Map and Set mutators on their own collections
+/// (`Vm::plain_collection_mutation`). `None` leaves any other call to `lane_call_native`.
 #[inline(never)]
-fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, args: &[Value]) -> Option<Value> {
+fn lane_pure_native<H: Host>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    callee: Value,
+    receiver: Value,
+    args: &[Value],
+) -> Option<Value> {
     let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else {
         return None;
     };
@@ -8520,6 +8531,35 @@ fn lane_pure_native<H: Host>(vm: &mut Vm<H>, callee: Value, receiver: Value, arg
             let text = vm.from_char_code_numbers(args)?;
             note_allocation(vm);
             Some(text)
+        }
+        Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
+            vm.plain_own_property_query(code, *native, receiver, *args.first()?)
+        }
+        Native::ArraySplice => {
+            let removed = vm.plain_array_splice(code, callee, receiver, args)?;
+            note_allocation(vm);
+            Some(removed)
+        }
+        Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
+        Native::ArrayShift => vm.plain_array_shift(receiver),
+        Native::ObjectHasOwn => vm.plain_own_property_query(
+            code,
+            Native::ObjectPrototypeHasOwnProperty,
+            *args.first()?,
+            *args.get(1)?,
+        ),
+        // Pure of any arguments: SameValue.
+        Native::ObjectIs => vm.call_object_native(code, Native::ObjectIs, args).ok(),
+        native @ (Native::MapSet
+        | Native::MapDelete
+        | Native::MapClear
+        | Native::SetAdd
+        | Native::SetDelete
+        | Native::SetClear) => vm.plain_collection_mutation(code, *native, receiver, args),
+        Native::ArrayIteratorNext => {
+            let result = vm.plain_array_iterator_next(callee, receiver)?;
+            note_allocation(vm);
+            Some(result)
         }
         Native::ArrayBufferIsView => Some(Value::boolean(vm.is_array_buffer_view(argument))),
         Native::Boolean => Some(Value::boolean(vm.truthy(argument))),
