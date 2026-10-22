@@ -8415,7 +8415,7 @@ script_handler! {
     #[inline(never)]
     fn lane_load_intrinsic_name<CALL: bool>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let Some(value) = vm.intrinsic_name_value(vm.atom_name(i.imm())) else {
+        let Some(value) = vm.intrinsic_name_value(i.imm()) else {
             return exit(ip);
         };
         r.set(i.a, value);
