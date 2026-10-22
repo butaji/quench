@@ -1169,6 +1169,22 @@ a performance claim; the diagnostic runs overlapped release-feature builds,
 so their Score and wall-time outputs are excluded. Raw inputs/counters and
 method are in `evidence/jit-jetstream3-2026-10-22/v8-v7-native-coverage/`.
 
+### Recheck after the merged OSR tier — 2026-10-22
+
+I rebuilt the production binary from the post-merge source and reran the same
+four stock V8-v7 scripts with `QUENCH_JS_JIT_STATS=1`. The runs completed their
+benchmark assertions; their printed Scores are not comparable performance
+measurements. Richards still has zero native function entries and zero admitted
+OSR sites. DeltaBlue has 17,539 native function entries and no admitted OSR
+sites. Crypto has 2,456 native function entries, 12 admitted OSR sites, 8 OSR
+compilation successes and 6,120,293 region runs. NavierStokes has no native
+function entries, 22 admitted OSR sites, 26 reported OSR compilation successes
+and 17,435 region runs. The merged OSR mode therefore adds loop execution for
+numeric regions, but does not yet cover Richards' field-, call-, construction-
+and write-heavy hot loops. This is diagnostic coverage evidence only; it does
+not establish a score or memory win. Full logs and binary provenance are in
+`evidence/jit-jetstream3-2026-10-22/v8-v7-coverage-after-osr-merge/`.
+
 ## Bounded `new Array(number)` fast path screen — 2026-10-22
 
 A lane fast path plus direct dense-hole initialization looked promising in an
