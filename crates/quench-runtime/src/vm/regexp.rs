@@ -1078,6 +1078,10 @@ impl<H: Host> Vm<H> {
         flags: RegExpFlags,
         result_used: bool,
     ) -> Result<Value, JsError> {
+        // Matching, slicing and substitution all read the input; a rope the program keeps
+        // (V8-v7 RegExp's input variants) would otherwise keep a flat copy of its text for its
+        // life once replaced: 837 KiB of RegExp's 4.3 MB malloc peak (massif, 2026-10-22).
+        let input = &input.unkept_flat();
         let subject = self.regexp_subject(input);
         if let FastReplacement::Template(template) = replacement {
             if !template.units().iter().any(|unit| unit == u16::from(b'$')) {
