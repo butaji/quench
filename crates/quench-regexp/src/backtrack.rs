@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use std::ops::Range;
 
 use super::{
-    class_is_single_unit, class_matches, equal, is_line_terminator, is_word_mode, merge_flags,
+    canonical, canonical_preimages_of, class_is_single_unit, class_matches, equal, is_line_terminator, is_word_mode, merge_flags,
     literal_finder, Assertion, Backreference, ClassExpr, ClassItem, ClassKind, Expr, Flags, LiteralFinder, Lookaround,
     Unit, ASCII_MAX,
 };
@@ -104,10 +104,42 @@ enum UnitTest {
 /// A set of units: exact for ASCII by bitmap, and by `beyond` for any other unit.
 struct UnitSet {
     ascii: u128,
-    /// `ascii` as one flag per ASCII unit, derived by `UnitSet::of`: a test of an ASCII unit
-    /// loads its flag instead of shifting the 128-bit mask.
-    table: [bool; ASCII_UNITS as usize],
     beyond: Beyond,
+}
+
+/// The ASCII units of a mask as one flag per unit, derived for the sets a program matches
+/// with (`MatchSet`): a test of an ASCII unit loads its flag instead
+/// of shifting the 128-bit mask. The set algebra that builds those sets keeps only the mask.
+type AsciiTable = [bool; ASCII_UNITS as usize];
+
+fn ascii_table(ascii: u128) -> AsciiTable {
+    std::array::from_fn(|unit| ascii >> unit & 1 != 0)
+}
+
+/// A set a program's instructions test units against: the set with its `AsciiTable`.
+struct MatchSet {
+    table: AsciiTable,
+    beyond: Beyond,
+}
+
+impl From<UnitSet> for MatchSet {
+    fn from(set: UnitSet) -> Self {
+        Self {
+            table: ascii_table(set.ascii),
+            beyond: set.beyond,
+        }
+    }
+}
+
+impl MatchSet {
+    #[inline(always)]
+    fn contains(&self, value: u32) -> bool {
+        if value < ASCII_UNITS {
+            self.table[value as usize]
+        } else {
+            self.beyond.matches(value)
+        }
+    }
 }
 
 /// How a `UnitSet` decides a unit past ASCII.
@@ -139,11 +171,7 @@ enum Beyond {
 impl UnitSet {
     /// The set of the ASCII units in `ascii` and the units past ASCII `beyond` admits.
     fn of(ascii: u128, beyond: Beyond) -> Self {
-        Self {
-            ascii,
-            table: std::array::from_fn(|unit| ascii >> unit & 1 != 0),
-            beyond,
-        }
+        Self { ascii, beyond }
     }
 
     /// The set of both: their tests are moved, not copied, as a fold over an alternation's
@@ -163,15 +191,6 @@ impl UnitSet {
     /// Whether no unit is in the set.
     fn is_empty(&self) -> bool {
         self.ascii == 0 && self.beyond.is_never()
-    }
-
-    #[inline(always)]
-    fn contains(&self, value: u32) -> bool {
-        if value < ASCII_UNITS {
-            self.table[value as usize]
-        } else {
-            self.beyond.matches(value)
-        }
     }
 }
 
@@ -229,6 +248,14 @@ impl Beyond {
                         bits | (u128::MAX >> (ASCII_UNITS - 1 - max)) & (u128::MAX << min)
                     });
                 if *negative { !members } else { members }
+            }
+            // The units folding to the literal's canonical form: that form and its preimages.
+            Self::Literal { value, unicode } => {
+                let form = canonical(*value, *unicode);
+                std::iter::once(form)
+                    .chain(canonical_preimages_of(form, *unicode))
+                    .filter(|unit| *unit < ASCII_UNITS && canonical(*unit, *unicode) == form)
+                    .fold(0u128, |bits, unit| bits | 1 << unit)
             }
             _ => (0..ASCII_UNITS)
                 .filter(|value| self.matches(*value))
@@ -418,15 +445,15 @@ struct Workspace {
 
 pub(crate) struct Program {
     instructions: Box<[Inst]>,
-    sets: Box<[UnitSet]>,
+    sets: Box<[MatchSet]>,
     /// Capture index lists for `ResetCaptures` and `Backreference`.
     lists: Box<[u32]>,
     /// The starts of guarded bodies, for `GuardedSplit`.
-    guards: Box<[Starts]>,
+    guards: Box<[MatchStarts]>,
     capture_count: usize,
     register_count: usize,
     /// Where matches can start; `None` where any position can.
-    starts: Option<Starts>,
+    starts: Option<MatchStarts>,
     /// How an ASCII subject's scan finds the next of `starts`' units; derived from them once
     /// here, as the set algebra that builds `starts` never scans. Only their ASCII part
     /// matters there: an ASCII subject holds no other unit.
@@ -439,7 +466,7 @@ pub(crate) struct Program {
     /// For an `anchored` pattern, a superset of the units its match consumes first at the
     /// subject's start (`anchored_first_units`), so a search whose first unit is outside it
     /// fails without a run; `None` where no such set is known.
-    anchored_first: Option<UnitSet>,
+    anchored_first: Option<MatchSet>,
     /// The length of `prefix` when it is the whole pattern and the pattern has no captures:
     /// an ASCII subject's match is then where the search finds it, with no run.
     literal_length: Option<usize>,
@@ -456,9 +483,9 @@ struct Unsupported;
 
 struct Compiler {
     instructions: Vec<Inst>,
-    sets: Vec<UnitSet>,
+    sets: Vec<MatchSet>,
     lists: Vec<u32>,
-    guards: Vec<Starts>,
+    guards: Vec<MatchStarts>,
     registers: u32,
     /// Bodies being compiled that one path may run more than once, or whose registers a
     /// caller keeps across their run: loops with more than one iteration and lookarounds.
@@ -495,7 +522,7 @@ impl Compiler {
     fn split(&mut self, alternative: u32, body: &Expr, flags: Flags) -> Inst {
         match starts(body, flags) {
             Some(guard) => {
-                self.guards.push(guard);
+                self.guards.push(guard.into());
                 Inst::GuardedSplit {
                     alternative,
                     guard: self.guards.len() as u32 - 1,
@@ -506,7 +533,7 @@ impl Compiler {
     }
 
     fn set(&mut self, beyond: Beyond) -> UnitTest {
-        self.sets.push(UnitSet::new(beyond));
+        self.sets.push(UnitSet::new(beyond).into());
         UnitTest::Set(self.sets.len() as u32 - 1)
     }
 
@@ -760,7 +787,7 @@ enum AsciiScan {
     Nothing,
     Bytes(StartBytes),
     Ranges(StartRanges),
-    /// Unit by unit, through `UnitSet::table`.
+    /// Unit by unit, through `MatchSet::table`.
     Table,
 }
 
@@ -929,7 +956,26 @@ impl Starts {
             self.units.union(other.units),
         )
     }
+}
 
+/// `Starts` a program tests positions against: its units as a `MatchSet`.
+struct MatchStarts {
+    at_start: bool,
+    at_end: bool,
+    units: MatchSet,
+}
+
+impl From<Starts> for MatchStarts {
+    fn from(starts: Starts) -> Self {
+        Self {
+            at_start: starts.at_start,
+            at_end: starts.at_end,
+            units: starts.units.into(),
+        }
+    }
+}
+
+impl MatchStarts {
     #[inline(always)]
     fn admits<T: Text + ?Sized>(&self, text: &T, position: usize) -> bool {
         (self.at_start && position == 0)
@@ -1109,9 +1155,10 @@ impl Program {
                 .as_ref()
                 .is_some_and(|starts| starts.only_at_start)
                 .then(|| anchored_first_units(expr, flags))
-                .flatten(),
+                .flatten()
+                .map(MatchSet::from),
             scan: starts.as_ref().map_or(AsciiScan::Nothing, |starts| AsciiScan::of(starts.units.ascii)),
-            starts,
+            starts: starts.map(MatchStarts::from),
             prefix: (!prefix.is_empty()).then(|| literal_finder(&prefix)),
             literal_length: (whole_literal && capture_count == 0 && !prefix.is_empty()).then_some(prefix.len()),
         })
@@ -1300,7 +1347,7 @@ impl Program {
     /// `next_start` by a `memchr` scan of an ASCII subject for one to `START_SCAN_BYTES`
     /// start units, out of line so `run`, whose restarts call it, keeps its registers.
     #[inline(never)]
-    fn scan_start_bytes(starts: &Starts, scan: AsciiScan, bytes: &[u8], from: usize, last: usize) -> Option<usize> {
+    fn scan_start_bytes(starts: &MatchStarts, scan: AsciiScan, bytes: &[u8], from: usize, last: usize) -> Option<usize> {
         // The positions admitted in order: the subject's start, a start byte, its end.
         if starts.at_start && from == 0 {
             return Some(0);
@@ -1744,6 +1791,22 @@ mod tests {
                     .filter(|value| beyond.matches(*value))
                     .fold(0u128, |bits, value| bits | 1 << value);
                 assert_eq!(beyond.ascii_mask(), each, "{ranges:?} negative={negative}");
+            }
+        }
+    }
+
+    /// A case-folded literal's derived ASCII mask: the units its per-unit test admits, for
+    /// literals that fold with ASCII letters (the Kelvin sign, long s) and others.
+    #[test]
+    fn literal_ascii_mask_matches_each_unit() {
+        const LITERALS_CHECKED: u32 = 0x2200;
+        for value in 0..LITERALS_CHECKED {
+            for unicode in [false, true] {
+                let beyond = Beyond::Literal { value, unicode };
+                let each = (0..ASCII_UNITS)
+                    .filter(|unit| beyond.matches(*unit))
+                    .fold(0u128, |bits, unit| bits | 1 << unit);
+                assert_eq!(beyond.ascii_mask(), each, "{value:#x} unicode={unicode}");
             }
         }
     }
