@@ -7028,7 +7028,9 @@ impl<H: Host> Vm<H> {
                     .programs
                     .js_jit_diagnostics_enabled()
                     .then(std::time::Instant::now);
+                crate::compile::compile_phase_boundary(crate::compile::CompilePhase::NativeCodeGeneration);
                 let artifact = super::js_compiled::compile(&residual, function_id);
+                crate::compile::compile_phase_boundary(crate::compile::CompilePhase::NativeCodeGenerated);
                 let artifact_failed = artifact.is_none();
                 let compile_rejection = artifact_failed.then(|| {
                     super::js_compiled::candidate_rejection_reason(&residual, function_id)
