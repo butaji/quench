@@ -2040,6 +2040,11 @@ impl<'a> Compiler<'a> {
     /// every function nested in it, resolves names statically, inside no function that may
     /// give it binding sites: its layout then depends on nothing compiled after it.
     fn finish_early(&mut self, id: u32) {
+        #[cfg(feature = "profile-aggregate")]
+        if std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some() {
+            // A function-level profile needs each replayable function's instruction records.
+            return;
+        }
         if !self.replayable_source || self.dynamic_binding_scopes != 0 {
             return;
         }

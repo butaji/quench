@@ -2247,8 +2247,9 @@ impl<H: Host> Vm<H> {
                 let id = ProgramId::from_raw(index as u32);
                 if let Some(residual) = self.programs.get(id) {
                     eprintln!(
-                        "{{\"kind\":\"quench-profile-program\",\"program_id\":{}}}",
+                        "{{\"kind\":\"quench-profile-program\",\"program_id\":{},\"source_name\":{:?}}}",
                         id.raw(),
+                        residual.source_name,
                     );
                     self.profile.report(&self.heap, id.raw(), &residual);
                 }

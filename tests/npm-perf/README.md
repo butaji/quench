@@ -82,3 +82,16 @@ across engines. This is a partial no-JIT improvement: it remains about 7.5x
 slower than Node `--jitless`, and its RSS is only about 13% below Node, so it
 does not meet the 20% win threshold. Linux RSS sampling remains diagnostic,
 not qualification.
+
+For function-level React profiling, build the iteration runner with
+`--features quench-runtime/profile-aggregate`, then run:
+
+```sh
+NODE_ENV=production QUENCH_PROFILE_ALL_PROGRAMS=1 \
+QUENCH_PROFILE_RETAIN_BYTECODE=1 ../../target/iteration/quench-node \
+  workloads/react-ssr.cjs
+```
+
+The retain flag is diagnostic only: it keeps replayable function records so the
+report can include hot function names and instruction counts. Each
+`quench-profile-program` record includes its source name for attribution.
