@@ -57,6 +57,15 @@ fusion_recipes! {
             first.set_optional_register_b(Some(second.result_register()));
             Some(first)
         };
+    LocalField: [LoadLocal, GetField] =>
+        |first: Instr, mut second: Instr, _: &mut Vec<FieldSite>| {
+            if first.numeric_local_store_target().is_some() || second.writes_current_this() { return None; }
+            let crate::bytecode::FieldLookup::Atom { base, .. } = second.field_lookup()? else { return None; };
+            if base.register_index() != Some(first.result_register()) { return None; }
+            let local = u16::try_from(first.local_slot()).ok()?;
+            second.set_b(crate::bytecode::FieldBase::local(local)?.0);
+            Some(second)
+        };
     ProducerMove: [
         LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
         LoadName, Move; Binary, Move; Unary, Move; GetField, Move

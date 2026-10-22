@@ -287,6 +287,9 @@ impl<H: Host> Vm<H> {
         frame: usize,
         base: FieldBase,
     ) -> Result<Value, JsError> {
+        if let Some(local) = base.local_index() {
+            return self.load_local_binding(p, frame, usize::from(local), None);
+        }
         match base.register_index() {
             Some(register) => Ok(self.read(frame, register)),
             None => self.checked_this_binding(p, frame),
