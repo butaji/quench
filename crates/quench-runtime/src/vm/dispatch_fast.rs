@@ -2176,6 +2176,31 @@ unsafe fn lane_binary_value<H: Host>(
     }
 }
 
+/// `lane_binary_value` of a returning `Binary`, which keeps its operands encoded: two
+/// integer registers decide it in place (`integer_binary`), as the operator-specialized
+/// records decide theirs; any other operands take the general value.
+///
+/// # Safety
+/// As for `lane_binary_value`.
+#[inline(always)]
+unsafe fn lane_returning_binary_value<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    i: &LaneInstruction,
+) -> Option<Value> {
+    let register = |encoded: u16| {
+        let operand = crate::bytecode::Operand(encoded);
+        (operand.kind() == Some(crate::bytecode::OperandKind::Register)).then(|| r.get(operand.payload()))
+    };
+    if let (Some(left), Some(right)) = (register(i.b), register(i.c))
+        && let Some((left, right)) = Value::int_pair(left, right)
+        && let Some(value) = super::operations::integer_binary(i.imm(), left, right)
+    {
+        return Some(value);
+    }
+    unsafe { lane_binary_value(cx, r, i) }
+}
+
 /// A BigInt operator of two BigInts that raises nothing (`Vm::bigint_binary_value`), which
 /// allocates the result; `None` leaves the operation, and any error, to the general path.
 #[inline(never)]
@@ -2740,8 +2765,10 @@ script_handler! {
     /// other takes `lane_load_capture_walk`.
     fn lane_load_capture<>(cx, r, ip, i, view) {
         let imm = i.imm();
+        // Deeper reads take `lane_load_outer_capture` (`specialize_outer_captures`).
+        debug_assert_eq!(ImmediateLayout::capture_depth(imm), 0);
         let slots = capture_reads(unsafe { (*cx).capture });
-        let value = if ImmediateLayout::capture_depth(imm) == 0 && !slots.is_null() {
+        let value = if !slots.is_null() {
             // SAFETY: the running function's dense capture slots, found this run
             // (`LaneContext::capture`).
             (unsafe { &*slots }).dense_plain(usize::from(ImmediateLayout::capture_slot(imm)))
@@ -9715,7 +9742,7 @@ script_handler! {
                 }
                 RETURNING_FIELD => lane_field_value(cx, r, i),
                 RETURNING_UNARY => lane_unary_value(cx, r, i),
-                RETURNING_BINARY => lane_binary_value(cx, r, i),
+                RETURNING_BINARY => lane_returning_binary_value(cx, r, i),
                 RETURNING_OBJECT => Some(lane_object_pair(cx, r, i)),
                 _ => lane_literal_value(cx, r, i),
             }
