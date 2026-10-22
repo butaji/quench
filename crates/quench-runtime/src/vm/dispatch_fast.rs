@@ -4530,10 +4530,10 @@ fn lane_loop_entry<H: Host>(
                 return None;
             }
             let elements = super::index::mutable_array_elements(elements);
-            entry.push_array(elements.as_mut_ptr(), elements.len());
+            entry.push_array(elements.as_mut_ptr(), elements.len())?;
         } else {
             let elements = vm.heap.record_array(value)?.elements();
-            entry.push_array(elements.as_ptr().cast_mut(), elements.len());
+            entry.push_array(elements.as_ptr().cast_mut(), elements.len())?;
         }
     }
     Some(entry)
