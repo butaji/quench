@@ -7032,9 +7032,78 @@ fn lane_string_or_native_call<H: Host>(
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    vm.pure_string_method_call(code, callee, receiver, args)
-        .or_else(|| lane_pure_native(vm, callee, receiver, args))
-        .or_else(|| lane_call_native(cx, ip, callee, receiver, args))
+    if let Some(value) = vm.pure_string_method_call(code, callee, receiver, args) {
+        return Some(value);
+    }
+    if let Some(value) = lane_pure_native(vm, callee, receiver, args) {
+        return Some(value);
+    }
+    if let Some(value) = lane_promise_native(vm, code, callee, receiver, args) {
+        note_allocation(vm);
+        return Some(value);
+    }
+    lane_call_native(cx, ip, callee, receiver, args)
+}
+
+/// A lane call of a promise native whose steps provably observe nothing, answered in place
+/// so the lane's activations need not become frames (`lane_call_native`): `then` and
+/// `catch` of a receiver with intrinsic species (`Vm::lane_promise_then`) and the intrinsic
+/// `Promise.resolve` (`Vm::lane_promise_resolve`). A resolving function (one with an
+/// environment), any other shape, or a lifecycle-observing host takes the general call.
+#[inline(never)]
+fn lane_promise_native<H: Host>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    callee: Value,
+    receiver: Value,
+    args: &[Value],
+) -> Option<Value> {
+    let (native, env) = match vm.heap.function(callee) {
+        Some(FunctionRecord {
+            kind:
+                FunctionKind::Native(
+                    native @ (Native::PromiseThen | Native::PromiseCatch | Native::PromiseResolve),
+                ),
+            env,
+            ..
+        }) => (*native, *env),
+        _ => return None,
+    };
+    if !env.is_null() {
+        return None;
+    }
+    match native {
+        Native::PromiseThen => vm.lane_promise_then(
+            code,
+            receiver,
+            args.first().copied().unwrap_or(Value::UNDEFINED),
+            args.get(1).copied().unwrap_or(Value::UNDEFINED),
+        ),
+        Native::PromiseCatch => {
+            // `catch` reads `then` of its receiver and calls it: only the intrinsic `then`,
+            // read as plain data, is the shortcut's to make.
+            let then_atom = vm.runtime_atoms.then;
+            let then = vm.plain_named_load(receiver, then_atom)?;
+            if !matches!(
+                vm.heap.function(then),
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::PromiseThen), .. })
+            ) {
+                return None;
+            }
+            vm.lane_promise_then(
+                code,
+                receiver,
+                Value::UNDEFINED,
+                args.first().copied().unwrap_or(Value::UNDEFINED),
+            )
+        }
+        Native::PromiseResolve => vm.lane_promise_resolve(
+            code,
+            receiver,
+            args.first().copied().unwrap_or(Value::UNDEFINED),
+        ),
+        _ => unreachable!("only promise shortcut natives reach here"),
+    }
 }
 
 /// A native call whose common case runs no guest code and observes no frame, answered in
