@@ -80,12 +80,13 @@ impl Compiler<'_> {
         // An arrow inside a field initializer or static block (`class_initializer`) still
         // owns its parameters and locals: the initializer's restrictions (no `arguments`) are
         // early errors, and direct eval is excluded below.
-        let (promoted_local_slots, clobbered_local_slots) = self.promoted_local_plan(
+        let super::PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, .. } = self.promoted_local_plan(
             parent.is_some()
                 && simple_parameters
                 && !value.r#async
                 && with_depth == 0
                 && !dynamic_eval,
+            None,
             body_statements,
             expression_body,
             &locals,
@@ -177,6 +178,7 @@ impl Compiler<'_> {
             constructible: false,
             class_initializer,
             parameter_eval_arguments_error: false,
+            unaliased_arguments: false,
             arguments_slot: None,
             simple_parameters,
             strict,

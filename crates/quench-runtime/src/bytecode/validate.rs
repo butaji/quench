@@ -167,7 +167,8 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
         && !(function.class_initializer && !function.is_arrow)
         && function.simple_parameters
         && !function.rest
-        && function.arguments_slot.is_none()
+        // Promoted parameters leave their slots, which only an aliasing `arguments` reads.
+        && (function.arguments_slot.is_none() || !function.arguments_alias_parameters())
         && !function.inherited_with_scope
         && function.binding_sites.is_empty()
         && !has_dynamic_local_resolution
@@ -1070,7 +1071,7 @@ fn selective_capture_layout_is_eligible(
             })
         });
     let mapped_parameter_is_captured =
-        function.arguments_are_mapped() && captured.iter().any(|slot| *slot < function.params);
+        function.arguments_alias_parameters() && captured.iter().any(|slot| *slot < function.params);
     // A mapped `arguments` object shares the captured parameters, so it lives in the
     // environment with them; a body that keeps no `arguments` binding maps nothing.
     let mapped_arguments_are_captured = !mapped_parameter_is_captured
@@ -1230,6 +1231,7 @@ mod tests {
             constructible: true,
             class_initializer: false,
             parameter_eval_arguments_error: false,
+            unaliased_arguments: false,
             arguments_slot: None,
             simple_parameters: true,
             strict: false,

@@ -139,6 +139,7 @@ mod tests {
             environment_clones: vec![],
             constructible: true,
             parameter_eval_arguments_error: false,
+            unaliased_arguments: false,
             arguments_slot: None,
             simple_parameters: true,
             strict: false,
