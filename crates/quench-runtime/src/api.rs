@@ -545,6 +545,15 @@ impl<H: Host> Runtime<H> {
         Ok(())
     }
 
+    /// The VM's GC safepoint between calls: a collection runs when the VM's own pacing
+    /// makes one due, as at a back edge. A host's event-loop turn, which may run no guest
+    /// loop, names it so a due collection does not wait for one.
+    pub fn collect_if_due(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        program.validate_unless_proven().map_err(JsError::validation)?;
+        self.vm.maybe_collect(program);
+        Ok(())
+    }
+
     pub fn compile_and_execute(
         &mut self,
         request: ExecutionRequest<'_>,
