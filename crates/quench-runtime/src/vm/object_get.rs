@@ -579,7 +579,11 @@ impl<H: Host> Vm<H> {
         match self.heap.get(key)? {
             // A host-private symbol names only an own property, which the general path reads.
             Cell::Symbol(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate => {
-                self.plain_proved_get(object, PropertyKey::symbol(key))
+                match self.heap.array(object) {
+                    // No proof records an array's shape; the walk reads it as ordinary.
+                    Some(_) => self.plain_property_get(object, PropertyKey::symbol(key)),
+                    None => self.plain_proved_get(object, PropertyKey::symbol(key)),
+                }
             }
             _ => None,
         }
@@ -751,9 +755,15 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: PropertyKey,
     ) -> Option<Option<Value>> {
+        // An array is ordinary for a symbol key: only index keys and `length` are exotic.
+        let symbol = key.symbol_value().is_some();
         let mut current = object;
         loop {
-            let data = self.heap.ordinary_object(current)?;
+            let data = match self.heap.ordinary_object(current) {
+                Some(data) => data,
+                None if symbol && self.heap.array(current).is_some() => self.heap.object(current)?,
+                None => return None,
+            };
             if data.is_module_namespace() || data.deferred_module().is_some() {
                 return None;
             }
