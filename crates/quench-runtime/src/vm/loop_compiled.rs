@@ -137,6 +137,21 @@ pub(super) struct LoopRegion {
     instructions: Vec<WideInstruction>,
     /// The Number constants the region reads, by constant index.
     constants: std::collections::BTreeMap<u16, f64>,
+    /// The function's live registers before each instruction (`compile::liveness`), when
+    /// liveness covers it.
+    live: Option<Box<[u64]>>,
+}
+
+impl LoopRegion {
+    /// Whether the interpreter may read `register` resuming at `pc` before writing it; every
+    /// register is, where liveness does not cover the function.
+    fn is_live(&self, pc: u32, register: Register) -> bool {
+        let Some(live) = &self.live else {
+            return true;
+        };
+        let bit = u32::from(register);
+        bit >= u64::BITS || live.get(pc as usize).is_none_or(|mask| mask & (1 << bit) != 0)
+    }
 }
 
 /// The entry record native code reads: the termination flag, then each capture's value,
@@ -336,6 +351,7 @@ pub(super) fn region(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[Value],
+    live: Option<&[u64]>,
     header: u32,
     backedge: u32,
 ) -> Option<LoopRegion> {
@@ -382,6 +398,7 @@ pub(super) fn region(
         captures: admission.captures,
         instructions: decoded[start..=end].to_vec(),
         constants: admission.numbers,
+        live: live.map(Box::from),
     })
 }
 
@@ -682,8 +699,9 @@ struct Lowering<'a, 'b> {
     captures: Vec<Typed>,
     capture_representations: Vec<Representation>,
     blocks: Vec<ir::Block>,
-    /// Writes every Number register back and returns its parameter, the outcome word.
-    leave: ir::Block,
+    /// Per PC the code leaves at, the block that writes back the Number registers live
+    /// there and returns its parameter, the outcome word.
+    leaves: std::collections::BTreeMap<u32, ir::Block>,
     registers: ir::Value,
     entry: ir::Value,
     /// The host termination flag's address, loaded at entry.
@@ -718,8 +736,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
         builder.switch_to_block(start);
         let (registers, entry) = (builder.block_params(start)[0], builder.block_params(start)[1]);
         let blocks = (region.header..=region.backedge).map(|_| builder.create_block()).collect();
-        let leave = builder.create_block();
-        builder.append_block_param(leave, types::I64);
         let variables = representations
             .iter()
             .map(|(register, representation)| (*register, builder.declare_var(machine_type(*representation))))
@@ -734,7 +750,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             captures: Vec::new(),
             capture_representations,
             blocks,
-            leave,
+            leaves: std::collections::BTreeMap::new(),
             registers,
             entry,
             interrupt: None,
@@ -777,10 +793,18 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .load(types::I64, flags(), self.entry, index as i32 * WORD_BYTES)
     }
 
+    /// A block laid out after the hot code: an exit, or a representation a region rarely
+    /// meets.
+    fn cold_block(&mut self) -> ir::Block {
+        let block = self.builder.create_block();
+        self.builder.set_cold_block(block);
+        block
+    }
+
     /// A block that returns not entered, naming `widening`.
     fn not_entered(&mut self, widening: Option<Widening>) -> ir::Block {
         let current = self.builder.current_block().expect("lowering inside a block");
-        let block = self.builder.create_block();
+        let block = self.cold_block();
         self.builder.switch_to_block(block);
         let word = self.outcome(OUTCOME_NOT_ENTERED, widening.map_or(0, Widening::code));
         self.builder.ins().return_(&[word]);
@@ -842,8 +866,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .ins()
             .icmp_imm_u(IntCC::UnsignedLessThanOrEqual, offset, ValueLayout::TAG_FIELD_SPAN as i64);
         let double_block = self.builder.create_block();
-        let tagged_block = self.builder.create_block();
-        let integer_block = self.builder.create_block();
+        let tagged_block = self.cold_block();
+        let integer_block = self.cold_block();
         let join = self.builder.create_block();
         self.builder.append_block_param(join, types::F64);
         self.builder.ins().brif(tagged, tagged_block, &[], double_block, &[]);
@@ -890,11 +914,27 @@ impl<'a, 'b> Lowering<'a, 'b> {
         }
     }
 
+    /// Fills each leave block: the interpreter resumes at its PC, so only the registers live
+    /// there (`LoopRegion::live`) take their native values; any other keeps the value it
+    /// held, which nothing reads before writing.
     fn write_back(&mut self) {
-        self.builder.switch_to_block(self.leave);
-        let word = self.builder.block_params(self.leave)[0];
-        let registers: Vec<Register> = self.representations.keys().copied().collect();
-        for register in registers {
+        let leaves: Vec<(u32, ir::Block)> = self.leaves.iter().map(|(pc, block)| (*pc, *block)).collect();
+        for (pc, block) in leaves {
+            self.builder.switch_to_block(block);
+            let word = self.builder.block_params(block)[0];
+            let registers: Vec<Register> = self
+                .representations
+                .keys()
+                .copied()
+                .filter(|register| self.region.is_live(pc, *register))
+                .collect();
+            self.store_registers(&registers);
+            self.builder.ins().return_(&[word]);
+        }
+    }
+
+    fn store_registers(&mut self, registers: &[Register]) {
+        for &register in registers {
             let value = self.register(register);
             let bits = self.boxed(value);
             self.builder.ins().store(
@@ -904,19 +944,27 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 i32::from(register) * WORD_BYTES,
             );
         }
-        self.builder.ins().return_(&[word]);
     }
 
     /// Leaves with `outcome` at `pc`.
     fn leave(&mut self, outcome: u64, pc: u32) {
         let word = self.outcome(outcome, u64::from(pc));
-        self.builder.ins().jump(self.leave, &[ir::BlockArg::Value(word)]);
+        let block = match self.leaves.get(&pc) {
+            Some(block) => *block,
+            None => {
+                let block = self.cold_block();
+                self.builder.append_block_param(block, types::I64);
+                self.leaves.insert(pc, block);
+                block
+            }
+        };
+        self.builder.ins().jump(block, &[ir::BlockArg::Value(word)]);
     }
 
     /// A block that exits at `pc` for the general path.
     fn exit_block(&mut self, pc: u32) -> ir::Block {
         let current = self.builder.current_block().expect("lowering inside a block");
-        let exit = self.builder.create_block();
+        let exit = self.cold_block();
         self.builder.switch_to_block(exit);
         self.leave(OUTCOME_EXIT, pc);
         self.builder.switch_to_block(current);
@@ -936,7 +984,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn widen_block(&mut self, pc: u32, widening: Widening) -> ir::Block {
         self.widenings.insert(pc, widening);
         let current = self.builder.current_block().expect("lowering inside a block");
-        let exit = self.builder.create_block();
+        let exit = self.cold_block();
         self.builder.switch_to_block(exit);
         self.leave(OUTCOME_WIDEN, pc);
         self.builder.switch_to_block(current);
