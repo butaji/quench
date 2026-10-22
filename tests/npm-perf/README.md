@@ -140,3 +140,27 @@ matched across engines. The lane-exit census dropped these `GetField` exits
 from 5,390 over 55 renders to 2 over 55 renders. This improves on the prior
 220.6 renders/s screen, but still misses the 20% throughput and RSS gates
 against Node. Linux RSS sampling remains diagnostic, not qualification.
+
+The next lane census found about 24 `JumpBinaryFalse` exits per render for
+nullish/Number equality. The lane now resolves that pair in its shared cold
+relation fallback: JavaScript loose and strict equality both make the values
+unequal without coercion. The initial inline placement removed 6,600 exits over
+275 renders and measured 290.0 renders/s, but sampled RSS rose to 41.75 MB; its
+11-round report is
+[`reports/react-no-jit-nullish-number-equality-linux-11.json`](reports/react-no-jit-nullish-number-equality-linux-11.json).
+Moving the check into the cold fallback measured 312.9 renders/s / 41.67 MB
+with matching output in
+[`reports/react-no-jit-nullish-equality-cold-linux-11.json`](reports/react-no-jit-nullish-equality-cold-linux-11.json).
+Under `QUENCH_MEMORY_POLICY=memory-first`, the same cold-fallback build measured
+217.0 renders/s / 23.76 MB in
+[`reports/react-no-jit-nullish-equality-memory-first-linux-11.json`](reports/react-no-jit-nullish-equality-memory-first-linux-11.json).
+That screen clears the RSS margin against both runtimes but is still far behind
+their throughput. Experimental GC tuning with a 2x young budget and a 1/2
+budget both regressed; those iteration-profile diagnostics are recorded at
+[`reports/react-no-jit-memory-first-young-2-linux-11.json`](reports/react-no-jit-memory-first-young-2-linux-11.json)
+and
+[`reports/react-no-jit-memory-first-young-half-linux-11.json`](reports/react-no-jit-memory-first-young-half-linux-11.json).
+The benchmark runner records memory and GC policy settings in each report.
+The lane census also attributes about 268,000 capture reads to the React server
+root over 275 renders; the next optimization target is that repeated global
+capture path. These Linux RSS measurements are diagnostic, not qualification.
