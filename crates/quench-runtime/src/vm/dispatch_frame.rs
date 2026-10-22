@@ -1753,6 +1753,8 @@ impl<H: Host> Vm<H> {
                         }) = ins.field_lookup()
                         && let Some(object) = match base.register_index() {
                             Some(register) => Some(self.read(frame, register)),
+                            // A local base (`FieldBase::local`) is the general path's read.
+                            None if base.local_index().is_some() => None,
                             None => self.frames[frame]
                                 .fixed_this
                                 .then(|| self.frames[frame].this),
