@@ -1106,3 +1106,14 @@ three-round screen measured Bun at 110.07 Score / 66.63 MiB and Node at 50.42 /
 206.71 MiB. The change is retained as a local win, not a JetStream victory.
 Reports and pair-level detail are in
 `evidence/jit-jetstream3-2026-10-21/async-fs-dataview-fast-lane/`.
+
+The follow-up fastens the common Boolean endianness argument check in this
+lane: Boolean arguments use `Value::as_bool`, while all other values retain
+general `ToBoolean` handling. Three-round control/candidate medians were 3.80
+and 3.94 Score, with 87.75 and 88.04 MiB peak RSS. In seven interleaved
+one-round Quench pairs, the candidate won six; the paired median and geometric
+mean Score ratios were 1.083 and 1.106, and median RSS ratio was 1.0014.
+Candidate-first pairs were added to check run-order bias. Peer scores varied
+sharply, so this supports a local async-fs improvement only; it is not a
+JetStream peer win or qualification. Reports and methodology are in
+`evidence/jit-jetstream3-2026-10-22/async-fs-dataview-boolean-fast-path/`.
