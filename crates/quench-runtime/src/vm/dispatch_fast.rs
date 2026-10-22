@@ -11569,6 +11569,9 @@ fn derive_lane_view<H: Host>(
         .then(|| memory_register(function))
         .flatten();
     let jump_targets = jump_targets(&decoded);
+    // Wasm instructions, whose fusions the passes under `wasm` make, occur only in Wasm
+    // bodies: JavaScript compiles to none of them.
+    let wasm = kind == crate::bytecode::ProgramKind::Wasm;
     let resolves_names = function.has_dynamic_scope_access();
     // One function-wide fact, consulted per local load; it scans the whole body.
     let forwards_arguments = std::cell::OnceCell::new();
@@ -11720,133 +11723,135 @@ fn derive_lane_view<H: Host>(
         tables[0][usize::from(acc)].get(op as usize).copied().flatten()
             .is_some_and(|served| handler == served.handler as *const ())
     };
-    // A table follows its selected entry's jump, so every entry must run in
-    // the lane.
-    for (pc, &instruction) in decoded.iter().enumerate() {
-        if instruction.op() == Op::WasmBranchTable
-            && crate::bytecode::branch_table_entries(pc, instruction).any(|entry| exits[entry])
-        {
-            records[pc].handler = lane_exit::<H> as Handler as *const ();
-            exits[pc] = true;
-            reads_accumulator[pc] = false;
-        }
-    }
-    // An add of a constant whose sum the next record loads from runs with
-    // that load as one record: the load reads the sum as its carried
-    // accumulator, so control reaches it only from the add.
-    for pc in 0..records.len().saturating_sub(1) {
-        let instruction = decoded[pc];
-        let next = decoded[pc + 1];
-        let plain_add = serves(records[pc].handler, Op::WasmI32AddImmediate, ACC_NONE);
-        let carried_load = serves(records[pc + 1].handler, next.op(), ACC_C);
-        if instruction.op() == Op::WasmI32AddImmediate
-            && plain_add
-            && carried_load
-            && let Some(fused) = add_load_handler::<H>(next.op())
-        {
-            // A float operator taking the loaded f64 joins the fusion.
-            let operator = (next.op() == Op::WasmF64Load && pc + 2 < records.len())
-                .then(|| decoded[pc + 2])
-                .filter(|third| third.op() == Op::WasmF64Binary)
-                .and_then(|third| {
-                    let second = float_arithmetic(third.op(), third.imm())?;
-                    let left = [ACC_B, ACC_C].into_iter().find(|acc| {
-                        records[pc + 2].handler
-                            == FloatArithmetic::<H>::HANDLERS[1][usize::from(second)]
-                                [usize::from(*acc)] as *const ()
-                    })? == ACC_B;
-                    Some(AddLoadF64::<H>::HANDLERS[usize::from(second)][usize::from(left)])
-                });
-            records[pc].handler = operator.unwrap_or(fused) as *const ();
-        }
-    }
-    // An i32 load whose value the next record's branch table selects on
-    // runs with that table as one record.
-    for pc in 0..records.len().saturating_sub(1) {
-        let instruction = decoded[pc];
-        let next = decoded[pc + 1];
-        let field = [ACC_NONE, ACC_C]
-            .into_iter()
-            .find(|acc| serves(records[pc].handler, instruction.op(), *acc));
-        if let Some(field) = field
-            && next.a() == instruction.a()
-            && serves(records[pc + 1].handler, Op::WasmBranchTable, ACC_NONE)
-            && let Some(fused) = load_table_handler::<H>(instruction.op(), field, false)
-        {
-            records[pc].handler = fused as *const ();
-            // A plain add of a constant ahead of a load reading its own
-            // field joins as well.
-            if pc > 0
-                && field == ACC_NONE
-                && serves(records[pc - 1].handler, Op::WasmI32AddImmediate, ACC_NONE)
-                && let Some(fused) = load_table_handler::<H>(instruction.op(), ACC_NONE, true)
+    if wasm {
+        // A table follows its selected entry's jump, so every entry must run in
+        // the lane.
+        for (pc, &instruction) in decoded.iter().enumerate() {
+            if instruction.op() == Op::WasmBranchTable
+                && crate::bytecode::branch_table_entries(pc, instruction).any(|entry| exits[entry])
             {
-                records[pc - 1].handler = fused as *const ();
+                records[pc].handler = lane_exit::<H> as Handler as *const ();
+                exits[pc] = true;
+                reads_accumulator[pc] = false;
             }
         }
-    }
-    // A shift left by a constant whose result the next record adds runs
-    // with that add as one record.
-    for pc in 0..records.len().saturating_sub(1) {
-        let variant = |op: Op, acc: u8, at: usize| serves(records[at].handler, op, acc);
-        let field = [ACC_NONE, ACC_B]
-            .into_iter()
-            .position(|acc| variant(Op::WasmI32ShiftLeftImmediate, acc, pc));
-        let left = [ACC_C, ACC_B]
-            .into_iter()
-            .position(|acc| variant(Op::WasmI32Add, acc, pc + 1));
-        if let (Some(field), Some(left)) = (field, left) {
-            records[pc].handler = ScaledIndex::<H>::HANDLERS[field][left] as *const ();
+        // An add of a constant whose sum the next record loads from runs with
+        // that load as one record: the load reads the sum as its carried
+        // accumulator, so control reaches it only from the add.
+        for pc in 0..records.len().saturating_sub(1) {
+            let instruction = decoded[pc];
+            let next = decoded[pc + 1];
+            let plain_add = serves(records[pc].handler, Op::WasmI32AddImmediate, ACC_NONE);
+            let carried_load = serves(records[pc + 1].handler, next.op(), ACC_C);
+            if instruction.op() == Op::WasmI32AddImmediate
+                && plain_add
+                && carried_load
+                && let Some(fused) = add_load_handler::<H>(next.op())
+            {
+                // A float operator taking the loaded f64 joins the fusion.
+                let operator = (next.op() == Op::WasmF64Load && pc + 2 < records.len())
+                    .then(|| decoded[pc + 2])
+                    .filter(|third| third.op() == Op::WasmF64Binary)
+                    .and_then(|third| {
+                        let second = float_arithmetic(third.op(), third.imm())?;
+                        let left = [ACC_B, ACC_C].into_iter().find(|acc| {
+                            records[pc + 2].handler
+                                == FloatArithmetic::<H>::HANDLERS[1][usize::from(second)]
+                                    [usize::from(*acc)] as *const ()
+                        })? == ACC_B;
+                        Some(AddLoadF64::<H>::HANDLERS[usize::from(second)][usize::from(left)])
+                    });
+                records[pc].handler = operator.unwrap_or(fused) as *const ();
+            }
         }
-    }
-    // An i32 load, the operator taking the loaded value and the store of
-    // its result run as one record.
-    for pc in 0..records.len().saturating_sub(2) {
-        let load = decoded[pc];
-        let combine = decoded[pc + 1];
-        let store = decoded[pc + 2];
-        if load.op() != Op::WasmI32Load || store.op() != Op::WasmI32Store {
-            continue;
+        // An i32 load whose value the next record's branch table selects on
+        // runs with that table as one record.
+        for pc in 0..records.len().saturating_sub(1) {
+            let instruction = decoded[pc];
+            let next = decoded[pc + 1];
+            let field = [ACC_NONE, ACC_C]
+                .into_iter()
+                .find(|acc| serves(records[pc].handler, instruction.op(), *acc));
+            if let Some(field) = field
+                && next.a() == instruction.a()
+                && serves(records[pc + 1].handler, Op::WasmBranchTable, ACC_NONE)
+                && let Some(fused) = load_table_handler::<H>(instruction.op(), field, false)
+            {
+                records[pc].handler = fused as *const ();
+                // A plain add of a constant ahead of a load reading its own
+                // field joins as well.
+                if pc > 0
+                    && field == ACC_NONE
+                    && serves(records[pc - 1].handler, Op::WasmI32AddImmediate, ACC_NONE)
+                    && let Some(fused) = load_table_handler::<H>(instruction.op(), ACC_NONE, true)
+                {
+                    records[pc - 1].handler = fused as *const ();
+                }
+            }
         }
-        let field = [ACC_NONE, ACC_C]
-            .into_iter()
-            .find(|&acc| serves(records[pc].handler, Op::WasmI32Load, acc));
-        let left = [ACC_C, ACC_B]
-            .into_iter()
-            .position(|acc| serves(records[pc + 1].handler, combine.op(), acc));
-        if let (Some(field), Some(left)) = (field, left)
-            && store.a() == combine.a()
-            && serves(records[pc + 2].handler, Op::WasmI32Store, ACC_A)
-            && let Some(fused) = i32_update_handler::<H>(combine.op(), left == 1, field)
-        {
-            records[pc].handler = fused as *const ();
+        // A shift left by a constant whose result the next record adds runs
+        // with that add as one record.
+        for pc in 0..records.len().saturating_sub(1) {
+            let variant = |op: Op, acc: u8, at: usize| serves(records[at].handler, op, acc);
+            let field = [ACC_NONE, ACC_B]
+                .into_iter()
+                .position(|acc| variant(Op::WasmI32ShiftLeftImmediate, acc, pc));
+            let left = [ACC_C, ACC_B]
+                .into_iter()
+                .position(|acc| variant(Op::WasmI32Add, acc, pc + 1));
+            if let (Some(field), Some(left)) = (field, left) {
+                records[pc].handler = ScaledIndex::<H>::HANDLERS[field][left] as *const ();
+            }
         }
-    }
-    // A constant that the next record stores runs with that store as one
-    // record.
-    for pc in 0..records.len().saturating_sub(1) {
-        let next = decoded[pc + 1];
-        if serves(records[pc].handler, Op::LoadConst, ACC_NONE)
-            && serves(records[pc + 1].handler, next.op(), ACC_A)
-            && let Some(fused) = constant_store_handler::<H>(next.op())
-        {
-            records[pc].handler = fused as *const ();
+        // An i32 load, the operator taking the loaded value and the store of
+        // its result run as one record.
+        for pc in 0..records.len().saturating_sub(2) {
+            let load = decoded[pc];
+            let combine = decoded[pc + 1];
+            let store = decoded[pc + 2];
+            if load.op() != Op::WasmI32Load || store.op() != Op::WasmI32Store {
+                continue;
+            }
+            let field = [ACC_NONE, ACC_C]
+                .into_iter()
+                .find(|&acc| serves(records[pc].handler, Op::WasmI32Load, acc));
+            let left = [ACC_C, ACC_B]
+                .into_iter()
+                .position(|acc| serves(records[pc + 1].handler, combine.op(), acc));
+            if let (Some(field), Some(left)) = (field, left)
+                && store.a() == combine.a()
+                && serves(records[pc + 2].handler, Op::WasmI32Store, ACC_A)
+                && let Some(fused) = i32_update_handler::<H>(combine.op(), left == 1, field)
+            {
+                records[pc].handler = fused as *const ();
+            }
         }
-    }
-    // A load whose value the next record stores runs with that store as
-    // one record.
-    for pc in 0..records.len().saturating_sub(1) {
-        let instruction = decoded[pc];
-        let next = decoded[pc + 1];
-        let field = [ACC_NONE, ACC_C]
-            .into_iter()
-            .find(|acc| serves(records[pc].handler, instruction.op(), *acc));
-        let carried_store = serves(records[pc + 1].handler, next.op(), ACC_A);
-        if let Some(field) = field
-            && carried_store
-            && let Some(fused) = load_store_handler::<H>(instruction.op(), next.op(), field)
-        {
-            records[pc].handler = fused as *const ();
+        // A constant that the next record stores runs with that store as one
+        // record.
+        for pc in 0..records.len().saturating_sub(1) {
+            let next = decoded[pc + 1];
+            if serves(records[pc].handler, Op::LoadConst, ACC_NONE)
+                && serves(records[pc + 1].handler, next.op(), ACC_A)
+                && let Some(fused) = constant_store_handler::<H>(next.op())
+            {
+                records[pc].handler = fused as *const ();
+            }
+        }
+        // A load whose value the next record stores runs with that store as
+        // one record.
+        for pc in 0..records.len().saturating_sub(1) {
+            let instruction = decoded[pc];
+            let next = decoded[pc + 1];
+            let field = [ACC_NONE, ACC_C]
+                .into_iter()
+                .find(|acc| serves(records[pc].handler, instruction.op(), *acc));
+            let carried_store = serves(records[pc + 1].handler, next.op(), ACC_A);
+            if let Some(field) = field
+                && carried_store
+                && let Some(fused) = load_store_handler::<H>(instruction.op(), next.op(), field)
+            {
+                records[pc].handler = fused as *const ();
+            }
         }
     }
     // The zero-test jump `handler` is, as (taken on zero, backward), when it carries no
@@ -11869,124 +11874,126 @@ fn derive_lane_view<H: Host>(
             )
         })
     };
-    // An i32 add or subtract of a constant, the and of a constant over its result and an
-    // immediate comparison jump testing that run as one record.
-    for pc in 0..records.len().saturating_sub(2) {
-        let (first, mask, jump) = (decoded[pc], decoded[pc + 1], decoded[pc + 2]);
-        let Some(acc) = [ACC_NONE, ACC_B].into_iter().find(|&acc| serves(records[pc].handler, first.op(), acc))
-        else {
-            continue;
-        };
-        if !matches!(first.op(), Op::WasmI32AddImmediate | Op::WasmI32SubtractImmediate)
-            || mask.op() != Op::WasmI32AndImmediate
-            || mask.b() != first.a()
-            || jump.a() != mask.a()
-            || ![ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, Op::WasmI32AndImmediate, acc))
-        {
-            continue;
+    if wasm {
+        // An i32 add or subtract of a constant, the and of a constant over its result and an
+        // immediate comparison jump testing that run as one record.
+        for pc in 0..records.len().saturating_sub(2) {
+            let (first, mask, jump) = (decoded[pc], decoded[pc + 1], decoded[pc + 2]);
+            let Some(acc) = [ACC_NONE, ACC_B].into_iter().find(|&acc| serves(records[pc].handler, first.op(), acc))
+            else {
+                continue;
+            };
+            if !matches!(first.op(), Op::WasmI32AddImmediate | Op::WasmI32SubtractImmediate)
+                || mask.op() != Op::WasmI32AndImmediate
+                || mask.b() != first.a()
+                || jump.a() != mask.a()
+                || ![ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, Op::WasmI32AndImmediate, acc))
+            {
+                continue;
+            }
+            let Some(backward) = [false, true].into_iter().find(|&backward| {
+                [ACC_NONE, ACC_A].into_iter().any(|acc| {
+                    tables[usize::from(backward)][usize::from(acc)]
+                        .get(jump.op() as usize)
+                        .copied()
+                        .flatten()
+                        .is_some_and(|served| records[pc + 2].handler == served.handler as *const ())
+                })
+            }) else {
+                continue;
+            };
+            if let Some(fused) = offset_mask_jump_handler::<H>(first.op(), jump.op(), backward, acc) {
+                records[pc].handler = fused as *const ();
+            }
         }
-        let Some(backward) = [false, true].into_iter().find(|&backward| {
-            [ACC_NONE, ACC_A].into_iter().any(|acc| {
-                tables[usize::from(backward)][usize::from(acc)]
-                    .get(jump.op() as usize)
-                    .copied()
-                    .flatten()
-                    .is_some_and(|served| records[pc + 2].handler == served.handler as *const ())
-            })
-        }) else {
-            continue;
-        };
-        if let Some(fused) = offset_mask_jump_handler::<H>(first.op(), jump.op(), backward, acc) {
-            records[pc].handler = fused as *const ();
+        // An i32 load whose value the next record's i32 load takes as its address runs with it as
+        // one record; so does an i32 load whose value the next record's zero-test jump tests.
+        for pc in 0..records.len().saturating_sub(1) {
+            let Some(acc) = i32_load(&records, pc) else {
+                continue;
+            };
+            let (load, next) = (decoded[pc], decoded[pc + 1]);
+            let fused = if load.op() == Op::WasmI32Load
+                && i32_load(&records, pc + 1).is_some()
+                && next.c() == load.a()
+            {
+                load_load_handler::<H>(next.op(), acc)
+            } else if let Some((zero, backward)) = plain_zero_jump(records[pc + 1].handler)
+                && next.a() == load.a()
+            {
+                load_jump_handler::<H>(load.op(), acc, zero == 1, backward == 1)
+            } else {
+                None
+            };
+            if let Some(fused) = fused {
+                records[pc].handler = fused as *const ();
+            }
         }
-    }
-    // An i32 load whose value the next record's i32 load takes as its address runs with it as
-    // one record; so does an i32 load whose value the next record's zero-test jump tests.
-    for pc in 0..records.len().saturating_sub(1) {
-        let Some(acc) = i32_load(&records, pc) else {
-            continue;
-        };
-        let (load, next) = (decoded[pc], decoded[pc + 1]);
-        let fused = if load.op() == Op::WasmI32Load
-            && i32_load(&records, pc + 1).is_some()
-            && next.c() == load.a()
-        {
-            load_load_handler::<H>(next.op(), acc)
-        } else if let Some((zero, backward)) = plain_zero_jump(records[pc + 1].handler)
-            && next.a() == load.a()
-        {
-            load_jump_handler::<H>(load.op(), acc, zero == 1, backward == 1)
-        } else {
-            None
-        };
-        if let Some(fused) = fused {
-            records[pc].handler = fused as *const ();
+        // Two plain i32 loads whose values the next record's i32 operator combines run with it
+        // as one record.
+        for pc in 0..records.len().saturating_sub(2) {
+            let (first, second, combine) = (decoded[pc], decoded[pc + 1], decoded[pc + 2]);
+            if first.op() != second.op()
+                || i32_load(&records, pc) != Some(ACC_NONE)
+                || i32_load(&records, pc + 1) != Some(ACC_NONE)
+                || first.a() == second.a()
+                || second.c() == first.a()
+                || ![ACC_NONE, ACC_B, ACC_C].into_iter().any(|acc| serves(records[pc + 2].handler, combine.op(), acc))
+            {
+                continue;
+            }
+            let first_left = if (combine.b(), combine.c()) == (first.a(), second.a()) {
+                true
+            } else if (combine.b(), combine.c()) == (second.a(), first.a()) {
+                false
+            } else {
+                continue;
+            };
+            if let Some(fused) = load_pair_binary_handler::<H>(first.op(), combine.op(), first_left) {
+                records[pc].handler = fused as *const ();
+            }
         }
-    }
-    // Two plain i32 loads whose values the next record's i32 operator combines run with it
-    // as one record.
-    for pc in 0..records.len().saturating_sub(2) {
-        let (first, second, combine) = (decoded[pc], decoded[pc + 1], decoded[pc + 2]);
-        if first.op() != second.op()
-            || i32_load(&records, pc) != Some(ACC_NONE)
-            || i32_load(&records, pc + 1) != Some(ACC_NONE)
-            || first.a() == second.a()
-            || second.c() == first.a()
-            || ![ACC_NONE, ACC_B, ACC_C].into_iter().any(|acc| serves(records[pc + 2].handler, combine.op(), acc))
-        {
-            continue;
+        // An i32 operator, a constant load and a select reading them run as one record.
+        for pc in 0..records.len().saturating_sub(2) {
+            let (operator, constant) = (decoded[pc], decoded[pc + 1]);
+            let Some(acc) = [ACC_NONE, ACC_B, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, operator.op(), acc))
+            else {
+                continue;
+            };
+            if !serves(records[pc + 1].handler, Op::LoadConst, ACC_NONE)
+                || ![ACC_NONE, ACC_B, ACC_C, ACC_PAIR]
+                    .into_iter()
+                    .any(|acc| serves(records[pc + 2].handler, Op::WasmSelect, acc))
+                || constant.op() != Op::LoadConst
+            {
+                continue;
+            }
+            if let Some(fused) = operator_constant_select_handler::<H>(operator.op(), acc) {
+                records[pc].handler = fused as *const ();
+            }
         }
-        let first_left = if (combine.b(), combine.c()) == (first.a(), second.a()) {
-            true
-        } else if (combine.b(), combine.c()) == (second.a(), first.a()) {
-            false
-        } else {
-            continue;
-        };
-        if let Some(fused) = load_pair_binary_handler::<H>(first.op(), combine.op(), first_left) {
-            records[pc].handler = fused as *const ();
+        // A plain move whose value the next record's i32 load takes as its address runs with it
+        // as one record.
+        for pc in 0..records.len().saturating_sub(1) {
+            if serves(records[pc].handler, Op::Move, ACC_NONE)
+                && i32_load(&records, pc + 1).is_some()
+                && decoded[pc + 1].c() == decoded[pc].a()
+                && let Some(fused) = move_load_handler::<H>(decoded[pc + 1].op(), ACC_NONE)
+            {
+                records[pc].handler = fused as *const ();
+            }
         }
-    }
-    // An i32 operator, a constant load and a select reading them run as one record.
-    for pc in 0..records.len().saturating_sub(2) {
-        let (operator, constant) = (decoded[pc], decoded[pc + 1]);
-        let Some(acc) = [ACC_NONE, ACC_B, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, operator.op(), acc))
-        else {
-            continue;
-        };
-        if !serves(records[pc + 1].handler, Op::LoadConst, ACC_NONE)
-            || ![ACC_NONE, ACC_B, ACC_C, ACC_PAIR]
-                .into_iter()
-                .any(|acc| serves(records[pc + 2].handler, Op::WasmSelect, acc))
-            || constant.op() != Op::LoadConst
-        {
-            continue;
-        }
-        if let Some(fused) = operator_constant_select_handler::<H>(operator.op(), acc) {
-            records[pc].handler = fused as *const ();
-        }
-    }
-    // A plain move whose value the next record's i32 load takes as its address runs with it
-    // as one record.
-    for pc in 0..records.len().saturating_sub(1) {
-        if serves(records[pc].handler, Op::Move, ACC_NONE)
-            && i32_load(&records, pc + 1).is_some()
-            && decoded[pc + 1].c() == decoded[pc].a()
-            && let Some(fused) = move_load_handler::<H>(decoded[pc + 1].op(), ACC_NONE)
-        {
-            records[pc].handler = fused as *const ();
-        }
-    }
-    // A plain i32 store followed by a move runs with it as one record.
-    for pc in 0..records.len().saturating_sub(1) {
-        let op = decoded[pc].op();
-        let Some(acc) = [ACC_NONE, ACC_A, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, op, acc)) else {
-            continue;
-        };
-        if [ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, Op::Move, acc))
-            && let Some(fused) = store_move_handler::<H>(op, acc)
-        {
-            records[pc].handler = fused as *const ();
+        // A plain i32 store followed by a move runs with it as one record.
+        for pc in 0..records.len().saturating_sub(1) {
+            let op = decoded[pc].op();
+            let Some(acc) = [ACC_NONE, ACC_A, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, op, acc)) else {
+                continue;
+            };
+            if [ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, Op::Move, acc))
+                && let Some(fused) = store_move_handler::<H>(op, acc)
+            {
+                records[pc].handler = fused as *const ();
+            }
         }
     }
     // A record's plain jump, with its direction.
@@ -12081,344 +12088,348 @@ fn derive_lane_view<H: Host>(
                 JumpFusions::<H>::THEN[usize::from(add)][usize::from(backward)] as *const ();
         }
     }
-    // A move whose next record is a zero-test jump that carries no register runs with that
-    // jump as one record.
-    for pc in 0..records.len().saturating_sub(1) {
-        let Some(move_acc) = [ACC_NONE, ACC_B]
-            .into_iter()
-            .position(|acc| serves(records[pc].handler, Op::Move, acc))
-        else {
-            continue;
-        };
-        if let Some((zero, backward)) = plain_zero_jump(records[pc + 1].handler) {
-            records[pc].handler = MoveZeroJumps::<H>::HANDLERS[zero][backward][move_acc] as *const ();
+    if wasm {
+        // A move whose next record is a zero-test jump that carries no register runs with that
+        // jump as one record.
+        for pc in 0..records.len().saturating_sub(1) {
+            let Some(move_acc) = [ACC_NONE, ACC_B]
+                .into_iter()
+                .position(|acc| serves(records[pc].handler, Op::Move, acc))
+            else {
+                continue;
+            };
+            if let Some((zero, backward)) = plain_zero_jump(records[pc + 1].handler) {
+                records[pc].handler = MoveZeroJumps::<H>::HANDLERS[zero][backward][move_acc] as *const ();
+            }
         }
     }
-    // An f64 arithmetic record whose result the next f64 operator takes
-    // through the accumulator runs with it as one record; pairs tile a
-    // chain from its start.
-    let mut pc = 0;
-    while pc + 1 < records.len() {
-        let instruction = decoded[pc];
-        let next = decoded[pc + 1];
-        let pair = (|| {
-            if next.op() != Op::WasmF64Binary {
-                return None;
-            }
-            let second = float_arithmetic(next.op(), next.imm())?;
-            let left_of = |records: &[LaneInstruction]| {
-                [ACC_B, ACC_C]
-                    .into_iter()
-                    .find(|acc| {
-                        records[pc + 1].handler
-                            == FloatArithmetic::<H>::HANDLERS[1][usize::from(second)]
-                                [usize::from(*acc)] as *const ()
-                    })
-                    .map(|acc| acc == ACC_B)
-            };
-            if instruction.op() == Op::WasmF64Load {
-                let plain = tables[0][usize::from(ACC_NONE)][Op::WasmF64Load as usize]?;
-                if records[pc].handler != plain.handler as *const () {
+    if wasm {
+        // An f64 arithmetic record whose result the next f64 operator takes
+        // through the accumulator runs with it as one record; pairs tile a
+        // chain from its start.
+        let mut pc = 0;
+        while pc + 1 < records.len() {
+            let instruction = decoded[pc];
+            let next = decoded[pc + 1];
+            let pair = (|| {
+                if next.op() != Op::WasmF64Binary {
                     return None;
                 }
-                let left = left_of(&records)?;
-                // An arithmetic whose result the record after it stores
-                // (`mem[x] += v`) joins as well.
-                let updates =
-                    pc + 2 < records.len() && usize::from(second) < FLOAT_PAIR_FIRSTS && {
-                        let store = decoded[pc + 2];
-                        store.op() == Op::WasmF64Store
-                            && store.a() == next.a()
-                            && [ACC_NONE, ACC_A]
-                                .into_iter()
-                                .any(|acc| serves(records[pc + 2].handler, Op::WasmF64Store, acc))
-                    };
-                if updates {
-                    return Some((
-                        FloatPairs::<H>::UPDATES[usize::from(second)][usize::from(left)],
-                        3,
-                    ));
-                }
-                return Some((
-                    FloatPairs::<H>::LOADS[usize::from(second)][usize::from(left)],
-                    2,
-                ));
-            }
-            if instruction.op() != Op::WasmF64Binary {
-                return None;
-            }
-            let first = float_arithmetic(instruction.op(), instruction.imm())?;
-            if usize::from(first) >= FLOAT_PAIR_FIRSTS {
-                return None;
-            }
-            let field = FUSED_ACC_FIELDS.iter().position(|acc| {
-                records[pc].handler
-                    == FloatArithmetic::<H>::HANDLERS[1][usize::from(first)][usize::from(*acc)]
-                        as *const ()
-            })?;
-            let left = left_of(&records)?;
-            Some((
-                FloatPairs::<H>::HANDLERS[usize::from(first)][usize::from(second)]
-                    [usize::from(left)][field],
-                2,
-            ))
-        })();
-        // An f64 arithmetic whose result the next record stores, when only
-        // the arithmetic reaches that store.
-        let pair = pair.or_else(|| {
-            let first = float_arithmetic(instruction.op(), instruction.imm())?;
-            // The fused record writes the arithmetic's result itself, so the
-            // store may read it plainly or through the accumulator.
-            let store_runs = [ACC_NONE, ACC_A]
-                .into_iter()
-                .any(|acc| serves(records[pc + 1].handler, Op::WasmF64Store, acc));
-            if instruction.op() != Op::WasmF64Binary
-                || usize::from(first) >= FLOAT_PAIR_FIRSTS
-                || next.op() != Op::WasmF64Store
-                || next.a() != instruction.a()
-                || jump_targets[pc + 1]
-                || !store_runs
-            {
-                return None;
-            }
-            let field = FUSED_ACC_FIELDS.iter().position(|acc| {
-                records[pc].handler
-                    == FloatArithmetic::<H>::HANDLERS[1][usize::from(first)][usize::from(*acc)]
-                        as *const ()
-            })?;
-            Some((FloatPairs::<H>::STORES[usize::from(first)][field], 2))
-        });
-        match pair {
-            Some((fused, span)) => {
-                records[pc].handler = fused as *const ();
-                pc += span;
-            }
-            None => pc += 1,
-        }
-    }
-    // A dispatch head (an add of a constant fused with the load and table
-    // after it) reads the register both take from the accumulator when every
-    // edge into it carries that register there, as an interpreter's latches
-    // carry its program counter.
-    let unfused = |records: &[LaneInstruction], from: usize, to: usize| {
-        (from..=to).all(|pc| records[pc].handler == selected[pc])
-    };
-    // The register the record at `pc` carries as the accumulator when it
-    // falls through, if it runs only itself and nothing fused runs into it.
-    let carried_through = |records: &[LaneInstruction], pc: usize| {
-        unfused(records, pc.saturating_sub(FUSION_REACH), pc)
-            .then_some(produced[pc])
-            .flatten()
-    };
-    // The register an edge into `target` carries, per edge; `None` when an
-    // edge carries none (or one this analysis does not follow).
-    // The carrying variant of the zero-test jump `handler`, if it is one.
-    let carrying_zero_jump = |handler: *const ()| {
-        let plain = ZeroJumps::<H, false>::HANDLERS
-            .as_flattened()
-            .as_flattened();
-        let carrying = ZeroJumps::<H, true>::HANDLERS.as_flattened().as_flattened();
-        plain
-            .iter()
-            .position(|&plain| handler == plain as *const ())
-            .map(|index| carrying[index])
-    };
-    let edges_carry = |records: &[LaneInstruction], target: usize| -> Option<u16> {
-        let mut carried: Option<u16> = None;
-        let mut agree = |register: Option<u16>| match (register, carried) {
-            (None, _) => false,
-            (Some(register), None) => {
-                carried = Some(register);
-                true
-            }
-            (Some(register), Some(known)) => register == known,
-        };
-        if target > 0 && !exits[target - 1] {
-            use crate::bytecode::ControlFlowLayout as Flow;
-            match decoded[target - 1]
-                .op()
-                .control_flow_layout()
-            {
-                Flow::Fallthrough => {
-                    if !agree(carried_through(records, target - 1)) {
+                let second = float_arithmetic(next.op(), next.imm())?;
+                let left_of = |records: &[LaneInstruction]| {
+                    [ACC_B, ACC_C]
+                        .into_iter()
+                        .find(|acc| {
+                            records[pc + 1].handler
+                                == FloatArithmetic::<H>::HANDLERS[1][usize::from(second)]
+                                    [usize::from(*acc)] as *const ()
+                        })
+                        .map(|acc| acc == ACC_B)
+                };
+                if instruction.op() == Op::WasmF64Load {
+                    let plain = tables[0][usize::from(ACC_NONE)][Op::WasmF64Load as usize]?;
+                    if records[pc].handler != plain.handler as *const () {
                         return None;
                     }
+                    let left = left_of(&records)?;
+                    // An arithmetic whose result the record after it stores
+                    // (`mem[x] += v`) joins as well.
+                    let updates =
+                        pc + 2 < records.len() && usize::from(second) < FLOAT_PAIR_FIRSTS && {
+                            let store = decoded[pc + 2];
+                            store.op() == Op::WasmF64Store
+                                && store.a() == next.a()
+                                && [ACC_NONE, ACC_A]
+                                    .into_iter()
+                                    .any(|acc| serves(records[pc + 2].handler, Op::WasmF64Store, acc))
+                        };
+                    if updates {
+                        return Some((
+                            FloatPairs::<H>::UPDATES[usize::from(second)][usize::from(left)],
+                            3,
+                        ));
+                    }
+                    return Some((
+                        FloatPairs::<H>::LOADS[usize::from(second)][usize::from(left)],
+                        2,
+                    ));
                 }
-                Flow::Jump | Flow::BranchTable | Flow::Terminal => {}
-                // A call's return or a branch not taken carries no register.
-                Flow::Call | Flow::ConditionalJump => return None,
-            }
-        }
-        for (pc, packed) in function.code.iter().enumerate() {
-            let instruction = decoded_instruction(function, *packed);
-            if instruction.op().immediate_role() != ImmediateRole::JumpTarget {
-                continue;
-            }
-            let jump = instruction.imm() as usize;
-            let through = JumpFusions::<H>::THROUGH
-                .iter()
-                .flatten()
-                .any(|&handler| records[pc].handler == handler as *const ());
-            if through {
-                // The record runs its target and lands after it.
-                if jump + 1 == target
-                    && !agree(Some(decoded[jump].a()))
+                if instruction.op() != Op::WasmF64Binary {
+                    return None;
+                }
+                let first = float_arithmetic(instruction.op(), instruction.imm())?;
+                if usize::from(first) >= FLOAT_PAIR_FIRSTS {
+                    return None;
+                }
+                let field = FUSED_ACC_FIELDS.iter().position(|acc| {
+                    records[pc].handler
+                        == FloatArithmetic::<H>::HANDLERS[1][usize::from(first)][usize::from(*acc)]
+                            as *const ()
+                })?;
+                let left = left_of(&records)?;
+                Some((
+                    FloatPairs::<H>::HANDLERS[usize::from(first)][usize::from(second)]
+                        [usize::from(left)][field],
+                    2,
+                ))
+            })();
+            // An f64 arithmetic whose result the next record stores, when only
+            // the arithmetic reaches that store.
+            let pair = pair.or_else(|| {
+                let first = float_arithmetic(instruction.op(), instruction.imm())?;
+                // The fused record writes the arithmetic's result itself, so the
+                // store may read it plainly or through the accumulator.
+                let store_runs = [ACC_NONE, ACC_A]
+                    .into_iter()
+                    .any(|acc| serves(records[pc + 1].handler, Op::WasmF64Store, acc));
+                if instruction.op() != Op::WasmF64Binary
+                    || usize::from(first) >= FLOAT_PAIR_FIRSTS
+                    || next.op() != Op::WasmF64Store
+                    || next.a() != instruction.a()
+                    || jump_targets[pc + 1]
+                    || !store_runs
                 {
                     return None;
                 }
-                continue;
-            }
-            if jump != target {
-                continue;
-            }
-            // A zero-test jump can carry any register (`ZeroJumps`).
-            if carrying_zero_jump(records[pc].handler).is_some() {
-                continue;
-            }
-            if instruction.op() != Op::Jump || entry_jumps[pc] || jump_targets[pc] || pc == 0 {
-                return None;
-            }
-            let then = JumpFusions::<H>::THEN
-                .iter()
-                .flatten()
-                .any(|&handler| records[pc - 1].handler == handler as *const ());
-            let pair = pc >= 2
-                && [true, false].into_iter().any(|backward| {
-                    records[pc - 2].handler
-                        == if backward {
-                            lane_move_pair::<H, true, true> as Handler
-                        } else {
-                            lane_move_pair::<H, true, false> as Handler
-                        } as *const ()
-                });
-            // Entering a pair's second move runs that move's own record.
-            if pair && !then && jump_targets[pc - 1] && carried_through(records, pc - 1).is_none() {
-                return None;
-            }
-            let register = if then || pair {
-                Some(decoded[pc - 1].a())
-            } else if jump_direction(records[pc].handler).is_some() {
-                carried_through(records, pc - 1)
-            } else {
-                None
-            };
-            if !agree(register) {
-                return None;
+                let field = FUSED_ACC_FIELDS.iter().position(|acc| {
+                    records[pc].handler
+                        == FloatArithmetic::<H>::HANDLERS[1][usize::from(first)][usize::from(*acc)]
+                            as *const ()
+                })?;
+                Some((FloatPairs::<H>::STORES[usize::from(first)][field], 2))
+            });
+            match pair {
+                Some((fused, span)) => {
+                    records[pc].handler = fused as *const ();
+                    pc += span;
+                }
+                None => pc += 1,
             }
         }
-        carried
-    };
-    for pc in 0..records.len().saturating_sub(1) {
-        let add = decoded[pc];
-        let load = decoded[pc + 1];
-        let Some(head) = load_table_handler::<H>(load.op(), ACC_NONE, true) else {
-            continue;
+        // A dispatch head (an add of a constant fused with the load and table
+        // after it) reads the register both take from the accumulator when every
+        // edge into it carries that register there, as an interpreter's latches
+        // carry its program counter.
+        let unfused = |records: &[LaneInstruction], from: usize, to: usize| {
+            (from..=to).all(|pc| records[pc].handler == selected[pc])
         };
-        if records[pc].handler != head as *const ()
-            || load.c() != add.b()
-            || add.a() == add.b()
-            || edges_carry(&records, pc) != Some(add.b())
-        {
-            continue;
+        // The register the record at `pc` carries as the accumulator when it
+        // falls through, if it runs only itself and nothing fused runs into it.
+        let carried_through = |records: &[LaneInstruction], pc: usize| {
+            unfused(records, pc.saturating_sub(FUSION_REACH), pc)
+                .then_some(produced[pc])
+                .flatten()
+        };
+        // The register an edge into `target` carries, per edge; `None` when an
+        // edge carries none (or one this analysis does not follow).
+        // The carrying variant of the zero-test jump `handler`, if it is one.
+        let carrying_zero_jump = |handler: *const ()| {
+            let plain = ZeroJumps::<H, false>::HANDLERS
+                .as_flattened()
+                .as_flattened();
+            let carrying = ZeroJumps::<H, true>::HANDLERS.as_flattened().as_flattened();
+            plain
+                .iter()
+                .position(|&plain| handler == plain as *const ())
+                .map(|index| carrying[index])
+        };
+        let edges_carry = |records: &[LaneInstruction], target: usize| -> Option<u16> {
+            let mut carried: Option<u16> = None;
+            let mut agree = |register: Option<u16>| match (register, carried) {
+                (None, _) => false,
+                (Some(register), None) => {
+                    carried = Some(register);
+                    true
+                }
+                (Some(register), Some(known)) => register == known,
+            };
+            if target > 0 && !exits[target - 1] {
+                use crate::bytecode::ControlFlowLayout as Flow;
+                match decoded[target - 1]
+                    .op()
+                    .control_flow_layout()
+                {
+                    Flow::Fallthrough => {
+                        if !agree(carried_through(records, target - 1)) {
+                            return None;
+                        }
+                    }
+                    Flow::Jump | Flow::BranchTable | Flow::Terminal => {}
+                    // A call's return or a branch not taken carries no register.
+                    Flow::Call | Flow::ConditionalJump => return None,
+                }
+            }
+            for (pc, packed) in function.code.iter().enumerate() {
+                let instruction = decoded_instruction(function, *packed);
+                if instruction.op().immediate_role() != ImmediateRole::JumpTarget {
+                    continue;
+                }
+                let jump = instruction.imm() as usize;
+                let through = JumpFusions::<H>::THROUGH
+                    .iter()
+                    .flatten()
+                    .any(|&handler| records[pc].handler == handler as *const ());
+                if through {
+                    // The record runs its target and lands after it.
+                    if jump + 1 == target
+                        && !agree(Some(decoded[jump].a()))
+                    {
+                        return None;
+                    }
+                    continue;
+                }
+                if jump != target {
+                    continue;
+                }
+                // A zero-test jump can carry any register (`ZeroJumps`).
+                if carrying_zero_jump(records[pc].handler).is_some() {
+                    continue;
+                }
+                if instruction.op() != Op::Jump || entry_jumps[pc] || jump_targets[pc] || pc == 0 {
+                    return None;
+                }
+                let then = JumpFusions::<H>::THEN
+                    .iter()
+                    .flatten()
+                    .any(|&handler| records[pc - 1].handler == handler as *const ());
+                let pair = pc >= 2
+                    && [true, false].into_iter().any(|backward| {
+                        records[pc - 2].handler
+                            == if backward {
+                                lane_move_pair::<H, true, true> as Handler
+                            } else {
+                                lane_move_pair::<H, true, false> as Handler
+                            } as *const ()
+                    });
+                // Entering a pair's second move runs that move's own record.
+                if pair && !then && jump_targets[pc - 1] && carried_through(records, pc - 1).is_none() {
+                    return None;
+                }
+                let register = if then || pair {
+                    Some(decoded[pc - 1].a())
+                } else if jump_direction(records[pc].handler).is_some() {
+                    carried_through(records, pc - 1)
+                } else {
+                    None
+                };
+                if !agree(register) {
+                    return None;
+                }
+            }
+            carried
+        };
+        for pc in 0..records.len().saturating_sub(1) {
+            let add = decoded[pc];
+            let load = decoded[pc + 1];
+            let Some(head) = load_table_handler::<H>(load.op(), ACC_NONE, true) else {
+                continue;
+            };
+            if records[pc].handler != head as *const ()
+                || load.c() != add.b()
+                || add.a() == add.b()
+                || edges_carry(&records, pc) != Some(add.b())
+            {
+                continue;
+            }
+            if let Some(carried) = load_table_handler::<H>(load.op(), ACC_C, true) {
+                records[pc].handler = carried as *const ();
+                reads_accumulator[pc] = true;
+                for (jump, packed) in function.code.iter().enumerate() {
+                    let instruction = decoded_instruction(function, *packed);
+                    if instruction.op().immediate_role() == ImmediateRole::JumpTarget
+                        && instruction.imm() as usize == pc
+                        && let Some(carrying) = carrying_zero_jump(records[jump].handler)
+                    {
+                        records[jump].handler = carrying as *const ();
+                        records[jump].c = add.b();
+                    }
+                }
+            }
         }
-        if let Some(carried) = load_table_handler::<H>(load.op(), ACC_C, true) {
+        // A move-and-load head whose every incoming edge carries the moved register reads it from
+        // the accumulator (a pointer walk carried around its loop); a latch of store, move and
+        // zero-test jump on that register, right after the load, tests and carries the register
+        // the load leaves there.
+        for pc in 0..records.len().saturating_sub(1) {
+            let (moving, load) = (decoded[pc], decoded[pc + 1]);
+            let Some(head) = move_load_handler::<H>(load.op(), ACC_NONE) else {
+                continue;
+            };
+            if !ACCUMULATOR
+                || records[pc].handler != head as *const ()
+                || moving.a() == moving.b()
+                || edges_carry(&records, pc) != Some(moving.b())
+            {
+                continue;
+            }
+            let Some(carried) = move_load_handler::<H>(load.op(), ACC_B) else {
+                continue;
+            };
             records[pc].handler = carried as *const ();
             reads_accumulator[pc] = true;
             for (jump, packed) in function.code.iter().enumerate() {
                 let instruction = decoded_instruction(function, *packed);
-                if instruction.op().immediate_role() == ImmediateRole::JumpTarget
-                    && instruction.imm() as usize == pc
-                    && let Some(carrying) = carrying_zero_jump(records[jump].handler)
+                if instruction.op().immediate_role() != ImmediateRole::JumpTarget
+                    || instruction.imm() as usize != pc
                 {
-                    records[jump].handler = carrying as *const ();
-                    records[jump].c = add.b();
+                    continue;
+                }
+                let Some(carrying) = carrying_zero_jump(records[jump].handler) else {
+                    continue;
+                };
+                let latch = plain_zero_jump(records[jump].handler);
+                records[jump].handler = carrying as *const ();
+                records[jump].c = moving.b();
+                // The loop's load, store, move and latch in a row: the load leaves the walked
+                // register in the accumulator for the latch to test and carry.
+                if let Some((zero, backward)) = latch
+                    && jump == pc + 4
+                    && instruction.a() == moving.b()
+                    && load.a() == moving.b()
+                    && !jump_targets[pc + 1]
+                    && !jump_targets[pc + 2]
+                    && !jump_targets[pc + 3]
+                    && decoded[pc + 3].op() == Op::Move
+                    && let Some(store_op) = Some(decoded[pc + 2].op())
+                    && let Some(fused) = store_move_handler::<H>(store_op, ACC_NONE)
+                    && records[pc + 2].handler == fused as *const ()
+                    && let Some(latch) = store_move_jump_handler::<H>(store_op, zero == 1, backward == 1)
+                {
+                    records[pc + 2].handler = latch as *const ();
+                    reads_accumulator[pc + 2] = true;
                 }
             }
         }
-    }
-    // A move-and-load head whose every incoming edge carries the moved register reads it from
-    // the accumulator (a pointer walk carried around its loop); a latch of store, move and
-    // zero-test jump on that register, right after the load, tests and carries the register
-    // the load leaves there.
-    for pc in 0..records.len().saturating_sub(1) {
-        let (moving, load) = (decoded[pc], decoded[pc + 1]);
-        let Some(head) = move_load_handler::<H>(load.op(), ACC_NONE) else {
-            continue;
-        };
-        if !ACCUMULATOR
-            || records[pc].handler != head as *const ()
-            || moving.a() == moving.b()
-            || edges_carry(&records, pc) != Some(moving.b())
-        {
-            continue;
-        }
-        let Some(carried) = move_load_handler::<H>(load.op(), ACC_B) else {
-            continue;
-        };
-        records[pc].handler = carried as *const ();
-        reads_accumulator[pc] = true;
-        for (jump, packed) in function.code.iter().enumerate() {
-            let instruction = decoded_instruction(function, *packed);
-            if instruction.op().immediate_role() != ImmediateRole::JumpTarget
-                || instruction.imm() as usize != pc
+        // A fused record that runs a following zero-test jump itself carries its own result when
+        // the jump is taken; where the jump now carries another register to a head reading it
+        // (`carrying_zero_jump`), that record runs only its own instruction again.
+        for jump in 1..records.len() {
+            if !ZeroJumps::<H, true>::HANDLERS
+                .as_flattened()
+                .as_flattened()
+                .iter()
+                .any(|&carrying| records[jump].handler == carrying as *const ())
             {
                 continue;
             }
-            let Some(carrying) = carrying_zero_jump(records[jump].handler) else {
-                continue;
-            };
-            let latch = plain_zero_jump(records[jump].handler);
-            records[jump].handler = carrying as *const ();
-            records[jump].c = moving.b();
-            // The loop's load, store, move and latch in a row: the load leaves the walked
-            // register in the accumulator for the latch to test and carry.
-            if let Some((zero, backward)) = latch
-                && jump == pc + 4
-                && instruction.a() == moving.b()
-                && load.a() == moving.b()
-                && !jump_targets[pc + 1]
-                && !jump_targets[pc + 2]
-                && !jump_targets[pc + 3]
-                && decoded[pc + 3].op() == Op::Move
-                && let Some(store_op) = Some(decoded[pc + 2].op())
-                && let Some(fused) = store_move_handler::<H>(store_op, ACC_NONE)
-                && records[pc + 2].handler == fused as *const ()
-                && let Some(latch) = store_move_jump_handler::<H>(store_op, zero == 1, backward == 1)
-            {
-                records[pc + 2].handler = latch as *const ();
-                reads_accumulator[pc + 2] = true;
-            }
-        }
-    }
-    // A fused record that runs a following zero-test jump itself carries its own result when
-    // the jump is taken; where the jump now carries another register to a head reading it
-    // (`carrying_zero_jump`), that record runs only its own instruction again.
-    for jump in 1..records.len() {
-        if !ZeroJumps::<H, true>::HANDLERS
-            .as_flattened()
-            .as_flattened()
-            .iter()
-            .any(|&carrying| records[jump].handler == carrying as *const ())
-        {
-            continue;
-        }
-        let carried = records[jump].c;
-        let before = jump - 1;
-        let move_jump = MoveZeroJumps::<H>::HANDLERS
-            .as_flattened()
-            .as_flattened()
-            .iter()
-            .any(|&fused| records[before].handler == fused as *const ());
-        let load_jump = (0..2).any(|zero| {
-            (0..2).any(|backward| {
-                [ACC_NONE, ACC_C].into_iter().any(|acc| {
-                    load_jump_handler::<H>(decoded[before].op(), acc, zero == 1, backward == 1)
-                        .is_some_and(|fused| records[before].handler == fused as *const ())
+            let carried = records[jump].c;
+            let before = jump - 1;
+            let move_jump = MoveZeroJumps::<H>::HANDLERS
+                .as_flattened()
+                .as_flattened()
+                .iter()
+                .any(|&fused| records[before].handler == fused as *const ());
+            let load_jump = (0..2).any(|zero| {
+                (0..2).any(|backward| {
+                    [ACC_NONE, ACC_C].into_iter().any(|acc| {
+                        load_jump_handler::<H>(decoded[before].op(), acc, zero == 1, backward == 1)
+                            .is_some_and(|fused| records[before].handler == fused as *const ())
+                    })
                 })
-            })
-        });
-        if (move_jump || load_jump) && decoded[before].a() != carried {
-            records[before].handler = selected[before];
+            });
+            if (move_jump || load_jump) && decoded[before].a() != carried {
+                records[before].handler = selected[before];
+            }
         }
     }
     specialize_register_operands::<H>(function, kind, constants, &mut records);
