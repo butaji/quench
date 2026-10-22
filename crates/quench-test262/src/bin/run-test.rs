@@ -1,6 +1,8 @@
 use std::{env, path::PathBuf, process::ExitCode};
 
-use quench_test262::{HarnessCache, Test262Runner, Test262RuntimeHost, TestOutcome};
+use quench_test262::{
+    take_execution_mode, HarnessCache, Test262Runner, Test262RuntimeHost, TestOutcome, JIT_FLAG,
+};
 
 fn main() -> ExitCode {
     match std::thread::Builder::new()
@@ -24,12 +26,14 @@ fn run() -> ExitCode {
         );
         return ExitCode::from(2);
     }
-    let Some(path) = env::args_os().nth(1).map(PathBuf::from) else {
-        eprintln!("usage: cargo run -p quench-test262 --bin run-test -- <test.js>");
+    let mut args = env::args_os().skip(1).collect::<Vec<_>>();
+    let mode = take_execution_mode(&mut args);
+    let Some(path) = args.into_iter().next().map(PathBuf::from) else {
+        eprintln!("usage: cargo run -p quench-test262 --bin run-test -- [{JIT_FLAG}] <test.js>");
         return ExitCode::from(2);
     };
     let root = test262_root();
-    let mut runner = Test262Runner::new(Test262RuntimeHost::default());
+    let mut runner = Test262Runner::new(Test262RuntimeHost::new(mode));
     let mut harness = HarnessCache::new(root.join("harness"));
     let outcome = runner.run_file_with_cache(&path, &mut harness);
     match outcome {

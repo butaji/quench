@@ -5,6 +5,10 @@ edition = "2021"
 description = "ECMA-262 test262 runner for a host JavaScript engine"
 license = "MIT"
 
+[lib]
+# No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
+doctest = false
+
 [features]
 profile-aggregate = ["quench-runtime/profile-aggregate"]
 profile-memory = ["quench-runtime/profile-memory"]

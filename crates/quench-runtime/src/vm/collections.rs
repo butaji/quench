@@ -1264,6 +1264,26 @@ impl<H: Host> Vm<H> {
 
     /// `Map.prototype.get` or `has` of a Map, or `Set.prototype.has` of a Set: lookups that
     /// read entries only. `None` for any other receiver, whose call raises.
+    /// A Map or Set mutator (`set`, `add`, `delete`, `clear`) on a receiver of its own
+    /// collection, which runs no guest code: the general step itself
+    /// (`call_collection_native`), whose only error is an incompatible receiver, ruled out
+    /// here. `None` for any other call.
+    pub(super) fn plain_collection_mutation(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        receiver: Value,
+        args: &[Value],
+    ) -> Option<Value> {
+        let owns = matches!(
+            (native, self.heap.get(receiver)?),
+            (Native::MapSet | Native::MapDelete | Native::MapClear, Cell::Map { .. })
+                | (Native::SetAdd | Native::SetDelete | Native::SetClear, Cell::Set { .. })
+        );
+        owns.then(|| self.call_collection_native(p, native, receiver, args).ok())
+            .flatten()
+    }
+
     pub(super) fn pure_collection_lookup(
         &self,
         native: Native,

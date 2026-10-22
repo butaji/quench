@@ -718,21 +718,15 @@ impl<H: Host> Vm<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_host::TestHost;
 
-    struct SilentHost;
-    impl Host for SilentHost {
-        fn write_line(&mut self, _: &str) {}
-        fn clock_millis(&mut self) -> f64 {
-            0.0
-        }
-    }
 
     #[test]
     fn high_array_index_stays_out_of_dense_storage() {
-        let mut vm = Vm::new(SilentHost);
+        let mut vm = Vm::new(TestHost::default());
         let array = vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
-                Vm::<SilentHost>::empty_object(Value::NULL),
+                Vm::<TestHost>::empty_object(Value::NULL),
                 vec![],
             ),
         });
@@ -748,7 +742,7 @@ mod tests {
     #[test]
     fn bounded_holey_array_length_uses_dense_storage() {
         let program = crate::Engine::specialize("", "dense-array-holes.js").unwrap();
-        let mut vm = Vm::new(SilentHost);
+        let mut vm = Vm::new(TestHost::default());
         let array = vm.array_create(&program, 16_900).unwrap();
 
         let Some(array_object) = vm.heap.array(array) else {
@@ -771,10 +765,10 @@ mod tests {
 
     #[test]
     fn bounded_sparse_write_promotes_to_dense_storage() {
-        let mut vm = Vm::new(SilentHost);
+        let mut vm = Vm::new(TestHost::default());
         let array = vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
-                Vm::<SilentHost>::empty_object(Value::NULL),
+                Vm::<TestHost>::empty_object(Value::NULL),
                 Vec::new(),
             ),
         });
@@ -793,10 +787,10 @@ mod tests {
 
     #[test]
     fn shrinking_large_sparse_array_promotes_and_preserves_values() {
-        let mut vm = Vm::new(SilentHost);
+        let mut vm = Vm::new(TestHost::default());
         let array = vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
-                Vm::<SilentHost>::empty_object(Value::NULL),
+                Vm::<TestHost>::empty_object(Value::NULL),
                 Vec::new(),
             ),
         });
@@ -819,10 +813,10 @@ mod tests {
     #[test]
     fn ordinary_indexed_writes_do_not_intern_property_names() {
         let program = crate::Engine::specialize("", "array-index-atoms.js").unwrap();
-        let mut vm = Vm::new(SilentHost);
+        let mut vm = Vm::new(TestHost::default());
         let array = vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
-                Vm::<SilentHost>::empty_object(Value::NULL),
+                Vm::<TestHost>::empty_object(Value::NULL),
                 Vec::new(),
             ),
         });
@@ -847,10 +841,10 @@ mod tests {
 
     #[test]
     fn deleting_an_uninterned_present_index_does_not_create_an_atom() {
-        let mut vm = Vm::new(SilentHost);
+        let mut vm = Vm::new(TestHost::default());
         let array = vm.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
-                Vm::<SilentHost>::empty_object(Value::NULL),
+                Vm::<TestHost>::empty_object(Value::NULL),
                 vec![Value::FALSE; 1024],
             ),
         });
@@ -869,7 +863,7 @@ mod tests {
 
     #[test]
     fn array_index_atom_lookup_uses_canonical_decimal_text() {
-        let mut vm = Vm::new(SilentHost);
+        let mut vm = Vm::new(TestHost::default());
         for index in [0, 9, 10, 99, 100, 1023, u32::MAX as usize, usize::MAX] {
             let expected = vm.intern_atom(&index.to_string());
             assert_eq!(vm.lookup_array_index_atom(index), Some(expected));
@@ -891,7 +885,7 @@ mod tests {
             }
         "#;
         let program = crate::Engine::specialize(source, "array-index-setter.js").unwrap();
-        let mut vm = Vm::new(SilentHost);
+        let mut vm = Vm::new(TestHost::default());
         vm.execute(&program).unwrap();
     }
 
@@ -907,7 +901,7 @@ mod tests {
             }
         "#;
         let program = crate::Engine::specialize(source, "array-index-prototype-data.js").unwrap();
-        let mut vm = Vm::new(SilentHost);
+        let mut vm = Vm::new(TestHost::default());
         assert!(vm.lookup_array_index_atom(0).is_none());
         vm.execute(&program).unwrap();
     }
