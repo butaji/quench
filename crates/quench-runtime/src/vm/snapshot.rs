@@ -335,7 +335,6 @@ impl<H: Host> Vm<H> {
             array_index_atoms: _,
             atom_sequence,
             regexp_subjects: _,
-            regexp_short_subject: _,
             regexp_matchers: _,
             atom_classes: _,
             dynamic_strings: _,
