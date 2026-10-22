@@ -895,6 +895,8 @@ impl Native {
                 | Self::JsonStringify
                 | Self::ParseInt
                 | Self::ArrayShift
+                | Self::WeakMapSet
+                | Self::FinalizationRegistryRegister
         )
     }
 

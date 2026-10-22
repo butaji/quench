@@ -6482,6 +6482,18 @@ impl<H: Host> Vm<H> {
             .unwrap_or(false)
     }
 
+    /// Whether `callee` is a native that runs beside a lane's activations
+    /// (`runs_beside_activations`), which a call made while they stay frameless may make
+    /// without making them frames.
+    pub(super) fn callee_runs_beside_activations(&self, callee: Value) -> bool {
+        match self.heap.function(callee) {
+            Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) => {
+                self.runs_beside_activations(*native, callee)
+            }
+            _ => false,
+        }
+    }
+
     /// Make a deferred lane native call's activations frames (`DeferredLaneCall`), as
     /// `lane_call_native` would have before calling: at every point that observes the frame
     /// stack while a native runs, which guest code, a stack capture and a collection do.

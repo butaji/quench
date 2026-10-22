@@ -1055,6 +1055,7 @@ const BESIDE_ACTIVATIONS: &[&str] = &[
     "httpResponseWrite",
     "httpResponseWriteHead",
     "httpResponseFinish",
+    "httpResponseInitialize",
     "stringDecoderDecode",
     "markAsUncloneable",
 ];

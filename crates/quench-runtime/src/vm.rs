@@ -2989,8 +2989,10 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         target: Option<CallTarget>,
     ) -> Result<Value, JsError> {
-        // Guest code observes the frame stack.
-        self.materialize_deferred_lane();
+        // Guest code observes the frame stack; a native that runs beside activations does not.
+        if self.lane_deferred.is_some() && !self.callee_runs_beside_activations(callee) {
+            self.materialize_deferred_lane();
+        }
         if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
             return self.proxy_call(p, callee, this, args);
         }
