@@ -3,7 +3,7 @@
 //! to its own sorted file. The three files can then be diffed to verify the
 //! runner is fully deterministic across modes.
 //!
-//! Usage: compare-runs [--target <test262-subdir>] [--limit N] [--threads N]
+//! Usage: compare-runs [--target <test262-subdir>] [--filter <path-substring>] [--threads N]
 //!
 //! All three modes run the exact same discovered file list, in the exact same
 //! sorted order. The only difference is how the runner is invoked:
@@ -21,7 +21,7 @@ use std::{
 };
 
 use quench_test262::{
-    discover_js_files, HarnessCache, RuntimeHost, Test262Runner, TestMetadata, TestOutcome,
+    discover_js_files, HarnessCache, Test262Runner, Test262RuntimeHost, TestMetadata, TestOutcome,
 };
 
 const WORK_BATCH: usize = 32;
@@ -61,13 +61,17 @@ struct Outcomes {
 #[derive(Debug)]
 struct Args {
     target: PathBuf,
+    filters: Vec<String>,
     threads: usize,
     out_dir: PathBuf,
 }
 
 fn main() -> ExitCode {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
-    if arguments.first().is_some_and(|argument| argument == "--reports") {
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--reports")
+    {
         return compare_saved_reports(&arguments[1..]);
     }
     if let Err(error) = required_timeout() {
@@ -79,10 +83,11 @@ fn main() -> ExitCode {
     };
     let root = test262_root();
     let target_dir = root.join(&args.target);
-    let files = match discover_js_files(&target_dir) {
+    let discovered = match discover_js_files(&target_dir) {
         Ok(files) => files,
         Err(error) => return fail(format!("discover: {error}")),
     };
+    let files = select_files(discovered, &target_dir, &args.filters);
     if files.is_empty() {
         return fail(format!("no tests found under {}", target_dir.display()));
     }
@@ -140,6 +145,7 @@ fn required_timeout() -> Result<std::time::Duration, String> {
 
 fn parse_args() -> Result<Args, String> {
     let mut target = PathBuf::from("test");
+    let mut filters = Vec::new();
     let mut threads = thread::available_parallelism().map_or(1, |n| n.get());
     let mut out_dir = PathBuf::from("/tmp/quench-compare");
     let mut values = env::args().skip(1);
@@ -159,6 +165,15 @@ fn parse_args() -> Result<Args, String> {
                     .parse::<usize>()
                     .map_err(|_| "invalid --threads value".to_string())?;
             }
+            "--filter" => {
+                let filter = values
+                    .next()
+                    .ok_or_else(|| "--filter requires a value".to_string())?;
+                if filter.is_empty() {
+                    return Err("--filter requires a non-empty value".into());
+                }
+                filters.push(filter);
+            }
             "--out" => {
                 out_dir = PathBuf::from(
                     values
@@ -171,9 +186,23 @@ fn parse_args() -> Result<Args, String> {
     }
     Ok(Args {
         target,
+        filters,
         threads: threads.max(1),
         out_dir,
     })
+}
+
+fn select_files(files: Vec<PathBuf>, base: &Path, filters: &[String]) -> Vec<PathBuf> {
+    if filters.is_empty() {
+        return files;
+    }
+    files
+        .into_iter()
+        .filter(|path| {
+            let relative = path.strip_prefix(base).unwrap_or(path).to_string_lossy();
+            filters.iter().any(|filter| relative.contains(filter))
+        })
+        .collect()
 }
 
 fn test262_root() -> PathBuf {
@@ -235,7 +264,7 @@ fn run_sequential(root: &Path, files: &[TestSource]) -> Outcomes {
     println!("mode=sequential starting");
     let start = Instant::now();
     let mut outcomes = Outcomes::default();
-    let mut runner = Test262Runner::new(RuntimeHost);
+    let mut runner = Test262Runner::new(Test262RuntimeHost::default());
     let mut cache = HarnessCache::new(root.join("harness"));
     for fixture in files {
         let outcome = dispatch_one(&mut runner, &mut cache, fixture);
@@ -307,20 +336,16 @@ fn run_parallel(root: &Path, files: &[TestSource], threads: usize) -> Outcomes {
 }
 
 fn dispatch_one(
-    runner: &mut Test262Runner<RuntimeHost>,
+    runner: &mut Test262Runner<Test262RuntimeHost>,
     cache: &mut HarnessCache,
     fixture: &TestSource,
 ) -> Result<TestOutcome, String> {
-    if fixture.metadata.is_module {
-        runner.run_test_with_cache_metadata_and_path(
-            &fixture.source,
-            &fixture.metadata,
-            &fixture.path,
-            cache,
-        )
-    } else {
-        runner.run_test_with_cache_and_metadata(&fixture.source, &fixture.metadata, cache)
-    }
+    runner.run_test_with_cache_metadata_and_path(
+        &fixture.source,
+        &fixture.metadata,
+        &fixture.path,
+        cache,
+    )
 }
 
 fn dispatch_with_timeout(harness_root: &Path, fixture: TestSource) -> Result<TestOutcome, String> {
@@ -329,7 +354,7 @@ fn dispatch_with_timeout(harness_root: &Path, fixture: TestSource) -> Result<Tes
     let handle = thread::Builder::new()
         .stack_size(quench_runtime::WORKER_STACK_SIZE)
         .spawn(move || {
-            let mut runner = Test262Runner::new(RuntimeHost);
+            let mut runner = Test262Runner::new(Test262RuntimeHost::default());
             let mut cache = HarnessCache::new(harness_root);
             let result = dispatch_one(&mut runner, &mut cache, &fixture);
             let _ = sender.send(result);
@@ -486,18 +511,27 @@ fn fail<T: AsRef<str>>(message: T) -> ExitCode {
 }
 
 fn compare_saved_reports(arguments: &[String]) -> ExitCode {
-    let [before, after] = arguments else { return fail("usage: compare-runs --reports BEFORE AFTER"); };
+    let [before, after] = arguments else {
+        return fail("usage: compare-runs --reports BEFORE AFTER");
+    };
     let read = |path: &str| -> Result<serde_json::Value, String> {
         let bytes = fs::read(path).map_err(|error| format!("read {path}: {error}"))?;
         serde_json::from_slice(&bytes).map_err(|error| format!("parse {path}: {error}"))
     };
-    let verdict = read(before).and_then(|before| read(after).and_then(|after|
-        quench_test262::reporting::compare_reports(&before, &after)));
+    let verdict = read(before).and_then(|before| {
+        read(after).and_then(|after| quench_test262::reporting::compare_reports(&before, &after))
+    });
     match verdict {
         Ok(regressions) => {
             println!("regressions={}", regressions.len());
-            for path in &regressions { eprintln!("regression: {path}"); }
-            if regressions.is_empty() { ExitCode::SUCCESS } else { ExitCode::from(1) }
+            for path in &regressions {
+                eprintln!("regression: {path}");
+            }
+            if regressions.is_empty() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            }
         }
         Err(error) => fail(error),
     }

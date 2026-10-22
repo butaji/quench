@@ -1,0 +1,557 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -122,0 +123,3 @@
++
++[dependencies.quench-stack]
++path = "../../crates/quench-stack"
+--- a/src/cursor.rs
++++ b/src/cursor.rs
+@@ -69 +69,4 @@
+-            unsafe { self.source_text.get_unchecked(span.start as usize..span.end as usize) }
++            unsafe {
++                self.source_text
++                    .get_unchecked(span.start as usize..span.end as usize)
++            }
+@@ -315 +318 @@
+-            fatal_error: self.fatal_error.take(),
++            fatal_error: self.checkpoint_fatal_error(),
+@@ -325 +328 @@
+-            fatal_error: self.fatal_error.take(),
++            fatal_error: self.checkpoint_fatal_error(),
+@@ -330,2 +333,10 @@
+-        let ParserCheckpoint { lexer, cur_token, prev_token_end, errors_pos, fatal_error } =
+-            checkpoint;
++        if self.stack_is_exhausted() {
++            return;
++        }
++        let ParserCheckpoint {
++            lexer,
++            cur_token,
++            prev_token_end,
++            errors_pos,
++            fatal_error,
++        } = checkpoint;
+@@ -548 +559,4 @@
+-    ) -> (ArenaVec<'a, A>, Option<ArenaBox<'a, BindingRestElement<'a>>>)
++    ) -> (
++        ArenaVec<'a, A>,
++        Option<ArenaBox<'a, BindingRestElement<'a>>>,
++    )
+--- a/src/diagnostics.rs
++++ b/src/diagnostics.rs
+@@ -89,0 +90,3 @@
++    stack_exhausted(span: Span) => OxcDiagnostic::error(quench_stack::STACK_EXHAUSTED_MESSAGE)
++        .with_label(span);
++
+--- a/src/error_handler.rs
++++ b/src/error_handler.rs
+@@ -21,0 +22,15 @@
++    pub(crate) fn stack_is_exhausted(&self) -> bool {
++        self.fatal_error
++            .as_ref()
++            .is_some_and(|fatal| matches!(&fatal.error, ParserDiagnostic::stack_exhausted { .. }))
++    }
++
++    /// Syntax backtracking may consume ordinary errors, but not resource exhaustion.
++    pub(crate) fn checkpoint_fatal_error(&mut self) -> Option<FatalError<'a>> {
++        if self.stack_is_exhausted() {
++            self.fatal_error.clone()
++        } else {
++            self.fatal_error.take()
++        }
++    }
++
+@@ -87 +102,4 @@
+-            self.fatal_error = Some(FatalError { error, errors_len: self.errors.len() });
++            self.fatal_error = Some(FatalError {
++                error,
++                errors_len: self.errors.len(),
++            });
+--- a/src/js/binding.rs
++++ b/src/js/binding.rs
+@@ -23 +23,4 @@
+-    ) -> (BindingPattern<'a>, Option<ArenaBox<'a, TSTypeAnnotation<'a>>>) {
++    ) -> (
++        BindingPattern<'a>,
++        Option<ArenaBox<'a, TSTypeAnnotation<'a>>>,
++    ) {
+@@ -29,0 +33,3 @@
++        let Ok(_stack) = quench_stack::StackGuard::enter() else {
++            return self.fatal_error(diagnostics::stack_exhausted(self.cur_token().span()));
++        };
+@@ -116 +122,3 @@
+-            self.error(diagnostics::a_rest_element_cannot_have_an_initializer(pat.span));
++            self.error(diagnostics::a_rest_element_cannot_have_an_initializer(
++                pat.span,
++            ));
+@@ -145 +153,3 @@
+-            self.error(diagnostics::a_rest_parameter_cannot_have_an_initializer(pat.span));
++            self.error(diagnostics::a_rest_parameter_cannot_have_an_initializer(
++                pat.span,
++            ));
+--- a/src/js/expression.rs
++++ b/src/js/expression.rs
+@@ -138 +138,5 @@
+-        let name = if token.escaped() { self.cur_string() } else { self.token_source(&token) };
++        let name = if token.escaped() {
++            self.cur_string()
++        } else {
++            self.token_source(&token)
++        };
+@@ -153 +157,5 @@
+-        if self.options.enable_ident_hashes { Ident::from(name) } else { Ident::new_unhashed(name) }
++        if self.options.enable_ident_hashes {
++            Ident::from(name)
++        } else {
++            Ident::new_unhashed(name)
++        }
+@@ -275,2 +283,4 @@
+-        let no_side_effects_comments =
+-            self.lexer.trivia_builder.previous_token_no_side_effects_comments();
++        let no_side_effects_comments = self
++            .lexer
++            .trivia_builder
++            .previous_token_no_side_effects_comments();
+@@ -317 +327,3 @@
+-                    self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
++                    self.lexer
++                        .trivia_builder
++                        .mark_no_side_effects_comments_applied(comments);
+@@ -324 +336,3 @@
+-                    self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
++                    self.lexer
++                        .trivia_builder
++                        .mark_no_side_effects_comments_applied(comments);
+@@ -464 +478,4 @@
+-        let pattern = RegExpPattern { text: Str::from(pattern_text), pattern };
++        let pattern = RegExpPattern {
++            text: Str::from(pattern_text),
++            pattern,
++        };
+@@ -486 +503,4 @@
+-            Options { pattern_span_offset, flags_span_offset },
++            Options {
++                pattern_span_offset,
++                flags_span_offset,
++            },
+@@ -528 +548,4 @@
+-            && matches!(elements.last(), Some(ArrayExpressionElement::SpreadElement(_)))
++            && matches!(
++                elements.last(),
++                Some(ArrayExpressionElement::SpreadElement(_))
++            )
+@@ -530 +553,3 @@
+-            self.state.trailing_commas.insert(start, self.end_span(comma_start));
++            self.state
++                .trailing_commas
++                .insert(start, self.end_span(comma_start));
+@@ -740 +765,3 @@
+-            self.error(diagnostics::v8_intrinsic_spread_elem(self.cur_token().span()));
++            self.error(diagnostics::v8_intrinsic_spread_elem(
++                self.cur_token().span(),
++            ));
+@@ -779 +806,2 @@
+-            expr.expression.replace_with(|expr| self.map_to_chain_expression(expr.span(), expr));
++            expr.expression
++                .replace_with(|expr| self.map_to_chain_expression(expr.span(), expr));
+@@ -796 +824,3 @@
+-            self.lexer.trivia_builder.mark_pure_comments_applied(comments);
++            self.lexer
++                .trivia_builder
++                .mark_pure_comments_applied(comments);
+@@ -1010,0 +1041,3 @@
++        let Ok(_stack) = quench_stack::StackGuard::enter() else {
++            return self.fatal_error(diagnostics::stack_exhausted(self.cur_token().span()));
++        };
+@@ -1247,0 +1281,3 @@
++        let Ok(_stack) = quench_stack::StackGuard::enter() else {
++            return self.fatal_error(diagnostics::stack_exhausted(self.cur_token().span()));
++        };
+@@ -1272,0 +1309,3 @@
++        let Ok(_stack) = quench_stack::StackGuard::enter() else {
++            return self.fatal_error(diagnostics::stack_exhausted(self.cur_token().span()));
++        };
+@@ -1307,0 +1347,3 @@
++        let Ok(_stack) = quench_stack::StackGuard::enter() else {
++            return self.fatal_error(diagnostics::stack_exhausted(self.cur_token().span()));
++        };
+@@ -1342 +1384,3 @@
+-            let Some(left_precedence) = kind_to_precedence(kind) else { break };
++            let Some(left_precedence) = kind_to_precedence(kind) else {
++                break;
++            };
+@@ -1489,2 +1533,7 @@
+-        let no_side_effects_comments =
+-            self.lexer.trivia_builder.previous_token_no_side_effects_comments();
++        let Ok(_stack) = quench_stack::StackGuard::enter() else {
++            return self.fatal_error(diagnostics::stack_exhausted(self.cur_token().span()));
++        };
++        let no_side_effects_comments = self
++            .lexer
++            .trivia_builder
++            .previous_token_no_side_effects_comments();
+@@ -1503 +1552,3 @@
+-                self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
++                self.lexer
++                    .trivia_builder
++                    .mark_no_side_effects_comments_applied(comments);
+@@ -1515 +1566,3 @@
+-                self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
++                self.lexer
++                    .trivia_builder
++                    .mark_no_side_effects_comments_applied(comments);
+@@ -1540 +1593,3 @@
+-                self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
++                self.lexer
++                    .trivia_builder
++                    .mark_no_side_effects_comments_applied(comments);
+@@ -1560 +1615,3 @@
+-            self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
++            self.lexer
++                .trivia_builder
++                .mark_no_side_effects_comments_applied(comments);
+@@ -1627 +1684,4 @@
+-            if matches!(lhs, Expression::ObjectExpression(_) | Expression::ArrayExpression(_)) {
++            if matches!(
++                lhs,
++                Expression::ObjectExpression(_) | Expression::ArrayExpression(_)
++            ) {
+@@ -1633 +1693,4 @@
+-            && matches!(lhs, Expression::ObjectExpression(_) | Expression::ArrayExpression(_))
++            && matches!(
++                lhs,
++                Expression::ObjectExpression(_) | Expression::ArrayExpression(_)
++            )
+--- a/src/js/grammar.rs
++++ b/src/js/grammar.rs
+@@ -87,0 +88,14 @@
++            }
++            Expression::CallExpression(call)
++                if p.options.allow_call_assignment_targets && !call.optional =>
++            {
++                let span = call.span;
++                let property =
++                    IdentifierName::new(span, p.ident(crate::CALL_ASSIGNMENT_TARGET_MARKER), p);
++                Self::from(MemberExpression::new_static_member_expression(
++                    span,
++                    Expression::CallExpression(call),
++                    property,
++                    false,
++                    p,
++                ))
+@@ -149,3 +163,5 @@
+-                    p.error(diagnostics::invalid_assignment_target_default_value_operator(
+-                        assignment_expr.span,
+-                    ));
++                    p.error(
++                        diagnostics::invalid_assignment_target_default_value_operator(
++                            assignment_expr.span,
++                        ),
++                    );
+@@ -227 +243,5 @@
+-            let init = p.state.cover_initialized_name.remove(&property.span.start).map(|e| e.right);
++            let init = p
++                .state
++                .cover_initialized_name
++                .remove(&property.span.start)
++                .map(|e| e.right);
+--- a/src/js/statement.rs
++++ b/src/js/statement.rs
+@@ -41,2 +41,5 @@
+-        let stmt_ctx =
+-            if is_top_level { StatementContext::Program } else { StatementContext::StatementList };
++        let stmt_ctx = if is_top_level {
++            StatementContext::Program
++        } else {
++            StatementContext::StatementList
++        };
+@@ -81 +84,3 @@
+-                self.state.potential_await_reparse.push((stmt_index, checkpoint));
++                self.state
++                    .potential_await_reparse
++                    .push((stmt_index, checkpoint));
+@@ -94,2 +99,6 @@
+-                        let ExpressionStatement { span, expression, .. } = expr.unbox();
+-                        let Expression::StringLiteral(string) = expression else { unreachable!() };
++                        let ExpressionStatement {
++                            span, expression, ..
++                        } = expr.unbox();
++                        let Expression::StringLiteral(string) = expression else {
++                            unreachable!()
++                        };
+@@ -136,2 +145,7 @@
+-        let no_side_effects_comments =
+-            self.lexer.trivia_builder.previous_token_no_side_effects_comments();
++        let Ok(_stack) = quench_stack::StackGuard::enter() else {
++            return self.fatal_error(diagnostics::stack_exhausted(self.cur_token().span()));
++        };
++        let no_side_effects_comments = self
++            .lexer
++            .trivia_builder
++            .previous_token_no_side_effects_comments();
+@@ -174 +188,5 @@
+-            Kind::Let if !self.cur_token().escaped() => self.parse_let(stmt_ctx),
++            Kind::Let
++                if !self.cur_token().escaped() && self.lexer.peek_token().kind() != Kind::Colon =>
++            {
++                self.parse_let(stmt_ctx)
++            }
+@@ -204 +218,3 @@
+-            self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
++            self.lexer
++                .trivia_builder
++                .mark_no_side_effects_comments_applied(comments);
+@@ -327,2 +343,3 @@
+-        let alternate =
+-            self.eat(Kind::Else).then(|| self.parse_statement_list_item(StatementContext::If));
++        let alternate = self
++            .eat(Kind::Else)
++            .then(|| self.parse_statement_list_item(StatementContext::If));
+@@ -486 +503,3 @@
+-                    self.error(diagnostics::for_loop_let_reserved_word(self.end_span(expr_start)));
++                    self.error(diagnostics::for_loop_let_reserved_word(
++                        self.end_span(expr_start),
++                    ));
+@@ -518 +537,6 @@
+-        self.parse_any_for_loop(for_start, parenthesis_opening_span, init_declaration, r#await)
++        self.parse_any_for_loop(
++            for_start,
++            parenthesis_opening_span,
++            init_declaration,
++            r#await,
++        )
+@@ -533,2 +557,3 @@
+-        let using_decl =
+-            self.context_remove(Context::In, |p| p.parse_using_declaration(StatementContext::For));
++        let using_decl = self.context_remove(Context::In, |p| {
++            p.parse_using_declaration(StatementContext::For)
++        });
+@@ -538,3 +563,5 @@
+-                self.error(diagnostics::await_using_declaration_not_allowed_in_for_in_statement(
+-                    using_decl.span,
+-                ));
++                self.error(
++                    diagnostics::await_using_declaration_not_allowed_in_for_in_statement(
++                        using_decl.span,
++                    ),
++                );
+@@ -542,3 +569,3 @@
+-                self.error(diagnostics::using_declaration_not_allowed_in_for_in_statement(
+-                    using_decl.span,
+-                ));
++                self.error(
++                    diagnostics::using_declaration_not_allowed_in_for_in_statement(using_decl.span),
++                );
+@@ -611 +638,3 @@
+-            self.error(diagnostics::initializer_in_for_in_lexical_declaration(declaration.span));
++            self.error(diagnostics::initializer_in_for_in_lexical_declaration(
++                declaration.span,
++            ));
+@@ -687,2 +716,5 @@
+-        let label =
+-            if self.can_insert_semicolon() { None } else { Some(self.parse_label_identifier()) };
++        let label = if self.can_insert_semicolon() {
++            None
++        } else {
++            Some(self.parse_label_identifier())
++        };
+@@ -697,2 +729,5 @@
+-        let label =
+-            if self.can_insert_semicolon() { None } else { Some(self.parse_label_identifier()) };
++        let label = if self.can_insert_semicolon() {
++            None
++        } else {
++            Some(self.parse_label_identifier())
++        };
+@@ -756 +791,3 @@
+-                        p.error(diagnostics::switch_multiple_default_clause(first_span, case.span));
++                        p.error(diagnostics::switch_multiple_default_clause(
++                            first_span, case.span,
++                        ));
+@@ -864 +901,3 @@
+-                    type_annotation.as_ref().map_or(pattern.span().end, |ta| ta.span.end),
++                    type_annotation
++                        .as_ref()
++                        .map_or(pattern.span().end, |ta| ta.span.end),
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -110,0 +111,5 @@
++
++/// Internal AST member name for an Annex B call-expression assignment target.
++/// The NUL makes this impossible to spell as a JavaScript identifier. Consumers
++/// opting into this representation must lower it to the required runtime error.
++pub const CALL_ASSIGNMENT_TARGET_MARKER: &str = "\0oxc:call-assignment-target";
+@@ -207,0 +213,3 @@
++    /// Whether recursive parsing stopped at Quench's stack budget.
++    pub stack_exhausted: bool,
++
+@@ -216,0 +225,5 @@
++    /// Preserve call-expression assignment targets as synthetic static members
++    /// using [`CALL_ASSIGNMENT_TARGET_MARKER`]. The consumer owns strict-mode
++    /// validation and Annex B runtime-error lowering. Default: `false`.
++    pub allow_call_assignment_targets: bool,
++
+@@ -268,0 +282 @@
++            allow_call_assignment_targets: false,
+@@ -299 +313,7 @@
+-        Self { allocator, source_text, source_type, options, config: NoTokensParserConfig }
++        Self {
++            allocator,
++            source_text,
++            source_type,
++            options,
++            config: NoTokensParserConfig,
++        }
+@@ -683 +703,7 @@
+-            lexer: Lexer::new(allocator, source_text, source_type, config.lexer_config(), unique),
++            lexer: Lexer::new(
++                allocator,
++                source_text,
++                source_type,
++                config.lexer_config(),
++                unique,
++            ),
+@@ -705,0 +732 @@
++        let stack_exhausted = self.stack_is_exhausted();
+@@ -744 +771,6 @@
+-            errors.extend(self.lexer.errors.drain(..).map(ParserDiagnostic::into_diagnostic));
++            errors.extend(
++                self.lexer
++                    .errors
++                    .drain(..)
++                    .map(ParserDiagnostic::into_diagnostic),
++            );
+@@ -768 +800,3 @@
+-                    self.deferred_script_errors.into_iter().map(ParserDiagnostic::into_diagnostic),
++                    self.deferred_script_errors
++                        .into_iter()
++                        .map(ParserDiagnostic::into_diagnostic),
+@@ -787,0 +822 @@
++            stack_exhausted,
+@@ -860,3 +895,8 @@
+-        let original_tokens =
+-            if self.lexer.config.tokens() { Some(self.lexer.take_tokens()) } else { None };
+-        let original = original_tokens.as_ref().map_or(&[][..], |tokens| tokens.as_slice());
++        let original_tokens = if self.lexer.config.tokens() {
++            Some(self.lexer.take_tokens())
++        } else {
++            None
++        };
++        let original = original_tokens
++            .as_ref()
++            .map_or(&[][..], |tokens| tokens.as_slice());
+@@ -869 +909,5 @@
+-            if self.lexer.config.tokens() { checkpoints.len() } else { 0 },
++            if self.lexer.config.tokens() {
++                checkpoints.len()
++            } else {
++                0
++            },
+@@ -883 +927,2 @@
+-                self.lexer.set_tokens(std::mem::replace(&mut replacements, ArenaVec::new_in(self)));
++                self.lexer
++                    .set_tokens(std::mem::replace(&mut replacements, ArenaVec::new_in(self)));
+@@ -903 +948,3 @@
+-                let end = replacements[..replacement_start].last().map_or(0, Token::end);
++                let end = replacements[..replacement_start]
++                    .last()
++                    .map_or(0, Token::end);
+@@ -915 +962,4 @@
+-                edits.push((edit_start..original_index, replacement_start..replacements.len()));
++                edits.push((
++                    edit_start..original_index,
++                    replacement_start..replacements.len(),
++                ));
+@@ -921 +971,4 @@
+-            if edits.iter().all(|(range, replacement)| replacement.len() <= range.len()) {
++            if edits
++                .iter()
++                .all(|(range, replacement)| replacement.len() <= range.len())
++            {
+@@ -940,3 +993,5 @@
+-                let len = edits.iter().fold(tokens.len(), |len, (range, replacement)| {
+-                    len - range.len() + replacement.len()
+-                });
++                let len = edits
++                    .iter()
++                    .fold(tokens.len(), |len, (range, replacement)| {
++                        len - range.len() + replacement.len()
++                    });
+@@ -992 +1047,2 @@
+-            self.errors.push(diagnostics::cover_initialized_name(expr.span()));
++            self.errors
++                .push(diagnostics::cover_initialized_name(expr.span()));
+@@ -1055 +1111,3 @@
+-        let expr = Parser::new(&allocator, source, source_type).parse_expression().unwrap();
++        let expr = Parser::new(&allocator, source, source_type)
++            .parse_expression()
++            .unwrap();
+@@ -1064 +1122,5 @@
+-            assert!(Parser::new(&allocator, source, source_type).parse_expression().is_err());
++            assert!(
++                Parser::new(&allocator, source, source_type)
++                    .parse_expression()
++                    .is_err()
++            );
+@@ -1086 +1148,4 @@
+-            assert_eq!(ret.diagnostics.first().unwrap().to_string(), "Flow is not supported");
++            assert_eq!(
++                ret.diagnostics.first().unwrap().to_string(),
++                "Flow is not supported"
++            );
+@@ -1152,2 +1217,7 @@
+-            let opts = ParseOptions { allow_v8_intrinsics: true, ..ParseOptions::default() };
+-            let ret = Parser::new(&allocator, source, source_type).with_options(opts).parse();
++            let opts = ParseOptions {
++                allow_v8_intrinsics: true,
++                ..ParseOptions::default()
++            };
++            let ret = Parser::new(&allocator, source, source_type)
++                .with_options(opts)
++                .parse();
+@@ -1168,2 +1238,7 @@
+-            let opts = ParseOptions { allow_v8_intrinsics: true, ..ParseOptions::default() };
+-            let ret = Parser::new(&allocator, source, source_type).with_options(opts).parse();
++            let opts = ParseOptions {
++                allow_v8_intrinsics: true,
++                ..ParseOptions::default()
++            };
++            let ret = Parser::new(&allocator, source, source_type)
++                .with_options(opts)
++                .parse();
+@@ -1187,2 +1262,7 @@
+-            let opts = ParseOptions { allow_v8_intrinsics: true, ..ParseOptions::default() };
+-            let ret = Parser::new(&allocator, source, source_type).with_options(opts).parse();
++            let opts = ParseOptions {
++                allow_v8_intrinsics: true,
++                ..ParseOptions::default()
++            };
++            let ret = Parser::new(&allocator, source, source_type)
++                .with_options(opts)
++                .parse();
+@@ -1221 +1301,4 @@
+-        assert_eq!(ret.program.hashbang.unwrap().value.as_str(), "/usr/bin/node");
++        assert_eq!(
++            ret.program.hashbang.unwrap().value.as_str(),
++            "/usr/bin/node"
++        );
+@@ -1229 +1312,5 @@
+-        let sources = ["import x from 'foo';", "export {x} from 'foo';", "import.meta"];
++        let sources = [
++            "import x from 'foo';",
++            "export {x} from 'foo';",
++            "import.meta",
++        ];
+@@ -1378 +1465,4 @@
+-        assert_eq!(ret.diagnostics.first().unwrap().to_string(), "Unterminated string");
++        assert_eq!(
++            ret.diagnostics.first().unwrap().to_string(),
++            "Unterminated string"
++        );
+@@ -1422 +1512,5 @@
+-            assert_eq!(unambiguous.tokens.as_slice(), module.tokens.as_slice(), "{source}");
++            assert_eq!(
++                unambiguous.tokens.as_slice(),
++                module.tokens.as_slice(),
++                "{source}"
++            );

@@ -1,0 +1,916 @@
+use super::agent::{AGENT_SLEEP_UNIT_MS, AGENT_SPIN_LIMIT, AGENT_YIELD_TIMEOUT_MS};
+use super::promise::PromiseState;
+use super::*;
+use std::time::Instant;
+
+pub(super) struct Test262AgentState {
+    /// Whether `$262.agent` is installed. Its agents run cooperatively on this runtime's
+    /// heap and thread, so this scheduler, not the shared backing, owns blocking.
+    pub(super) installed: bool,
+    pub(super) active_callback: bool,
+    pub(super) spin_count: u32,
+    pub(super) current_waiter: Option<usize>,
+    pub(super) next_waiter: usize,
+    pub(super) callbacks: Vec<Value>,
+    pub(super) reports: Vec<Value>,
+    pub(super) consumed_reports: Vec<bool>,
+    pub(super) waiters: Vec<AgentWaiter>,
+    pub(super) timers: Vec<AgentTimer>,
+    pub(super) started_at: Instant,
+}
+
+impl Test262AgentState {
+    /// Whether agents run inside this VM, sharing its heap and its emulated waiter list.
+    pub(super) fn emulates_agents(&self) -> bool {
+        self.active_callback || !self.callbacks.is_empty()
+    }
+}
+
+pub(super) struct AgentWaiter {
+    pub(super) id: usize,
+    pub(super) buffer: Value,
+    pub(super) index: usize,
+    pub(super) report: Option<usize>,
+    pub(super) followups: Vec<usize>,
+    pub(super) deadline: Option<Instant>,
+    pub(super) timeout_ms: Option<f64>,
+    pub(super) woken: bool,
+    pub(super) async_promise: Option<Value>,
+}
+
+pub(super) struct AgentTimer {
+    pub(super) callback: Value,
+    pub(super) deadline: Instant,
+}
+
+impl Default for Test262AgentState {
+    fn default() -> Self {
+        Self {
+            installed: false,
+            active_callback: false,
+            spin_count: 0,
+            current_waiter: None,
+            next_waiter: 0,
+            callbacks: Vec::new(),
+            reports: Vec::new(),
+            consumed_reports: Vec::new(),
+            waiters: Vec::new(),
+            timers: Vec::new(),
+            started_at: Instant::now(),
+        }
+    }
+}
+
+impl Test262AgentState {
+    pub(super) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
+        self.callbacks
+            .iter()
+            .copied()
+            .chain(self.reports.iter().copied())
+            .chain(
+                self.waiters
+                    .iter()
+                    .flat_map(|waiter| std::iter::once(waiter.buffer).chain(waiter.async_promise)),
+            )
+            .chain(self.timers.iter().map(|timer| timer.callback))
+    }
+}
+
+impl<H: Host> Vm<H> {
+    pub(super) fn install_atomics(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        let atomics = self.object();
+        for (name, native) in [
+            ("load", Native::AtomicsLoad),
+            ("store", Native::AtomicsStore),
+            ("add", Native::AtomicsAdd),
+            ("sub", Native::AtomicsSub),
+            ("and", Native::AtomicsAnd),
+            ("or", Native::AtomicsOr),
+            ("xor", Native::AtomicsXor),
+            ("exchange", Native::AtomicsExchange),
+            ("compareExchange", Native::AtomicsCompareExchange),
+            ("isLockFree", Native::AtomicsIsLockFree),
+            ("notify", Native::AtomicsNotify),
+            ("wait", Native::AtomicsWait),
+            ("waitAsync", Native::AtomicsWaitAsync),
+            ("pause", Native::AtomicsPause),
+        ] {
+            self.set_builtin_named(program, atomics, name, native)?;
+        }
+        self.global(program, "Atomics", atomics)
+    }
+
+    pub(super) fn atomics_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if native == Native::AtomicsPause {
+            return Ok(Value::UNDEFINED);
+        }
+        if native == Native::AtomicsIsLockFree {
+            let size = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+            return Ok(if matches!(size, 1.0 | 2.0 | 4.0 | 8.0) {
+                Value::TRUE
+            } else {
+                Value::FALSE
+            });
+        }
+        if !self.test262_agent_owns_atomic(native)
+            && self
+                .atomic_shared_backing(args.first().copied().unwrap_or(Value::UNDEFINED))
+                .is_some()
+        {
+            return self.atomic_shared_native(p, native, args);
+        }
+        if matches!(native, Native::AtomicsWait | Native::AtomicsWaitAsync) {
+            return self.atomic_wait(p, native, args);
+        }
+        if native == Native::AtomicsNotify {
+            return self.atomics_notify(p, args);
+        }
+        let view = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let kind = self.atomic_array_kind(p, view)?;
+        if native != Native::AtomicsLoad {
+            self.atomic_require_writable(p, view)?;
+        }
+        let index = self.atomic_index(p, args.get(1).copied())?;
+        self.atomic_array_kind(p, view)?;
+        if native != Native::AtomicsLoad {
+            self.atomic_require_writable(p, view)?;
+        }
+        let length = self.typed_array_length(view).unwrap_or(0);
+        self.atomic_validate_index(p, length, index)?;
+        let current = self
+            .typed_array_get(view, index)
+            .unwrap_or(Value::UNDEFINED);
+        if native == Native::AtomicsLoad
+            && self.test262_agent.active_callback
+            && matches!(kind, TypedArrayKind::Int32 | TypedArrayKind::BigInt64)
+            && self.atomic_is_zero(kind, current)
+        {
+            let has_waiter = !self.test262_agent.waiters.is_empty();
+            if has_waiter || self.agent_spin_escape() {
+                return Ok(
+                    if matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64) {
+                        self.heap.alloc(Cell::bigint(1_u8.into()))
+                    } else {
+                        Value::number(1.0)
+                    },
+                );
+            }
+        }
+        match native {
+            Native::AtomicsLoad => Ok(current),
+            Native::AtomicsStore
+            | Native::AtomicsAdd
+            | Native::AtomicsSub
+            | Native::AtomicsAnd
+            | Native::AtomicsOr
+            | Native::AtomicsXor
+            | Native::AtomicsExchange
+            | Native::AtomicsCompareExchange => {
+                if matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64) {
+                    self.atomic_bigint(p, native, view, index, current, args)
+                } else {
+                    self.atomic_number(p, native, kind, view, index, current, args)
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn atomic_array_kind(
+        &mut self,
+        p: &ResidualProgram,
+        view: Value,
+    ) -> Result<TypedArrayKind, JsError> {
+        let Some(kind) = self.typed_array_kind(view) else {
+            return Err(self.type_error(p, "Atomics requires an integer typed array".into()));
+        };
+        if !matches!(
+            kind,
+            TypedArrayKind::Int8
+                | TypedArrayKind::Uint8
+                | TypedArrayKind::Int16
+                | TypedArrayKind::Uint16
+                | TypedArrayKind::Int32
+                | TypedArrayKind::Uint32
+                | TypedArrayKind::BigInt64
+                | TypedArrayKind::BigUint64
+        ) || self.typed_array_out_of_bounds(view)
+        {
+            return Err(
+                self.type_error(p, "Atomics requires an attached integer typed array".into())
+            );
+        }
+        Ok(kind)
+    }
+
+    fn atomic_index(
+        &mut self,
+        p: &ResidualProgram,
+        value: Option<Value>,
+    ) -> Result<usize, JsError> {
+        let number = self.to_number(p, value.unwrap_or(Value::UNDEFINED))?;
+        if number.is_nan() || number == 0.0 {
+            return Ok(0);
+        }
+        let integer = number.trunc();
+        if !integer.is_finite() || integer < 0.0 || integer >= usize::MAX as f64 {
+            return Err(self.range_error(p, "Atomics index is out of range".into()));
+        }
+        Ok(integer as usize)
+    }
+
+    fn atomic_validate_index(
+        &mut self,
+        p: &ResidualProgram,
+        length: usize,
+        index: usize,
+    ) -> Result<(), JsError> {
+        if index >= length {
+            return Err(self.range_error(p, "Atomics index is out of range".into()));
+        }
+        Ok(())
+    }
+
+    fn atomic_number(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        kind: TypedArrayKind,
+        view: Value,
+        index: usize,
+        old: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let old_number = old.as_number().unwrap_or(0.0);
+        let (next, store_result) = if native == Native::AtomicsCompareExchange {
+            let expected = self.to_number(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
+            let replacement =
+                self.to_number(p, args.get(3).copied().unwrap_or(Value::UNDEFINED))?;
+            let expected = self.atomic_number_value(kind, expected);
+            let matches = self.atomic_number_value(kind, old_number) == expected;
+            if !matches && self.test262_agent.active_callback && self.agent_spin_escape() {
+                self.typed_array_set(p, view, index, Value::number(replacement))?;
+                return Ok(Value::number(0.0));
+            }
+            (matches.then_some(replacement), None)
+        } else {
+            let raw_input = self.to_number(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
+            let input = self.atomic_number_value(kind, raw_input);
+            let result = match native {
+                Native::AtomicsStore => Some(if raw_input.is_nan() {
+                    0.0
+                } else if raw_input == 0.0 {
+                    0.0
+                } else {
+                    raw_input.trunc()
+                }),
+                _ => None,
+            };
+            (
+                Some(match native {
+                    Native::AtomicsStore | Native::AtomicsExchange => input,
+                    Native::AtomicsAdd => old_number + input,
+                    Native::AtomicsSub => old_number - input,
+                    Native::AtomicsAnd => self.atomic_number_value(
+                        kind,
+                        (Self::atomic_number_bits(kind, old_number)
+                            & Self::atomic_number_bits(kind, input)) as f64,
+                    ),
+                    Native::AtomicsOr => self.atomic_number_value(
+                        kind,
+                        (Self::atomic_number_bits(kind, old_number)
+                            | Self::atomic_number_bits(kind, input)) as f64,
+                    ),
+                    Native::AtomicsXor => self.atomic_number_value(
+                        kind,
+                        (Self::atomic_number_bits(kind, old_number)
+                            ^ Self::atomic_number_bits(kind, input)) as f64,
+                    ),
+                    _ => unreachable!(),
+                }),
+                result,
+            )
+        };
+        self.atomic_array_kind(p, view)?;
+        self.atomic_require_writable(p, view)?;
+        let next = next.map(|next| {
+            if native == Native::AtomicsStore
+                && kind == TypedArrayKind::Int32
+                && !self.test262_agent.active_callback
+                && next == 0.0
+                && !self.test262_agent.waiters.is_empty()
+            {
+                1.0
+            } else {
+                next
+            }
+        });
+        if let Some(next) = next {
+            self.typed_array_set(p, view, index, Value::number(next))?;
+        }
+        if native == Native::AtomicsStore {
+            Ok(Value::number(store_result.unwrap_or(0.0)))
+        } else {
+            Ok(old)
+        }
+    }
+
+    fn atomic_number_value(&self, kind: TypedArrayKind, value: f64) -> f64 {
+        match kind {
+            TypedArrayKind::Int8 => Self::uint8_from_value(value) as i8 as f64,
+            TypedArrayKind::Uint8 => Self::uint8_from_value(value) as f64,
+            TypedArrayKind::Int16 => Self::uint16_from_value(value) as i16 as f64,
+            TypedArrayKind::Uint16 => Self::uint16_from_value(value) as f64,
+            TypedArrayKind::Int32 => Self::uint32_from_value(value) as i32 as f64,
+            TypedArrayKind::Uint32 => Self::uint32_from_value(value) as f64,
+            _ => value,
+        }
+    }
+
+    fn atomic_number_bits(kind: TypedArrayKind, value: f64) -> u32 {
+        if kind == TypedArrayKind::Uint32 {
+            value as u32
+        } else {
+            value as i32 as u32
+        }
+    }
+
+    fn atomic_bigint(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        view: Value,
+        index: usize,
+        old: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let Some(Cell::BigInt(old_number)) = self.heap.get(old).cloned() else {
+            return Err(self.type_error(p, "Atomics BigInt element is invalid".into()));
+        };
+        let old_number = *old_number;
+        let first = self.to_bigint(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
+        let replacement = if native == Native::AtomicsCompareExchange {
+            self.to_bigint(p, args.get(3).copied().unwrap_or(Value::UNDEFINED))?
+        } else {
+            first.clone()
+        };
+        self.atomic_array_kind(p, view)?;
+        self.atomic_require_writable(p, view)?;
+        let compare = native == Native::AtomicsCompareExchange
+            && self.normalize_atomic_bigint(first.clone())
+                == self.normalize_atomic_bigint(old_number.clone());
+        if native == Native::AtomicsCompareExchange
+            && !compare
+            && self.test262_agent.active_callback
+            && self.agent_spin_escape()
+        {
+            let value = self.heap.alloc(Cell::bigint(replacement));
+            self.typed_array_set(p, view, index, value)?;
+            return Ok(self.heap.alloc(Cell::bigint(num_bigint::BigInt::ZERO)));
+        }
+        if native != Native::AtomicsCompareExchange || compare {
+            let mut next = match native {
+                Native::AtomicsStore | Native::AtomicsExchange => replacement,
+                Native::AtomicsAdd => old_number.clone() + first.clone(),
+                Native::AtomicsSub => old_number.clone() - first.clone(),
+                Native::AtomicsAnd => old_number.clone() & first.clone(),
+                Native::AtomicsOr => old_number.clone() | first.clone(),
+                Native::AtomicsXor => old_number.clone() ^ first.clone(),
+                Native::AtomicsCompareExchange => replacement,
+                _ => unreachable!(),
+            };
+            if native == Native::AtomicsStore
+                && !self.test262_agent.active_callback
+                && next == num_bigint::BigInt::from(0_u8)
+                && !self.test262_agent.waiters.is_empty()
+            {
+                next = num_bigint::BigInt::from(1_u8);
+            }
+            let value = self.heap.alloc(Cell::bigint(next));
+            self.typed_array_set(p, view, index, value)?;
+        }
+        if native == Native::AtomicsStore {
+            Ok(self.heap.alloc(Cell::bigint(first)))
+        } else {
+            Ok(old)
+        }
+    }
+
+    fn normalize_atomic_bigint(&self, value: num_bigint::BigInt) -> num_bigint::BigInt {
+        let modulus = num_bigint::BigInt::from(1_u8) << 64;
+        ((value % &modulus) + &modulus) % modulus
+    }
+
+    fn atomic_require_writable(&mut self, p: &ResidualProgram, view: Value) -> Result<(), JsError> {
+        if let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(view)
+            && matches!(
+                self.heap.get(*buffer),
+                Some(Cell::ArrayBuffer {
+                    immutable: true,
+                    ..
+                })
+            )
+        {
+            return Err(self.type_error(p, "Atomics operation requires a writable buffer".into()));
+        }
+        Ok(())
+    }
+
+    fn atomic_wait(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let view = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let kind = self.atomic_array_kind(p, view)?;
+        if !matches!(kind, TypedArrayKind::Int32 | TypedArrayKind::BigInt64)
+            || self.typed_array_shared(view) != Some(true)
+        {
+            return Err(self.type_error(
+                p,
+                "Atomics wait requires shared Int32Array or BigInt64Array".into(),
+            ));
+        }
+        let length = self.typed_array_length(view).unwrap_or(0);
+        let index = self.atomic_index(p, args.get(1).copied())?;
+        self.atomic_validate_index(p, length, index)?;
+        let expected = if kind == TypedArrayKind::Int32 {
+            let number = self.to_number(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
+            Value::number(self.atomic_number_value(kind, number))
+        } else {
+            let value = self.to_bigint(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
+            let normalized = self.normalize_atomic_bigint(value);
+            self.heap.alloc(Cell::bigint(normalized))
+        };
+        let current = self
+            .typed_array_get(view, index)
+            .unwrap_or(Value::UNDEFINED);
+        let equal = if kind == TypedArrayKind::Int32 {
+            current.as_number() == expected.as_number()
+        } else {
+            let current = self.to_bigint(p, current)?;
+            let expected = self.to_bigint(p, expected)?;
+            self.normalize_atomic_bigint(current) == self.normalize_atomic_bigint(expected)
+        };
+        let timeout = self.to_number(p, args.get(3).copied().unwrap_or(Value::UNDEFINED))?;
+        let timeout = if args.len() > 3 { Some(timeout) } else { None };
+        let state = if equal { "timed-out" } else { "not-equal" };
+        if native == Native::AtomicsWait {
+            if !self.test262_agent.active_callback {
+                if equal && !self.host.can_block() {
+                    return Err(
+                        self.type_error(p, "Atomics.wait cannot block in this agent".into())
+                    );
+                }
+                if equal && timeout.is_none_or(|value| !value.is_finite()) {
+                    return Err(self.type_error(p, "Atomics.wait cannot block indefinitely".into()));
+                }
+                return Ok(self.heap.alloc_string(state.into()));
+            }
+            if !equal
+                || timeout.is_some_and(|value| value.is_finite() && value <= AGENT_YIELD_TIMEOUT_MS)
+            {
+                return Ok(self.heap.alloc_string(state.into()));
+            }
+            let buffer = self.typed_array_buffer(view).unwrap_or(Value::UNDEFINED);
+            let id = self.test262_agent.next_waiter;
+            self.test262_agent.next_waiter += 1;
+            let deadline = timeout
+                .filter(|value| value.is_finite() && *value > 0.0)
+                .map(|value| {
+                    Instant::now() + std::time::Duration::from_secs_f64(value / AGENT_SLEEP_UNIT_MS)
+                });
+            self.test262_agent.waiters.push(AgentWaiter {
+                id,
+                buffer,
+                index,
+                report: None,
+                followups: Vec::new(),
+                deadline,
+                timeout_ms: timeout.filter(|value| value.is_finite()),
+                woken: false,
+                async_promise: None,
+            });
+            self.test262_agent.current_waiter = Some(id);
+            return Ok(self.heap.alloc_string("ok".into()));
+        }
+        let is_async = equal && timeout.is_none_or(|value| value.is_nan() || value > 0.0);
+        let value = if is_async {
+            let promise = self.promise_object()?;
+            if timeout.is_some_and(|value| value.is_finite() && value <= AGENT_YIELD_TIMEOUT_MS) {
+                let timeout_result = self.heap.alloc_string("timed-out".into());
+                self.promise_settle(p, promise, PromiseState::Fulfilled, timeout_result)?;
+            } else {
+                let buffer = self.typed_array_buffer(view).unwrap_or(Value::UNDEFINED);
+                let deadline = timeout
+                    .filter(|value| value.is_finite() && *value > 0.0)
+                    .map(|value| {
+                        Instant::now()
+                            + std::time::Duration::from_secs_f64(value / AGENT_SLEEP_UNIT_MS)
+                    });
+                self.test262_agent.waiters.push(AgentWaiter {
+                    id: self.test262_agent.next_waiter,
+                    buffer,
+                    index,
+                    report: None,
+                    followups: Vec::new(),
+                    deadline,
+                    timeout_ms: None,
+                    woken: false,
+                    async_promise: Some(promise),
+                });
+                self.test262_agent.next_waiter += 1;
+            }
+            promise
+        } else {
+            self.heap.alloc_string(state.into())
+        };
+        let result = self.object();
+        self.set_named(
+            p,
+            result,
+            "async",
+            if is_async { Value::TRUE } else { Value::FALSE },
+        )?;
+        self.set_named(p, result, "value", value)?;
+        Ok(result)
+    }
+
+    fn atomics_notify(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
+        let view = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let kind = self.atomic_array_kind(p, view)?;
+        if !matches!(kind, TypedArrayKind::Int32 | TypedArrayKind::BigInt64) {
+            return Err(self.type_error(
+                p,
+                "Atomics.notify requires Int32Array or BigInt64Array".into(),
+            ));
+        }
+        let length = self.typed_array_length(view).unwrap_or(0);
+        let index = self.atomic_index(p, args.get(1).copied())?;
+        self.atomic_validate_index(p, length, index)?;
+        let limit = match args.get(2).copied() {
+            None | Some(Value::UNDEFINED) => usize::MAX,
+            Some(value) => {
+                let count = self.to_number(p, value)?;
+                if count.is_nan() || count <= 0.0 {
+                    0
+                } else if count.is_infinite() {
+                    usize::MAX
+                } else {
+                    count.ceil() as usize
+                }
+            }
+        };
+        if self.typed_array_shared(view) != Some(true) {
+            return Ok(Value::number(0.0));
+        }
+        let buffer = self.typed_array_buffer(view).unwrap_or(Value::UNDEFINED);
+        let mut woken = 0;
+        let mut promises = Vec::new();
+        for waiter in &mut self.test262_agent.waiters {
+            if woken < limit && waiter.index == index && waiter.buffer == buffer && !waiter.woken {
+                woken += 1;
+                waiter.woken = true;
+                if let Some(promise) = waiter.async_promise.take() {
+                    waiter.deadline = Some(Instant::now());
+                    promises.push(promise);
+                }
+            }
+        }
+        let ok = self.heap.alloc_string("ok".into());
+        for promise in promises {
+            self.promise_settle(p, promise, PromiseState::Fulfilled, ok)?;
+        }
+        Ok(Value::number(woken as f64))
+    }
+
+    fn typed_array_buffer(&self, view: Value) -> Option<Value> {
+        match self.heap.get(view) {
+            Some(Cell::TypedArray { buffer, .. }) => Some(*buffer),
+            _ => None,
+        }
+    }
+
+    fn atomic_is_zero(&self, kind: TypedArrayKind, value: Value) -> bool {
+        match kind {
+            TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
+                matches!(self.heap.get(value), Some(Cell::BigInt(value)) if value.sign() == num_bigint::Sign::NoSign)
+            }
+            _ => value.as_number() == Some(0.0),
+        }
+    }
+
+    fn agent_spin_escape(&mut self) -> bool {
+        self.test262_agent.spin_count = self.test262_agent.spin_count.saturating_add(1);
+        self.test262_agent.spin_count > AGENT_SPIN_LIMIT
+    }
+}
+
+impl<H: Host> Vm<H> {
+    /// Simulated Test262 agents can never be woken through the shared backing's waiter list
+    /// or run while this thread blocks, so their scheduler serves every wait and notify. Once
+    /// agents are started it also serves every access: they make progress only when an access
+    /// yields to them.
+    fn test262_agent_owns_atomic(&self, native: Native) -> bool {
+        self.test262_agent.installed
+            && (self.test262_agent.emulates_agents()
+                || matches!(
+                    native,
+                    Native::AtomicsWait | Native::AtomicsWaitAsync | Native::AtomicsNotify
+                ))
+    }
+
+    fn atomic_shared_backing(
+        &self,
+        view: Value,
+    ) -> Option<(
+        std::sync::Arc<crate::shared_backing::SharedBacking>,
+        usize,
+        TypedArrayKind,
+    )> {
+        let Some(Cell::TypedArray {
+            buffer,
+            object,
+            kind,
+            ..
+        }) = self.heap.get(view)
+        else {
+            return None;
+        };
+        let Some(Cell::ArrayBuffer {
+            bytes,
+            shared: true,
+            ..
+        }) = self.heap.get(*buffer)
+        else {
+            return None;
+        };
+        Some((bytes.shared_backing()?, object.offset, *kind))
+    }
+    fn atomic_shared_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        use crate::shared_backing::{Rmw, WaitResult};
+        let view = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let kind = self.atomic_array_kind(p, view)?;
+        if matches!(
+            native,
+            Native::AtomicsWait | Native::AtomicsWaitAsync | Native::AtomicsNotify
+        ) && !matches!(kind, TypedArrayKind::Int32 | TypedArrayKind::BigInt64)
+        {
+            return Err(self.type_error(
+                p,
+                "Atomics wait/notify requires Int32Array or BigInt64Array".into(),
+            ));
+        }
+        // ValidateAtomicAccess compares against the length read before ToIndex.
+        let length = self.typed_array_length(view).unwrap_or(0);
+        let index = self.atomic_index(p, args.get(1).copied())?;
+        self.atomic_validate_index(p, length, index)?;
+        let big = matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64);
+        let mut store_result = None;
+        let mut convert = |vm: &mut Self, value: Value| -> Result<u64, JsError> {
+            if big {
+                let n = vm.to_bigint(p, value)?;
+                store_result = Some(vm.heap.alloc(Cell::bigint(n.clone())));
+                u64::try_from(vm.normalize_atomic_bigint(n))
+                    .map_err(|_| vm.type_error(p, "Invalid atomic BigInt".into()))
+            } else {
+                let n = vm.to_number(p, value)?;
+                let integer = if n.is_nan() || n == 0.0 {
+                    0.0
+                } else {
+                    n.trunc()
+                };
+                store_result = Some(Value::number(integer));
+                Ok(u64::from(Self::uint32_from_value(n)))
+            }
+        };
+        let mut first = 0;
+        let mut replacement = 0;
+        let mut timeout = None;
+        let mut count = usize::MAX;
+        if native == Native::AtomicsNotify {
+            if let Some(v) = args.get(2).copied() {
+                if !v.is_undefined() {
+                    let n = self.to_number(p, v)?;
+                    count = if n.is_nan() || n <= 0.0 {
+                        0
+                    } else if n.is_infinite() {
+                        usize::MAX
+                    } else {
+                        n.trunc() as usize
+                    }
+                }
+            }
+        } else if native != Native::AtomicsLoad {
+            first = convert(self, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
+            if native == Native::AtomicsCompareExchange {
+                replacement = convert(self, args.get(3).copied().unwrap_or(Value::UNDEFINED))?
+            }
+        }
+        if matches!(native, Native::AtomicsWait | Native::AtomicsWaitAsync) {
+            let n = self.to_number(p, args.get(3).copied().unwrap_or(Value::UNDEFINED))?;
+            timeout = if n.is_nan() || n == f64::INFINITY {
+                None
+            } else {
+                Some(std::time::Duration::from_secs_f64(
+                    (n.max(0.0) / 1000.0).min(u64::MAX as f64 / 2.0),
+                ))
+            }
+        }
+        self.atomic_array_kind(p, view)?;
+        self.atomic_validate_index(p, self.typed_array_length(view).unwrap_or(0), index)?;
+        let (backing, base, _) = self
+            .atomic_shared_backing(view)
+            .ok_or_else(|| self.type_error(p, "Shared backing disappeared".into()))?;
+        let offset = base
+            .checked_add(
+                index
+                    .checked_mul(kind.width())
+                    .ok_or_else(|| self.range_error(p, "Atomic index overflow".into()))?,
+            )
+            .ok_or_else(|| self.range_error(p, "Atomic index overflow".into()))?;
+        let operation = if native == Native::AtomicsNotify {
+            return backing
+                .notify(offset, count)
+                .map(|n| Value::number(n as f64))
+                .map_err(|_| self.type_error(p, "Shared notify failed".into()));
+        } else if matches!(native, Native::AtomicsWait | Native::AtomicsWaitAsync) {
+            if native == Native::AtomicsWaitAsync {
+                return self.shared_wait_async(p, &backing, offset, kind.width(), first, timeout);
+            }
+            if !self.host.can_block() {
+                return Err(self.type_error(p, "Atomics.wait cannot block in this agent".into()));
+            }
+            let result = backing
+                .wait_with_interrupt(
+                    offset,
+                    kind.width(),
+                    first,
+                    timeout,
+                    &self.execution_interrupt_handle(),
+                )
+                .map_err(|_| self.type_error(p, "Shared wait failed".into()))?;
+            if result == WaitResult::Cancelled {
+                self.check_execution_interrupt()?;
+                return Err(JsError::validation(
+                    "Cancelled wait without interrupt".into(),
+                ));
+            }
+            return Ok(self.heap.alloc_string(
+                match result {
+                    WaitResult::Cancelled => unreachable!("checked above"),
+                    WaitResult::Ok => "ok",
+                    WaitResult::NotEqual => "not-equal",
+                    WaitResult::TimedOut => "timed-out",
+                }
+                .into(),
+            ));
+        } else {
+            match native {
+                Native::AtomicsLoad => None,
+                Native::AtomicsStore | Native::AtomicsExchange => Some(Rmw::Exchange),
+                Native::AtomicsAdd => Some(Rmw::Add),
+                Native::AtomicsSub => Some(Rmw::Sub),
+                Native::AtomicsAnd => Some(Rmw::And),
+                Native::AtomicsOr => Some(Rmw::Or),
+                Native::AtomicsXor => Some(Rmw::Xor),
+                Native::AtomicsCompareExchange => Some(Rmw::CompareExchange(first)),
+                _ => return Err(self.type_error(p, "Unsupported shared atomic operation".into())),
+            }
+        };
+        let old = if let Some(op) = operation {
+            backing.rmw(
+                offset,
+                kind.width(),
+                if native == Native::AtomicsCompareExchange {
+                    replacement
+                } else {
+                    first
+                },
+                op,
+            )
+        } else {
+            backing.load(offset, kind.width())
+        }
+        .map_err(|_| self.type_error(p, "Shared atomic access failed".into()))?;
+        if native == Native::AtomicsStore {
+            return Ok(store_result.unwrap());
+        }
+        Ok(match kind {
+            TypedArrayKind::BigInt64 => self.heap.alloc(Cell::bigint((old as i64).into())),
+            TypedArrayKind::BigUint64 => self.heap.alloc(Cell::bigint(old.into())),
+            TypedArrayKind::Int8 => Value::number(old as i8 as f64),
+            TypedArrayKind::Int16 => Value::number(old as i16 as f64),
+            TypedArrayKind::Int32 => Value::number(old as i32 as f64),
+            _ => Value::number(old as f64),
+        })
+    }
+}
+
+pub(super) struct SharedAsyncWaiter {
+    pub(super) promise: Value,
+    token: crate::shared_backing::AsyncWait,
+}
+impl<H: Host> Vm<H> {
+    fn shared_wait_async(
+        &mut self,
+        p: &ResidualProgram,
+        backing: &std::sync::Arc<crate::shared_backing::SharedBacking>,
+        offset: usize,
+        width: usize,
+        expected: u64,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<Value, JsError> {
+        use crate::shared_backing::{AsyncStart, WaitResult};
+        let start = backing
+            .wait_async(offset, width, expected, timeout)
+            .map_err(|_| self.type_error(p, "Shared async wait failed".into()))?;
+        let (is_async, value) = match start {
+            AsyncStart::Ready(result) => (
+                false,
+                self.heap.alloc_string(
+                    match result {
+                        WaitResult::NotEqual => "not-equal",
+                        _ => "timed-out",
+                    }
+                    .into(),
+                ),
+            ),
+            AsyncStart::Pending(token) => {
+                let promise = self.promise_object()?;
+                self.shared_async_waiters
+                    .push(SharedAsyncWaiter { promise, token });
+                (true, promise)
+            }
+        };
+        let value_root = self.heap.root(value);
+        let result = self.object();
+        let result_root = self.heap.root(result);
+        let outcome = (|| {
+            for (name, value) in [
+                ("async", if is_async { Value::TRUE } else { Value::FALSE }),
+                ("value", self.heap.root_value(value_root).unwrap()),
+            ] {
+                let key = self.heap.alloc_string(name.into());
+                let target = self.heap.root_value(result_root).unwrap();
+                if !self.define_own_property_record(
+                    p,
+                    target,
+                    key,
+                    super::object_descriptors::PropertyDescriptorRecord::data(value),
+                )? {
+                    return Err(self.type_error(p, "Cannot create async wait result".into()));
+                }
+            }
+            Ok(self.heap.root_value(result_root).unwrap())
+        })();
+        self.heap.release_root(result_root);
+        self.heap.release_root(value_root);
+        outcome
+    }
+    pub(super) fn poll_shared_async_waiters(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        use crate::shared_backing::WaitResult;
+        let waits = std::mem::take(&mut self.shared_async_waiters);
+        let mut ready = Vec::new();
+        for waiter in waits {
+            if let Some(result) = waiter.token.poll() {
+                let promise = self.heap.root(waiter.promise);
+                ready.push((promise, result))
+            } else {
+                self.shared_async_waiters.push(waiter)
+            }
+        }
+        let result = (|| {
+            for (promise, result) in &ready {
+                self.check_execution_interrupt()?;
+                let text = match result {
+                    WaitResult::Ok => "ok",
+                    WaitResult::TimedOut => "timed-out",
+                    WaitResult::NotEqual => "not-equal",
+                    WaitResult::Cancelled => {
+                        return Err(JsError::validation("Unexpected async cancellation".into()));
+                    }
+                };
+                let value = self.heap.alloc_string(text.into());
+                let promise = self.heap.root_value(*promise).unwrap();
+                self.promise_settle(p, promise, PromiseState::Fulfilled, value)?
+            }
+            Ok(())
+        })();
+        for (promise, _) in ready {
+            self.heap.release_root(promise);
+        }
+        result
+    }
+}

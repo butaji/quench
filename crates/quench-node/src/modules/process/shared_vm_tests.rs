@@ -1,6 +1,5 @@
 use super::*;
-use quench_runtime::ops::RealmId;
-use rqj::{Engine, Runtime};
+use quench_runtime::{Engine, Runtime};
 
 #[test]
 fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() {
@@ -8,10 +7,11 @@ fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() 
         std::env::temp_dir().join(format!("quench-module-root-test-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let filename = directory.join("main.cjs");
-    std::fs::write(&filename, "module.exports = { answer: 42 };").unwrap();
-    let host =
-        NodeHost::new(RealmId::ROOT, vec!["quench-node".into()]).with_commonjs_entry(filename);
-    let state = host.state();
+    std::fs::write(&filename, "require('node:module'); module.exports = { answer: 42 };").unwrap();
+    let filename = std::fs::canonicalize(filename).unwrap();
+    let module_key = filename.to_string_lossy().into_owned();
+    let host = NodeHost::new(vec!["quench-node".into()]).with_commonjs_entry(filename);
+    let roots = host.shared_state();
     let mut runtime = Runtime::new(host);
     let program = Engine::specialize("", "module-root-lifecycle.js").unwrap();
     let mut previous = None;
@@ -20,15 +20,15 @@ fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() 
         if let Some(previous) = previous {
             assert!(!runtime.root_is_live(previous));
         }
-        let cached = match &state.borrow().module_cache {
-            crate::host::ModuleCache::Shared(cache) => {
-                assert_eq!(cache.len(), 1);
-                *cache.values().next().unwrap()
-            }
-            crate::host::ModuleCache::Legacy(_) => {
-                panic!("shared execution retained a legacy cache")
+        let cache = match roots.borrow().commonjs_cache.unwrap() {
+            crate::host::node_host::CommonJsCache::Bootstrap(cache) => cache,
+            crate::host::node_host::CommonJsCache::Module(module) => {
+                let key = runtime.string_rooted("_cache");
+                runtime.get_property_rooted(module, key).unwrap()
             }
         };
+        let key = runtime.string_rooted(&module_key);
+        let cached = runtime.get_property_rooted(cache, key).unwrap();
         runtime.collect(&program).unwrap();
         let key = runtime.string_rooted("exports");
         let exports = runtime.get_property_rooted(cached, key).unwrap();
@@ -47,8 +47,8 @@ fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() 
 
 #[test]
 fn canonical_process_root_survives_global_replacement_and_refreshes_with_the_vm() {
-    let host = NodeHost::new(RealmId::ROOT, vec!["quench-node".into()]);
-    let state = host.state();
+    let host = NodeHost::new(vec!["quench-node".into()]);
+    let roots = host.shared_state();
     let mut runtime = Runtime::new(host);
     let program = Engine::specialize(
         "var original = process; globalThis.process = { replacement: true };",
@@ -56,17 +56,20 @@ fn canonical_process_root_survives_global_replacement_and_refreshes_with_the_vm(
     )
     .unwrap();
     let mut previous = None;
+    let mut previous_capture = None;
     for _ in 0..2 {
         runtime.execute(&program).unwrap();
         if let Some(previous) = previous {
             assert!(!runtime.root_is_live(previous));
         }
-        let cached = match state.borrow().process_module.as_ref().unwrap() {
-            ProcessModule::Shared(root) => *root,
-            ProcessModule::Legacy(_) => panic!("shared initialization retained a legacy value"),
-        };
+        let capture = roots.borrow().process_capture_state.unwrap();
+        if let Some(previous_capture) = previous_capture {
+            assert!(!runtime.root_is_live(previous_capture));
+        }
+        let cached = roots.borrow().process_module.unwrap();
         runtime.collect(&program).unwrap();
         assert!(runtime.root_is_live(cached));
+        assert!(runtime.root_is_live(capture));
         let global = runtime.global_root().unwrap();
         let original_key = runtime.string_rooted("original");
         let original = runtime.get_property_rooted(global, original_key).unwrap();
@@ -81,5 +84,6 @@ fn canonical_process_root_survives_global_replacement_and_refreshes_with_the_vm(
             assert!(runtime.release_root(root));
         }
         previous = Some(cached);
+        previous_capture = Some(capture);
     }
 }

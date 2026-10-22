@@ -1,0 +1,22 @@
+'use strict';
+const assert = require('assert');
+const fs = require('fs');
+const { internalBinding } = require('internal/test/binding');
+const binding = internalBinding('os');
+const original = binding.getHomeDirectory;
+binding.getHomeDirectory = function(ctx) {
+  ctx.syscall = 'probe';
+  ctx.code = 'EIO';
+  ctx.message = 'failure';
+};
+const os = require('os');
+assert.throws(os.homedir, { message: 'A system error occurred: probe returned EIO (failure)' });
+binding.getHomeDirectory = original;
+const descriptor = Object.getOwnPropertyDescriptor(fs.promises, 'glob');
+assert.strictEqual(typeof descriptor.value, 'function');
+assert.strictEqual(descriptor.writable, true);
+assert.strictEqual(descriptor.enumerable, true);
+assert.strictEqual(descriptor.configurable, true);
+assert.strictEqual(descriptor.value, require('fs/promises').glob);
+assert.strictEqual(descriptor.value.name, 'glob');
+console.log('fs-promises-glob-lazy-policy: ok');

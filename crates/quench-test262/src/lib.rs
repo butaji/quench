@@ -8,16 +8,14 @@
 use std::path::Path;
 
 mod harness_cache;
-pub mod module_graph;
-pub mod next_host;
-mod runner_support;
 pub mod ratchet;
 pub mod reporting;
+mod runner_support;
 pub mod runtime_host;
 mod stages;
+pub mod waivers;
 pub use harness_cache::HarnessCache;
-pub use next_host::RuntimeNextHost;
-pub use runtime_host::{LinkedModule, LinkedModuleGraph, RuntimeHost};
+pub use runtime_host::Test262RuntimeHost;
 pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
 
 /// Engine-facing execution contract for an external conformance runner.
@@ -321,6 +319,9 @@ pub struct StageReport {
     pub total: usize,
     pub passed: usize,
     pub failed: usize,
+    /// Raw failures that match their Node waiver; counted in `failed` too.
+    pub waived: Vec<std::path::PathBuf>,
+    /// Outcomes the run must reject: unwaived failures and stale waivers.
     pub failures: Vec<(std::path::PathBuf, String)>,
 }
 

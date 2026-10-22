@@ -29,7 +29,7 @@ pub struct StackGuard(PhantomData<Rc<()>>);
 pub struct GuestCallGuard(PhantomData<Rc<()>>);
 
 impl StackGuard {
-    #[inline(never)]
+    #[inline]
     pub fn enter() -> Result<Self, ()> {
         let current_stack_pointer = current_stack_pointer();
         ACTIVE_TRANSITIONS.with(|depth| {
@@ -61,6 +61,11 @@ impl Drop for StackGuard {
 }
 
 impl GuestCallGuard {
+    /// How many more guest calls the thread admits before `enter` fails.
+    pub fn remaining() -> usize {
+        MAX_GUEST_CALL_DEPTH - ACTIVE_GUEST_CALLS.with(Cell::get)
+    }
+
     pub fn enter() -> Result<Self, ()> {
         ACTIVE_GUEST_CALLS.with(|depth| {
             let current = depth.get();

@@ -33,6 +33,14 @@ pub fn core_features() -> WasmFeatures {
         | WasmFeatures::MEMORY64
 }
 
+/// What the JavaScript API (`WebAssembly.validate`, `compile`, `Module`) accepts: the core set
+/// and the legacy exception-handling proposal (`try`, `catch`, `catch_all`, `delegate`,
+/// `rethrow`), which V8 and JavaScriptCore still ship and toolchains such as .NET's still
+/// emit (Node v26.10.0 validates such a module). The official suite tests core without it.
+pub fn js_api_features() -> WasmFeatures {
+    core_features() | WasmFeatures::LEGACY_EXCEPTIONS
+}
+
 /// Features the official suite uses for a `.wast` path.
 pub fn features_for_path(path: impl AsRef<Path>) -> WasmFeatures {
     let path = path.as_ref();
@@ -80,7 +88,7 @@ pub fn inspect_binary_with(bytes: &[u8], features: WasmFeatures) -> ModuleStatus
 
 /// Decode and validate with Wasm 3.0 core features.
 pub fn inspect_binary(bytes: &[u8]) -> ModuleStatus {
-    inspect_binary_with(bytes, core_features())
+    inspect_binary_with(bytes, js_api_features())
 }
 
 /// Encode a wast module then inspect with `features`.

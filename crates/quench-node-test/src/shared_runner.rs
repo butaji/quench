@@ -1,17 +1,10 @@
 //! Shared-VM worker adapter for the inventory-driven compatibility runner.
 
 use crate::NodeOutcome;
-use quench_node::{
-    host::EntryGoal,
-    shared_run::{execute_shared, SharedCompletion, SharedInput},
-};
+use quench_node::shared_run::{execute_shared, EntryGoal, SharedCompletion, SharedInput};
 use std::path::Path;
 
 pub fn run_file(path: &Path) -> NodeOutcome {
-    run_shared_file(path, file_entry_goal(path))
-}
-
-pub fn run_parallel_fixture(path: &Path) -> NodeOutcome {
     run_shared_file(path, file_entry_goal(path))
 }
 
@@ -31,7 +24,7 @@ fn run_shared_file(path: &Path, goal: EntryGoal) -> NodeOutcome {
             };
         }
     };
-    let executable = match std::env::current_exe() {
+    let executable = match quench_node::shared_run::executable_path() {
         Ok(path) => path.to_string_lossy().into_owned(),
         Err(error) => {
             return NodeOutcome::Fail {
@@ -43,7 +36,7 @@ fn run_shared_file(path: &Path, goal: EntryGoal) -> NodeOutcome {
     match execute_shared(
         SharedInput::File {
             path: path.to_path_buf(),
-            exec_argv: crate::reader::fixture_flags(&source),
+            exec_argv: crate::fixture_metadata::fixture_flags(&source),
             goal,
         },
         vec![executable, script],

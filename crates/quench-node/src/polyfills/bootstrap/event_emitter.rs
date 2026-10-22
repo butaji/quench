@@ -1,130 +1,77 @@
 //! Shared guest bridge for Node's EventEmitter listener semantics.
 
-pub const JS: &str = quench_js_check::checked_js!(r#"class NodeEventEmitter {
-  constructor(options = {}) {
-    this._events = Object.create(null);
-    const activeDomain = globalThis.__quench_active_domain;
-    if (activeDomain) {
-      this.domain = activeDomain;
-      activeDomain.add(this);
-    }
-    this.captureRejections = options.captureRejections ??
-      NodeEventEmitter.captureRejections ?? false;
-  }
-  on(event, listener) {
-    this._events ||= Object.create(null);
-    const current = this._events[event];
-    this._events[event] = current === undefined
-      ? listener
-      : Array.isArray(current)
-      ? [...current, listener]
-      : [current, listener];
-    return this;
-  }
-  addListener(event, listener) {
-    return this.on(event, listener);
-  }
-  once(event, listener) {
-    const wrapped = (...args) => {
-      this.removeListener(event, wrapped);
-      listener(...args);
-    };
-    wrapped.listener = listener;
-    return this.on(event, wrapped);
-  }
-  emit(event, ...args) {
-    this._events ||= Object.create(null);
-    if (event === "error") {
-      const monitorSymbol = globalThis.__nodeErrorMonitorSymbol ||
-        Symbol.for("events.errorMonitor");
-      this.listeners(monitorSymbol).forEach((listener) =>
-        Reflect.apply(listener, this, args)
-      );
-    }
-    const listeners = this._events[event];
+pub const JS: &str = quench_js_check::checked_js!(
+    r#"(shapeKey, captureKey, validateCaptureRejections, dispatch, errorInspector) => {
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const STREAM_OWNER = Symbol.for("quench.internal.streamOwner");
+class EventEmitterBridge {
+  emit(event, args, listeners) {
     const values = listeners === undefined
       ? []
       : Array.isArray(listeners)
       ? listeners
       : [listeners];
-    if (event === "error" && values.length === 0 && this.domain) {
-      const error = args[0] && typeof args[0] === "object"
-        ? args[0]
-        : Object.assign(new Error("Unhandled error."), { domain: this.domain });
-      error.domain = this.domain;
-      error.domainEmitter = this;
-      error.domainThrown = false;
-      this.domain.emit("error", error);
-      return true;
-    }
-    values.slice().filter((listener) => typeof listener === "function").forEach(
-      (listener) => {
-        const result = Reflect.apply(listener, this, args);
-        if (result?.then) {
-          result.catch((error) => setImmediate(() => {
-            if (this.captureRejections && event !== "error") {
-              const rejection = this[Symbol.for("nodejs.rejection")];
-              if (typeof rejection === "function") {
-                rejection.call(this, error, event, ...args);
-              } else this.emit("error", error);
-            } else {
-              process.emit("unhandledRejection", error);
-            }
-          }));
-        }
-      },
-    );
-    return values.length > 0;
-  }
-  removeListener(event, listener) {
-    const current = this.listeners(event);
-    const removed = current.find(
-      (item) => item === listener || item.listener === listener,
-    );
-    if (!removed) return this;
-    const values = current.filter((item) => item !== removed);
-    if (values.length === 0) delete this._events[event];
-    else this._events[event] = values.length === 1 ? values[0] : values;
-    if (event !== "removeListener") {
-      this.emit("removeListener", event, removed.listener || removed);
-    }
-    return this;
-  }
-  off(event, listener) {
-    return this.removeListener(event, listener);
-  }
-  removeAllListeners(event) {
-    if (!this._events) {
-      this._events = Object.create(null);
-      return this;
-    }
-    const names = event === undefined ? this.eventNames() : [event];
-    if (event === undefined && names.includes("removeListener")) {
-      names.splice(names.indexOf("removeListener"), 1);
-      names.push("removeListener");
-    }
-    for (const name of names) {
-      for (const listener of this.listeners(name).reverse()) {
-        this.removeListener(name, listener);
+    const internalOnlyError = event === "error" && values.length > 0 &&
+      values.every((listener) => listener.__quenchInternal === true);
+    const ownerWasDestroyed = this[STREAM_OWNER]?.destroyed === true;
+    if (
+      event === "error" &&
+      (values.length === 0 || (internalOnlyError && ownerWasDestroyed))
+    ) {
+      if (internalOnlyError) {
+        values.slice().filter((listener) => typeof listener === "function").forEach(
+          (listener) => Reflect.apply(listener, this, args),
+        );
       }
+      const error = args[0];
+      if (error instanceof Error) throw error;
+      let detail;
+      try {
+        detail = errorInspector()(error);
+      } catch {
+        detail = String(error);
+      }
+      const unhandled = new Error(`Unhandled error. (${detail})`);
+      unhandled.code = "ERR_UNHANDLED_ERROR";
+      unhandled.context = error;
+      throw unhandled;
     }
-    return this;
+    return dispatch(this, event, args, listeners);
   }
-  listeners(event) {
-    if (event === undefined || !this._events) return [];
-    const value = this._events[event];
-    return value === undefined
-      ? []
-      : Array.isArray(value)
-      ? value.slice()
-      : [value];
-  }
-  listenerCount(event) {
-    return this.listeners(event).length;
-  }
+
 }
-NodeEventEmitter.captureRejectionSymbol = Symbol.for("nodejs.rejection");
+const prototype = EventEmitterBridge.prototype;
+const EventEmitter = function EventEmitter(options) {
+  'use strict';
+  EventEmitter.init.call(this, options);
+};
+EventEmitter.prototype = prototype;
+Object.defineProperty(prototype, 'constructor', {value: EventEmitter, writable: true, configurable: true});
+// Node assigns these anonymous functions, so they have no name. Node's EventEmitter.init,
+// read for read; the captureRejections type error keeps Node's validator message.
+EventEmitter.init = function(options) {
+  'use strict';
+  if (this._events === undefined ||
+      this._events === ObjectGetPrototypeOf(this)._events) {
+    this._events = { __proto__: null };
+    this._eventsCount = 0;
+    this[shapeKey] = false;
+  } else {
+    this[shapeKey] = true;
+  }
+  this._maxListeners ||= undefined;
+  if (options?.captureRejections) {
+    validateCaptureRejections(options.captureRejections);
+    this[captureKey] = Boolean(options.captureRejections);
+  } else {
+    this[captureKey] = EventEmitter.prototype[captureKey];
+  }
+};
+EventEmitter.captureRejectionSymbol = Symbol.for("nodejs.rejection");
+EventEmitter.usingDomains = false;
 Object.defineProperty(globalThis, "__nodeEventEmitter", {
-  value: NodeEventEmitter,
+  value: EventEmitter,
   configurable: true,
-});"#);
+});
+}"#
+);

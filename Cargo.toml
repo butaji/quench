@@ -1,15 +1,15 @@
 [workspace]
 resolver = "2"
-exclude = ["vendor/oxc-parser-legacy", "vendor/oxc-regexp"]
+exclude = ["vendor/oxc-regular-expression"]
 members = [
     "quench-bench",
     "crates/quench-js-check",
     "crates/quench-node",
     "crates/quench-node-test",
     "crates/quench-runtime",
-    "crates/quench-runtime-next",
     "crates/quench-stack",
-    "vendor/oxc-parser-next",
+    "crates/quench-alloc",
+    "vendor/oxc-parser",
     "crates/quench-regexp",
     "crates/quench-intl",
     "crates/quench-temporal",
@@ -17,6 +17,18 @@ members = [
     "crates/quench-wasm",
     "crates/quench-wasm-test",
 ]
+
+[workspace.dependencies]
+oxc = "=0.153.0"
+oxc_allocator = "=0.153.0"
+oxc_ast = "=0.153.0"
+oxc_ast_visit = "=0.153.0"
+oxc_diagnostics = "=0.153.0"
+oxc_parser = { version = "=0.153.0", default-features = false }
+oxc_regular_expression = "=0.153.0"
+oxc_semantic = "=0.153.0"
+oxc_span = "=0.153.0"
+oxc_syntax = "=0.153.0"
 
 [profile.dev]
 # Minimize compiler work for the default edit/compile cycle. Use `iteration`
@@ -50,6 +62,9 @@ lto = "thin"
 # The final release profile remains the production/performance authority.
 [profile.iteration]
 inherits = "release"
+# Share dependency artifacts between iterative binaries and Rust API tests,
+# which require unwinding. Production/release retain abort-on-panic.
+panic = "unwind"
 opt-level = 1
 lto = false
 codegen-units = 256
@@ -57,13 +72,26 @@ incremental = true
 
 [profile.production]
 inherits = "release"
-# Alias the release contract for explicit score invocations. The optimizer
-# policy itself lives only in `profile.release`.
+# Keep qualification builds independent of user-level profile overrides. On
+# the M4 qualification host, thin LTO won the matched local-loop cycle runs
+# and the one-round V8-v7 Score screen. Fat LTO used fewer instructions and
+# less RSS but more cycles. This is an M4 policy choice, not a universal claim.
+opt-level = 3
+debug = 0
+debug-assertions = false
+overflow-checks = false
+incremental = false
+# The symbol table stays: a trained link order names symbols, whose crate
+# hashes follow the profile (crates/quench-wasm-test/build.rs). It is not
+# loaded at run time.
+strip = "debuginfo"
+panic = "abort"
+lto = "thin"
+codegen-units = 1
+rpath = false
 
 [profile.bench-throughput]
 inherits = "production"
-debug = 0
-strip = "symbols"
 
 # Optimized measurements with full address-to-source attribution. DWARF makes
 # samples explainable; operation counts still come from explicit counters.
@@ -73,6 +101,6 @@ debug = true
 strip = "none"
 
 [patch.crates-io]
-oxc_parser_next = { package = "oxc_parser", path = "vendor/oxc-parser-next" }
-oxc_parser_legacy = { package = "oxc_parser", path = "vendor/oxc-parser-legacy" }
-oxc_regular_expression = { path = "vendor/oxc-regexp" }
+oxc_parser = { path = "vendor/oxc-parser" }
+oxc_regular_expression = { path = "vendor/oxc-regular-expression" }
+cranelift-codegen = { path = "vendor/cranelift-codegen" }

@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/npm/node-semver",
+  "tag": "v7.8.5",
+  "commit": "6e05b7637396ac66522cff8731f07cfe0ef49a29",
+  "files": "test/fixtures/*.js; unchanged upstream guest fixtures",
+  "license": "ISC",
+  "scope": "Published upstream data fixtures, not the entire TAP suite",
+  "published_source_comparison": {
+    "files": 49,
+    "mismatches": []
+  }
+}

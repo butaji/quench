@@ -1,6 +1,6 @@
 use std::{env, path::PathBuf, process::ExitCode};
 
-use quench_test262::{HarnessCache, RuntimeHost, Test262Runner, TestOutcome};
+use quench_test262::{HarnessCache, Test262Runner, Test262RuntimeHost, TestOutcome};
 
 fn main() -> ExitCode {
     match std::thread::Builder::new()
@@ -29,7 +29,7 @@ fn run() -> ExitCode {
         return ExitCode::from(2);
     };
     let root = test262_root();
-    let mut runner = Test262Runner::new(RuntimeHost);
+    let mut runner = Test262Runner::new(Test262RuntimeHost::default());
     let mut harness = HarnessCache::new(root.join("harness"));
     let outcome = runner.run_file_with_cache(&path, &mut harness);
     match outcome {

@@ -1,0 +1,33 @@
+'use strict';
+const assert=require('assert');
+const {mock}=require('node:test');
+const rows=[];
+assert.throws(()=>require('internal/timers'),{code:'MODULE_NOT_FOUND'});
+const fn=mock.fn(function increment(value){return this.base+value});
+const receiver={base:10};
+rows.push(['function',fn.call(receiver,2),fn.call(receiver,3),fn.mock.callCount(),
+  fn.mock.calls.map(call=>[call.arguments,call.result,call.error===undefined,call.this===receiver])]);
+fn.mock.resetCalls();rows.push(['resetCalls',fn.mock.callCount(),fn.mock.calls.length]);
+const object={base:4,add(value){return this.base+value}};
+const original=object.add;
+const spy=mock.method(object,'add');
+rows.push(['method',object.add(3),spy.mock.callCount(),spy.mock.calls[0].this===object]);
+spy.mock.restore();rows.push(['restore',object.add===original,object.add(4)]);
+const marker={tag:'marker'};
+const throws=mock.fn(()=>{throw marker});
+assert.throws(()=>throws(7),error=>error===marker);
+rows.push(['error',throws.mock.callCount(),throws.mock.calls[0].error===marker,
+  throws.mock.calls[0].result===undefined,throws.mock.calls[0].arguments]);
+const second=mock.method(object,'add',function replacement(value){return value*2});
+rows.push(['replacement',object.add(5),second.mock.callCount()]);
+mock.restoreAll();rows.push(['restoreAll',object.add===original]);
+const beforeDate=Date,beforeTimeout=setTimeout;
+mock.timers.enable({apis:['Date','setTimeout'],now:1000});
+const events=[];
+const handle=setTimeout(value=>events.push([value,Date.now()]),10,'scheduled');
+rows.push(['clock',Date.now(),typeof handle.ref,typeof handle[Symbol.dispose]]);
+mock.timers.tick(9);rows.push(['beforeDue',Date.now(),events.slice()]);
+mock.timers.tick(1);rows.push(['due',Date.now(),events]);
+mock.timers.reset();rows.push(['timerRestore',Date===beforeDate,setTimeout===beforeTimeout]);
+mock.reset();
+console.log(JSON.stringify(rows));
