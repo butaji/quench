@@ -4559,6 +4559,7 @@ fn lane_loop_run(
             widened: &tier.widened,
         };
         tier.code = super::loop_compiled::compile(&site.region, &observation);
+        crate::compile::compile_phase_boundary(crate::compile::CompilePhase::NativeCodeGenerated);
         if tier.code.is_none() {
             tier.compilations = LOOP_TIER_MAX_COMPILATIONS;
             return LoopContinuation::Jump;
