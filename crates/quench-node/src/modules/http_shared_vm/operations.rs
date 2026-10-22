@@ -360,7 +360,6 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
         context.host_function(crate::host::shared_vm::operation("httpResponseDestroy"))?;
     // Core owns the weak response-to-transport identity. Keeping the method on
     // the prototype preserves ordinary method identity and receiver dispatch.
-    let response_data = context.null_object_rooted()?;
     let global = context.global_root()?;
     let key = context.string_rooted("WeakMap");
     let weak_map = context.get_property_rooted(global, key)?;
@@ -369,8 +368,6 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let prototype = context.get_property_rooted(weak_map, key)?;
     let key = context.string_rooted("set");
     let map_set = context.get_property_rooted(prototype, key)?;
-    set(context, response_data, "responses", responses)?;
-    set(context, response_data, "set", map_set)?;
     // A finished response's host entry lives as long as its JavaScript object: a keep-alive
     // connection serves many responses and must not keep every one of them.
     let release =
@@ -383,12 +380,15 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let registry_prototype = context.get_property_rooted(registry_constructor, key)?;
     let key = context.string_rooted("register");
     let register = context.get_property_rooted(registry_prototype, key)?;
-    set(context, response_data, "registry", registry)?;
-    set(context, response_data, "register", register)?;
-    let initialize_response = context.host_function_with_data(
-        crate::host::shared_vm::operation("httpResponseInitialize"),
-        response_data,
-    )?;
+    let tracking = super::state::ResponseTracking {
+        responses: context.retain(responses)?,
+        map_set: context.retain(map_set)?,
+        registry: context.retain(registry)?,
+        register: context.retain(register)?,
+    };
+    context.host_mut().shared_state().borrow_mut().http.response_tracking = Some(tracking);
+    let initialize_response =
+        context.host_function(crate::host::shared_vm::operation("httpResponseInitialize"))?;
     let send = context.host_constructor_with_data(
         crate::host::shared_vm::operation("httpResponseSend"),
         responses,
@@ -1091,21 +1091,15 @@ pub(crate) fn response_initialize(
     if let Some(stale) = replaced {
         context.release_host_weak_root(stale);
     }
-    let data = context.host_function_data()?;
-    let key = context.string_rooted("responses");
-    let responses = context.get_property_rooted(data, key)?;
-    let key = context.string_rooted("set");
-    let map_set = context.get_property_rooted(data, key)?;
-    context.call_rooted(map_set, responses, &[response, id])?;
-    let key = context.string_rooted("registry");
-    let registry = context.get_property_rooted(data, key)?;
-    let key = context.string_rooted("register");
-    let register = context.get_property_rooted(data, key)?;
-    context.call_rooted(register, registry, &[response, id])?;
-    let yes = context.boolean(true);
-    set(context, response, "sendDate", yes)?;
-    let undefined = context.undefined();
-    set(context, response, "statusMessage", undefined)?;
+    let tracking = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .http
+        .response_tracking
+        .ok_or_else(|| RootedError::host("HTTP response tracking is unavailable"))?;
+    context.call_rooted(tracking.map_set, tracking.responses, &[response, id])?;
+    context.call_rooted(tracking.register, tracking.registry, &[response, id])?;
     Ok(context.undefined())
 }
 
