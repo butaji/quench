@@ -43,6 +43,10 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
 
+#[path = "compiled/osr_loop.rs"]
+mod osr_loop;
+pub(super) use osr_loop::{LoopEntry, LoopOutcome, LoopRegion, Observation, Widening};
+
 /// How the shared VM executes JavaScript and Wasm functions. Compiled code is
 /// lazy and falls back to the interpreter; both modes use the same VM, heap,
 /// frames and host APIs.
@@ -2169,6 +2173,27 @@ impl CompiledProgram {
     }
 }
 
+/// With `QUENCH_WASM_JIT_PERF_MAP` set, names each compiled Wasm function's code for
+/// `perf` (`/tmp/perf-PID.map`) and writes the module's code to `/tmp/quench-jit-PID-BASE.bin`
+/// for disassembly at `BASE` (diagnostics only).
+fn write_perf_map(base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
+    if std::env::var_os("QUENCH_WASM_JIT_PERF_MAP").is_none() {
+        return;
+    }
+    use std::io::Write;
+    let pid = std::process::id();
+    if let Ok(mut map) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("/tmp/perf-{pid}.map"))
+    {
+        for &(offset, len, index) in spans {
+            let _ = writeln!(map, "{:x} {len:x} wasm-function-{index}", base + offset);
+        }
+    }
+    let _ = std::fs::write(format!("/tmp/quench-jit-{pid}-{base:x}.bin"), bytes);
+}
+
 /// Executable memory holding a program's machine code.
 pub(super) struct CodeMemory {
     pointer: *mut u8,
@@ -2224,6 +2249,47 @@ impl Drop for CodeMemory {
         // SAFETY: the mapping this value owns.
         unsafe { libc::munmap(self.pointer.cast(), self.length) };
     }
+}
+
+/// A native OSR region published by the shared compiler. Its lowerer is private to this
+/// module; lanes only ask the region to run and inspect its exact-PC widening result.
+pub(super) struct CompiledOsrRegion(osr_loop::CompiledLoop);
+
+impl CompiledOsrRegion {
+    /// # Safety
+    /// `registers` and `entry` must describe the live activation guarded by the lane.
+    pub(super) unsafe fn run(
+        &self,
+        registers: *mut crate::value::Value,
+        entry: &LoopEntry,
+    ) -> LoopOutcome {
+        // SAFETY: the caller keeps the guarded activation and entry alive for this run.
+        unsafe { self.0.run(registers, entry) }
+    }
+
+    pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
+        self.0.widening(pc)
+    }
+}
+
+/// Analyze a loop candidate through the shared region compiler's OSR mode.
+pub(super) fn analyze_osr_region(
+    function: &Function,
+    decoded: &[WideInstruction],
+    constants: &[crate::value::Value],
+    live: Option<&[u64]>,
+    header: u32,
+    backedge: u32,
+) -> Option<LoopRegion> {
+    osr_loop::region(function, decoded, constants, live, header, backedge)
+}
+
+/// Compile one admitted OSR region and publish it through the shared executable-memory path.
+pub(super) fn compile_osr_region(
+    region: &LoopRegion,
+    observation: &Observation<'_>,
+) -> Option<CompiledOsrRegion> {
+    osr_loop::compile(region, observation).map(CompiledOsrRegion)
 }
 
 /// A guarded JavaScript numeric function compiled from a narrow residual
@@ -7572,6 +7638,7 @@ impl<H: Host> Vm<H> {
         }
         let mut bytes = Vec::new();
         let mut offsets = vec![None; count];
+        let mut spans = Vec::new();
         let mut entries = vec![None; count];
         let mut calls = Vec::new();
         let place = |bytes: &mut Vec<u8>, code: Vec<u8>| {
@@ -7626,8 +7693,10 @@ impl<H: Host> Vm<H> {
                 }
                 return None;
             }
+            let body_len = body.len();
             let offset = place(&mut bytes, body);
             offsets[index] = Some(offset);
+            spans.push((offset, body_len, index));
             calls.extend(function_calls.into_iter().map(|call| (offset, call)));
             let memory = MemoryArguments::of(fixed_base, guarded);
             let entry = analysis.compile_entry(&*isa, index, plans[index].as_ref()?, memory)?;
@@ -7649,6 +7718,7 @@ impl<H: Host> Vm<H> {
         let memory = CodeMemory::new(&bytes)?;
         let mapped_bytes = memory.length;
         let base = memory.pointer as usize;
+        write_perf_map(base, &bytes, &spans);
         let table: Box<[usize]> = offsets
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))

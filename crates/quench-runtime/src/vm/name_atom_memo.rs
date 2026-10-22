@@ -1,10 +1,13 @@
-//! Memoized `intern_atom` answers for host-provided names. Host glue passes the same
-//! `&'static str` property names on every call, so the text's address and length usually
-//! name its atom; each hit is still confirmed against the atom's text, which keeps a reused
-//! address of a transient string from ever answering wrongly. Entries are dropped when atoms
-//! are reassigned (VM reset).
+//! Memoized atom answers for names. Host glue passes the same `&'static str` property
+//! names on every call, so the text's address and length usually name its atom; each hit is
+//! still confirmed against the atom's text, which keeps a reused address of a transient
+//! string from ever answering wrongly. A keyed access passes the same heap strings (a
+//! bytecode constant's `'data'`, a header name) on every call: a heap string's text never
+//! changes and its value names the same cell while the collection epoch holds, so its value
+//! under that epoch names its atom outright. Entries are dropped when atoms are reassigned
+//! (VM reset, snapshot restore).
 
-use super::Atom;
+use super::{Atom, Value};
 use std::cell::Cell;
 
 /// Direct-mapped entries: a power of two that holds the distinct names the Node host glue
@@ -18,14 +21,27 @@ struct Entry {
     atom: Atom,
 }
 
+/// Direct-mapped heap-string entries: a power of two that holds the distinct string keys a
+/// request's keyed accesses use (event names, header names, option keys).
+const STRING_ATOM_MEMO_ENTRIES: usize = 1 << 8;
+
+#[derive(Clone, Copy)]
+struct StringEntry {
+    string: Value,
+    epoch: u64,
+    atom: Atom,
+}
+
 pub(super) struct NameAtomMemo {
     entries: Box<[Cell<Option<Entry>>]>,
+    strings: Box<[Cell<Option<StringEntry>>]>,
 }
 
 impl Default for NameAtomMemo {
     fn default() -> Self {
         Self {
             entries: (0..NAME_ATOM_MEMO_ENTRIES).map(|_| Cell::new(None)).collect(),
+            strings: (0..STRING_ATOM_MEMO_ENTRIES).map(|_| Cell::new(None)).collect(),
         }
     }
 }
@@ -51,8 +67,26 @@ impl NameAtomMemo {
         }));
     }
 
+    fn string_index(string: Value) -> usize {
+        super::shape_memo::direct_mapped_index(string, STRING_ATOM_MEMO_ENTRIES)
+    }
+
+    /// The existing atom the heap string `string` names, recorded under collection `epoch`.
+    #[inline(always)]
+    pub(super) fn string_atom(&self, string: Value, epoch: u64) -> Option<Atom> {
+        let entry = self.strings[Self::string_index(string)].get()?;
+        (entry.string == string && entry.epoch == epoch).then_some(entry.atom)
+    }
+
+    pub(super) fn record_string(&self, string: Value, epoch: u64, atom: Atom) {
+        self.strings[Self::string_index(string)].set(Some(StringEntry { string, epoch, atom }));
+    }
+
     pub(super) fn clear(&self) {
         for entry in self.entries.iter() {
+            entry.set(None);
+        }
+        for entry in self.strings.iter() {
             entry.set(None);
         }
     }

@@ -1019,6 +1019,14 @@ impl<H: Host> Vm<H> {
                 return subject;
             }
             FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) | FlatUnits::Wide(_) => &*flat,
+            // A matcher subject owns whole wide storage, so a slice's run is copied into one;
+            // it is not kept, as nothing else holds that copy to find it by.
+            FlatUnits::WideSlice(_) => {
+                let crate::vm::wtf16::Units::Wide(units) = flat.view() else {
+                    unreachable!("a wide slice views wide units")
+                };
+                return Rc::new(quench_regexp::Subject::new(Rc::from(units)));
+            }
         };
         let cached = self.regexp_subjects.iter().position(|subject| match text {
             FlatUnits::Wide(units) => subject.is_text_of(units),
@@ -1033,7 +1041,8 @@ impl<H: Host> Vm<H> {
             return Rc::clone(&self.regexp_subjects[0]);
         }
         let fresh = match text {
-            FlatUnits::Wide(units) => quench_regexp::Subject::new(Rc::clone(units)),
+            // Wide storage always holds a non-ASCII unit (`FlatUnits::Wide`).
+            FlatUnits::Wide(units) => quench_regexp::Subject::from_non_ascii(Rc::clone(units)),
             ascii => {
                 let (text, range) = ascii.shared_ascii().expect("short subjects returned above");
                 quench_regexp::Subject::from_ascii(Rc::clone(text), range)

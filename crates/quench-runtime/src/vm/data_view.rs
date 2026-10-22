@@ -259,7 +259,8 @@ impl<H: Host> Vm<H> {
             } else {
                 DATA_VIEW_GET_ENDIAN_ARGUMENT
             })
-            .is_some_and(|value| self.truthy(*value));
+            .copied()
+            .is_some_and(|value| value.as_bool().unwrap_or_else(|| self.truthy(value)));
         let absolute = offset.checked_add(index)?;
         if setter {
             let value = args

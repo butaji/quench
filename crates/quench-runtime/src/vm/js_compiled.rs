@@ -948,42 +948,37 @@ pub(super) fn string_transform_candidate(
     let name = function.name.or(function.inferred_name)?;
     match &program.atoms[name as usize] {
         "escapeLeadingUnderscores"
-            if function.code.len() == 19
+            if function.code.len() == 14
                 && function.code.iter().map(|i| i.as_wide().op()).eq([
                     Op::GetField,
-                    Op::Binary,
-                    Op::Move,
-                    Op::JumpFalse,
+                    Op::JumpBinaryFalse,
                     Op::GetField,
                     Op::LoadConst,
                     Op::Call,
-                    Op::Binary,
-                    Op::Move,
-                    Op::JumpFalse,
+                    Op::JumpBinaryFalse,
                     Op::GetField,
                     Op::LoadConst,
                     Op::Call,
-                    Op::Binary,
-                    Op::JumpFalse,
+                    Op::JumpBinaryFalse,
                     Op::Binary,
                     Op::Return,
                     Op::LoadConst,
                     Op::Return,
                 ])
                 && field_name(program, function, 0) == Some("length")
-                && field_name(program, function, 4) == Some("charCodeAt")
-                && field_name(program, function, 10) == Some("charCodeAt")
-                && function.code[15].as_wide().binary_operator()
+                && field_name(program, function, 2) == Some("charCodeAt")
+                && field_name(program, function, 6) == Some("charCodeAt")
+                && function.code[10].as_wide().binary_operator()
                     == oxc_ast::ast::BinaryOperator::Addition as u32 =>
         {
             Some(JsJitStringTransform::PrefixUnderscore)
         }
         "unescapeLeadingUnderscores" if unescape_leading_underscores_shape(function)
                 && field_name(program, function, 1) == Some("length")
-                && field_name(program, function, 6) == Some("charCodeAt")
-                && field_name(program, function, 13) == Some("charCodeAt")
-                && field_name(program, function, 20) == Some("charCodeAt")
-                && field_name(program, function, 26) == Some("substr") =>
+                && field_name(program, function, 4) == Some("charCodeAt")
+                && field_name(program, function, 9) == Some("charCodeAt")
+                && field_name(program, function, 14) == Some("charCodeAt")
+                && field_name(program, function, 19) == Some("substr") =>
         {
             Some(JsJitStringTransform::RemoveLeadingUnderscore)
         }
@@ -995,12 +990,13 @@ pub(super) fn string_transform_candidate(
 /// through a frame slot or through the register frame-register promotion gave it (`Move`s),
 /// and its final `return id` either reloading the parameter or naming its register.
 fn unescape_leading_underscores_shape(function: &Function) -> bool {
-    use Op::{Binary, Call, GetField, JumpFalse, LoadConst, Move, Return};
-    const BODY: [Op; 29] = [
-        Move, GetField, Binary, Move, JumpFalse,
-        Move, GetField, LoadConst, Call, Binary, Move, JumpFalse,
-        Move, GetField, LoadConst, Call, Binary, Move, JumpFalse,
-        Move, GetField, LoadConst, Call, Binary, JumpFalse,
+    use Op::{Call, GetField, JumpBinaryFalse, LoadConst, Move, Return};
+    // Each `&&` operand of the test is its own compare-and-branch (`FunctionCompiler::condition`).
+    const BODY: [Op; 22] = [
+        Move, GetField, JumpBinaryFalse,
+        Move, GetField, LoadConst, Call, JumpBinaryFalse,
+        Move, GetField, LoadConst, Call, JumpBinaryFalse,
+        Move, GetField, LoadConst, Call, JumpBinaryFalse,
         Move, GetField, LoadConst, Call,
     ];
     let ops = function.code.iter().map(|instruction| match instruction.as_wide().op() {
@@ -2465,6 +2461,11 @@ fn compile_numeric_with_captures(
     }
 
     let params = usize::from(function.params);
+    // A field read at entry is supplied by the VM's guarded monomorphic
+    // cache. The native region sees only its numeric data-property value;
+    // cache misses, accessors and non-numeric values stay in the interpreter.
+    let field_argument = cached_field_argument_candidate(function)
+        .filter(|candidate| candidate.entry_pc == 0);
     let isa = super::jit_backend::target_isa("speed", true)?;
 
     let mut signature = ir::Signature::new(isa.default_call_conv());
@@ -2485,6 +2486,11 @@ fn compile_numeric_with_captures(
     // promoted parameter locals in registers 0..params.
     let mut registers = vec![None; usize::from(function.registers)];
     for (index, register) in registers.iter_mut().take(params).enumerate() {
+        if field_argument.is_some() && index == 0 {
+            // Parameter zero is the object used by the guarded GetField, not
+            // a numeric value inside the native region.
+            continue;
+        }
         let offset = i32::try_from(index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
         *register = Some(builder.ins().load(
             types::F64,
@@ -2501,6 +2507,30 @@ fn compile_numeric_with_captures(
         }
         let instruction = packed.as_wide();
         let result = match instruction.op() {
+            Op::GetField => {
+                let candidate = field_argument?;
+                if pc != candidate.entry_pc
+                    || instruction.returns_from_frame()
+                    || instruction.result_flags() != 0
+                    || instruction.writes_current_this()
+                    || !matches!(
+                        instruction.field_lookup(),
+                        Some(FieldLookup::Atom {
+                            base: FieldBase(0),
+                            cache_site,
+                            ..
+                        }) if cache_site == candidate.cache_site
+                    )
+                {
+                    return None;
+                }
+                Some(builder.ins().load(
+                    types::F64,
+                    ir::MemFlagsData::trusted(),
+                    arguments,
+                    0,
+                ))
+            }
             Op::LoadConst => {
                 if instruction.returns_from_frame() || instruction.result_flags() != 0 {
                     return None;
@@ -2639,7 +2669,7 @@ fn compile_numeric_with_captures(
         code,
         params,
         result: JsJitResultKind::Number,
-        field_argument: None,
+        field_argument,
         capture_arguments: captures.to_vec(),
     })
 }

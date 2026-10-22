@@ -617,7 +617,11 @@ impl ProgramStore {
         let id = ProgramId::from_index(self.programs.len())?;
         // A function compiles again on its first call; until then it keeps only its header.
         // A program other owners share keeps its records.
-        if let Some(program) = Rc::get_mut(&mut program) {
+        #[cfg(feature = "profile-aggregate")]
+        let retain_profile_records = std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some();
+        #[cfg(not(feature = "profile-aggregate"))]
+        let retain_profile_records = false;
+        if !retain_profile_records && let Some(program) = Rc::get_mut(&mut program) {
             program.release_replayable_records();
         }
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
@@ -1739,7 +1743,7 @@ impl ProgramStore {
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();
-                super::lane_exits::register_view(start, end, census_label(entry, function));
+                super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
             }
             view
         }))
@@ -1784,7 +1788,7 @@ impl ProgramStore {
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();
-                super::lane_exits::register_view(start, end, census_label(entry, function));
+                super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
             }
             view
         }))
@@ -1956,6 +1960,11 @@ impl Drop for ProgramStore {
                     / u128::from(total_entries))
                 .min(1_000_000) as u64
             };
+            let osr = entry
+                .and_then(|entry| entry.lane_views.get(*function as usize))
+                .and_then(std::cell::OnceCell::get)
+                .map(super::dispatch_fast::LaneView::osr_diagnostics)
+                .unwrap_or_default();
             let _ = write!(
                 stderr,
                 "QUENCH_JS_JIT_STATS {{\"program\":{program},\"function\":{function},\"function_name\":"
@@ -1971,7 +1980,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"opcodes\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"opcodes\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -1998,6 +2007,16 @@ impl Drop for ProgramStore {
                 counters.guard_typeof_ops,
                 counters.guard_strict_comparisons,
                 counters.guard_relational_comparisons,
+                osr.plain_backward_jump_sites,
+                osr.admitted_sites,
+                osr.compile_attempts,
+                osr.compile_successes,
+                osr.currently_compiled_sites,
+                osr.native_entry_attempts,
+                osr.native_region_runs,
+                osr.entry_guard_misses,
+                osr.exits,
+                osr.widenings,
             );
             for (index, (opcode, count)) in counters.opcode_counts.iter().enumerate() {
                 if index != 0 {
@@ -2058,7 +2077,7 @@ fn census_label(entry: &ProgramEntry, function: u32) -> String {
     let code = &entry.residual;
     let body = code.function_get(function as usize);
     format!(
-        "{} {} @{:?}",
+        "{} f{function} {} @{:?}",
         code.source_name,
         body.and_then(|body| body.name).map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
         body.and_then(|body| body.source_span).map(|span| span.start),
