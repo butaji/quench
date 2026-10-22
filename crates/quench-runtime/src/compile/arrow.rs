@@ -83,7 +83,6 @@ impl Compiler<'_> {
                 && !value.r#async
                 && !class_initializer
                 && with_depth == 0
-                && self.eval_context.is_none()
                 && !dynamic_eval,
             body_statements,
             expression_body,
