@@ -114,3 +114,15 @@ The optional `quench-alloc` feature raised the 11-round React screen to 224.3
 renders/s but also raised sampled max RSS to 32.49 MB (from 196.7 renders/s /
 29.74 MB with the system allocator). It remains disabled for this workload
 because the speed gain comes with a larger memory footprint.
+
+The React profile then identified compiler-private `for...in` helper loads as
+the largest fast-lane exit. The lane now resolves the two internal names to the
+same `ForInKeys` and `ForInKeyIsEnumerable` native functions used by the normal
+name resolver. The 11-round Linux diagnostic is saved at
+[`reports/react-no-jit-internal-name-fast-lane-linux-11.json`](reports/react-no-jit-internal-name-fast-lane-linux-11.json).
+It produced 220.6 renders/s and 29.33 MB sampled max RSS, versus Node
+`--jitless` at 1483.7 / 31.90 MB and Bun no-JIT at 1199.0 / 37.41 MB. Output
+matched across engines. This improves on the prior 196.7 renders/s / 29.74 MB
+Quench screen, but still misses the required 20% throughput advantage and 20%
+RSS reduction against both engines. Linux RSS sampling remains diagnostic,
+not qualification.
