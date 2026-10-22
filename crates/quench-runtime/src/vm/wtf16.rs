@@ -845,6 +845,17 @@ impl JsString {
         }
     }
 
+    /// A flat string with this string's units that leaves a rope unflattened (`flat_unkept`):
+    /// the copy lives only as long as the returned string. An operation that reads a rope
+    /// many times through helpers that take a string uses it in place of the rope, so the
+    /// rope does not keep a flat copy of its text for its own life.
+    pub(crate) fn unkept_flat(&self) -> JsString {
+        match &self.repr {
+            Repr::Flat(_) => self.clone(),
+            Repr::Shared(_) => Self::from_flat(self.flat_unkept().into_owned()),
+        }
+    }
+
     /// The units of a rope's runs, in one canonical allocation.
     fn flattened(inner: &Rc<JsStringInner>) -> FlatUnits {
         let length = inner.length as usize;
