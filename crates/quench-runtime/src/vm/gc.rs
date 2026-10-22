@@ -317,7 +317,7 @@ impl<H: Host> Vm<H> {
     }
 
     #[inline(always)]
-    pub(super) fn maybe_collect(&mut self, program: &ResidualProgram) {
+    pub(crate) fn maybe_collect(&mut self, program: &ResidualProgram) {
         if !self.heap.should_collect() {
             return;
         }
@@ -464,6 +464,7 @@ impl<H: Host> Vm<H> {
             self.async_generator_proto,
             self.async_from_sync_iterator_proto,
             self.regexp_proto,
+            self.reused_iterator_result,
         ]);
         // The active realm's top-level lexical bindings, then every inactive realm's.
         roots.extend(self.realm.global_lexical_bindings.values().copied());
