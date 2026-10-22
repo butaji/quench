@@ -536,12 +536,11 @@ impl<H: Host> Vm<H> {
         frame.env = parent;
         let arrow = function.is_arrow;
         let derived = function.derived_constructor;
+        let captured_this = if arrow { self.captured_lexical_this(parent) } else { None };
         let this = if derived {
             Value::DELETED
-        } else if arrow {
-            self.captured_lexical_this(parent).unwrap_or(this)
         } else {
-            this
+            captured_this.unwrap_or(this)
         };
         frame.this = if derived || arrow {
             this
@@ -572,6 +571,9 @@ impl<H: Host> Vm<H> {
             id == super::ROOT_FUNCTION_ID
                 || function.activation_bindings_observable(&p.atoms, &p.functions),
         );
+        // An arrow whose creator's `this` binding is initialized keeps that receiver: the
+        // binding never changes once initialized (`Vm::lexical_this`).
+        frame.fixed_this |= captured_this.is_some_and(|this| !this.is_deleted());
         frame.prepare_registers_for(function);
         frame.bind_register_parameters(function, args);
         frame.initialize_promoted_registers(function, args);
@@ -623,12 +625,11 @@ impl<H: Host> Vm<H> {
         frame.env = parent;
         let arrow = function.is_arrow;
         let derived = function.derived_constructor;
+        let captured_this = if arrow { self.captured_lexical_this(parent) } else { None };
         let this = if derived {
             Value::DELETED
-        } else if arrow {
-            self.captured_lexical_this(parent).unwrap_or(this)
         } else {
-            this
+            captured_this.unwrap_or(this)
         };
         frame.this = if derived || arrow || function.strict {
             this
@@ -649,6 +650,9 @@ impl<H: Host> Vm<H> {
             id == super::ROOT_FUNCTION_ID
                 || function.activation_bindings_observable(&p.atoms, &p.functions),
         );
+        // An arrow whose creator's `this` binding is initialized keeps that receiver: the
+        // binding never changes once initialized (`Vm::lexical_this`).
+        frame.fixed_this |= captured_this.is_some_and(|this| !this.is_deleted());
         frame.prepare_registers_for(function);
         frame.bind_register_parameters(function, args);
         frame.initialize_promoted_registers(function, args);

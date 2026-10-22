@@ -866,8 +866,14 @@ impl<H: Host> Vm<H> {
         let value = self
             .dynamic_binding(frame, atom)
             .unwrap_or(self.frames[frame].this);
-        self.frames[frame].this = value;
-        (!value.is_deleted()).then_some(value)
+        // An initialized `this` binding never changes (a second `super()` throws), so the
+        // frame keeps it as its fixed receiver; only a derived constructor's binding before
+        // `super()` stays to be resolved again.
+        let initialized = !value.is_deleted();
+        let activation = &mut self.frames[frame];
+        activation.this = value;
+        activation.fixed_this = initialized;
+        initialized.then_some(value)
     }
 
     #[inline(always)]
