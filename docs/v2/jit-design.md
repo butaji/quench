@@ -1271,3 +1271,41 @@ JetStream 3's [published methodology](https://webkit.org/blog/17899/introducing-
 uses repeated per-subtest measurements and suite aggregation. Papers and
 diagnostic counters above are leads only: neither the 1.20x score goal nor a
 20% broad no-JIT/JIT win is established by this research.
+
+## Effectful JS call-region ABI boundary
+
+The current JS native entry is deliberately primitive-valued; it cannot carry
+arbitrary tagged JS values or keep guest heap references live across collection.
+The first compiled call region therefore needs a VM-owned continuation context,
+not a wider raw-pointer callback. Before entering the shared dispatcher, write
+all live native values back as tagged values in GC-rooted frame registers and
+publish the exact instruction PC, resume state, and binding-site PC. The
+callback must reacquire VM/frame data by a stable frame identity after dispatch;
+it must not retain Rust references or slices into VM storage across a callout.
+
+The callback uses the existing instruction dispatcher as the semantic
+authority. It encodes the full `StepResult` and error outcome. Native execution
+may resume only when dispatch completed normally with `Continue`, the same
+program/function/frame remains active, and the continuation state matches the
+compiled map. `Return`, `Throw`, `PushFrame`, `TailCall`, yield, panic, and any
+other non-Continue result leave native code for the existing VM. A consumed call
+must never be retried at the old PC. Catch Rust panics inside any C ABI callback;
+no unwind may cross generated-code boundaries. Drop heap-derived type/shape
+facts across effectful calls and writes.
+
+Start with ordinary nonterminal `Call` over already-resolved callees, excluding
+direct or parameter eval, spread, tail calls, and terminal-return cases. Keep
+`LoadNameCall`, `with`, getters/proxies, constructors, and other effectful name
+resolution on the current fallback until their exact receiver, lookup, and
+error behavior is represented. This restriction is a pilot boundary, not a
+source/function recognizer: admission is derived from bytecode effects and
+explicit flags. Required tests cover receiver and argument order, non-callable
+and throwing callees, reentrant calls that collect while values are live,
+callee replacement, and exactly-once effects with fallback at the failing PC.
+
+This protocol is correctness and coverage groundwork. `runIteration` can check
+the ABI and output parity, but its observed call count does not make it a score
+target. Before choosing a hot site, record time-weighted compile rejection
+reasons, call-target/cache state, receiver-shape diversity, entries and
+callouts. A cache/guard hit is useful only if it reduces measured VM work; keep
+it only on matched production JetStream score and RSS data.
