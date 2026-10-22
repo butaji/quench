@@ -402,7 +402,8 @@ found four dominant monomorphic sites (two with roughly 90k sampled calls each,
 and two with roughly 13k each); all other sites were sparse. The new general
 dispatch hook did not reveal a second class of high-volume call sites, so a
 per-site target memo has too little likely coverage to justify its complexity
-as the next optimization. This profile build is intentionally instrumented and
-its 67.8 renders/s is not a performance result. Output matched at 2,498,000
-bytes/checksum 41826. Full diagnostic output:
-`work/react-perf/react-call-target-profile-general.log`.
+as the next optimization. A followup also sampled normal frame materialization
+and left the same four sites on top. These profile builds are intentionally
+instrumented; the extended run's 52.9 renders/s is not a performance result.
+Output matched at 2,498,000 bytes/checksum 41826. Full diagnostic output:
+`work/react-perf/react-call-target-profile-all.log`.
