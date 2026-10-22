@@ -367,13 +367,13 @@ fn jit_emscripten_memcpy_leaf_enabled() -> bool {
         .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
 }
 
-/// Keep the numeric hash-map loop as an opt-in experiment until it has a
-/// matched score win.
+/// Run the guarded numeric hash-map loop by default. Set the environment
+/// variable to `0` to retain the interpreter path for A/B measurement.
 fn jit_numeric_find_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var(JIT_NUMERIC_FIND_ENV)
-            .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    *ENABLED.get_or_init(|| match std::env::var_os(JIT_NUMERIC_FIND_ENV) {
+        None => true,
+        Some(value) => matches!(value.to_str(), Some("1" | "true")),
     })
 }
 
@@ -2170,13 +2170,18 @@ impl CompiledProgram {
 }
 
 /// Executable memory holding a program's machine code.
-struct CodeMemory {
+pub(super) struct CodeMemory {
     pointer: *mut u8,
     length: usize,
 }
 
 impl CodeMemory {
-    fn new(bytes: &[u8]) -> Option<Self> {
+    /// The first byte of the executable mapping.
+    pub(super) fn pointer(&self) -> *mut u8 {
+        self.pointer
+    }
+
+    pub(super) fn new(bytes: &[u8]) -> Option<Self> {
         let length = bytes.len().max(1);
         // `mmap` rounds to whole pages. Store that rounded length explicitly
         // so the JS tier's budget reflects its executable mappings.
