@@ -456,7 +456,13 @@ impl<H: Host> Vm<H> {
             self.host.keep_compiled_program(name, &[mode, goal, source], &bytes);
         }
         // Its final source is settled, so a function compiles again from it on first call.
-        residual.release_replayable_records();
+        #[cfg(feature = "profile-aggregate")]
+        let retain_profile_records = std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some();
+        #[cfg(not(feature = "profile-aggregate"))]
+        let retain_profile_records = false;
+        if !retain_profile_records {
+            residual.release_replayable_records();
+        }
         Ok(crate::PreparedScript { program: Rc::new(residual) })
     }
 
