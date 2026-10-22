@@ -5,6 +5,10 @@ edition = "2021"
 license = "MIT"
 description = "Shared ECMAScript regular-expression parser and matcher"
 
+[lib]
+# No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
+doctest = false
+
 [dependencies]
 quench-stack = { path = "../quench-stack" }
 icu_casemap = { version = "2.2", features = ["compiled_data"] }

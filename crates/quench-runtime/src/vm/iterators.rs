@@ -3323,6 +3323,51 @@ impl<H: Host> Vm<H> {
         Some(rest)
     }
 
+    /// %ArrayIteratorPrototype%.next of this realm (`callee`) on a keys or values iterator
+    /// over a plain array, where the step runs no guest code: the source has no indexed
+    /// descriptors, sparse elements or arguments mapping, so its length is its element count
+    /// and the element at the position is a present data value (a hole's Get reaches the
+    /// prototype chain). The result object is the general step's (`iterator_result`); `None`
+    /// leaves the call to the general path.
+    pub(super) fn plain_array_iterator_next(&mut self, callee: Value, iterator: Value) -> Option<Value> {
+        if !self.is_current_realm_native(callee, Native::ArrayIteratorNext) {
+            return None;
+        }
+        let (source, kind, position) = match self.heap.iterator(iterator)? {
+            IteratorRecord { done: true, .. } => return self.iterator_result(Value::UNDEFINED, true).ok(),
+            IteratorRecord {
+                source,
+                kind: kind @ (IteratorKind::Array | IteratorKind::ArrayValues | IteratorKind::ArrayKeys),
+                index,
+                ext,
+                ..
+            } => (*source, *kind, ext.position(*index)),
+            _ => return None,
+        };
+        let array = self.heap.array(source)?;
+        if array.has_indexed_descriptors()
+            || array.is_arguments_object()
+            || self.heap.sparse_length(source).is_some()
+        {
+            return None;
+        }
+        let Some(&element) = array.elements().get(position) else {
+            if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
+                *done = true;
+                *source = Value::UNDEFINED;
+            }
+            return self.iterator_result(Value::UNDEFINED, true).ok();
+        };
+        if element.is_deleted() {
+            return None;
+        }
+        if let Some(IteratorRecord { index, ext, .. }) = self.heap.iterator_mut(iterator) {
+            ext.store_position(index, position + 1);
+        }
+        let value = if kind == IteratorKind::ArrayKeys { Value::number(position as f64) } else { element };
+        self.iterator_result(value, false).ok()
+    }
+
     /// Whether `method` is this realm's %ArrayIteratorPrototype%.next and `iterator` one of
     /// its array iterators, so a step may run without the call and its result object.
     pub(super) fn steps_as_array_iterator(&self, iterator: Value, method: Value) -> bool {

@@ -121,6 +121,16 @@ pub(super) fn decode_trusted_program(bytes: super::KeptBytes) -> Result<super::R
     decode_program(&bytes, encoding, ReadAtoms::Program, None)
 }
 
+/// `decode_trusted_program`, with each atom of the program's table named by `intern`'s id,
+/// as a compact encoding's reader names them.
+pub(super) fn decode_trusted_program_interned(
+    bytes: super::KeptBytes,
+    intern: &mut dyn FnMut(&str) -> u32,
+) -> Result<super::ResidualProgram, String> {
+    let encoding = sealed_encoding_length(bytes.as_ref().as_ref())?;
+    decode_program(&bytes, encoding, ReadAtoms::Interned(intern), None)
+}
+
 /// The length of a sealed encoding without its checksum, when the checksum holds over its
 /// body. The region of deferred records is left unread.
 fn sealed_encoding_length(bytes: &[u8]) -> Result<usize, String> {
@@ -293,9 +303,14 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
             Vec::new()
         }
         AtomEncoding::Compact(compact) => {
+            // The names' lengths, then their text as one run, which the reader validates as
+            // UTF-8 at once instead of name by name.
             header.u32(compact.order.len() as u32);
             for &atom in &compact.order {
-                header.string(&program.atoms[atom as usize]);
+                header.u32(program.atoms[atom as usize].len() as u32);
+            }
+            for &atom in &compact.order {
+                header.bytes.extend_from_slice(program.atoms[atom as usize].as_bytes());
             }
             compact.order
         }
@@ -355,6 +370,8 @@ enum ReadAtoms<'a> {
     Program,
     /// A compact table, whose names `intern` gives the reader's ids.
     Compact(&'a mut dyn FnMut(&str) -> u32),
+    /// The program's own table, whose names `intern` gives the reader's ids.
+    Interned(&'a mut dyn FnMut(&str) -> u32),
     /// Only the length of the table the program shares with its reader, written here.
     Shared(&'a mut usize),
 }
@@ -431,13 +448,29 @@ fn decode_program(
             **count = input.u32()? as usize;
             AtomTable::default()
         }
-        ReadAtoms::Compact(intern) => {
+        ReadAtoms::Interned(intern) => {
             let count = input.u32()? as usize;
             let mut ids = Vec::with_capacity(count);
             for _ in 0..count {
                 let len = input.u32()? as usize;
                 let name = std::str::from_utf8(input.take(len)?).map_err(|_| "invalid residual string")?;
                 ids.push(intern(name));
+            }
+            input.atoms = Some(ids.into());
+            AtomTable::default()
+        }
+        ReadAtoms::Compact(intern) => {
+            let count = input.u32()? as usize;
+            let lengths = (0..count).map(|_| input.u32().map(|len| len as usize)).collect::<Result<Vec<_>, _>>()?;
+            let total = lengths.iter().try_fold(0usize, |total, &len| total.checked_add(len));
+            let text = std::str::from_utf8(input.take(total.ok_or("invalid residual string")?)?)
+                .map_err(|_| "invalid residual string")?;
+            let mut ids = Vec::with_capacity(count);
+            let mut start = 0;
+            for len in lengths {
+                let name = text.get(start..start + len).ok_or("invalid residual string")?;
+                ids.push(intern(name));
+                start += len;
             }
             input.atoms = Some(ids.into());
             AtomTable::default()
@@ -916,13 +949,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
         let mut code = input.list(|input| {
             let at = pc;
             pc += 1;
-            let opcode = input.u16()?;
-            let op = Op::from_index(usize::from(opcode))
-                .ok_or_else(|| String::from("invalid residual opcode"))?;
-            let a = input.u16()?;
-            let b = input.u16()?;
-            let c = input.u16()?;
-            let imm = input.immediate(op, b)?;
+            let (op, a, b, c, imm) = input.instruction()?;
             if op.is_wide_marker() {
                 return Instr::wide_from_fields(a, b, c, imm)
                     .ok_or_else(|| String::from("residual wide index exceeds domain"));
@@ -934,12 +961,11 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             }))
         })?;
         let mut wide = input.list(|input| {
-            let opcode = input.u16()?;
-            let op = Op::from_index(usize::from(opcode))
-                .filter(|op| !op.is_wide_marker())
-                .ok_or_else(|| String::from("invalid residual wide opcode"))?;
-            let (a, b, c) = (input.u16()?, input.u16()?, input.u16()?);
-            Ok(WideInstruction::new(op, a, b, c, input.immediate(op, b)?))
+            let (op, a, b, c, imm) = input.instruction()?;
+            if op.is_wide_marker() {
+                return Err("invalid residual wide opcode".into());
+            }
+            Ok(WideInstruction::new(op, a, b, c, imm))
         })?;
         for (at, instruction) in widened {
             code[at] = Instr::wide(wide.len())
@@ -1046,6 +1072,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: handlers.into(),
             register_roots,
@@ -1177,10 +1204,28 @@ impl<'a> BinaryReader<'a> {
     }
     fn atom(&mut self) -> Result<u32, String> {
         let encoded = self.u32()?;
+        self.atom_id(encoded)
+    }
+    /// The reader's id for the atom `encoded` names (`BinaryWriter::atom`).
+    fn atom_id(&self, encoded: u32) -> Result<u32, String> {
         match &self.atoms {
             None => Ok(encoded),
             Some(ids) => ids.get(encoded as usize).copied().ok_or_else(|| "residual atom outside its table".into()),
         }
+    }
+    /// One instruction's record (`BinaryWriter::instruction`), read whole: its opcode, fields
+    /// and immediate, which is the reader's atom id when it names an atom. Reading the record
+    /// field by field checked its bounds five times.
+    fn instruction(&mut self) -> Result<(Op, u16, u16, u16, u32), String> {
+        const FIELD: usize = size_of::<u16>();
+        const RECORD: usize = 4 * FIELD + size_of::<u32>();
+        let record = self.array::<RECORD>()?;
+        let field = |index: usize| u16::from_le_bytes([record[index * FIELD], record[index * FIELD + 1]]);
+        let op = Op::from_index(usize::from(field(0))).ok_or_else(|| String::from("invalid residual opcode"))?;
+        let (a, b, c) = (field(1), field(2), field(3));
+        let encoded = u32::from_le_bytes(record[4 * FIELD..].try_into().expect("a record ends in its immediate"));
+        let imm = if op.immediate_names_atom(b) { self.atom_id(encoded)? } else { encoded };
+        Ok((op, a, b, c, imm))
     }
     fn option_atom(&mut self) -> Result<Option<u32>, String> {
         let encoded = self.u32()?;
