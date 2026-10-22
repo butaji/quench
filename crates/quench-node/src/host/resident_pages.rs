@@ -290,6 +290,20 @@ pub fn note_collection() {
     COLLECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Releases the read-only pages at a collection boundary whose count since start-up is a power
+/// of two: a run's first boundaries return the start-up code it never runs again, and later
+/// ones return what it stopped running, while a run that collects thousands of times does not
+/// refault its own hot code after each. Releasing at every boundary cost EarleyBoyer a quarter
+/// of its Score under MemoryFirst at the 2^13 young minimum (2705 against 3648 without
+/// collection-time code release; 197K minor faults against 39K), while the release returned
+/// 560-800 KiB of each V8-v7 fixture's max RSS (static + BOLT x86_64, 4 vCPU, 2026-10-22).
+pub fn release_read_only_pages_at_collection() {
+    let boundary = COLLECTIONS.load(std::sync::atomic::Ordering::Relaxed) + 1;
+    if boundary.is_power_of_two() {
+        release_read_only_pages();
+    }
+}
+
 /// Releases the read-only pages before console output when a collection has run since the
 /// last such release: a run that prints its result once at the end touches the output code
 /// while its own code is resident, at the peak of its heap (V8-v7 RegExp max RSS, bolted
