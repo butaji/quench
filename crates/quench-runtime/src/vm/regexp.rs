@@ -684,7 +684,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
             return None;
         };
-        Some((Rc::clone(&meta.matcher), flags))
+        Some((Self::regexp_matcher(meta).ok()?, flags))
     }
 
     /// `GetMethod(receiver, symbol)` for a RegExp `receiver` whose shape and prototype's
@@ -1537,7 +1537,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::RegExp { meta, .. }) = self.heap.get(regexp) else {
             return None;
         };
-        let matcher = &meta.matcher;
+        let matcher = Self::regexp_matcher(meta).ok()?;
         let intrinsics = self
             .realm
             .intrinsics
@@ -1554,7 +1554,7 @@ impl<H: Host> Vm<H> {
                 Native::RegExpExec,
                 false,
             ))
-        .then(|| Rc::clone(matcher))
+        .then_some(matcher)
     }
 
     /// `RegExp.prototype[@@split]` steps 19–25 for a sticky `splitter` this call created,
@@ -2288,7 +2288,7 @@ impl<H: Host> Vm<H> {
                             source: source.clone(),
                             flags: RegExpFlags::validated(&flags),
                             legacy_constructor: owner,
-                            matcher,
+                            matcher: crate::heap::RegExpMatcher::compiled(matcher),
                         })
                     })
                     .map_err(|error| Rc::<str>::from(error.to_string()));
@@ -2319,6 +2319,7 @@ impl<H: Host> Vm<H> {
         matcher: Rc<quench_regexp::Regex>,
         legacy_constructor: crate::heap::RegExpLegacyOwner,
     ) -> Result<Value, JsError> {
+        let matcher = crate::heap::RegExpMatcher::compiled(matcher);
         let meta = Rc::new(crate::heap::RegExpMeta { source, flags, legacy_constructor, matcher });
         self.regexp_from_meta(prototype, meta)
     }
@@ -2414,7 +2415,7 @@ impl<H: Host> Vm<H> {
                 let meta = Rc::make_mut(meta);
                 meta.source = source;
                 meta.flags = RegExpFlags::validated(&flags);
-                meta.matcher = matcher;
+                meta.matcher = crate::heap::RegExpMatcher::compiled(matcher);
                 let last_index = vm.intern_atom("lastIndex");
                 vm.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
                 Ok(receiver)
@@ -2526,7 +2527,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<quench_regexp::Match>, JsError> {
         let (regex, stateful, sticky) = match self.heap.get(this) {
             Some(Cell::RegExp { meta, .. }) => (
-                Rc::clone(&meta.matcher),
+                Self::regexp_matcher(meta)?,
                 meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY)),
                 meta.flags.contains(RegExpFlags::STICKY),
             ),
@@ -2998,6 +2999,16 @@ impl<H: Host> Vm<H> {
                 pair,
             ),
         })
+    }
+
+    /// `meta`'s matcher, compiled now if it has none (`RegExpMatcher`): the pattern compiled
+    /// when the record was first made, so it compiles again.
+    pub(super) fn regexp_matcher(meta: &crate::heap::RegExpMeta) -> Result<Rc<quench_regexp::Regex>, JsError> {
+        if let Some(matcher) = meta.matcher.0.get() {
+            return Ok(Rc::clone(matcher));
+        }
+        let matcher = Rc::new(Self::compile_regexp(&meta.source, &meta.flags.text(), PatternValidity::EarlyChecked)?);
+        Ok(Rc::clone(meta.matcher.0.get_or_init(|| matcher)))
     }
 
     pub(super) fn compile_regexp(
