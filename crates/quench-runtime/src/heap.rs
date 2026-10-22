@@ -1981,6 +1981,11 @@ impl Heap {
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let compaction_started = std::time::Instant::now();
+        if full && self.memory_policy.trims_slack_at_full_collections() {
+            let mut released = 0;
+            self.array_records.for_each_live_mut(|_, array| released += array.elements_mut().trim_slack());
+            live_payload_bytes -= released;
+        }
         if full {
             // A full sweep recounts the ledger from the survivors: shrinking a live array
             // (truncation, `pop`, `splice`) is not charged back between full collections.
