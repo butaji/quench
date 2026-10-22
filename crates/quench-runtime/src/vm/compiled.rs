@@ -596,13 +596,18 @@ struct CallContext {
 
 impl CallContext {
     /// A nested native entry shares the caller's instance and callout state,
-    /// but needs its own stack budget, guard-resume stack pointer and raised
-    /// completion, as a nested `run_compiled` invocation would.
+    /// but needs its own guard-resume stack pointer and raised completion, as a
+    /// nested `run_compiled` invocation would. Its stack limit is never below
+    /// the caller's: recursion through the callout (a runaway `call_indirect`)
+    /// spends the outermost entry's budget and traps as exhausted, rather than
+    /// taking a fresh budget at each level until the native stack overflows.
     fn nested_entry(&self) -> Self {
         let marker = 0u8;
         let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
         Self {
-            stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
+            stack_limit: self
+                .stack_limit
+                .max(stack_pointer.saturating_sub(COMPILED_STACK_BUDGET)),
             interrupt: self.interrupt,
             table: self.table,
             vm: self.vm,
