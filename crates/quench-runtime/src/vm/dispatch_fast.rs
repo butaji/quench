@@ -6668,18 +6668,38 @@ script_handler! {
             .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
         // An internal name is no binding source text can declare, except the internal globals
         // the realm installs on its global object, which a static lookup reads as any other.
-        let global = vm.programs.unresolved_names_are_global(unsafe { (*cx).program }, function)
+        // Static resolution rules out a `with` object, which the general search consults first.
+        let statically = code
+            .function_get(function as usize)
+            .is_some_and(|function| function.names_resolve_statically(code));
+        let global = statically
+            && vm.programs.unresolved_names_are_global(unsafe { (*cx).program }, function)
             && (!vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
-                || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&vm.atom_name(i.imm())))
-            && code.function_get(function as usize).is_some_and(|function| {
-                function.names_resolve_statically(code)
-            });
+                || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&vm.atom_name(i.imm())));
         if global {
             requicken(ip, lane_load_global_name::<H>);
             sibling!(lane_load_global_name::<H>, r, ip, Carried::script(cx))
         }
+        // An internal name of a built-in, which every lookup resolves before any scope.
+        if statically && super::environment::internal_name_native(vm.atom_name(i.imm())).is_some() {
+            requicken(ip, lane_load_internal_native::<H>);
+            sibling!(lane_load_internal_native::<H>, r, ip, Carried::script(cx))
+        }
         requicken(ip, lane_exit::<H>);
         exit(ip)
+    }
+}
+
+script_handler! {
+    /// A `LoadName` of an internal name of a built-in (`internal_name_native`), which the
+    /// general path resolves before any scope: the realm's native.
+    fn lane_load_internal_native<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(native) = super::environment::internal_name_native(vm.atom_name(i.imm())) else {
+            return exit(ip);
+        };
+        r.set(i.a, vm.native_value(native));
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
@@ -7191,6 +7211,14 @@ fn lane_pure_native<H: Host>(
         ),
         // Pure of any arguments: SameValue and a Number test.
         Native::ObjectIs => vm.call_object_native(code, Native::ObjectIs, args).ok(),
+        // `super` reads (`Reflect.get` and `Reflect.getPrototypeOf` of a home object): an
+        // ordinary target's data property, whose read ignores the receiver, and its prototype.
+        Native::ReflectGet => {
+            let target = *args.first()?;
+            vm.heap.ordinary_object(target)?;
+            vm.plain_keyed_get(target, *args.get(1)?)
+        }
+        Native::ReflectGetPrototypeOf => Some(vm.heap.ordinary_object(*args.first()?)?.proto()),
         Native::NumberIsNaN => vm.call_number_native(code, Native::NumberIsNaN, args).ok(),
         // The registry lookup of a string key, which ToString leaves as it is.
         Native::SymbolFor if args.first().is_some_and(|key| vm.heap.is_string(*key)) => {
