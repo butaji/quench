@@ -2012,6 +2012,16 @@ impl<H: Host> Vm<H> {
                     self.record_accessor_field_cache(object, atom, site);
                     self.cached_field_getter(object, atom, site)
                 });
+                #[cfg(feature = "profile-lane-exits")]
+                if getter.is_none() {
+                    super::lane_exits::record_detail(format!(
+                        "field miss {} function={} shape_answers={} dictionary={}",
+                        self.atom_name(atom),
+                        self.heap.function(object).is_some(),
+                        self.shape_property_lookup(object, atom).is_some(),
+                        self.object_data(object).is_some_and(|data| self.shape_is_dictionary(data.shape())),
+                    ));
+                }
                 match getter {
                     Some(getter) => self.call_value(p, getter, object, &[]),
                     None => self.get_property(p, object, atom),
@@ -2316,7 +2326,7 @@ impl<H: Host> Vm<H> {
         let mut holder = None;
         let mut holder_value = Value::UNDEFINED;
         for &shape in &cache.prototype_shapes[..usize::from(cache.depth)] {
-            let Some(data) = self.shape_property_lookup(prototype, cache.atom) else {
+            let Some(data) = self.inherited_chain_link(prototype, cache.atom, cache.function_links) else {
                 return None;
             };
             if data.shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
@@ -2365,9 +2375,34 @@ impl<H: Host> Vm<H> {
         cache.proved_holder = proof.holder;
     }
 
+    /// Whether a function on a prototype chain answers `atom` from its shape as an ordinary
+    /// object does, so an inherited entry for it may pass one: every name but its restricted
+    /// ones (`caller`, `arguments`), the names exotic receivers answer outside their shape,
+    /// the native-info names (`Vm::reads_function_info`) and `prototype`, whose slot may hold
+    /// a constructor's prototype before it is made.
+    fn function_links_answer(&self, atom: Atom) -> bool {
+        !self
+            .atom_class(atom)
+            .intersects(AtomClass::RESTRICTED_FUNCTION_PROPERTY | AtomClass::VIRTUAL_FIELD)
+            && !self.reads_function_info(atom)
+            && self.known_prototype_atom() != Some(atom)
+    }
+
+    /// The object of a prototype-chain link an inherited entry passes, when its shape answers
+    /// `atom` (`shape_property_lookup`); a function only where `function_links`
+    /// (`function_links_answer`), as Node's classes inherit from their parent constructors
+    /// (`Readable` from `Stream`).
+    #[inline(always)]
+    fn inherited_chain_link(&self, value: Value, atom: Atom, function_links: bool) -> Option<&Object> {
+        if !function_links && self.heap.function(value).is_some() {
+            return None;
+        }
+        self.shape_property_lookup(value, atom)
+    }
+
     /// A data field of `atom` held more than one prototype above `object`, which lacks it,
-    /// with every prototype on the way an ordinary non-dictionary object: the cache entry that
-    /// answers the load again, and the value.
+    /// with every prototype on the way a non-dictionary object `inherited_chain_link` passes:
+    /// the cache entry that answers the load again, and the value.
     #[cold]
     #[inline(never)]
     fn inherited_field(
@@ -2379,11 +2414,13 @@ impl<H: Host> Vm<H> {
         if self.shape_slot(object.shape(), atom).is_some() {
             return None;
         }
+        let function_links = self.function_links_answer(atom);
         let mut cache = InheritedFieldCache {
             receiver: object.shape(),
             atom,
             prototype_shapes: [NO_FIELD_HOLDER; INHERITED_FIELD_CACHE_MAX_DEPTH],
             depth: 0,
+            function_links,
             answer: InheritedFieldAnswer::Absent,
             proved_epoch: NO_PROVED_EPOCH,
             proved_prototype: crate::heap::ProtoLink::NULL,
@@ -2401,7 +2438,7 @@ impl<H: Host> Vm<H> {
             if prototype.is_null() {
                 return absence_cacheable.then_some((cache, Value::UNDEFINED));
             }
-            let Some(data) = self.shape_property_lookup(prototype, atom) else {
+            let Some(data) = self.inherited_chain_link(prototype, atom, function_links) else {
                 return None;
             };
             let shape = data.shape();
