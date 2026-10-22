@@ -254,7 +254,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::ConditionalExpression(value) => {
                 let alternate = self.condition(&value.test);
                 self.return_expression(&value.consequent);
-                self.patch(alternate);
+                self.patch_exits(&alternate);
                 self.return_expression(&value.alternate);
             }
             _ => {
@@ -421,11 +421,11 @@ impl FunctionCompiler<'_, '_> {
         self.annex_b_statement(&item.consequent);
         if let Some(other) = &item.alternate {
             let end = self.emit(Op::Jump, 0, 0, 0, 0);
-            self.patch(alternate);
+            self.patch_exits(&alternate);
             self.annex_b_statement(other);
             self.patch(end);
         } else {
-            self.patch(alternate);
+            self.patch_exits(&alternate);
         }
     }
 
@@ -456,8 +456,8 @@ impl FunctionCompiler<'_, '_> {
         self.patch_edges(&control.continues, head);
         self.emit(Op::Jump, 0, 0, 0, head);
         let end = self.code.len() as u32;
-        if let Some(edge) = condition_end {
-            self.patch_to(edge, end);
+        if let Some(edges) = condition_end {
+            self.patch_edges(&edges, end);
         }
         self.patch_edges(&control.breaks, end);
         self.resolve_control_destinations(&control, end, Some(head));
@@ -478,8 +478,8 @@ impl FunctionCompiler<'_, '_> {
         let end_edge = self.loop_condition(&item.test);
         self.emit(Op::Jump, 0, 0, 0, head);
         let end = self.code.len() as u32;
-        if let Some(edge) = end_edge {
-            self.patch_to(edge, end);
+        if let Some(edges) = end_edge {
+            self.patch_edges(&edges, end);
         }
         self.patch_edges(&control.breaks, end);
         self.resolve_control_destinations(&control, end, Some(condition));
@@ -541,8 +541,8 @@ impl FunctionCompiler<'_, '_> {
         }
         self.emit(Op::Jump, 0, 0, 0, head);
         let end = self.code.len() as u32;
-        if let Some(edge) = condition_end {
-            self.patch_to(edge, end);
+        if let Some(edges) = condition_end {
+            self.patch_edges(&edges, end);
         }
         self.patch_edges(&control.breaks, end);
         self.resolve_control_destinations(&control, end, Some(update));
