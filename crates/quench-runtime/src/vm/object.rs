@@ -1572,6 +1572,23 @@ impl<H: Host> Vm<H> {
         Some(slot)
     }
 
+    /// An own-data slot from a site's hashed megamorphic entries, once its inline entries
+    /// overflowed: the store at an AST-building site sees a receiver shape per node kind
+    /// (Babel's and TypeScript's `node.end =` and `e.parent =`), so its writes stay cached
+    /// in the lane instead of each leaving it. Out of line, as the hash probe needs
+    /// registers the inline store does not.
+    #[inline(never)]
+    fn hashed_megamorphic_own_field_slot(&self, site: usize, receiver: u32) -> Option<u16> {
+        // SAFETY: as for `inline_megamorphic_field_slot`.
+        let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site) };
+        if table_index == NO_MEGAMORPHIC_FIELD {
+            return None;
+        }
+        let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
+        set.overflow.as_ref()?;
+        set.get(receiver, NO_FIELD_HOLDER).map(|entry| entry.slot)
+    }
+
     /// `get_field_cached` past the inline own-data hits: hashed megamorphic and
     /// prototype-holder hits, then the uncached path. The receiver is an ordinary object.
     #[inline(never)]
@@ -2829,6 +2846,7 @@ impl<H: Host> Vm<H> {
             Some(cache.slot)
         } else {
             self.inline_megamorphic_field_slot(index, shape)
+                .or_else(|| self.hashed_megamorphic_own_field_slot(index, shape))
         };
         let Some(slot) = slot else {
             return false;
