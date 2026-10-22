@@ -4,12 +4,6 @@
 use super::*;
 use crate::snapshot::{read_list, snap_struct, snapshot_enum, Reader, Snap, SnapshotError, SnapshotResult, Writer};
 
-/// What decoding a cell needs from the VM it is restored into.
-pub(crate) struct CellDecoder<'a> {
-    /// The matcher of a regular expression, compiled again from its source and flags.
-    pub(crate) regexp: &'a mut dyn FnMut(&JsString, &str) -> SnapshotResult<Rc<quench_regexp::Regex>>,
-}
-
 snapshot_enum!(proxy_kind: ProxyKind { Object, Callable, Constructor });
 snapshot_enum!(typed_array_kind: TypedArrayKind {
     Uint8, Uint8Clamped, Uint16, Uint32, Int8, Int16, Int32, BigInt64, BigUint64, Float16, Float32, Float64,
@@ -731,7 +725,7 @@ impl Cell {
         Ok(())
     }
 
-    pub(crate) fn read_snapshot(reader: &mut Reader<'_>, decoder: &mut CellDecoder<'_>) -> SnapshotResult<Self> {
+    pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         let boxed_object = |reader: &mut Reader<'_>| read_object(reader).map(Box::new);
         Ok(match reader.u8()? {
             tag::OBJECT => Self::Object(read_object(reader)?),
@@ -851,10 +845,9 @@ impl Cell {
                     1 => RegExpLegacyOwner::Disabled(reader.value()?),
                     _ => return Err(SnapshotError("invalid snapshot regexp owner".into())),
                 };
-                let matcher = (decoder.regexp)(&source, &flag_text)?;
                 // A restored RegExp owns its record; literal sites share theirs again from the
                 // program store (`ProgramStore::regexp_literal_meta`) on their next evaluation.
-                Self::RegExp { object, meta: std::rc::Rc::new(RegExpMeta { source, flags, legacy_constructor, matcher }) }
+                Self::RegExp { object, meta: std::rc::Rc::new(RegExpMeta { source, flags, legacy_constructor, matcher: Default::default() }) }
             }
             tag::ERROR => Self::Error(reader.string()?),
             tag::PROMISE => Self::Promise(Box::new(crate::heap::PromiseCell::read_snapshot(reader)?)),
