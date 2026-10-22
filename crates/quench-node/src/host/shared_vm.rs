@@ -1025,27 +1025,30 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
 
 /// The host function registered as `name`. Hosts resolve operations per request (an
 /// incoming message's stream methods, an accepted socket's handle), so the names are
-/// indexed once rather than searched among every binding. Each name registers exactly one
-/// function (`operation_names_are_unique`).
+/// indexed once, by a binary search, rather than scanned among every binding. Each name
+/// registers exactly one function (`operation_names_are_unique`).
 pub(crate) fn operation(name: &str) -> HostFunctionId {
-    static INDEX: std::sync::OnceLock<rustc_hash::FxHashMap<&'static str, u32>> =
-        std::sync::OnceLock::new();
-    // Built in every process: hashed by FxHash and sized for every binding, it is neither
-    // rehashed as it grows nor SipHashed (2% of an empty script's instructions).
+    /// The bindings' positions, ordered by name: the names are the bindings' own static
+    /// strings, so the index holds two bytes a binding. A hash map keyed by the names, sized
+    /// for every binding, was 50 KiB of every process's heap at start-up (massif, V8-v7
+    /// Richards, 2026-10-22); a binary search costs about eleven comparisons of short names.
+    static INDEX: std::sync::OnceLock<Box<[u16]>> = std::sync::OnceLock::new();
+    let bindings = bindings();
     let index = INDEX.get_or_init(|| {
-        let mut index = rustc_hash::FxHashMap::with_capacity_and_hasher(
-            bindings().len(),
-            Default::default(),
-        );
-        for (position, binding) in bindings().iter().enumerate() {
-            // A repeated name resolves to its first registration.
-            index
-                .entry(binding.name)
-                .or_insert(u32::try_from(position).expect("Node binding index fits u32"));
-        }
+        let mut index: Box<[u16]> = (0..bindings.len())
+            .map(|position| u16::try_from(position).expect("Node binding index fits u16"))
+            .collect();
+        // Stable, so a repeated name resolves to its first registration.
+        index.sort_by_key(|&position| bindings[usize::from(position)].name);
         index
     });
-    HostFunctionId(*index.get(name).expect("registered Node operation"))
+    let first = index.partition_point(|&position| bindings[usize::from(position)].name < name);
+    let position = index
+        .get(first)
+        .copied()
+        .filter(|&position| bindings[usize::from(position)].name == name)
+        .expect("registered Node operation");
+    HostFunctionId(u32::from(position))
 }
 
 /// The host operations that run beside a lane's frameless activations
