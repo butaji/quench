@@ -884,9 +884,11 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
 /// Entries of the script call cache, in sets of `SCRIPT_TARGET_WAYS` that a hash of the
 /// callee's heap index picks (`ScriptTargets::set`), at most: Express's router calls a
 /// matcher closure per layer, some 400 distinct callees a request, which 256 entries
-/// thrashed (Callgrind: 2.4% of a ping request re-resolving); 1024 hold them in 64 KiB per
-/// table.
-const SCRIPT_CALL_TARGETS: usize = 1024;
+/// thrashed (Callgrind: 2.4% of a ping request re-resolving). 1024 still met conflicts in
+/// their two-way sets, re-resolving 34 callees a body request (~380 instructions each);
+/// 4096 (256 KiB per table, reached only by a cache that keeps displacing live targets) cut
+/// express body and ping 1.3% (Callgrind, per request).
+const SCRIPT_CALL_TARGETS: usize = 4096;
 /// Entries a script call cache starts with: a program that calls few distinct callees keeps
 /// 16 KiB per table resident instead of 64 (V8-v7 max RSS, both tables: about 100 KiB per
 /// fixture). A cache grows to `SCRIPT_CALL_TARGETS` by this factor each time it has
@@ -1525,6 +1527,35 @@ unsafe fn vm<'a, H: Host>(cx: *mut LaneContext<H>) -> &'a mut Vm<H> {
     unsafe { &mut *(*cx).vm }
 }
 
+/// Sample the identity and body a script call site targets. Diagnostic builds use this to
+/// determine whether a per-site target memo is worth implementing; production builds compile
+/// every call to this helper away.
+#[cfg(feature = "profile-lane-exits")]
+#[inline(always)]
+fn profile_script_call_target<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    callee: Value,
+    target: &ScriptCallTarget,
+) {
+    let vm = unsafe { vm(cx) };
+    let caller = vm
+        .lane_stack
+        .activations
+        .last()
+        .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| {
+            activation.function
+        });
+    let pc = unsafe { ip.offset_from((*cx).base) } as u32;
+    super::lane_exits::call_target(
+        unsafe { (*cx).program.raw() },
+        caller,
+        pc,
+        callee,
+        target.function,
+    );
+}
+
 /// The handler of the record at `ip`.
 #[inline(always)]
 fn handler<H: Host>(ip: Ip) -> Handler {
@@ -2081,10 +2112,10 @@ script_handler! {
 }
 
 script_handler! {
-    /// Numbers convert to themselves; other values take the general path.
+    /// Numbers and BigInts convert to themselves; other values take the general path.
     fn lane_to_numeric<>(cx, r, ip, i, view) {
         let value = r.get(i.b);
-        if value.as_number().is_none() {
+        if value.as_number().is_none() && !matches!(unsafe { vm(cx) }.heap.get(value), Some(Cell::BigInt(_))) {
             return exit(ip);
         }
         r.set(i.a, value);
@@ -2169,15 +2200,27 @@ const fn lane_steps_in_place(op: Op) -> bool {
 }
 
 script_handler! {
-    /// `IncDec` of a Number; other values take the general path. The view derives the
-    /// direction from the record (`specialize_updates`).
+    /// `IncDec` of a Number or BigInt (`lane_increment`); other values take the general path.
+    /// The view derives the direction from the record (`specialize_updates`).
     fn lane_inc_dec<DECREMENT: bool>(cx, r, ip, i, view) {
-        let Some(value) = super::dispatch::number_increment(r.get(i.b), DECREMENT) else {
+        let Some(value) = lane_increment::<H, DECREMENT>(cx, r.get(i.b)) else {
             return exit(ip);
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
+}
+
+/// The update of a Number (`number_increment`) or a BigInt (`Vm::bigint_increment`, which
+/// allocates its result); `None` for any value whose ToNumeric may run guest code.
+#[inline(always)]
+fn lane_increment<H: Host, const DECREMENT: bool>(cx: *mut LaneContext<H>, value: Value) -> Option<Value> {
+    super::dispatch::number_increment(value, DECREMENT).or_else(|| {
+        let vm = unsafe { vm(cx) };
+        let next = vm.bigint_increment(value, DECREMENT)?;
+        note_allocation(vm);
+        Some(next)
+    })
 }
 
 script_handler! {
@@ -2202,12 +2245,12 @@ script_handler! {
 }
 
 script_handler! {
-    /// A postfix update of a Number: `ToNumeric` into `a` and the `IncDec` of its result into
-    /// `c` that follows it (`specialize_updates`). Other values take the general path at the
-    /// conversion.
+    /// A postfix update of a Number or BigInt (`lane_increment`): `ToNumeric` into `a` and the
+    /// `IncDec` of its result into `c` that follows it (`specialize_updates`). Other values
+    /// take the general path at the conversion.
     fn lane_postfix_update<DECREMENT: bool>(cx, r, ip, i, view) {
         let value = r.get(i.b);
-        let Some(updated) = super::dispatch::number_increment(value, DECREMENT) else {
+        let Some(updated) = lane_increment::<H, DECREMENT>(cx, value) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -2957,9 +3000,10 @@ script_handler! {
     }
 }
 
-/// A capture of a root environment's global var (`Vm::plain_projected_global_var`), which a
-/// script's functions read for its top-level `var`s: the capture's environment as the general
-/// path finds it, from the frame or from the activation's environment.
+/// A capture of a root environment's global var or global lexical
+/// (`Vm::plain_projected_root_binding`), which a script's functions read for its top-level
+/// `var`s, and in an eval script's context its `let`s and `const`s: the capture's environment
+/// as the general path finds it, from the frame or from the activation's environment.
 #[inline(never)]
 fn lane_projected_capture<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
@@ -2969,7 +3013,7 @@ fn lane_projected_capture<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u1
     } else {
         vm.environment_capture_env(env, false, depth)?
     };
-    vm.plain_projected_global_var(env, slot)
+    vm.plain_projected_root_binding(env, slot)
 }
 
 /// A frame run's innermost capture slots for `LaneContext::capture`, when the frame's
@@ -3691,6 +3735,23 @@ script_handler! {
         let Some(length) = (unsafe { vm(cx) }).string_length(r.get(i.b)) else {
             sibling!(lane_get_length_arguments::<H>, r, ip, Carried::script(cx))
         };
+        // A site that reads a string's length mostly reads strings, as a scan over one does.
+        requicken(ip, lane_get_length_string::<H>);
+        r.set(i.a, Value::length(length));
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_length` at a site that read a string's length (`lane_get_length_other`):
+    /// a string's length first, then an array's; any other receiver takes
+    /// `lane_get_length_arguments`.
+    fn lane_get_length_string<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let receiver = r.get(i.b);
+        let Some(length) = vm.string_length(receiver).or_else(|| vm.own_array_length(receiver)) else {
+            sibling!(lane_get_length_arguments::<H>, r, ip, Carried::script(cx))
+        };
         r.set(i.a, Value::length(length));
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -4147,8 +4208,9 @@ fn lane_cached_field_miss<H: Host>(
             .array_length_field(object, atom)
             .or_else(|| vm.cached_string_field_hit(code, object, atom, site)),
     }
-    // A collection's `size`, which no cache records (`AtomClass::VIRTUAL_FIELD`).
-    .or_else(|| vm.collection_size_field(object, atom))
+    // A collection's `size` or a buffer view's field, which no cache records
+    // (`AtomClass::VIRTUAL_FIELD`).
+    .or_else(|| vm.pure_virtual_field(object, atom))
 }
 
 script_handler! {
@@ -4383,6 +4445,22 @@ script_handler! {
         if !present {
             sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
         }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `CopyDataProperties` (an object spread or rest) that a plain copy answers
+    /// (`Vm::copy_plain_data_properties`), which runs no guest code and cannot throw, so it
+    /// runs beside activations; any other copy takes `lane_general_step`.
+    #[inline(never)]
+    fn lane_copy_data_properties<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        if !vm.copy_plain_data_properties(r.get(i.a), r.get(i.b), r.get(i.c)) {
+            sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
+        }
+        // The copy can allocate property storage.
+        note_allocation(vm);
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -6776,6 +6854,263 @@ fn offset_mask_jump_handler<H: Host>(first: Op, jump: Op, backward: bool, acc: u
 }
 
 lane_handler! {
+    /// A bit-field extraction, reading its operand through field `ACC`, and a following i32
+    /// operator `SECOND` (another extraction, or an operator of registers or a constant): both
+    /// records run here, the extraction written before the operator reads its operands.
+    fn lane_bit_field_then<SECOND: u16, ACC: u8>(cx, r, ip, i, view) {
+        let (operator, immediate) = const {
+            match opcode(SECOND) {
+                Op::WasmI32ShiftRightUnsignedAndImmediate => (None, true),
+                op => match I32BinaryOperator::from_register_op(op) {
+                    Some(operator) => (Some(operator), false),
+                    None => match I32BinaryOperator::from_immediate_op(op) {
+                        Some(operator) => (Some(operator), true),
+                        None => panic!("not an i32 operator"),
+                    },
+                },
+            }
+        };
+        let field = crate::wasm::integer::shift_right_unsigned_and(
+            read_i32::<ACC, ACC_B>(r, i.b, view),
+            i32::from(i.c as i16),
+            i.imm() as i32,
+        );
+        r.set(i.a, view.integers.encode(field));
+        let second_ip = following(ip);
+        // SAFETY: the view fuses an extraction only with a following i32 operator.
+        let second = unsafe { &*second_ip };
+        let value = match operator {
+            None => crate::wasm::integer::shift_right_unsigned_and(
+                r.i32(second.b),
+                i32::from(second.c as i16),
+                second.imm() as i32,
+            ),
+            Some(operator) => {
+                let right = if immediate { second.imm() as i32 } else { r.i32(second.c) };
+                let Ok(value) = operator.evaluate(r.i32(second.b), right) else {
+                    return exit(second_ip);
+                };
+                value
+            }
+        };
+        produce!(cx, r, second_ip, second.a, view.integers.encode(value), view)
+    }
+}
+
+/// The extraction-then-operator handler for i32 operator `second`, the extraction read
+/// through field `acc`.
+fn bit_field_then_handler<H: Host>(second: Op, acc: u8) -> Option<Handler> {
+    macro_rules! seconds {
+        ($($second:ident),+) => {
+            match (second, acc) {
+                $(
+                    (Op::$second, ACC_NONE) => Some(lane_bit_field_then::<H, { Op::$second as u16 }, ACC_NONE> as Handler),
+                    (Op::$second, ACC_B) => Some(lane_bit_field_then::<H, { Op::$second as u16 }, ACC_B> as Handler),
+                )+
+                _ => None,
+            }
+        };
+    }
+    seconds!(WasmI32ShiftRightUnsignedAndImmediate, WasmI32Multiply, WasmI32XorImmediate)
+}
+
+lane_handler! {
+    /// An immediate comparison jump `JUMP`, reading its operand through field `ACC`, that
+    /// falls through to direct i32 load `LOAD` (`if c == k goto L; v = *p`): both records run
+    /// here, the load only when the jump falls through.
+    fn lane_compare_jump_load<JUMP: u16, LOAD: u16, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
+        let comparison = const {
+            match I32BinaryOperator::from_immediate_jump_op(opcode(JUMP)) {
+                Some(comparison) => comparison,
+                None => panic!("not an i32 immediate comparison jump"),
+            }
+        };
+        let load = const { direct_load(LOAD) };
+        let Ok(taken) = comparison.evaluate(read_i32::<ACC, ACC_A>(r, i.a, view), i32::from(i.b as i16)) else {
+            return exit(ip);
+        };
+        if taken != 0 {
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
+        }
+        let load_ip = following(ip);
+        // SAFETY: the view fuses a comparison jump only with a following plain load.
+        let access = unsafe { &*load_ip };
+        let address = u64::from(r.get(access.c).wasm_bits32()) + u64::from(access.imm());
+        // SAFETY: as for `lane_load`.
+        let Some(value) = (unsafe { view.memory.read(load, address) }) else {
+            return exit(load_ip);
+        };
+        let Some(value) = lane_encode(view, value) else {
+            return exit(load_ip);
+        };
+        produce!(cx, r, load_ip, access.a, value, view)
+    }
+}
+
+/// The compare-jump-load handler for immediate comparison jump `jump` and i32 load `load`.
+fn compare_jump_load_handler<H: Host>(jump: Op, load: Op, backward: bool, acc: u8) -> Option<Handler> {
+    macro_rules! accs {
+        ($jump:ident, $load:ident) => {
+            match (backward, acc) {
+                (false, ACC_NONE) => Some(lane_compare_jump_load::<H, { Op::$jump as u16 }, { Op::$load as u16 }, false, ACC_NONE> as Handler),
+                (true, ACC_NONE) => Some(lane_compare_jump_load::<H, { Op::$jump as u16 }, { Op::$load as u16 }, true, ACC_NONE> as Handler),
+                (false, ACC_A) => Some(lane_compare_jump_load::<H, { Op::$jump as u16 }, { Op::$load as u16 }, false, ACC_A> as Handler),
+                (true, ACC_A) => Some(lane_compare_jump_load::<H, { Op::$jump as u16 }, { Op::$load as u16 }, true, ACC_A> as Handler),
+                _ => None,
+            }
+        };
+    }
+    macro_rules! loads {
+        ($jump:ident) => {
+            match load {
+                Op::WasmI32Load => accs!($jump, WasmI32Load),
+                Op::WasmI32Load8U => accs!($jump, WasmI32Load8U),
+                _ => None,
+            }
+        };
+    }
+    match jump {
+        Op::WasmJumpI32EqualImmediate => loads!(WasmJumpI32EqualImmediate),
+        Op::WasmJumpI32NotEqualImmediate => loads!(WasmJumpI32NotEqualImmediate),
+        _ => None,
+    }
+}
+
+lane_handler! {
+    /// Two i32 adds (`FIRST`, reading through field `ACC`, then `SECOND`), each of a register
+    /// or a constant, or an add and a counted loop's step and test (`SECOND` is
+    /// `WasmI32AddImmediateJumpNonZero`): a strided loop's pointer and counter updates. The
+    /// first result is written before the second reads its operands, as two records do.
+    fn lane_add_pair<FIRST: u16, SECOND: u16, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
+        let first_immediate = const {
+            match opcode(FIRST) {
+                Op::WasmI32Add => false,
+                Op::WasmI32AddImmediate => true,
+                _ => panic!("not an i32 add"),
+            }
+        };
+        let right = if first_immediate { i.imm() as i32 } else { read_i32::<ACC, ACC_C>(r, i.c, view) };
+        let first = view.integers.encode(read_i32::<ACC, ACC_B>(r, i.b, view).wrapping_add(right));
+        r.set(i.a, first);
+        let second_ip = following(ip);
+        // SAFETY: the view fuses an add only with a following add or loop step.
+        let second = unsafe { &*second_ip };
+        let view = Carried { acc: Slot::of(first), ..view };
+        match const { opcode(SECOND) } {
+            Op::WasmI32AddImmediateJumpNonZero => {
+                let sum = r.i32(second.b).wrapping_add(i32::from(second.c as i16));
+                let encoded = view.integers.encode(sum);
+                if sum != 0 {
+                    return lane_jump(cx, r, second_ip, BACKWARD, view, Some((second.a, encoded)));
+                }
+                produce!(cx, r, second_ip, second.a, encoded, view)
+            }
+            Op::WasmI32AddImmediate => {
+                let sum = r.i32(second.b).wrapping_add(second.imm() as i32);
+                produce!(cx, r, second_ip, second.a, view.integers.encode(sum), view)
+            }
+            _ => {
+                let sum = r.i32(second.b).wrapping_add(r.i32(second.c));
+                produce!(cx, r, second_ip, second.a, view.integers.encode(sum), view)
+            }
+        }
+    }
+}
+
+/// The add-pair handler for add `first` read through field `acc`, then `second`.
+fn add_pair_handler<H: Host>(first: Op, second: Op, backward: bool, acc: u8) -> Option<Handler> {
+    macro_rules! accs {
+        ($first:ident, $second:ident, $backward:literal) => {
+            match acc {
+                ACC_NONE => Some(lane_add_pair::<H, { Op::$first as u16 }, { Op::$second as u16 }, $backward, ACC_NONE> as Handler),
+                ACC_B => Some(lane_add_pair::<H, { Op::$first as u16 }, { Op::$second as u16 }, $backward, ACC_B> as Handler),
+                ACC_C => Some(lane_add_pair::<H, { Op::$first as u16 }, { Op::$second as u16 }, $backward, ACC_C> as Handler),
+                _ => None,
+            }
+        };
+    }
+    macro_rules! seconds {
+        ($first:ident) => {
+            match (second, backward) {
+                (Op::WasmI32Add, _) => accs!($first, WasmI32Add, false),
+                (Op::WasmI32AddImmediate, _) => accs!($first, WasmI32AddImmediate, false),
+                (Op::WasmI32AddImmediateJumpNonZero, false) => accs!($first, WasmI32AddImmediateJumpNonZero, false),
+                (Op::WasmI32AddImmediateJumpNonZero, true) => accs!($first, WasmI32AddImmediateJumpNonZero, true),
+                _ => None,
+            }
+        };
+    }
+    match first {
+        Op::WasmI32Add => seconds!(WasmI32Add),
+        Op::WasmI32AddImmediate => seconds!(WasmI32AddImmediate),
+        _ => None,
+    }
+}
+
+lane_handler! {
+    /// An i32 operator of a constant (`FIRST`) and the register comparison jump `JUMP` reading
+    /// its result as either operand (`(x & mask) == y`): two records run here, the result
+    /// written as its own record writes it.
+    fn lane_immediate_compare_jump<FIRST: u16, JUMP: u16, BACKWARD: bool>(cx, r, ip, i, view) {
+        let operator = const {
+            match I32BinaryOperator::from_immediate_op(opcode(FIRST)) {
+                Some(operator) => operator,
+                None => panic!("not an i32 immediate operator"),
+            }
+        };
+        let comparison = const {
+            match I32BinaryOperator::from_jump_op(opcode(JUMP)) {
+                Some(comparison) => comparison,
+                None => panic!("not an i32 register comparison jump"),
+            }
+        };
+        let Ok(result) = operator.evaluate(r.i32(i.b), i.imm() as i32) else {
+            return exit(ip);
+        };
+        let encoded = view.integers.encode(result);
+        r.set(i.a, encoded);
+        let view = Carried { acc: Slot::of(encoded), ..view };
+        let jump_ip = following(ip);
+        // SAFETY: the view fuses an immediate operator only with a following comparison jump.
+        let jump = unsafe { &*jump_ip };
+        let operand = |register: u16| if register == i.a { result } else { r.i32(register) };
+        let Ok(taken) = comparison.evaluate(operand(jump.a), operand(jump.b)) else {
+            return exit(jump_ip);
+        };
+        if taken != 0 {
+            return lane_jump(cx, r, jump_ip, BACKWARD, view, None);
+        }
+        next!(cx, r, following(jump_ip), view)
+    }
+}
+
+/// The immediate-operator comparison-jump handler for operator `first`, register comparison
+/// jump `jump`.
+fn immediate_compare_jump_handler<H: Host>(first: Op, jump: Op, backward: bool) -> Option<Handler> {
+    macro_rules! jumps {
+        ($first:ident; $($jump:ident),+) => {
+            match (jump, backward) {
+                $(
+                    (Op::$jump, false) => Some(lane_immediate_compare_jump::<H, { Op::$first as u16 }, { Op::$jump as u16 }, false> as Handler),
+                    (Op::$jump, true) => Some(lane_immediate_compare_jump::<H, { Op::$first as u16 }, { Op::$jump as u16 }, true> as Handler),
+                )+
+                _ => None,
+            }
+        };
+    }
+    macro_rules! tested {
+        ($first:ident) => {
+            jumps!($first; WasmJumpI32Equal, WasmJumpI32NotEqual)
+        };
+    }
+    // Masked tag tests; each further pairing is another family of handler copies.
+    match first {
+        Op::WasmI32AndImmediate => tested!(WasmI32AndImmediate),
+        _ => None,
+    }
+}
+
+lane_handler! {
     /// An i32 operator `OP` (reading through field `ACC`; a comparison, typically), a constant
     /// load and a select choosing among their results and other registers (`cur = cur > clip
     /// ? 0 : cur`): three records run here, each result written as its own record writes it,
@@ -7225,6 +7560,18 @@ impl<H: Host> Vm<H> {
             .get(index as usize)
             .copied()
             .unwrap_or(false)
+    }
+
+    /// Whether `callee` is a native that runs beside a lane's activations
+    /// (`runs_beside_activations`), which a call made while they stay frameless may make
+    /// without making them frames.
+    pub(super) fn callee_runs_beside_activations(&self, callee: Value) -> bool {
+        match self.heap.function(callee) {
+            Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) => {
+                self.runs_beside_activations(*native, callee)
+            }
+            _ => false,
+        }
     }
 
     /// Make a deferred lane native call's activations frames (`DeferredLaneCall`), as
@@ -7797,6 +8144,8 @@ script_handler! {
             requicken(ip, handler);
             sibling!(handler, r, ip, Carried::script(cx))
         }
+        #[cfg(feature = "profile-lane-exits")]
+        profile_script_call_target(cx, ip, callee, target);
         // A receiver whose binding needs the heap takes the out-of-line form, so this
         // handler makes no call and keeps its registers.
         let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
@@ -7902,6 +8251,8 @@ script_handler! {
         let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
             sibling!(lane_script_call_general::<H>, r, ip, Carried::script(cx))
         };
+        #[cfg(feature = "profile-lane-exits")]
+        profile_script_call_target(cx, ip, callee, target);
         let arguments = ImmediateLayout::call_window_base(i.imm());
         let argc = ImmediateLayout::argument_count(i.imm());
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
@@ -7959,6 +8310,8 @@ script_handler! {
         let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
             return exit(ip);
         };
+        #[cfg(feature = "profile-lane-exits")]
+        profile_script_call_target(cx, ip, callee, target);
         let arguments = ImmediateLayout::call_window_base(i.imm());
         match lane_activate(cx, r, ip, target, arguments, this, false) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
@@ -7989,6 +8342,8 @@ script_handler! {
         let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
             return exit(ip);
         };
+        #[cfg(feature = "profile-lane-exits")]
+        profile_script_call_target(cx, ip, callee, target);
         let arguments = ImmediateLayout::call_window_base(i.imm());
         match lane_activate_environment(cx, r, ip, target, arguments, this) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
@@ -8050,6 +8405,8 @@ script_handler! {
         if target.entry != CallEntry::Activates {
             sibling!(lane_frame_call::<H>, r, ip, Carried::script(cx))
         }
+        #[cfg(feature = "profile-lane-exits")]
+        profile_script_call_target(cx, ip, callee, target);
         let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
             return exit(ip);
         };
@@ -8168,21 +8525,36 @@ script_handler! {
 }
 
 script_handler! {
-    /// A `LoadName` of a global object property (`lane_load_name_first`) that no global
-    /// lexical binding shadows: the global object's cached field (`Vm::cached_field_hit`).
-    /// Any other read, including a cache miss, takes the general path, which caches it.
+    /// A `LoadName` where names resolve statically to global bindings (`lane_load_name_first`):
+    /// an initialized global lexical binding of the name, which the general path's search
+    /// finds first there, else the global object's cached field (`Vm::cached_field_hit`).
+    /// Any other read, including an uninitialized binding or a cache miss, takes the general
+    /// path, which raises or caches it. A `LoadNameCall` (`CALL`) also writes the call's
+    /// receiver, `undefined` for a global binding.
     fn lane_load_global_name<CALL: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
         let atom = i.imm();
         if vm.realm.global_lexical_declarations.contains(&atom) {
-            return exit(ip);
+            let Some(value) = vm.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted())
+            else {
+                return exit(ip);
+            };
+            r.set(i.a, value);
+            if CALL {
+                r.set(i.b, Value::UNDEFINED);
+            }
+            next!(cx, r, following(ip), Carried::script(cx))
         }
-        let super::object::FieldCacheProbe::Hit(value) =
-            vm.cached_field_hit(code, vm.realm.globals, i.c)
-        else {
-            return exit(ip);
+        let value = match vm.cached_field_hit(code, vm.realm.globals, i.c) {
+            super::object::FieldCacheProbe::Hit(value) => value,
+            // A global object no cache records (a dictionary shape) still answers a present
+            // data property through its shape walk; an absent name raises on the general path.
+            _ => match vm.plain_global_binding(atom) {
+                Some(value) => value,
+                None => return exit(ip),
+            },
         };
         r.set(i.a, value);
         if CALL {
@@ -8351,6 +8723,21 @@ fn lane_forwarded_frame_call<H: Host>(
     receiver: Value,
     args: &[Value],
 ) -> Ip {
+    let skip = usize::from(ImmediateLayout::argument_count(i.imm())) - args.len();
+    lane_passed_frame_call(cx, r, ip, i, callee, receiver, FrameCallArguments::Window(skip))
+}
+
+/// The frame call of `callee` with `receiver` and `passed` that `lane_forwarded_frame_call`
+/// and an applied call (`lane_apply_activation`) make.
+fn lane_passed_frame_call<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    callee: Value,
+    receiver: Value,
+    passed: FrameCallArguments<'_>,
+) -> Ip {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -8361,8 +8748,17 @@ fn lane_forwarded_frame_call<H: Host>(
     let Some(target) = vm.in_loop_call_target(code, callee) else {
         return exit(ip);
     };
-    let skip = usize::from(ImmediateLayout::argument_count(i.imm())) - args.len();
-    lane_push_frame_call(cx, r, ip, i, target, callee, receiver, skip)
+    lane_push_frame_call(cx, r, ip, i, target, callee, receiver, passed)
+}
+
+/// The values a frame call passes its callee (`lane_push_frame_call`).
+#[derive(Clone, Copy)]
+enum FrameCallArguments<'a> {
+    /// The call window's values past its first `skip` (a forwarded call's own arguments),
+    /// read again once the caller is a frame.
+    Window(usize),
+    /// Values the caller copied out, as an applied list's elements.
+    List(&'a [Value]),
 }
 
 script_handler! {
@@ -8385,6 +8781,14 @@ script_handler! {
         if matches!(kind, FunctionKind::Native(Native::FunctionCall | Native::FunctionBoundCall)) {
             sibling!(lane_function_call::<H>, r, ip, Carried::script(cx))
         }
+        if let FunctionKind::Native(native @ (Native::FunctionApply | Native::ReflectApply)) = kind
+            && let Some(activation) = lane_apply_activation(cx, r, ip, i, native)
+        {
+            return match activation {
+                Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+                Err(next) => next,
+            };
+        }
         // A call that returns its result completes its caller: an activation in the lane, or
         // the frame in the general loop (`lane_frame_return`).
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
@@ -8400,6 +8804,71 @@ script_handler! {
         lane_native_complete(cx, ip, i, value)
     }
 }
+
+/// `f.apply(thisArg, list)` (`native` `FunctionApply`, `f` the receiver) or
+/// `Reflect.apply(f, thisArg, list)` (`ReflectApply`) of a frameless `f` and a list that is a
+/// dense array without holes, or absent for `apply`: `f`'s activation with the list's
+/// elements, which CreateListFromArrayLike reads as its own data elements and the activation
+/// copies before anything runs, as `lane_function_call_activation` activates a call's. `None`
+/// for any other call, which the native makes.
+#[inline(never)]
+fn lane_apply_activation<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    native: Native,
+) -> Option<Result<(Registers, Ip), Ip>> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the call's window is registers of the running function.
+    let args = unsafe { lane_call_window(r, i) };
+    let argument = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
+    let (callee, receiver, list) = match native {
+        Native::FunctionApply => (r.get(i.c), argument(0), argument(1)),
+        _ => (argument(0), argument(1), *args.get(2)?),
+    };
+    let listed = !(native == Native::FunctionApply && (list.is_undefined() || list.is_null()));
+    let dense = |vm: &Vm<H>| {
+        vm.heap.array(list).is_some_and(|array| {
+            !array.is_arguments_object()
+                && vm.heap.sparse_length(list).is_none()
+                && !array.elements().as_slice().iter().any(|value| value.is_deleted())
+        })
+    };
+    if listed && !dense(vm) {
+        return None;
+    }
+    let target = lane_script_target(cx, callee).or_else(|| {
+        if lane_constructing(vm, callee) {
+            return None;
+        }
+        // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
+        Some(unsafe { *vm.cross_call_entry(callee)? }).filter(|target| target.entry == CallEntry::Activates)
+    });
+    let Some(target) = target else {
+        // A user function that needs a frame takes it in place (`lane_passed_frame_call`), with
+        // the elements copied out first: making the caller's
+        // activations frames moves no heap array, but the callee may change the list.
+        let elements = if listed {
+            vm.heap.array_elements(list)?.as_slice().iter().copied().collect()
+        } else {
+            smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::new()
+        };
+        return Some(Err(lane_passed_frame_call(cx, r, ip, i, callee, receiver, FrameCallArguments::List(&elements))));
+    };
+    let Some(this) = lane_call_this(vm, &target, receiver) else {
+        return Some(Err(exit(ip)));
+    };
+    // Read after the resolution above, which runs no guest code but may allocate.
+    let elements: &[Value] = if listed { vm.heap.array_elements(list)?.as_slice() } else { &[] };
+    let arguments = ActivationArguments::Kept(elements.as_ptr(), elements.len());
+    Some(lane_activate_keeping::<H, true>(cx, r, ip, target, arguments, this, false, None))
+}
+
+/// Values an applied frame call copies out without allocating their list.
+const FRAME_CALL_INLINE_ARGUMENTS: usize = 8;
+
+
 
 /// The values a lane `Call` record passes: its window of the running function's registers.
 ///
@@ -8789,6 +9258,15 @@ fn lane_call_native<H: Host>(
     {
         return Some(Value::number(result));
     }
+    // So do `Math.max` and its kin of Numbers (`math_numbers`).
+    if let Some(numbers) = args
+        .iter()
+        .map(|value| value.as_number())
+        .collect::<Option<smallvec::SmallVec<[f64; super::number::MATH_INLINE_ARGUMENTS]>>>()
+        && let Some(result) = super::number::math_numbers(native, &numbers)
+    {
+        return Some(Value::number(result));
+    }
     if !unsafe { (*cx).script_calls } {
         return None;
     }
@@ -9025,6 +9503,8 @@ fn lane_call_keeping_activation<H: Host>(
     if !target.forwards() {
         return Err(None);
     }
+    #[cfg(feature = "profile-lane-exits")]
+    profile_script_call_target(cx, ip, r.get(i.b), &target);
     let receiver = r.get(i.c);
     let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Err(Some(exit(ip)));
@@ -11019,8 +11499,8 @@ fn returning_kind(instruction: WideInstruction) -> Option<u8> {
         Op::Unary => Some(RETURNING_UNARY),
         Op::Binary => Some(RETURNING_BINARY),
         Op::MakeObject2 => Some(RETURNING_OBJECT),
-        Op::SuperConstArrayObject2 => Some(RETURNING_LITERAL),
         Op::MakeObjectLiteral => Some(RETURNING_OBJECT_LITERAL),
+        Op::SuperConstArrayObject2 => Some(RETURNING_LITERAL),
         _ => None,
     }
 }
@@ -11157,7 +11637,7 @@ script_handler! {
             requicken(ip, lane_script_call::<H>);
             return exit(ip);
         };
-        lane_push_frame_call(cx, r, ip, i, target, callee, r.get(i.c), 0)
+        lane_push_frame_call(cx, r, ip, i, target, callee, r.get(i.c), FrameCallArguments::Window(0))
     }
 }
 
@@ -11175,7 +11655,7 @@ fn lane_push_frame_call<H: Host>(
     target: (ProgramId, u32, Value),
     callee: Value,
     this: Value,
-    skip: usize,
+    passed: FrameCallArguments<'_>,
 ) -> Ip {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
@@ -11220,10 +11700,13 @@ fn lane_push_frame_call<H: Host>(
     // forwarded call is pushed, as the general loop's (`Vm::try_inline_call_apply`).
     // SAFETY: the call's window is registers of the running function, which the direct
     // call only reads.
-    let arguments = unsafe {
-        std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
+    let arguments = match passed {
+        FrameCallArguments::Window(skip) => (skip == 0).then(|| unsafe {
+            std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
+        }),
+        FrameCallArguments::List(list) => Some(list),
     };
-    if skip == 0
+    if let Some(arguments) = arguments
         && let Some(value) = vm.js_jit_compiled_call(code, (target.0, target.1), returns, arguments)
     {
         r.set(i.a, value);
@@ -11235,9 +11718,12 @@ fn lane_push_frame_call<H: Host>(
     // SAFETY: the call record lies in the running view.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     // SAFETY: the call's window is registers of the caller frame, which the push neither
-    // moves nor frees before it copies them.
-    let arguments: *const [Value] = unsafe {
-        std::slice::from_raw_parts(r.0.add(usize::from(window) + skip), usize::from(argc) - skip)
+    // moves nor frees before it copies them; a list outlives the push.
+    let arguments: *const [Value] = match passed {
+        FrameCallArguments::Window(skip) => unsafe {
+            std::slice::from_raw_parts(r.0.add(usize::from(window) + skip), usize::from(argc) - skip)
+        },
+        FrameCallArguments::List(list) => list,
     };
     let destination = i.a & crate::bytecode::REGISTER_MASK;
     let pushed = vm.push_in_loop_call(
@@ -11616,6 +12102,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::DefinePrivateField => Some(lane_define_private_field::<H>),
         Op::CheckPrivate => Some(lane_check_private::<H>),
         Op::PrivateIn => Some(lane_private_in::<H>),
+        Op::CopyDataProperties => Some(lane_copy_data_properties::<H>),
         op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => Some(lane_binary::<H>),
@@ -11775,8 +12262,8 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
                             | Op::GetField
                             | Op::Unary
                             | Op::MakeObject2
-                            | Op::SuperConstArrayObject2
                             | Op::MakeObjectLiteral
+                            | Op::SuperConstArrayObject2
                     )
                         || (op == Op::Binary && instruction.returns_from_frame())) =>
             {
@@ -12135,6 +12622,20 @@ fn derive_lane_view<H: Host>(
         tables[0][usize::from(acc)].get(op as usize).copied().flatten()
             .is_some_and(|served| handler == served.handler as *const ())
     };
+    // The direction and accumulator field (among `accs`) of the plain handler serving `op`
+    // that `handler` is, for an instruction whose handler depends on its jump's direction.
+    let plain_served = |handler: *const (), op: Op, accs: &[u8]| {
+        [false, true].into_iter().find_map(|backward| {
+            accs.iter().copied().find(|&acc| {
+                tables[usize::from(backward)][usize::from(acc)]
+                    .get(op as usize)
+                    .copied()
+                    .flatten()
+                    .is_some_and(|served| handler == served.handler as *const ())
+            })
+            .map(|acc| (backward, acc))
+        })
+    };
     if wasm {
         // A table follows its selected entry's jump, so every entry must run in
         // the lane.
@@ -12303,18 +12804,29 @@ fn derive_lane_view<H: Host>(
             {
                 continue;
             }
-            let Some(backward) = [false, true].into_iter().find(|&backward| {
-                [ACC_NONE, ACC_A].into_iter().any(|acc| {
-                    tables[usize::from(backward)][usize::from(acc)]
-                        .get(jump.op() as usize)
-                        .copied()
-                        .flatten()
-                        .is_some_and(|served| records[pc + 2].handler == served.handler as *const ())
-                })
-            }) else {
+            let Some((backward, _)) = plain_served(records[pc + 2].handler, jump.op(), &[ACC_NONE, ACC_A])
+            else {
                 continue;
             };
             if let Some(fused) = offset_mask_jump_handler::<H>(first.op(), jump.op(), backward, acc) {
+                records[pc].handler = fused as *const ();
+            }
+        }
+        // An i32 operator of a constant and a register comparison jump reading its result run as
+        // one record.
+        for pc in 0..records.len().saturating_sub(1) {
+            let (first, jump) = (decoded[pc], decoded[pc + 1]);
+            if !serves(records[pc].handler, first.op(), ACC_NONE)
+                || I32BinaryOperator::from_jump_op(jump.op()).is_none()
+                || (jump.a() != first.a() && jump.b() != first.a())
+            {
+                continue;
+            }
+            let Some((backward, _)) = plain_served(records[pc + 1].handler, jump.op(), &[ACC_NONE, ACC_A, ACC_B])
+            else {
+                continue;
+            };
+            if let Some(fused) = immediate_compare_jump_handler::<H>(first.op(), jump.op(), backward) {
                 records[pc].handler = fused as *const ();
             }
         }
@@ -12813,6 +13325,60 @@ fn derive_lane_view<H: Host>(
                 }
             }
         }
+        // A bit-field extraction and a following i32 operator run as one record.
+        for pc in 0..records.len().saturating_sub(1) {
+            let second = decoded[pc + 1];
+            let Some(acc) = [ACC_NONE, ACC_B]
+                .into_iter()
+                .find(|&acc| serves(records[pc].handler, Op::WasmI32ShiftRightUnsignedAndImmediate, acc))
+            else {
+                continue;
+            };
+            if decoded[pc].op() != Op::WasmI32ShiftRightUnsignedAndImmediate
+                || ![ACC_NONE, ACC_B, ACC_C].into_iter().any(|acc| serves(records[pc + 1].handler, second.op(), acc))
+            {
+                continue;
+            }
+            if let Some(fused) = bit_field_then_handler::<H>(second.op(), acc) {
+                records[pc].handler = fused as *const ();
+            }
+        }
+        // An immediate equality jump that falls through to a plain i32 load runs with it as one
+        // record (which reads the address from its register, written whether or not the
+        // accumulator also holds it).
+        for pc in 0..records.len().saturating_sub(1) {
+            let jump = decoded[pc];
+            if !matches!(jump.op(), Op::WasmJumpI32EqualImmediate | Op::WasmJumpI32NotEqualImmediate)
+                || i32_load(&records, pc + 1).is_none()
+            {
+                continue;
+            }
+            let Some((backward, acc)) = plain_served(records[pc].handler, jump.op(), &[ACC_NONE, ACC_A]) else {
+                continue;
+            };
+            if let Some(fused) = compare_jump_load_handler::<H>(jump.op(), decoded[pc + 1].op(), backward, acc) {
+                records[pc].handler = fused as *const ();
+            }
+        }
+        // Two i32 adds, or an add and a counted loop's step and test, run as one record; other
+        // fusions take their records first.
+        for pc in 0..records.len().saturating_sub(1) {
+            let (first, second) = (decoded[pc], decoded[pc + 1]);
+            let Some(acc) = [ACC_NONE, ACC_B, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, first.op(), acc))
+            else {
+                continue;
+            };
+            if !matches!(first.op(), Op::WasmI32Add | Op::WasmI32AddImmediate) {
+                continue;
+            }
+            let Some((backward, _)) = plain_served(records[pc + 1].handler, second.op(), &[ACC_NONE, ACC_B, ACC_C])
+            else {
+                continue;
+            };
+            if let Some(fused) = add_pair_handler::<H>(first.op(), second.op(), backward, acc) {
+                records[pc].handler = fused as *const ();
+            }
+        }
         // A fused record that runs a following zero-test jump itself carries its own result when
         // the jump is taken; where the jump now carries another register to a head reading it
         // (`carrying_zero_jump`), that record runs only its own instruction again.
@@ -12845,19 +13411,19 @@ fn derive_lane_view<H: Host>(
             }
         }
     }
-    specialize_register_operands::<H>(function, kind, constants, &mut records);
+    specialize_register_operands::<H>(&decoded, kind, constants, &mut records);
     specialize_updates::<H>(&mut records);
     specialize_updated_index_reads::<H>(&mut records);
     specialize_negated_instanceof::<H>(&mut records);
     specialize_frame_locals::<H>(function, &mut records);
     specialize_outer_captures::<H>(&mut records);
-    let environment_window = specialize_environment_window::<H>(function, &mut records);
+    let environment_window = specialize_environment_window::<H>(function, &decoded, &mut records);
     let loops = if loop_tier && kind != crate::bytecode::ProgramKind::Wasm {
         install_loop_sites::<H>(function, &decoded, constants, live, diagnostics, &mut records)
     } else {
         Box::default()
     };
-    let min_run = if closes_loop(function, &exits) {
+    let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
     } else {
         LANE_ENTRY_MIN_CALL_RUN
@@ -12888,14 +13454,10 @@ fn derive_lane_view<H: Host>(
         target_body: std::cell::OnceCell::new(),
         environment_window,
         loops,
-        plain_backward_jump_sites: function
-            .code
+        plain_backward_jump_sites: decoded
             .iter()
             .enumerate()
-            .filter(|(pc, packed)| {
-                let instruction = decoded_instruction(function, **packed);
-                instruction.op() == Op::Jump && instruction.jump_target() <= *pc as u32
-            })
+            .filter(|(pc, instruction)| instruction.op() == Op::Jump && instruction.jump_target() <= *pc as u32)
             .count(),
     }
 }
@@ -12975,7 +13537,7 @@ fn install_loop_sites<H: Host>(
 /// the record, `GetIndex` and `JumpBinaryFalse`, also with a small integer constant right
 /// operand carried in the record.
 fn specialize_register_operands<H: Host>(
-    function: &Function,
+    decoded: &[WideInstruction],
     kind: crate::bytecode::ProgramKind,
     constants: &[Value],
     records: &mut [LaneInstruction],
@@ -12990,8 +13552,7 @@ fn specialize_register_operands<H: Host>(
     };
     let forward_test = lane_jump_binary_false::<H, false> as Handler as *const ();
     let backward_test = lane_jump_binary_false::<H, true> as Handler as *const ();
-    for (pc, packed) in function.code.iter().enumerate() {
-        let instruction = decoded_instruction(function, *packed);
+    for (pc, &instruction) in decoded.iter().enumerate() {
         let record = &mut records[pc];
         if ![binary, get_index, forward_test, backward_test].contains(&record.handler) {
             continue;
@@ -13230,6 +13791,7 @@ fn environment_window_fields(i: &LaneInstruction) -> (usize, u16) {
 /// any record of which cannot keeps all of them.
 fn specialize_environment_window<H: Host>(
     function: &Function,
+    decoded: &[WideInstruction],
     records: &mut [LaneInstruction],
 ) -> Option<EnvironmentWindow> {
     if function.locals == 0
@@ -13257,8 +13819,7 @@ fn specialize_environment_window<H: Host>(
         lane_exit::<H>,
     ];
     let mut replacements = Vec::new();
-    for (pc, packed) in function.code.iter().enumerate() {
-        let instruction = decoded_instruction(function, *packed);
+    for (pc, &instruction) in decoded.iter().enumerate() {
         let op = instruction.op();
         let own = match op {
             Op::MakeClosure => instruction.imm(),
@@ -13452,9 +14013,8 @@ fn may_loop(function: &Function) -> bool {
     })
 }
 
-fn closes_loop(function: &Function, exits: &[bool]) -> bool {
-    function.code.iter().enumerate().any(|(pc, packed)| {
-        let instruction = decoded_instruction(function, *packed);
+fn closes_loop(decoded: &[WideInstruction], exits: &[bool]) -> bool {
+    decoded.iter().enumerate().any(|(pc, &instruction)| {
         let target = instruction.imm() as usize;
         instruction.op().immediate_role() == ImmediateRole::JumpTarget
             && target <= pc

@@ -1683,6 +1683,7 @@ pub(crate) struct Vm<H> {
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
+    plain_copy_shapes: shape_memo::PlainCopyShapeMemo,
     function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
@@ -1971,6 +1972,18 @@ impl<H: Host> Vm<H> {
     }
     pub(crate) fn release_root(&mut self, root: RootId) -> bool {
         self.heap.release_root(root)
+    }
+    pub(crate) fn root_scoped(&mut self, value: Value) -> RootId {
+        self.heap.root_scoped(value)
+    }
+    pub(crate) fn scoped_root_height(&self) -> usize {
+        self.heap.scoped_root_height()
+    }
+    pub(crate) fn release_root_scope(&mut self, height: usize) {
+        self.heap.release_root_scope(height);
+    }
+    pub(crate) fn release_root_scope_keeping(&mut self, height: usize, keep: &[RootId]) {
+        self.heap.release_root_scope_keeping(height, keep);
     }
     pub(super) fn instantiate_global_declarations(
         &mut self,
@@ -2616,6 +2629,7 @@ impl<H: Host> Vm<H> {
         self.shapes[0].last_child.set(NO_LAST_CHILD);
         self.transitions.clear();
         self.shape_slot_memo.clear();
+        self.plain_copy_shapes.clear();
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
@@ -2983,8 +2997,10 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         target: Option<CallTarget>,
     ) -> Result<Value, JsError> {
-        // Guest code observes the frame stack.
-        self.materialize_deferred_lane();
+        // Guest code observes the frame stack; a native that runs beside activations does not.
+        if self.lane_deferred.is_some() && !self.callee_runs_beside_activations(callee) {
+            self.materialize_deferred_lane();
+        }
         if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
             return self.proxy_call(p, callee, this, args);
         }

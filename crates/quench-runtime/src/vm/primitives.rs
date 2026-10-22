@@ -574,41 +574,11 @@ impl<H: Host> Vm<H> {
                 Ok(Value::number(super::fdlibm_math::atan2(y, x)))
             }
             Native::MathMin | Native::MathMax => {
-                let mut result = if native == Native::MathMin {
-                    f64::INFINITY
-                } else {
-                    f64::NEG_INFINITY
-                };
-                let mut saw_nan = false;
+                let mut numbers = smallvec::SmallVec::<[f64; super::number::MATH_INLINE_ARGUMENTS]>::new();
                 for value in args {
-                    let number = self.to_number(p, *value)?;
-                    if number.is_nan() {
-                        saw_nan = true;
-                        continue;
-                    }
-                    result = if native == Native::MathMin {
-                        if number == 0.0 && result == 0.0 {
-                            if number.is_sign_negative() || result.is_sign_negative() {
-                                -0.0
-                            } else {
-                                0.0
-                            }
-                        } else {
-                            result.min(number)
-                        }
-                    } else {
-                        if number == 0.0 && result == 0.0 {
-                            if number.is_sign_positive() || result.is_sign_positive() {
-                                0.0
-                            } else {
-                                -0.0
-                            }
-                        } else {
-                            result.max(number)
-                        }
-                    };
+                    numbers.push(self.to_number(p, *value)?);
                 }
-                Ok(Value::number(if saw_nan { f64::NAN } else { result }))
+                Ok(Value::number(super::number::math_numbers(native, &numbers).expect("Math.min or Math.max")))
             }
             Native::MathHypot => self.math_hypot(p, args),
             Native::MathImul => {

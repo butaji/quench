@@ -202,6 +202,16 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<FrameOutcome, JsError> {
+        #[cfg(feature = "profile-lane-exits")]
+        if let Some(caller) = self.frames.last() {
+            super::lane_exits::call_target(
+                self.active_program.raw(),
+                caller.function,
+                caller.pc as u32,
+                context.callee().unwrap_or(Value::UNDEFINED),
+                id,
+            );
+        }
         self.run_user_frame(p, id, parent, this, args, context, false)
     }
 
@@ -1569,6 +1579,13 @@ impl<H: Host> Vm<H> {
                 instruction_pc,
             );
             let ins = cursor.instruction(pc);
+            if self.programs.js_jit_diagnostics_enabled() {
+                self.programs.record_js_jit_general_dispatch_opcode(
+                    cursor.program,
+                    cursor.function,
+                    ins.op(),
+                );
+            }
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::count_general(
                 || {
