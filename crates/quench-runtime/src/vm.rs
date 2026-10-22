@@ -672,6 +672,7 @@ const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
 #[derive(Clone, Copy)]
 struct InheritedFieldCache {
     receiver: u32,
+    atom: Atom,
     prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
     depth: u8,
     answer: InheritedFieldAnswer,
