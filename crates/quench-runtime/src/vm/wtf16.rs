@@ -578,7 +578,7 @@ const ROPE_LEAF_MAX_UNITS: usize = 512;
 /// pdfjs 12.67G -> 9.42G instructions with max RSS 84.8 -> 86.8 MB, and web-ssr's built
 /// text 89.8 -> 100.9 MB (Bun without its JIT: 88.8 and 124.3 MB; 512 saved 2% more on
 /// pdfjs for 3.5 MB more on web-ssr; JetStream, Linux x86_64, 2026-10-19).
-const FLAT_PREFIX_MAX_UNITS: usize = 2048;
+const FLAT_PREFIX_MAX_UNITS: usize = 512;
 
 /// Flat UTF-16 strings retain the existing Node-compatible length policy.
 /// V8's public String::kMaxLength on the supported 64-bit host is this limit;
