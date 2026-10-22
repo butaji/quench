@@ -191,6 +191,7 @@ this array-length shortcut is not a performance win. The reports and profile
 logs from these probes remain under the local `work/react-perf` scratch folder;
 Linux RSS sampling is diagnostic, not qualification.
 
+
 The full-size no-JIT baseline uses 5,000 renders and 250 warmups per sample.
 Its 11-round Linux report is
 [`reports/react-no-jit-full-linux-11.json`](reports/react-no-jit-full-linux-11.json):
@@ -335,3 +336,21 @@ remains 22.4% below Node and 24.9% below Bun, but throughput is still about 5x
 slower than either runtime. The paired report is
 `work/react-perf/react-pgo-prefix-512-vs-2048-memory-first-max-young-32k-nojit-11.json`.
 Linux RSS sampling is diagnostic, not qualification.
+
+A concat-cache probe removed the pre-number-dispatch lookup because the React
+profile showed 625,214 string-string concats and zero hits. The initial
+3-round screen appeared 23.2% faster, but the full 11-round paired run measured
+299.6 renders/s / 28.35 MB versus 311.5 / 26.84 MB for the unchanged PGO+512
+control. Output matched, but speed fell 3.8% and RSS grew 5.6%, so the probe was
+reverted. Reports are
+`work/react-perf/react-pgo-prefix-512-single-concat-lookup-vs-control-memory-first-32k-nojit-screen-3.json`
+and `work/react-perf/react-pgo-prefix-512-single-concat-lookup-vs-control-memory-first-32k-nojit-11.json`.
+Linux RSS sampling is diagnostic, not qualification.
+
+A smaller 256-unit flat-prefix threshold did not improve enough over the retained
+512-unit PGO build to justify its memory cost. In the paired 11-round full-size
+run, 256 measured 319.3 renders/s / 28.07 MB versus 310.1 / 26.81 MB for 512,
+a 3.0% speed gain for 4.7% more RSS. Output matched at 24,980,000 bytes and
+checksum 414318. RSS was 22.3% below Node and 24.9% below Bun, but the 512-unit
+build remains the better memory/speed balance. Report:
+`work/react-perf/react-pgo-prefix-256-vs-512-memory-first-max-young-32k-nojit-11.json`.
