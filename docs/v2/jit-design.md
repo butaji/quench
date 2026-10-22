@@ -1267,6 +1267,18 @@ then prioritize costs by total dispatched time. Large string/allocation
 representation changes remain research hypotheses until those profiles size
 their opportunity and the semantic costs.
 
+TOD-164's newer comments narrow another no-JIT lead. Survivor-only record
+sweeps and young-word-only minor sweeps are already merged; the latter measured
++2.7% on a five-pair GC-heavy JetStream screen, about -0.3% on V8-v7, and
+roughly neutral RSS. Stable-root/frame-watermark skipping was within noise and
+is deprioritized. `doxbee-promise` still merits attribution: about 20% of its
+measured callgrind instructions were in GC over four sampled iterations, but
+its 10,000 live promise chains may require most of that marking work. Before
+proposing another collector optimization, split minor/full collection counts,
+newly allocated and live young records, owner scans, and mark work per pending
+job. These measurements identify where to look; they do not establish another
+broad speedup.
+
 JetStream 3's [published methodology](https://webkit.org/blog/17899/introducing-the-jetstream-3-benchmark-suite/)
 uses repeated per-subtest measurements and suite aggregation. Papers and
 diagnostic counters above are leads only: neither the 1.20x score goal nor a
