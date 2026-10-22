@@ -55,7 +55,7 @@ impl<H: Host> Vm<H> {
         let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
             .map(|atom| self.atom_name(atom as u32).to_owned())
             .collect::<Vec<_>>();
-        let mut residual = crate::Engine::specialize_eval_specialized_with_context(
+        let residual = crate::Engine::specialize_eval_specialized_with_context(
             source,
             name,
             &atom_prefix,
@@ -69,11 +69,6 @@ impl<H: Host> Vm<H> {
                 self.syntax_error_result(&parent, &message)
                     .expect_err("script syntax errors must throw")
             })?;
-        // Dynamic programs have independent compiler cache-site numbering,
-        // while the VM's inline-cache arrays are allocated for the startup
-        // program. Keep the specialization passes, but route dynamic property
-        // accesses through their generic path until caches are program scoped.
-        residual.specialized = false;
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(&parent, "dynamic program store is full".into()));
         };

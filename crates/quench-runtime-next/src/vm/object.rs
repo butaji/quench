@@ -359,13 +359,19 @@ impl<H: Host> Vm<H> {
                 .heap
                 .alloc_object_pair(self.object_proto, two, first, second);
         }
-        let shape = if self.object_shapes[site] != u32::MAX {
-            self.object_shapes[site]
+        let object_site = self
+            .object_shape_offsets
+            .get(self.active_program.raw() as usize)
+            .copied()
+            .unwrap_or(0)
+            + site;
+        let shape = if self.object_shapes[object_site] != u32::MAX {
+            self.object_shapes[object_site]
         } else {
             let atoms = program.object_sites[site].atoms;
             let one = self.transition_shape(0, atoms[0]);
             let two = self.transition_shape(one, atoms[1]);
-            self.object_shapes[site] = two;
+            self.object_shapes[object_site] = two;
             two
         };
         self.heap
@@ -419,6 +425,14 @@ impl<H: Host> Vm<H> {
             )
         )
     }
+    pub(super) fn field_cache_index(&self, site: u16) -> usize {
+        self.field_cache_offsets
+            .get(self.active_program.raw() as usize)
+            .copied()
+            .unwrap_or(0)
+            + site as usize
+    }
+
     pub(super) fn get_field_cached(
         &mut self,
         p: &ResidualProgram,
@@ -441,7 +455,8 @@ impl<H: Host> Vm<H> {
         let receiver_shape = receiver.shape();
         // SAFETY: cache-site ids are emitted only by the compiler and execute
         // against the exactly-sized cache vector initialized for this program.
-        let cache = unsafe { *self.field_caches.get_unchecked(site as usize) };
+        let cache_index = self.field_cache_index(site);
+        let cache = unsafe { *self.field_caches.get_unchecked(cache_index) };
         if cache.receiver == receiver_shape
             && let Some(owner) = self.field_cache_owner(object, cache)
             && let Some(owner_data) = self.object_data(owner)
@@ -1017,7 +1032,8 @@ impl<H: Host> Vm<H> {
             .object_data(object)
             .map(Object::shape)
             .unwrap_or(u32::MAX);
-        let cache = self.field_caches[site as usize];
+        let cache_index = self.field_cache_index(site);
+        let cache = self.field_caches[cache_index];
         if shape != u32::MAX && cache.receiver == shape && cache.depth == 0 {
             let invalidates_method = self.callable_write(object, cache.slot as usize, value);
             // SAFETY: a matching immutable shape proves the cached slot layout.
@@ -1192,6 +1208,7 @@ impl<H: Host> Vm<H> {
                 .is_some_and(|old| self.is_function(old))
     }
     pub(super) fn record_field_cache(&mut self, site: u16, cache: FieldCache) {
+        let site = self.field_cache_index(site);
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site as usize) };
         if table_index != NO_MEGAMORPHIC_FIELD {
@@ -1220,9 +1237,10 @@ impl<H: Host> Vm<H> {
     }
     #[inline(always)]
     fn megamorphic_field_cache(&self, site: u16, shape: u32) -> Option<FieldCache> {
+        let site = self.field_cache_index(site);
         // SAFETY: compiler-produced sites index exactly-sized cache vectors;
         // every non-sentinel index was installed together with its table.
-        let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site as usize) };
+        let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site) };
         if table_index == NO_MEGAMORPHIC_FIELD {
             return None;
         }

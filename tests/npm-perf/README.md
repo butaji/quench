@@ -58,3 +58,10 @@ sample) is saved at
 [`reports/react-no-jit-linux-11.json`](reports/react-no-jit-linux-11.json).
 It verifies matching output but shows Quench behind both comparators on speed
 and maximum RSS; it is a diagnostic baseline, not a win or qualification.
+
+After enabling program-scoped inline caches for dynamically compiled CommonJS
+modules, a second 11-round Linux pilot is saved at
+[`reports/react-no-jit-program-caches-linux-11.json`](reports/react-no-jit-program-caches-linux-11.json).
+It also verifies matching output, but Quench remains behind both comparators
+on throughput and maximum RSS. The earlier report remains as the pre-cache
+baseline.
