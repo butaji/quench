@@ -35,6 +35,10 @@ pub(super) struct ArrayIterationProof {
     next_slot: usize,
 }
 
+/// The slots of an iterator result's shape (`Vm::iterator_result`): `value`, then `done`.
+const ITERATOR_RESULT_VALUE_SLOT: usize = 0;
+const ITERATOR_RESULT_DONE_SLOT: usize = 1;
+
 impl<H: Host> Vm<H> {
     /// ArrayAccumulation of a spread element: every value `source` iterates is appended to the
     /// literal `array`.
@@ -3377,10 +3381,68 @@ impl<H: Host> Vm<H> {
 
     /// CreateIterResultObject: a fresh ordinary object whose `value` and `done` are data
     /// properties, laid out as the literal `{ value, done }`.
+    /// One %ArrayIteratorPrototype%.next step of a values iterator over a plain array where
+    /// it runs no guest code: the present data element at its position (`Some(Some(_))`), or
+    /// the iterator done past the end (`Some(None)`), as `take_present_array_values` decides
+    /// for every remaining step. `None` for a hole, an exotic or sparse array, another kind
+    /// or a done iterator, whose step the native makes.
+    pub(super) fn step_present_array_value(&mut self, iterator: Value) -> Option<Option<Value>> {
+        let Some(IteratorRecord {
+            source,
+            kind: IteratorKind::Array | IteratorKind::ArrayValues,
+            index,
+            done: false,
+            ext,
+            ..
+        }) = self.heap.iterator(iterator)
+        else {
+            return None;
+        };
+        let (source, position) = (*source, ext.position(*index));
+        let array = self.heap.array(source)?;
+        if array.has_indexed_descriptors()
+            || array.is_arguments_object()
+            || self.heap.sparse_length(source).is_some()
+        {
+            return None;
+        }
+        let Some(value) = array.elements().get(position).copied() else {
+            if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
+                *done = true;
+                *source = Value::UNDEFINED;
+            }
+            return Some(None);
+        };
+        if value.is_deleted() {
+            return None;
+        }
+        if let Some(IteratorRecord { index, ext, .. }) = self.heap.iterator_mut(iterator) {
+            ext.store_position(index, position + 1);
+        }
+        Some(Some(value))
+    }
+
+    /// An iterator result `{ value, done }` whose object no code but the step that reads it
+    /// back observes (a `Call` the lane recognises as an iteration step, `lane_iterator_step`):
+    /// one object, rewritten by each such step, in place of a fresh one per step.
+    pub(super) fn reused_iterator_result(&mut self, value: Value, done: bool) -> Value {
+        let result = self.reused_iterator_result;
+        if result.is_undefined() {
+            let result = self.iterator_result(value, done).expect("an iterator result allocates");
+            self.reused_iterator_result = result;
+            return result;
+        }
+        self.heap.property_set(result, ITERATOR_RESULT_VALUE_SLOT, value);
+        self.heap
+            .property_set(result, ITERATOR_RESULT_DONE_SLOT, if done { Value::TRUE } else { Value::FALSE });
+        result
+    }
+
     pub(super) fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
         let shape = match self.iterator_result_shape {
             Some(shape) => shape,
             None => {
+                // `ITERATOR_RESULT_VALUE_SLOT` and `ITERATOR_RESULT_DONE_SLOT` name these slots.
                 let atoms = [self.runtime_atoms.value, self.runtime_atoms.done];
                 let shape = self.literal_shape(&atoms);
                 self.iterator_result_shape = Some(shape);

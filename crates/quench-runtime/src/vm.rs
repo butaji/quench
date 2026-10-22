@@ -1739,6 +1739,9 @@ pub(crate) struct Vm<H> {
     /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
     /// from shapes, so field-cache invalidation clears it.
     iterator_result_shape: Option<u32>,
+    /// The one `{ value, done }` result a lane iterator step reuses (`Vm::reused_iterator_result`),
+    /// `undefined` until the first; cleared with `iterator_result_shape`.
+    reused_iterator_result: Value,
     /// The shapes of a complete data and accessor property descriptor object
     /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
     /// field-cache invalidation clears them.
@@ -2668,6 +2671,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_shape = None;
+        self.reused_iterator_result = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
         self.regexp_object_shapes = None;
