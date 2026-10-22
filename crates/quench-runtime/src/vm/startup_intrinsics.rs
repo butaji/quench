@@ -165,6 +165,7 @@ impl<H: Host> Vm<H> {
             .filter_map(|holder| self.sealed_holder(holder))
             .collect();
         self.startup_intrinsics.sealed_roots = self.sealed_roots(&sealed);
+        self.stable_roots_changed = true;
         self.startup_intrinsics.holders = sealed;
     }
 
@@ -236,6 +237,7 @@ impl<H: Host> Vm<H> {
                     continue;
                 }
                 // Recorded first: once overwritten, the script's values are rooted only here.
+                self.stable_roots_changed = true;
                 self.startup_intrinsics.swapped.push(SwappedProperty {
                     holder,
                     key,
@@ -269,6 +271,7 @@ impl<H: Host> Vm<H> {
         }
         if resealed {
             self.startup_intrinsics.sealed_roots = self.sealed_roots(&self.startup_intrinsics.holders);
+            self.stable_roots_changed = true;
         }
         // The swap list stays traced until every script value is back in place.
         let swapped = self.startup_intrinsics.swapped.clone();

@@ -68,6 +68,7 @@ impl<H: Host> Vm<H> {
             temporal_plain_year_month_proto: Value::NULL,
             natives: vec![],
             atom_strings: FxHashMap::default(),
+            stable_roots_changed: true,
             shared_natives: Default::default(),
             frames: vec![],
             native_stack_frames: vec![],

@@ -633,6 +633,7 @@ impl<H: Host> Vm<H> {
         for native in NATIVES {
             let value = self.native(*native);
             self.natives.push((*native, value));
+            self.stable_roots_changed = true;
             self.shared_natives.insert(value);
         }
         #[cfg(feature = "profile-memory")]

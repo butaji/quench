@@ -288,6 +288,8 @@ impl<H: Host> Vm<H> {
             temporal_plain_year_month_proto: _,
             natives,
             atom_strings,
+            // A restore marks the tables changed; the flag itself is not state.
+            stable_roots_changed: _,
             shared_natives,
             frames,
             native_stack_frames,
@@ -527,6 +529,7 @@ impl<H: Host> Vm<H> {
         builtin_prototypes!(read_prototypes);
         self.natives = Snap::unsnap(&mut reader)?;
         self.atom_strings = Snap::unsnap(&mut reader)?;
+        self.stable_roots_changed = true;
         self.shared_natives = Snap::unsnap(&mut reader)?;
         self.startup_intrinsics = startup_intrinsics::StartupIntrinsics::read_snapshot(&mut reader)?;
         self.with_scope_entered = reader.bool()?;

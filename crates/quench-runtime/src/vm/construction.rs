@@ -151,6 +151,7 @@ impl<H: Host> Vm<H> {
         let value = self.heap.alloc_string(self.atom_value(atom));
         if keep {
             self.atom_strings.insert(atom, value);
+            self.stable_roots_changed = true;
         }
         value
     }
