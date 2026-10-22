@@ -47,6 +47,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install_exit_code(context, process)?;
     super::process_fatal_exception_route::install(context, process)?;
     super::report_configuration_shared_vm::install(context, process)?;
+    #[cfg(feature = "profile-memory")]
+    malloc_checkpoint("process_report");
     let exit = context.host_function(crate::host::shared_vm::operation("processExit"))?;
     install(context, process, "exit", exit)?;
     let really_exit = context.host_function(crate::host::shared_vm::operation("reallyExit"))?;
@@ -56,6 +58,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     crate::modules::process_stdin_shared_vm::install(context, process)?;
     let stderr = create_stream(context, STDERR_FD)?;
     install(context, process, "stderr", stderr)?;
+    #[cfg(feature = "profile-memory")]
+    malloc_checkpoint("process_streams");
     let event_count = context.number(0.0);
     install(context, process, "_eventsCount", event_count)?;
     // Property, native operation and the function name Node reports.
@@ -97,6 +101,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     }
     let kill = context.host_function(crate::host::shared_vm::operation("processKillNative"))?;
     install(context, process, "_kill", kill)?;
+    #[cfg(feature = "profile-memory")]
+    malloc_checkpoint("process_functions");
     #[cfg(target_os = "linux")]
     {
         let signals = super::os_shared_vm::signal_constants(context)?;
@@ -145,6 +151,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let undefined = context.undefined();
     let hrtime = context.call_rooted(hrtime_factory, undefined, &[hrtime_raw])?;
     install(context, process, "hrtime", hrtime)?;
+    #[cfg(feature = "profile-memory")]
+    malloc_checkpoint("process_kill_hrtime");
     let exiting = context.boolean(false);
     install(context, process, "_exiting", exiting)?;
     let shared_state = context.host_mut().shared_state();
@@ -170,6 +178,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         set_text(context, process, "title", title)?;
     }
     super::child_process_ipc_shared_vm::initialize(context)?;
+    #[cfg(feature = "profile-memory")]
+    malloc_checkpoint("process_ipc");
     // Copied from the OS environment on the first read of `process.env`: most runs never read
     // it, and every variable costs a key and a string.
     let initializer = context.host_function(crate::host::shared_vm::operation("processEnvInitialize"))?;
@@ -178,6 +188,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         context.host_function(crate::host::shared_vm::operation("processLoadEnvFile"))?;
     install(context, process, "loadEnvFile", load_env_file)?;
     install_identity(context, process)?;
+    #[cfg(feature = "profile-memory")]
+    malloc_checkpoint("process_identity");
     let version = format!("v{}", process_state::NODE_VERSION);
     let version = context.string_rooted(&version);
     let key = context.string_rooted("version");
@@ -192,10 +204,14 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         return Err(RootedError::host("cannot set process toStringTag"));
     }
     context.scoped(|context| install_config(context, process))?;
+    #[cfg(feature = "profile-memory")]
+    malloc_checkpoint("process_config");
     context.scoped(|context| {
         install_facts(context, process, "features", process_state::feature_facts())
     })?;
     context.scoped(|context| install_versions(context, process))?;
+    #[cfg(feature = "profile-memory")]
+    malloc_checkpoint("process_facts_versions");
     install(context, global, "global", global)?;
     define_global_process(context, global, process)?;
     let retained = context.retain(process)?;
@@ -3741,4 +3757,12 @@ pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>,
 /// (`process_warning_shared_vm`).
 pub(crate) fn warning_listener(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     crate::modules::process_warning_shared_vm::on_warning(context)
+}
+
+#[cfg(feature = "profile-memory")]
+pub(crate) fn malloc_checkpoint(phase: &str) {
+    let info = unsafe { libc::mallinfo2() };
+    let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
+    let rss_pages: usize = statm.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(0);
+    eprintln!("malloc-checkpoint {phase} used {} rss_kib {}", info.uordblks, rss_pages * 4);
 }
