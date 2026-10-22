@@ -685,6 +685,58 @@ pub(super) fn cached_field_argument_candidate(function: &Function) -> Option<JsJ
     })
 }
 
+/// Find one cached field read in a side-effect-free numeric region. The object
+/// is formal parameter zero; the field value is appended to the numeric ABI
+/// after parameters and captures. Control flow and effectful opcodes are left
+/// to their existing denotations.
+pub(super) fn cached_numeric_field_argument_candidate(
+    function: &Function,
+) -> Option<JsJitFieldArgument> {
+    if function.params == 0 {
+        return None;
+    }
+    let mut candidate = None;
+    for (pc, packed) in function.code.iter().copied().enumerate() {
+        if packed.is_wide() {
+            return None;
+        }
+        let instruction = packed.as_wide();
+        if instruction.op() == Op::GetField {
+            if instruction.returns_from_frame()
+                || instruction.result_flags() != 0
+                || instruction.writes_current_this()
+                || candidate.is_some()
+            {
+                return None;
+            }
+            let FieldLookup::Atom {
+                base: FieldBase(0),
+                cache_site,
+                ..
+            } = instruction.field_lookup()?
+            else {
+                return None;
+            };
+            candidate = Some(JsJitFieldArgument {
+                cache_site,
+                entry_pc: pc,
+            });
+        } else if !matches!(
+            instruction.op(),
+            Op::LoadConst
+                | Op::Move
+                | Op::LoadCapture
+                | Op::Binary
+                | Op::NumericAdd
+                | Op::NumericMultiply
+                | Op::Return
+        ) {
+            return None;
+        }
+    }
+    candidate
+}
+
 /// Recognize a direct field getter. The first instruction is an unconditional
 /// frame-returning `GetField`, so the remaining instructions are unreachable
 /// unless it throws. The VM still requires a cached data-property hit; that
@@ -2464,8 +2516,7 @@ fn compile_numeric_with_captures(
     // A field read at entry is supplied by the VM's guarded monomorphic
     // cache. The native region sees only its numeric data-property value;
     // cache misses, accessors and non-numeric values stay in the interpreter.
-    let field_argument = cached_field_argument_candidate(function)
-        .filter(|candidate| candidate.entry_pc == 0);
+    let field_argument = cached_numeric_field_argument_candidate(function);
     let isa = super::jit_backend::target_isa("speed", true)?;
 
     let mut signature = ir::Signature::new(isa.default_call_conv());
@@ -2524,11 +2575,14 @@ fn compile_numeric_with_captures(
                 {
                     return None;
                 }
+                let field_index = params.checked_add(captures.len())?;
+                let field_offset =
+                    i32::try_from(field_index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
                 Some(builder.ins().load(
                     types::F64,
                     ir::MemFlagsData::trusted(),
                     arguments,
-                    0,
+                    field_offset,
                 ))
             }
             Op::LoadConst => {
