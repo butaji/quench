@@ -743,8 +743,10 @@ impl<H: Host> Vm<H> {
                         cache_site,
                     } => {
                         let base = self.resolve_field_base(p, f, base)?;
+                        // A read fused with its frame's return pushes the getter as a call
+                        // whose completion returns from the frame (`PendingGeneralCall::returns`);
+                        // a getter is no tail call, so a strict frame pushes it too.
                         if allow_inline_calls
-                            && !i.returns_from_frame()
                             && !i.writes_current_this()
                             && let Some(getter) =
                                 self.cached_field_getter(base, atom, self.field_cache_index(cache_site))
