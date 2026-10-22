@@ -50,7 +50,7 @@ pub(super) struct SymbolLoadProofs {
 
 /// Direct-mapped site entries: a power of two. A request's symbol-keyed reads run at a few
 /// hundred lane records (Node's Readable state reads), most of them monomorphic.
-const SITE_OWN_READ_ENTRIES: usize = 1 << 9;
+pub(super) const SITE_OWN_READ_ENTRIES: usize = 1 << 9;
 
 /// A site's last own-slot answer: what `SymbolLoadAnswer::Own` said for `key` on a receiver
 /// of `shape` under `epoch`, recorded at the read site `site` (a lane record's address).
@@ -91,16 +91,11 @@ impl SymbolLoadProofs {
         self.entries[Self::index(shape, key)].set(Some(SymbolLoadProof { shape, key, epoch, answer }));
     }
 
-    /// The entry a read site maps to: its address past the alignment of a record.
-    fn site_index(site: usize) -> usize {
-        (site >> SITE_ADDRESS_SHIFT) & (SITE_OWN_READ_ENTRIES - 1)
-    }
-
     /// The own data slot site `site` last read `key` from on a receiver of `shape`, while
     /// `epoch` holds.
     #[inline(always)]
     pub(super) fn site_own_slot(&self, site: usize, shape: u32, key: Value, epoch: u64) -> Option<u32> {
-        self.sites[Self::site_index(site)]
+        self.sites[site_index(site)]
             .get()
             .filter(|read| read.site == site && read.shape == shape && read.key == key && read.epoch == epoch)
             .map(|read| read.slot)
@@ -110,7 +105,7 @@ impl SymbolLoadProofs {
     /// gives one under `epoch`.
     pub(super) fn record_site_own_slot(&self, site: usize, shape: u32, key: Value, epoch: u64) {
         if let Some(SymbolLoadAnswer::Own(slot)) = self.answer(shape, PropertyKey::symbol(key), epoch) {
-            self.sites[Self::site_index(site)].set(Some(SiteOwnRead { site, shape, key, epoch, slot }));
+            self.sites[site_index(site)].set(Some(SiteOwnRead { site, shape, key, epoch, slot }));
         }
     }
 
@@ -127,3 +122,9 @@ impl SymbolLoadProofs {
 /// Lane records are at least this many bytes apart (a handler pointer and an operand word),
 /// so a site's address shifted by it spreads neighbouring sites over the entries.
 const SITE_ADDRESS_SHIFT: u32 = std::mem::size_of::<usize>().trailing_zeros() + 1;
+
+/// The entry of a `SITE_OWN_READ_ENTRIES`-entry site table that lane site `site` (a record's
+/// address) maps to: its address past the alignment of a record.
+pub(super) fn site_index(site: usize) -> usize {
+    (site >> SITE_ADDRESS_SHIFT) & (SITE_OWN_READ_ENTRIES - 1)
+}
