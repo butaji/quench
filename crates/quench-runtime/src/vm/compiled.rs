@@ -2170,13 +2170,18 @@ impl CompiledProgram {
 }
 
 /// Executable memory holding a program's machine code.
-struct CodeMemory {
+pub(super) struct CodeMemory {
     pointer: *mut u8,
     length: usize,
 }
 
 impl CodeMemory {
-    fn new(bytes: &[u8]) -> Option<Self> {
+    /// The first byte of the executable mapping.
+    pub(super) fn pointer(&self) -> *mut u8 {
+        self.pointer
+    }
+
+    pub(super) fn new(bytes: &[u8]) -> Option<Self> {
         let length = bytes.len().max(1);
         // `mmap` rounds to whole pages. Store that rounded length explicitly
         // so the JS tier's budget reflects its executable mappings.
