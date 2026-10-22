@@ -369,7 +369,7 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     // sampled max RSS across 11 rounds, up from 114.7 / 30.37 MB at 1/64.
     young: Ratio::new(1, 1),
     minimum_young: YOUNG_MINIMUM_ALLOCATION,
-    maximum_young: MAXIMUM_YOUNG,
+    maximum_young: MEMORY_FIRST_MAXIMUM_YOUNG,
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
     allocation_cap: Ratio::new(1, 1),
@@ -396,6 +396,9 @@ const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
 /// 46 -> 28 MB and splay 161 -> 92 MB, with Scores within the run-to-run band. 2^16 cut little
 /// more memory.
 const MAXIMUM_YOUNG: usize = 1 << 17;
+/// React SSR no-JIT production, 11 rounds at 1/1: 2^16 measured 196.7 renders/s
+/// and 29.74 MB RSS, versus 194.9 / 30.74 MB at 2^17.
+const MEMORY_FIRST_MAXIMUM_YOUNG: usize = 1 << 16;
 
 /// The fewest allocations between young collections under memory-first: twice the headroom,
 /// which kept every scorecard workload's max RSS within 1 MB and 5% (1024 raised koa's by
