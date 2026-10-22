@@ -155,10 +155,12 @@ pub(super) const RESPONSE_HIGH_WATER_MARK: usize = 64 * 1024;
 const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperation, removeHeaderOperation, write, finish, writeHeadOperation, destroyOperation, initializeResponse, nextTick, codes) => {
   const kExchange = Symbol("kResponseExchange");
   const kFinished = Symbol("kResponseFinished");
-  const normalizeHeaderValue = (value) => {
-    if (value === undefined) return [value, false];
-    if (Array.isArray(value)) return [value.map((item) => String(item)), true];
-    return [String(value), false];
+  // A header value as the native exchange takes it: each element of an array as a string,
+  // any other value but `undefined` as one string; an array also marks a multiple header.
+  const headerValue = (value) => {
+    if (value === undefined) return value;
+    if (Array.isArray(value)) return value.map((item) => String(item));
+    return String(value);
   };
   const validChunk = (chunk) => {
     if (chunk === null) throw new codes.ERR_STREAM_NULL_VALUES();
@@ -216,8 +218,8 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
   });
   define("constructor", ServerResponse);
   define("setHeader", function setHeader(name, value) {
-    const [normalized, multiple] = normalizeHeaderValue(value);
-    setHeaderOperation(this[kExchange].id, name, normalized, multiple);
+    const multiple = Array.isArray(value);
+    setHeaderOperation(this[kExchange].id, name, headerValue(value), multiple);
     return this;
   });
   define("getHeader", function getHeader(name) {
@@ -237,14 +239,18 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
         if (source.length % 2 !== 0) invalid = true;
         else {
           for (let index = 0; index < source.length; index += 2) {
-            const [value, multiple] = normalizeHeaderValue(source[index + 1]);
-            entries.push(source[index], value, multiple);
+            const value = source[index + 1];
+            const multiple = Array.isArray(value);
+            entries.push(source[index], headerValue(value), multiple);
           }
         }
       } else if (source !== null && typeof source === "object") {
-        for (const name of Object.keys(source)) {
-          const [value, multiple] = normalizeHeaderValue(source[name]);
-          entries.push(name, value, multiple);
+        const names = Object.keys(source);
+        for (let index = 0; index < names.length; index++) {
+          const name = names[index];
+          const value = source[name];
+          const multiple = Array.isArray(value);
+          entries.push(name, headerValue(value), multiple);
         }
       } else {
         invalid = true;

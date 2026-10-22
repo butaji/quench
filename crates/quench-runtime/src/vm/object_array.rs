@@ -125,7 +125,7 @@ impl<H: Host> Vm<H> {
                 if let Some(blocked_index) = blocked_index {
                     let partial_len = blocked_index + 1;
                     if let Some(elements) = self.heap.array_elements_mut(target) {
-                        Rc::make_mut(elements).truncate(partial_len);
+                        elements.make_mut().truncate(partial_len);
                     }
                     self.heap.sparse_set_length(target, partial_len);
                     for (atom, index, _) in &tail {
@@ -147,7 +147,7 @@ impl<H: Host> Vm<H> {
                     return Ok(false);
                 }
                 if let Some(elements) = self.heap.array_elements_mut(target) {
-                    Rc::make_mut(elements).truncate(next_len);
+                    elements.make_mut().truncate(next_len);
                 }
                 for (atom, _, _) in &tail {
                     self.descriptors
@@ -423,7 +423,7 @@ impl<H: Host> Vm<H> {
             if let Some(elements) = self.heap.array_elements_mut(target)
                 && index < elements.len()
             {
-                Rc::make_mut(elements)[index] = Value::DELETED;
+                elements.make_mut()[index] = Value::DELETED;
             } else {
                 self.heap.sparse_set(target, index, Value::DELETED);
             }

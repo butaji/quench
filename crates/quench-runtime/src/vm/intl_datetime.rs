@@ -1469,7 +1469,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(entries),
+                entries,
             ),
         }))
     }

@@ -1,4 +1,4 @@
-# TOD-170: array elements in one copy-on-write allocation — held
+# TOD-170: array elements in one copy-on-write allocation — kept on production builds
 
 Host: Linux x86_64 VM, 4 logical CPUs, 16 GB. Release `quench-node`, both binaries run with
 `QUENCH_COMPILE_CACHE=`.
@@ -65,3 +65,24 @@ weighs the trade.
 Trunk's link order (`crates/quench-node/link/x86_64-linux.order`) is stale. Navier-stokes
 executes 1,791 functions; 905 of them (1.16 MB) are not in the order. A retrain should
 cut resident text for every quench-node process.
+
+## Production-profile measurement: kept
+
+The release builds compared above probably link without a usable order, since the order
+file names production crate hashes (TOD-171). That leaves file-page RSS to layout chance.
+The shipped profile is production, so the comparison was repeated on production builds:
+
+- `p170b`: v2-gc at 85b8a5bfd, with the retrained order.
+- `p170c`: the candidate merged with that v2-gc and the same order file.
+
+| Suite | Pairs | Speed | RSS |
+| -- | --: | -- | -- |
+| V8-v7 | 10 | ×0.994 | ×1.002 (navier-stokes 5.2 → 5.3 MB) |
+| JetStream (9 tests) | 3 | ×1.014 | **×0.982** (typescript-lib 222.7 → 215.7, web-ssr 61.5 → 58.7, espree 49.1 → 46.9) |
+| Frameworks | 3 | ×0.993 | ×0.992 |
+| npm top 300 | 1 | — | ×0.9964, no new failures |
+
+The rule is met on every suite.
+
+Splay was ×0.910 in the scorecard (2/10 wins). Six alternating direct runs average −1.5%
+(5,274 vs 5,197), which is within single-workload noise (TOD-137 A/A note).

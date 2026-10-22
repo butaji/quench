@@ -48,7 +48,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
           'The "input" argument must be an instance of ArrayBuffer or ArrayBufferView.'
         );
       }
-      return decodeBytes(Array.from(view), state.encoding, state.fatal, state.ignoreBOM);
+      return decodeBytes(view, state.encoding, state.fatal, state.ignoreBOM);
     }
   }
 
@@ -214,6 +214,8 @@ pub(crate) fn decode(
     Ok(context.string_rooted(text))
 }
 
+/// The bytes `decode` reads: the Uint8Array the TextDecoder's `decode` makes over its input,
+/// read in place.
 fn byte_array(
     context: &mut NativeContext<'_, NodeHost>,
     root: Option<RootId>,
@@ -221,23 +223,7 @@ fn byte_array(
     let Some(root) = root else {
         return Ok(Vec::new());
     };
-    let length_key = context.string_rooted("length");
-    let length = context.get_property_rooted(root, length_key)?;
-    let length = context
-        .rooted_value(length)
-        .and_then(|value| value.as_number())
-        .unwrap_or_default()
-        .max(0.0) as usize;
-    let mut bytes = Vec::with_capacity(length);
-    for index in 0..length {
-        let key = context.string_rooted(&index.to_string());
-        let value = context.get_property_rooted(root, key)?;
-        bytes.push(
-            context
-                .rooted_value(value)
-                .and_then(|value| value.as_number())
-                .unwrap_or_default() as u8,
-        );
-    }
-    Ok(bytes)
+    context
+        .view_bytes_rooted(root)
+        .ok_or_else(|| RootedError::host("TextDecoder input is not a byte view"))
 }
