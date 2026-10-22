@@ -2530,7 +2530,7 @@ impl<H: Host> Vm<H> {
 }
 
 /// The built-in each engine-internal binding name the compiler emits resolves to.
-fn internal_name_native(name: &str) -> Option<Native> {
+pub(super) fn internal_name_native(name: &str) -> Option<Native> {
     Some(match name {
         "\0quench:dynamic-import" => Native::DynamicImport,
         "\0quench:intrinsic-promise" => Native::Promise,
