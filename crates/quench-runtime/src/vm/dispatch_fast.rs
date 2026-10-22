@@ -7137,6 +7137,16 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
+        if vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
+            && let Some(native) =
+                super::environment::internal_name_native(&code.atoms[i.imm() as usize])
+        {
+            r.set(i.a, vm.native_value(native));
+            if CALL {
+                r.set(i.b, Value::UNDEFINED);
+            }
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
         let function = vm
             .lane_stack
             .activations
