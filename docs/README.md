@@ -9,7 +9,7 @@
 - [Native Node host contracts](node-host-contracts.md)
 - [Shared array operation contracts](shared-array-contracts.md)
 - [V8-v7 commands](v8_v7.md)
-- [GC verification and experiment strategy](v2/gc-verification.md)
+- [GC verification, memory policy and experiment strategy](v2/gc-verification.md)
 - [JetStream 3 commands](jetstream3.md)
 - [Benchmark micros](../quench-bench/micros/README.md)
 
@@ -719,9 +719,24 @@ target/production/bolt-profile $PROFILED_BINARY bolt --order $ORDER \
 # relink with $ORDER, then:
 llvm-bolt $BINARY -o $BINARY-bolt -data=bolt/profile.fdata \
   -reorder-blocks=ext-tsp -split-functions -split-all-cold \
-  -reorder-functions=user -function-order=bolt/function.order \
-  -skip-funcs-file=bolt/skip.funcs -use-gnu-stack -jump-tables=move
+  -reorder-functions=cdsort -skip-funcs-file=bolt/skip.funcs -use-gnu-stack \
+  -jump-tables=move
 ```
+
+`-reorder-functions=cdsort` orders hot functions by the profile's call graph instead of the
+trained symbol order (`bolt/function.order`), which places them by first execution: callers
+and callees a run alternates between share pages. A V8-v7 run had executed about 613 KB of
+code lines spread over 1184 KB of pages; with the call-graph order its max RSS is 50-280 KB
+lower on every fixture without and with `--jit` (bolted static x86_64, 2026-10-22: Richards
+2340 -> 2064 KiB, Crypto 2956 -> 2768, NavierStokes 4180 -> 3996), Score within noise. The
+linked order still lays out start-up and cold code.
+
+The static `quench-node` order and its BOLT profile train on the same scripts without and
+with `--jit` (start-up cachegrind and run-phase callgrind profiles of each), the `--jit`
+profiles after the others: without them the JS tier's Cranelift compiler is laid out as
+cold code, and a `--jit` run faulted in about 1.1 MB more of it (V8-v7 `--jit` max RSS,
+bolted static x86_64, 2026-10-22: Crypto 4620 -> 3968 KiB, DeltaBlue 3908 -> 3368,
+Richards 2724 -> 2468; no-JIT equal or lower).
 
 `-jump-tables=move` lays the jump tables of hot code beside it, apart from the cold
 ones: in place, the `match` tables of the dispatch and the compiler sit among
