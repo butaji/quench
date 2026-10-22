@@ -872,7 +872,7 @@ fn name_shared_sites_keep_loads_apart_from_stores() {
     );
     let program = Engine::specialize(&source, "name-shared-sites.js").unwrap();
     assert_eq!(program.cache_sites, crate::bytecode::SHARED_UNCACHED_SITE + 1);
-    let mut vm = Vm::new(SilentHost);
+    let mut vm = Vm::new(TestHost::default());
     vm.execute(&program).unwrap();
     let name = vm.intern_atom("result");
     let result = vm.own_property(vm.realm.globals, name).unwrap();
