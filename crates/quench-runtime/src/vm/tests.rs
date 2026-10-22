@@ -11868,6 +11868,33 @@ fn bound_calls_and_base_class_constructions_pushed_in_place_keep_their_semantics
 }
 
 #[test]
+fn lane_forwarded_calls_run_callees_of_other_programs_in_their_program() {
+    // `f.call(...)` and a bound call of a callee compiled as another program, made from a
+    // lane function often enough that its cross-program target is cached: the callee reads
+    // its own program's names, constants and field sites (`globalThis`, a defined property,
+    // string keys), not the caller's.
+    let source = r#"
+      const loose = Function('return function(){ return this === globalThis ? "global" : typeof this; }')();
+      const definer = Function('o', 'k', 'Object.defineProperty(o, k, { value: k.length, enumerable: true }); o[k + "x"] = "v"; return Object.keys(o).join("+");');
+      function run(i) {
+        const bound = loose.bind(null);
+        return [bound(), loose.call(null), loose.call(i), definer.call(null, {}, 'key' + i)].join(",");
+      }
+      const out = [];
+      for (let i = 0; i < 24; i++) out.push(run(i % 2));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-cross-program-forwarded.js").unwrap()).unwrap();
+    let expected = (0..24)
+        .map(|i| format!("global,global,object,key{0}+key{0}x", i % 2))
+        .collect::<Vec<_>>()
+        .join("|");
+    assert_eq!(output.borrow().as_slice(), [expected]);
+}
+
+#[test]
 fn lane_regexp_exec_keeps_last_index_and_coercion_order() {
     // Exec calls made from frameless activations: a global pattern advances `lastIndex`,
     // an object `lastIndex` is still converted exactly once per call, and a frozen global
