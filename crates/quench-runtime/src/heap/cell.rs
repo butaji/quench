@@ -884,6 +884,20 @@ impl Native {
     /// call-forwarding natives push their target as a frame there (and run under a
     /// forwarding boundary), direct `eval` reads the calling instruction, and `with` entry
     /// and exit change the running frame's object environment.
+    /// Whether the native observes the frame stack only by calling guest code, capturing an
+    /// error's stack or making a collection due (`Host::host_function_runs_beside_activations`
+    /// for a host's), so a lane calls it with its activations frameless.
+    pub(crate) fn runs_beside_activations(self) -> bool {
+        matches!(
+            self,
+            Self::ObjectLiteralPrototype
+                | Self::ObjectKeys
+                | Self::ObjectDefineProperty
+                | Self::StringSplit
+                | Self::JsonStringify
+        )
+    }
+
     pub(crate) fn runs_from_lane(self) -> bool {
         !matches!(
             self,

@@ -81,6 +81,15 @@ impl ModuleSource {
 pub struct HostExecutionContext(pub u64);
 
 pub trait Host {
+    /// Whether host function `index` (into `functions`) observes the frame stack only by
+    /// calling guest code, capturing an error's stack or making a collection due, so a lane
+    /// may call it while its frameless activations stay frameless: each of those first makes
+    /// them frames (`Vm::materialize_deferred_lane`). A host function that reads frames any
+    /// other way (source positions, callers) must answer `false`, as the default does.
+    fn host_function_runs_beside_activations(&self, _index: usize) -> bool {
+        false
+    }
+
     /// Whether Promise lifecycle observers are active now. While none are,
     /// Promise allocation and optimized await stay free of embedding callbacks
     /// and of per-Promise host resources.
