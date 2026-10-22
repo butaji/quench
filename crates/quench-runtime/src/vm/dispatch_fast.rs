@@ -3075,17 +3075,25 @@ script_handler! {
     /// `MakeObjectLiteral`: an ordinary object of the literal site's shape holding the
     /// record's window of registers, as the general loop makes it.
     fn lane_make_object_literal<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        // SAFETY: the context's program outlives the lane run.
-        let shape = vm.object_site_shape(unsafe { &*(*cx).code }, i.imm() as usize);
-        // SAFETY: `lane_fields_fit` admitted the window inside the register file, and no
-        // other reference into it is live while the object is allocated.
-        let properties = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.b)), usize::from(i.c)) };
-        let value = vm.heap.alloc_object_with_properties(vm.object_proto, shape, properties);
-        note_allocation(vm);
+        let value = lane_object_literal_value(cx, r, i);
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
+}
+
+/// The object a `MakeObjectLiteral` record makes: its site's shape over the record's window
+/// of property values (`Vm::object_site_shape`).
+#[inline(always)]
+fn lane_object_literal_value<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Value {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let shape = vm.object_site_shape(unsafe { &*(*cx).code }, i.imm() as usize);
+    // SAFETY: `lane_fields_fit` admitted the window inside the register file, and no
+    // other reference into it is live while the object is allocated.
+    let properties = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.b)), usize::from(i.c)) };
+    let value = vm.heap.alloc_object_with_properties(vm.object_proto, shape, properties);
+    note_allocation(vm);
+    value
 }
 
 script_handler! {
@@ -9141,6 +9149,9 @@ const RETURNING_FIELD_INHERITED: u8 = 8;
 /// `RETURNING_FIELD` of a nested site whose steps hit primary own entries
 /// (`lane_nested_own_value`).
 const RETURNING_FIELD_NESTED: u8 = 9;
+/// A returning `MakeObjectLiteral` (`return { ... }`): the literal `lane_make_object_literal`
+/// makes, returned from the frame.
+const RETURNING_OBJECT_LITERAL: u8 = 10;
 
 /// The cached read of a single-base returning `GetField` of `KIND` (`RETURNING_FIELD_OWN`,
 /// `_POLYMORPHIC`, `_HOLDER`, `_INHERITED`) at `cache`: a hit, which runs no guest code.
@@ -9711,6 +9722,7 @@ fn returning_kind(instruction: WideInstruction) -> Option<u8> {
         Op::Binary => Some(RETURNING_BINARY),
         Op::MakeObject2 => Some(RETURNING_OBJECT),
         Op::SuperConstArrayObject2 => Some(RETURNING_LITERAL),
+        Op::MakeObjectLiteral => Some(RETURNING_OBJECT_LITERAL),
         _ => None,
     }
 }
@@ -9749,6 +9761,7 @@ script_handler! {
                 RETURNING_UNARY => lane_unary_value(cx, r, i),
                 RETURNING_BINARY => lane_binary_value(cx, r, i),
                 RETURNING_OBJECT => Some(lane_object_pair(cx, r, i)),
+                RETURNING_OBJECT_LITERAL => Some(lane_object_literal_value(cx, r, i)),
                 _ => lane_literal_value(cx, r, i),
             }
         };
@@ -9972,12 +9985,21 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
     let callee = r.get(i.b);
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
     // The checks `inline_construct_target` makes of the callee alone, before activations
-    // become frames for it.
+    // become frames for it. A constructor of another program is pushed in its own, where the
+    // lane admits it.
     let pushable = match vm.heap.function(callee) {
         Some(FunctionRecord { kind: FunctionKind::User(program, id), realm, .. }) => {
-            *program == unsafe { (*cx).program }
-                && *realm == vm.realm.globals
-                && code.function_get(*id as usize).is_some_and(Vm::<H>::inline_constructible)
+            *realm == vm.realm.globals
+                && if *program == unsafe { (*cx).program } {
+                    code.function_get(*id as usize).is_some_and(Vm::<H>::inline_constructible)
+                } else {
+                    vm.programs.residual(*program).is_some_and(|callee_code| {
+                        vm.lane_admits(callee_code)
+                            && callee_code
+                                .function_get(*id as usize)
+                                .is_some_and(Vm::<H>::inline_constructible)
+                    })
+                }
         }
         _ => false,
     };
@@ -9991,7 +10013,7 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
     vm.materialize_lane_activations(cx);
     // The caller is now the innermost frame, its registers the frame's.
     let (frame, r) = unsafe { ((*cx).frame, (*cx).registers) };
-    let Some((id, env, this)) = vm.inline_construct_target(code, frame, callee) else {
+    let Some((program, id, env, this)) = vm.inline_construct_target(code, frame, callee) else {
         return exit(ip);
     };
     // Allocating the receiver can make a collection due.
@@ -10005,6 +10027,21 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
     // neither moves nor frees before it copies them.
     let arguments: *const [Value] = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.c)), argc) };
     vm.construct_target = Some(super::activation::ConstructionTarget { callee, new_target: callee });
+    // A constructor of another program runs in its own, which the push makes active and the
+    // loop's executing one sets aside, as `lane_push_frame_call` pushes a call.
+    let caller_program = (program != unsafe { (*cx).program }).then(|| {
+        // SAFETY: the general loop's executing program outlives the lane run.
+        let executing = unsafe { &mut *(*cx).executing };
+        let saved = super::dispatch_frame::SavedProgram {
+            id: executing.id,
+            retained: std::mem::replace(&mut executing.retained, vm.programs.get(program)),
+        };
+        executing.id = program;
+        lane_enter_program(cx, program);
+        saved
+    });
+    // SAFETY: the context's program is now the callee's, which outlives the lane run.
+    let code = unsafe { &*(*cx).code };
     let pushed = vm.push_general_user_frame(code, id, env, this, unsafe { &*arguments }, CallContext::user_function(id, callee));
     vm.construct_target = None;
     match pushed {
@@ -10018,7 +10055,7 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
                 construct_this: Some(this),
                 returns,
                 call_guard: Some(call_guard),
-                caller_program: None,
+                caller_program,
             });
             // The pushed frame's guard narrows the activations the thread admits.
             vm.lane_stack.refresh_activation_limit();
@@ -10029,8 +10066,15 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
             lane_enter_script_frame(cx, callee_frame)
         }
         // A failed push (the guest call depth) throws at the construction, as the general
-        // path's.
+        // path's. The caller's program is the executing one again.
         Err(error) => {
+            if let Some(saved) = caller_program {
+                // SAFETY: as above.
+                let executing = unsafe { &mut *(*cx).executing };
+                executing.id = saved.id;
+                executing.retained = saved.retained;
+                lane_enter_program(cx, saved.id);
+            }
             vm.lane_raised = Some(error);
             exit(ip)
         }
@@ -10400,6 +10444,7 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
                             | Op::Unary
                             | Op::MakeObject2
                             | Op::SuperConstArrayObject2
+                            | Op::MakeObjectLiteral
                     )
                         || (op == Op::Binary && instruction.returns_from_frame())) =>
             {
@@ -10472,7 +10517,9 @@ fn lane_call_fits(instruction: WideInstruction) -> bool {
                 && !ImmediateLayout::construct_array_arguments(instruction.imm())
         }
         Op::GetField => lane_returns(instruction) || lane_sinks_field(instruction),
-        Op::Unary | Op::MakeObject2 | Op::SuperConstArrayObject2 => lane_returns(instruction),
+        Op::Unary | Op::MakeObject2 | Op::SuperConstArrayObject2 | Op::MakeObjectLiteral => {
+            lane_returns(instruction)
+        }
         Op::Binary if instruction.returns_from_frame() => lane_returns(instruction),
         _ => true,
     }
@@ -10714,6 +10761,7 @@ fn derive_lane_view<H: Host>(
                         RETURNING_UNARY => lane_returning::<H, RETURNING_UNARY> as Handler,
                         RETURNING_BINARY => lane_returning::<H, RETURNING_BINARY> as Handler,
                         RETURNING_OBJECT => lane_returning::<H, RETURNING_OBJECT> as Handler,
+                        RETURNING_OBJECT_LITERAL => lane_returning::<H, RETURNING_OBJECT_LITERAL> as Handler,
                         _ => lane_returning::<H, RETURNING_LITERAL> as Handler,
                     },
                     produces: false,
