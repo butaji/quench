@@ -297,6 +297,7 @@ impl<H: Host> Vm<H> {
             frame_pool: _,
             lane_stack: _,
             execution_mode: _,
+            wasm_compilation: _,
             execution_interrupt: _,
             wasm_reference_epoch: _,
             active_call_roots,
@@ -646,15 +647,31 @@ impl<H: Host> Vm<H> {
     }
 
     /// `entry`, compiled apart, with its atoms numbered as this VM's.
+    /// An entry decoded from its cached form (`Runtime::compile_entry`) reads that form again,
+    /// with this VM's atoms; any other is encoded compactly for the same. Encoding the entry
+    /// was about 1.5% of an npm scenario's instructions (chalk, 2026-10-22).
     fn rebased_entry(&mut self, entry: &ResidualProgram) -> SnapshotResult<ResidualProgram> {
-        let (bytes, _) = entry.encode_compact();
-        let text = entry
-            .source
+        // A table in the program's own ids marks the form `decode_trusted` reads.
+        let cached = entry
+            .encoded_records
             .as_ref()
-            .map_or_else(|| crate::bytecode::SourceText::Static(""), |source| source.text.clone());
-        let bytes: crate::KeptBytes = Rc::new(bytes);
-        let mut main = ResidualProgram::decode_compact(bytes, &mut |name| self.intern_atom(name), text)
-            .map_err(|error| SnapshotError(format!("snapshot entry: {error}")))?;
+            .filter(|records| records.atoms.is_none())
+            .and_then(|records| {
+                ResidualProgram::decode_trusted_interned(records.bytes.clone(), &mut |name| self.intern_atom(name)).ok()
+            });
+        let mut main = match cached {
+            Some(main) => main,
+            None => {
+                let (bytes, _) = entry.encode_compact();
+                let text = entry
+                    .source
+                    .as_ref()
+                    .map_or_else(|| crate::bytecode::SourceText::Static(""), |source| source.text.clone());
+                let bytes: crate::KeptBytes = Rc::new(bytes);
+                ResidualProgram::decode_compact(bytes, &mut |name| self.intern_atom(name), text)
+                    .map_err(|error| SnapshotError(format!("snapshot entry: {error}")))?
+            }
+        };
         main.atoms = AtomTable::shared(self.atom_sequence.clone(), self.atom_sequence.len());
         if entry.validated.holds() {
             main.validated.establish();
