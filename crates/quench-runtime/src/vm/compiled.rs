@@ -2527,6 +2527,10 @@ impl CompiledJsFunction {
         self.field_argument
     }
 
+    fn uses_numeric_field_argument(&self) -> bool {
+        self.field_argument.is_some() && matches!(self.entry, CompiledJsEntry::Number(_))
+    }
+
     fn capture_argument(&self) -> Option<super::js_compiled::JsJitCaptureArgument> {
         self.capture_argument
     }
@@ -6916,19 +6920,25 @@ impl<H: Host> Vm<H> {
         });
 
         let params = usize::from(function.params);
-        let registers = self.frames[frame].registers.get(..params)?;
+        let registers = self.frames[frame].registers.get(..params)?.to_vec();
         let first_argument = registers.first().copied();
-        let field_argument = match compiled_tier {
+        let numeric_field_argument = match compiled_tier {
+            Some(compiled) if compiled.uses_numeric_field_argument() => compiled.field_argument(),
+            Some(_) => None,
+            None => super::js_compiled::cached_numeric_field_argument_candidate(function),
+        };
+        let field_argument_uses_numeric_abi = numeric_field_argument.is_some();
+        let field_argument = numeric_field_argument.or_else(|| match compiled_tier {
             Some(compiled) => compiled.field_argument(),
             None => super::js_compiled::cached_field_argument_candidate(function),
-        };
+        });
         let field_reject_candidate = match compiled_tier {
             Some(compiled) => compiled.is_field_reject(),
             None => super::js_compiled::is_field_reject_candidate(function),
         };
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
-        for value in registers {
+        for value in registers.iter().copied() {
             match value.as_number() {
                 Some(value) => arguments.push(value),
                 None => {
@@ -6954,17 +6964,52 @@ impl<H: Host> Vm<H> {
         if let Some(field_argument) = field_argument {
             let receiver = first_argument?;
             arguments.clear();
-            numeric = false;
-            if let super::object::FieldCacheProbe::Hit(value) =
-                self.cached_field_hit(program, receiver, field_argument.cache_site)
-            {
-                if let Some(number) = value.as_number() {
-                    arguments.push(number);
-                    numeric = true;
-                } else if field_reject_candidate {
-                    // Strict inequality against a Number is true for every non-Number
-                    // value. NaN therefore takes the guarded early-return path.
-                    arguments.push(f64::NAN);
+            if !field_argument_uses_numeric_abi {
+                numeric = false;
+                if let super::object::FieldCacheProbe::Hit(value) =
+                    self.cached_field_hit(program, receiver, field_argument.cache_site)
+                {
+                    if let Some(value) = value.as_number() {
+                        arguments.push(value);
+                        numeric = true;
+                    } else if field_reject_candidate {
+                        // Strict inequality against a Number is true for every
+                        // non-Number value, so NaN takes the guarded early return.
+                        arguments.push(f64::NAN);
+                    }
+                } else {
+                    arguments.clear();
+                }
+            } else {
+                numeric = true;
+                // Preserve numeric arguments after the receiver. The compiler
+                // keeps the object's ABI slot as a placeholder, then appends
+                // the guarded field value after parameters and captures.
+                for (index, value) in registers.iter().copied().enumerate() {
+                    if index == 0 {
+                        arguments.push(0.0);
+                    } else if let Some(value) = value.as_number() {
+                        arguments.push(value);
+                    } else {
+                        numeric = false;
+                        break;
+                    }
+                }
+                if captures_numeric {
+                    arguments.extend(capture_values.iter().copied());
+                } else {
+                    numeric = false;
+                }
+                if let super::object::FieldCacheProbe::Hit(value) =
+                    self.cached_field_hit(program, receiver, field_argument.cache_site)
+                {
+                    if let Some(number) = value.as_number() {
+                        arguments.push(number);
+                    } else {
+                        numeric = false;
+                    }
+                } else {
+                    numeric = false;
                 }
             }
         }
