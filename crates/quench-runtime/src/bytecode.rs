@@ -2459,14 +2459,25 @@ pub(crate) struct FieldBase(pub(crate) u16);
 impl FieldBase {
     pub(crate) const THIS: Self = Self(u16::MAX);
     pub(crate) const NESTED: u16 = u16::MAX - 1;
+    const LOCAL_FLAG: u16 = 0x4000;
 
     pub(crate) fn register(value: Register) -> Self {
-        debug_assert!(value < Self::NESTED);
+        debug_assert!(value <= REGISTER_MASK);
         Self(value)
     }
 
     pub(crate) fn register_index(self) -> Option<Register> {
-        (self != Self::THIS).then_some(self.0)
+        (self.0 <= REGISTER_MASK).then_some(self.0)
+    }
+
+    pub(crate) fn local(value: u16) -> Option<Self> {
+        (value <= REGISTER_MASK).then_some(Self(Self::LOCAL_FLAG | value))
+    }
+
+    pub(crate) fn local_index(self) -> Option<u16> {
+        (self.0 & Self::LOCAL_FLAG != 0
+            && self.0 & !(Self::LOCAL_FLAG | REGISTER_MASK) == 0)
+            .then_some(self.0 & REGISTER_MASK)
     }
 }
 

@@ -3328,6 +3328,9 @@ unsafe fn lane_single_field_base<H: Host>(
     r: Registers,
     base: u16,
 ) -> Option<Value> {
+    if crate::bytecode::FieldBase(base).local_index().is_some() {
+        return None;
+    }
     if base == crate::bytecode::FieldBase::NESTED {
         return None;
     }
@@ -3545,6 +3548,9 @@ script_handler! {
     /// prepares, so such a site keeps it; any other takes `lane_get_field_own`.
     #[inline(never)]
     fn lane_get_field_first<>(cx, r, ip, i, view) {
+        if crate::bytecode::FieldBase(i.b).local_index().is_some() {
+            sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
+        }
         let vm = unsafe { vm(cx) };
         if vm.is_private_name(i.imm()) && i.b != crate::bytecode::FieldBase::NESTED {
             requicken(ip, lane_get_private_field::<H>);
@@ -3924,6 +3930,9 @@ unsafe fn lane_field_base<H: Host>(
     r: Registers,
     base: crate::bytecode::FieldBase,
 ) -> Option<Value> {
+    if let Some(slot) = base.local_index() {
+        return lane_plain_local_operand(cx, slot);
+    }
     match base.register_index() {
         Some(register) => Some(r.get(register)),
         None => unsafe { lane_this(cx) },
@@ -4725,6 +4734,15 @@ script_handler! {
 #[inline(never)]
 fn lane_relation_other<H: Host>(operator: u32, left: Value, right: Value) -> Option<bool> {
     let vm = unsafe { vm(lane_context::<H>()) };
+    // A nullish value is unequal to every Number under both loose and strict equality.
+    // The Number/nullish pair cannot invoke conversion hooks or `document.all`; keep this
+    // check in the shared cold fallback so it does not enlarge each hot comparison handler.
+    if operator <= STRICT_INEQUALITY_OPERATOR
+        && ((left.is_null() || left.is_undefined()) && right.as_number().is_some()
+            || (right.is_null() || right.is_undefined()) && left.as_number().is_some())
+    {
+        return Some(matches!(operator, 1 | STRICT_INEQUALITY_OPERATOR));
+    }
     vm.instanceof_truthy(operator, left, right)
         .or_else(|| vm.plain_in(operator, left, right))
         .or_else(|| vm.identity_equality(operator, left, right))
@@ -7812,6 +7830,16 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
+        if vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
+            && let Some(native) =
+                super::environment::internal_name_native(&code.atoms[i.imm() as usize])
+        {
+            r.set(i.a, vm.native_value(native));
+            if CALL {
+                r.set(i.b, Value::UNDEFINED);
+            }
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
         let function = vm
             .lane_stack
             .activations
