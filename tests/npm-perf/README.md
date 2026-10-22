@@ -418,3 +418,10 @@ a Move-to-JumpFalse fusion, which skips a dispatch on about 3.6M records in this
 sample. Diagnostic output:
 `work/react-perf/react-lane-opcode-profile.log` and
 `work/react-perf/react-lane-move-successors.log`.
+
+The Move-to-JumpFalse fusion screen matched output, but the full 11-round paired
+run was effectively flat: 319.26 renders/s / 27.20 MB versus 318.69 / 27.70 MB
+for the generic PGO+512 control (+0.18% speed, -1.8% RSS). The fused handler
+was reverted. Reports:
+`work/react-perf/react-move-jumpfalse-vs-generic-screen-3.json` and
+`work/react-perf/react-move-jumpfalse-vs-generic-11.json`.
