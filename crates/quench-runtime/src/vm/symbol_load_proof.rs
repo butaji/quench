@@ -1,6 +1,7 @@
-//! Proofs that answer a symbol-keyed `[[Get]]` without walking its receiver's chain.
-//! A symbol-keyed read (`this[kState]`) has no compiler cache site, so each read would look the
-//! key up in every shape from the receiver to its holder. A proof records, under one
+//! Proofs that answer a `[[Get]]` without walking its receiver's chain. A symbol-keyed read
+//! (`this[kState]`), and the VM's own reads of named properties (a promise's `constructor`
+//! and `then`, an iterator result's `done`), have no compiler cache site, so each read would
+//! look the key up in every shape from the receiver to its holder. A proof records, under one
 //! `prototype_layout_epoch`, where the walk from a receiver of one shape found `key`: an own
 //! data slot, a data slot of a prototype, or nowhere. Every prototype the walk passed was
 //! marked a prototype when the proof was made, so any later change to one advances the epoch
@@ -8,12 +9,14 @@
 //! shape or symbol. The receiver's own layout is its shape, which the proof names.
 
 use super::Value;
+use super::property_key::PropertyKey;
 use std::cell::Cell;
 
 /// Direct-mapped entries: a power of two. Node's streams and Fastify's request and reply
 /// objects read a few dozen distinct symbol keys through a handful of receiver shapes per
-/// request; 256 entries hold that working set in 12 KiB.
-const SYMBOL_LOAD_PROOF_ENTRIES: usize = 1 << 8;
+/// request, which 256 entries held; the named reads natives make on many shapes share the
+/// table, doubled for them.
+const SYMBOL_LOAD_PROOF_ENTRIES: usize = 1 << 9;
 
 /// Where a proved walk found the key.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -33,7 +36,7 @@ pub(super) enum SymbolLoadAnswer {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct SymbolLoadProof {
     shape: u32,
-    key: Value,
+    key: PropertyKey,
     epoch: u64,
     answer: SymbolLoadAnswer,
 }
@@ -49,20 +52,20 @@ impl Default for SymbolLoadProofs {
 }
 
 impl SymbolLoadProofs {
-    fn index(shape: u32, key: Value) -> usize {
+    fn index(shape: u32, key: PropertyKey) -> usize {
         super::shape_memo::direct_mapped_index((shape, key), SYMBOL_LOAD_PROOF_ENTRIES)
     }
 
     /// The answer a proof for `key` on a receiver of `shape` holds under `epoch`.
     #[inline(always)]
-    pub(super) fn answer(&self, shape: u32, key: Value, epoch: u64) -> Option<SymbolLoadAnswer> {
+    pub(super) fn answer(&self, shape: u32, key: PropertyKey, epoch: u64) -> Option<SymbolLoadAnswer> {
         self.entries[Self::index(shape, key)]
             .get()
             .filter(|proof| proof.shape == shape && proof.key == key && proof.epoch == epoch)
             .map(|proof| proof.answer)
     }
 
-    pub(super) fn record(&self, shape: u32, key: Value, epoch: u64, answer: SymbolLoadAnswer) {
+    pub(super) fn record(&self, shape: u32, key: PropertyKey, epoch: u64, answer: SymbolLoadAnswer) {
         self.entries[Self::index(shape, key)].set(Some(SymbolLoadProof { shape, key, epoch, answer }));
     }
 
