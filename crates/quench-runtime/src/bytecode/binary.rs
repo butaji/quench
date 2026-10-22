@@ -121,6 +121,16 @@ pub(super) fn decode_trusted_program(bytes: super::KeptBytes) -> Result<super::R
     decode_program(&bytes, encoding, ReadAtoms::Program, None)
 }
 
+/// `decode_trusted_program`, with each atom of the program's table named by `intern`'s id,
+/// as a compact encoding's reader names them.
+pub(super) fn decode_trusted_program_interned(
+    bytes: super::KeptBytes,
+    intern: &mut dyn FnMut(&str) -> u32,
+) -> Result<super::ResidualProgram, String> {
+    let encoding = sealed_encoding_length(bytes.as_ref().as_ref())?;
+    decode_program(&bytes, encoding, ReadAtoms::Interned(intern), None)
+}
+
 /// The length of a sealed encoding without its checksum, when the checksum holds over its
 /// body. The region of deferred records is left unread.
 fn sealed_encoding_length(bytes: &[u8]) -> Result<usize, String> {
@@ -360,6 +370,8 @@ enum ReadAtoms<'a> {
     Program,
     /// A compact table, whose names `intern` gives the reader's ids.
     Compact(&'a mut dyn FnMut(&str) -> u32),
+    /// The program's own table, whose names `intern` gives the reader's ids.
+    Interned(&'a mut dyn FnMut(&str) -> u32),
     /// Only the length of the table the program shares with its reader, written here.
     Shared(&'a mut usize),
 }
@@ -434,6 +446,17 @@ fn decode_program(
         ReadAtoms::Program => input.strings()?,
         ReadAtoms::Shared(count) => {
             **count = input.u32()? as usize;
+            AtomTable::default()
+        }
+        ReadAtoms::Interned(intern) => {
+            let count = input.u32()? as usize;
+            let mut ids = Vec::with_capacity(count);
+            for _ in 0..count {
+                let len = input.u32()? as usize;
+                let name = std::str::from_utf8(input.take(len)?).map_err(|_| "invalid residual string")?;
+                ids.push(intern(name));
+            }
+            input.atoms = Some(ids.into());
             AtomTable::default()
         }
         ReadAtoms::Compact(intern) => {
