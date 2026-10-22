@@ -1579,6 +1579,13 @@ impl<H: Host> Vm<H> {
                 instruction_pc,
             );
             let ins = cursor.instruction(pc);
+            if self.programs.js_jit_diagnostics_enabled() {
+                self.programs.record_js_jit_general_dispatch_opcode(
+                    cursor.program,
+                    cursor.function,
+                    ins.op(),
+                );
+            }
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::count_general(
                 || {
