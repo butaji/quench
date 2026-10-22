@@ -410,6 +410,16 @@ impl<H: Host> Vm<H> {
     }
 }
 
+/// What the global `isNaN` or `isFinite` returns for the Number its argument converted to;
+/// `None` for any other native.
+pub(super) fn global_number_predicate(native: Native, number: f64) -> Option<bool> {
+    Some(match native {
+        Native::GlobalIsNaN => number.is_nan(),
+        Native::GlobalIsFinite => number.is_finite(),
+        _ => return None,
+    })
+}
+
 /// What `Number.isNaN`, `isFinite`, `isInteger` or `isSafeInteger` returns for `value`: none
 /// coerces its argument, so a non-Number answers `false`. `None` for any other native.
 pub(super) fn number_predicate(native: Native, value: Value) -> Option<bool> {
