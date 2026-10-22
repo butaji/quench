@@ -1207,3 +1207,21 @@ For no-JIT, old per-op instruction screens show large dispatch and allocation
 costs in object/closure creation, field/array operations and string/RegExp
 builtins; these need current profiles and fixture-level validation before
 choosing a hot path. No 20% runtime-level gain has been demonstrated yet.
+
+## Guarded multi-field numeric inputs — 2026-10-22
+
+The numeric denotation now accepts up to four cached reads from `this` or
+parameter zero in pure numeric regions. Each field cache is checked at entry;
+only numeric values enter native code, and any miss resumes the untouched frame
+in the lane. This is general bytecode metadata, not a function/source matcher.
+All 799 runtime library tests pass. The functional unit test enters native code
+for a two-field `this` method and confirms accessor and non-number fallback.
+
+The V8-v7 Richards diagnostic still reports zero native entries for
+`isHeldOrSuspended` (32 entries); the remaining unsupported combination is two
+field reads, numeric captures and a branch. One-round JetStream 3
+`typescript-lib` and `async-fs` diagnostic runs timed out at the 600-second
+per-engine limit before valid samples, so no score or RSS gain is established.
+The step is recorded as compiler coverage groundwork, not a performance win.
+Evidence and raw reports are in
+`evidence/jit-this-field-inputs-2026-10-22/`.
