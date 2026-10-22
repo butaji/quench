@@ -128,13 +128,7 @@ pub(super) fn promote<'a>(
         if let Some(target) = instruction.numeric_local_target() {
             exclude(usize::from(target));
         }
-        if let Some(local) = instruction
-            .field_lookup()
-            .and_then(|lookup| match lookup {
-                crate::bytecode::FieldLookup::Atom { base, .. } => base.local_index(),
-                crate::bytecode::FieldLookup::Site(_) => None,
-            })
-        {
+        if let Some(local) = instruction.local_field_base() {
             exclude(usize::from(local));
         }
         if instruction.op().immediate_role() != ImmediateRole::LocalSlot {
