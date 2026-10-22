@@ -197,3 +197,11 @@ qualification; it shows Quench's sampled RSS below both engines while speed
 remains much slower. JS-tier diagnostics show the hot object-heavy React
 functions are unsupported by the current narrow compiler tier and have zero
 compile attempts. Linux RSS sampling remains diagnostic, not qualification.
+
+The full-size no-JIT memory-first policy report is
+[`reports/react-no-jit-memory-first-full-linux-11.json`](reports/react-no-jit-memory-first-full-linux-11.json).
+It measured 228.1 renders/s / 29.30 MB, versus Node `--jitless` at 1,580.3 /
+36.20 MB and Bun no-JIT at 1,375.5 / 37.37 MB, with matching output. It clears
+the 20% RSS margin against Bun and narrowly misses Node, while throughput is
+still far behind both. This policy does not meet the combined performance
+target.
