@@ -4,5 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "Size-classed small-object allocator for the Quench runtime"
 
+[lib]
+# No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
+doctest = false
+
 [dependencies]
 libc = "0.2"
