@@ -378,3 +378,12 @@ An early string-pair branch tried to bypass numeric operator checks for the
 control: only 0.5% more throughput and 4.2% more RSS, with matching output. The
 fast path was reverted without a full run because it showed no useful signal.
 Report: `work/react-perf/react-pgo-string-pair-fastpath-vs-control-memory-first-32k-screen-3.json`.
+
+After the diagnostic GC builds, the ordinary PGO+512 production `quench-node`
+was restored and rerun with the full 5,000-render workload, 250 warmups,
+memory-first policy, and 32K young cap for 11 interleaved rounds. It measured
+325.9 renders/s / 26.86 MB versus Node `--jitless` at 1,662.2 / 36.22 MB and
+Bun no-JIT at 1,496.6 / 37.44 MB. Output matched at 24,980,000 bytes and
+checksum 414318. RSS remains over 20% lower than both engines, but throughput
+is about five times slower, so React no-JIT is not won. Report:
+`work/react-perf/react-pgo512-restored-full-memoryfirst-32k-nojit-11.json`.
