@@ -218,41 +218,35 @@ impl GenerationalPacing {
     }
 }
 
-/// Production pacing, memory-first on the owner's direction of 2026-10-17 (TOD-123): young
-/// collections every sixty-fourth of a live set (at least 384 weight; from an eighth, with
-/// read-only pages released after every collection: V8-v7 max RSS RegExp 7244-7500 -> 6852
-/// KiB, EarleyBoyer 7792-8000 -> 9040-9160, the floor-bound fixtures unchanged, static
-/// x86_64 unbolted, 2026-10-18; RSS is this lane's only criterion), a full collection once the old
-/// generation has doubled or one live set of allocation has passed since the last one, and,
-/// when more than half of young allocations survive, full collections with one live set
-/// between them, probing survival with a minor collection every fourth one. The minimums are
-/// the pre-generational 384-cell headroom. The Score lane's table (eight live sets per young
-/// collection, four per full one, 2^15 and 2^18 minimums) raised npm peak RSS by up to 17 MiB
-/// per package (semver 27.6 -> 45.2, typescript-eslint 188 -> 226); the owner reaffirmed
-/// memory-first on 2026-10-18.
-///
-/// The young floor is `YOUNG_MINIMUM_ALLOCATION`, not the 384 headroom: at a sixty-fourth of a
-/// small live set the floor decides the interval, and 384 collected small programs every few
-/// hundred allocations without lowering their peak (TOD-161, quench-node scorecard, x86_64
-/// 4 vCPU, 2026-10-20: 768 against 384 gave V8-v7 Score x1.161 with RayTrace x1.54 and
-/// RegExp x1.60 in 7/7 pairs, frameworks x1.023, max RSS geomean x0.997 and x0.999).
+/// Production pacing of the JetStream lane (v2-cloud-jet): young collections every eighth
+/// of a live set, at least `SCORE_MINIMUM_YOUNG` and at most `MAXIMUM_YOUNG`; a full one once
+/// the old generation has doubled or one live set of allocation has passed, at least
+/// `SCORE_MINIMUM_FULL_INTERVAL` apart; past half survival, full collections with one live
+/// set between them, probing survival every fourth. Trunk's memory-first table (a sixty-fourth,
+/// 768 and 384 minimums; TOD-123, TOD-161) stays the owner's default there. Against it, on
+/// x86_64 4 vCPU, 2026-10-21: UniPoker Score 12.6-13.1 -> 18.4-19.2 (max RSS 12 -> 16-17 MB),
+/// stanford-crypto-aes 25.7-27.5 -> 29.4-32.1 (22.5 -> 32 MB, Bun no-JIT 47 MB).
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
-    young: Ratio::new(1, 64),
-    minimum_young: YOUNG_MINIMUM_ALLOCATION,
+    young: Ratio::new(1, 8),
+    minimum_young: SCORE_MINIMUM_YOUNG,
     maximum_young: MAXIMUM_YOUNG,
     old_growth: Ratio::new(1, 1),
-    minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
+    minimum_old_growth: SCORE_MINIMUM_FULL_INTERVAL,
     allocation_cap: Ratio::new(1, 1),
-    minimum_allocation_cap: MEMORY_FIRST_MINIMUM_ALLOCATION,
+    minimum_allocation_cap: SCORE_MINIMUM_FULL_INTERVAL,
     survival_limit: SURVIVAL_SCALE / 2,
     full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
 };
 
-/// The fewest allocations between collections, whatever survived: the pre-generational
-/// minimum headroom.
-const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
+/// The JetStream lane's fewest allocations between young collections (v2-cloud-jet only,
+/// pending the owner's decision): 2^17 doubled small-heap RSS (aes 29 -> 60 MB) and 2^16 kept
+/// it under Bun's, while the memory-first 768 left UniPoker at 0.7x this table's Score.
+const SCORE_MINIMUM_YOUNG: usize = 1 << 16;
+/// The JetStream lane's fewest allocations, or old-generation growth, between full collections.
+const SCORE_MINIMUM_FULL_INTERVAL: usize = 1 << 18;
+
 /// The most allocations between young collections, however large the live set. Without it
 /// the young budget is eight live sets: a server whose startup leaves a few hundred thousand
 /// live cells (the Node library plus a framework) allocated millions between collections,
@@ -262,9 +256,6 @@ const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
 /// splay 161 -> 92 MB, with Scores within the run-to-run band. 2^16 cut little more memory.
 const MAXIMUM_YOUNG: usize = 1 << 17;
 
-/// The fewest allocations between young collections: twice the headroom, which kept every
-/// scorecard workload's max RSS within 1 MB and 5% (1024 raised koa's by 1.1 MB; TOD-161).
-const YOUNG_MINIMUM_ALLOCATION: usize = 2 * MEMORY_FIRST_MINIMUM_ALLOCATION;
 
 #[cfg(not(feature = "gc-tuning"))]
 pub(super) fn pacing() -> GenerationalPacing {
