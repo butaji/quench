@@ -163,7 +163,8 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
         && !function.is_async
         && !function.is_generator
         && !function.derived_constructor
-        && !function.class_initializer
+        // An arrow inside an initializer owns its locals (`compile/arrow.rs`).
+        && !(function.class_initializer && !function.is_arrow)
         && function.simple_parameters
         && !function.rest
         && function.arguments_slot.is_none()
