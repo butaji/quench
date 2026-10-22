@@ -235,12 +235,20 @@ impl<H: Host> Vm<H> {
     }
 
     #[expect(clippy::wrong_self_convention)]
+    /// ToNumber of `value` where it runs no guest code and raises nothing: an immediate
+    /// primitive or a string. `None` for any other value.
+    pub(super) fn primitive_to_number(&self, value: Value) -> Option<f64> {
+        value
+            .immediate_number()
+            .or_else(|| self.heap.string(value).map(|text| super::number::parse_number_string(&text.host_string())))
+    }
+
     pub(super) fn to_number(
         &mut self,
         program: &ResidualProgram,
         value: Value,
     ) -> Result<f64, JsError> {
-        if let Some(number) = value.immediate_number() {
+        if let Some(number) = self.primitive_to_number(value) {
             return Ok(number);
         }
         if self.object_data(value).is_some() {
@@ -253,9 +261,6 @@ impl<H: Host> Vm<H> {
                 return Err(
                     self.type_error(program, "Cannot convert a Symbol value to a number".into())
                 );
-            }
-            _ if let Some(value) = self.heap.string(value)  => {
-                return Ok(super::number::parse_number_string(&value.host_string()));
             }
             Some(Cell::BigInt(_)) => {
                 return Err(
