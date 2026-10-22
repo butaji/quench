@@ -8789,6 +8789,15 @@ fn lane_call_native<H: Host>(
     {
         return Some(Value::number(result));
     }
+    // So do `Math.max` and its kin of Numbers (`math_numbers`).
+    if let Some(numbers) = args
+        .iter()
+        .map(|value| value.as_number())
+        .collect::<Option<smallvec::SmallVec<[f64; super::number::MATH_INLINE_ARGUMENTS]>>>()
+        && let Some(result) = super::number::math_numbers(native, &numbers)
+    {
+        return Some(Value::number(result));
+    }
     if !unsafe { (*cx).script_calls } {
         return None;
     }
