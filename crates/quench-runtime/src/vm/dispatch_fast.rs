@@ -7220,6 +7220,18 @@ fn lane_native_value<H: Host>(
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     match kind {
+        // The JIT-mode DataView lane (`js_jit_dataview_float64_enabled`); a miss takes the
+        // native, which coerces and throws.
+        FunctionKind::Native(native @ (Native::DataViewGetFloat64 | Native::DataViewSetFloat64))
+            if vm.execution_mode == super::ExecutionMode::Compiled
+                && vm.programs.js_jit_dataview_float64_enabled() =>
+        {
+            let value = vm.lane_data_view_float64(native, receiver, args);
+            if value.is_some() {
+                vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64);
+            }
+            value.or_else(|| lane_string_or_native_call(cx, ip, callee, receiver, args))
+        }
         FunctionKind::Native(Native::ArrayPush) => vm.array_push_dense(receiver, args),
         FunctionKind::Native(Native::ArrayPop) => vm.array_pop_dense(receiver),
         FunctionKind::Native(Native::StringCharCodeAt) if !args.is_empty() => {
@@ -8360,6 +8372,10 @@ fn lane_activate_environment<H: Host>(
         (*cx).env = target.env;
         (*cx).capture = target.capture;
     }
+    if vm.programs.js_jit_diagnostics_enabled() {
+        vm.programs
+            .record_js_jit_lane_entry(unsafe { (*cx).program }, target.function);
+    }
     Ok((callee_registers, base))
 }
 
@@ -8677,6 +8693,9 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     }
     if cross {
         lane_enter_program(cx, target.program);
+    }
+    if vm.programs.js_jit_diagnostics_enabled() {
+        vm.programs.record_js_jit_lane_entry(target.program, target.function);
     }
     Ok((callee_registers, base))
 }
