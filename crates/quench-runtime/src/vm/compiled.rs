@@ -2077,6 +2077,20 @@ unsafe extern "C" fn import_callout<H: Host>(
 /// arguments, result) -> status.
 type Entry = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64, *mut u64) -> u32;
 
+/// The shared native-entry ABI used by compiled Wasm functions and JS OSR regions:
+/// (context, memory base, memory length, arguments or region inputs, result word) -> status.
+fn native_entry_signature(
+    pointer: ir::Type,
+    call_conv: cranelift_codegen::isa::CallConv,
+) -> Signature {
+    let mut signature = Signature::new(call_conv);
+    for parameter in [pointer, types::I64, types::I64, pointer, pointer] {
+        signature.params.push(AbiParam::new(parameter));
+    }
+    signature.returns.push(AbiParam::new(types::I32));
+    signature
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum NativeEntryMode {
     /// Use the signal-resuming entry, required by guarded memory and poll-page faults.
@@ -7011,11 +7025,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         memory: MemoryArguments,
     ) -> Option<Vec<u8>> {
         let call_conv = isa.default_call_conv();
-        let mut signature = Signature::new(call_conv);
-        for _ in 0..5 {
-            signature.params.push(AbiParam::new(types::I64));
-        }
-        signature.returns.push(AbiParam::new(types::I32));
+        let signature = native_entry_signature(isa.pointer_type(), call_conv);
         let mut func = ir::Function::with_name_signature(
             UserFuncName::user(ENTRY_NAMESPACE, index as u32),
             signature,
@@ -7034,6 +7044,11 @@ impl<'a, H: Host> Analysis<'a, H> {
             parameters[3],
             parameters[4],
         );
+        let context = if builder.func.dfg.value_type(context) == types::I64 {
+            context
+        } else {
+            builder.ins().uextend(types::I64, context)
+        };
         let mut call_args = vec![context];
         call_args.extend(memory.select(base, length));
         for (offset, ty) in plan.params.iter().enumerate() {

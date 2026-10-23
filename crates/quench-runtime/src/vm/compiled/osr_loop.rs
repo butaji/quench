@@ -24,7 +24,7 @@
 use crate::bytecode::{FieldBase, FieldLookup, Function, Op, Operand, OperandKind, Register, WideInstruction};
 use crate::value::{Value, ValueLayout};
 use cranelift_codegen::ir::{
-    self, AbiParam, InstBuilder, UserFuncName,
+    self, InstBuilder, UserFuncName,
     condcodes::{FloatCC, IntCC},
     types,
 };
@@ -1307,11 +1307,7 @@ pub(super) fn compile(
 ) -> Option<CompiledLoop> {
     let isa = super::jit_backend::target_isa("speed", false)?;
     let pointer = isa.pointer_type();
-    let mut signature = ir::Signature::new(isa.default_call_conv());
-    for parameter in [pointer, types::I64, types::I64, pointer, pointer] {
-        signature.params.push(AbiParam::new(parameter));
-    }
-    signature.returns.push(AbiParam::new(types::I32));
+    let signature = super::native_entry_signature(pointer, isa.default_call_conv());
     let mut native = ir::Function::with_name_signature(
         UserFuncName::user(LOOP_NAMESPACE, region.header),
         signature,
