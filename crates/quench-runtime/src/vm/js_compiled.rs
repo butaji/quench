@@ -129,7 +129,7 @@ const MAX_INSTRUCTIONS: usize = 256;
 // Native entry guards and VM return plumbing dominate bodies with too little
 // arithmetic, branching, or guarded heap work. This generic estimate is a
 // promotion-cost floor, not a semantic eligibility rule.
-const MIN_JS_JIT_WORK_UNITS: usize = 2;
+const MIN_JS_JIT_WORK_UNITS: usize = 6;
 const MAX_REGISTERS: usize = 256;
 const MAX_CODE_BYTES: usize = 64 * 1024;
 const MAX_PARAMETERS: usize = 8;
@@ -4003,7 +4003,9 @@ fn js_native_work_units(function: &Function) -> usize {
         .code
         .iter()
         .map(|packed| match packed.as_wide().op() {
-            Op::Binary | Op::Unary | Op::GetField => 2,
+            Op::Unary => 6,
+            Op::GetField => 4,
+            Op::Binary => 2,
             Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse => 1,
             _ => 0,
         })
