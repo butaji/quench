@@ -7747,6 +7747,7 @@ impl<H: Host> Vm<H> {
                             call_pc: call_pc as u32,
                             destination: result & crate::bytecode::REGISTER_MASK,
                             construct_this: Some(state.this),
+                            settles: None,
                             returns: result & crate::bytecode::RETURN_REGISTER != 0,
                             call_guard: crate::stack::GuestCallGuard::enter().ok(),
                             caller_program: None,
@@ -7810,6 +7811,7 @@ impl<H: Host> Vm<H> {
                 call_pc: call_pc as u32,
                 destination: result & crate::bytecode::REGISTER_MASK,
                 construct_this,
+                settles: None,
                 returns: result & crate::bytecode::RETURN_REGISTER != 0,
                 call_guard,
                 caller_program,
@@ -10894,6 +10896,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Ip {
         call_pc: call_pc as u32,
         destination: i.a,
         construct_this: None,
+        settles: None,
         returns: false,
         call_guard: Some(call_guard),
         caller_program: None,
@@ -11839,6 +11842,7 @@ fn lane_push_frame_call<H: Host>(
             destination,
             call_guard,
             construct_this,
+            ..
         })) => {
             // A callee of another program runs in its own, which the push made active
             // and the loop's executing one sets aside as the loop's own push does.
@@ -11860,6 +11864,7 @@ fn lane_push_frame_call<H: Host>(
                 call_pc: call_pc as u32,
                 destination,
                 construct_this,
+                settles: None,
                 returns,
                 call_guard: Some(call_guard),
                 caller_program,
@@ -11965,6 +11970,7 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
                 call_pc: call_pc as u32,
                 destination: i.a & crate::bytecode::REGISTER_MASK,
                 construct_this: Some(this),
+                settles: None,
                 returns,
                 call_guard: Some(call_guard),
                 caller_program,
@@ -12029,9 +12035,10 @@ fn lane_return_script_frame<H: Host>(
     let mut frame = unsafe { (*cx).frame };
     let mut exit_ip = ip;
     loop {
-        let returns_here = pending
-            .last()
-            .is_some_and(|call| call.caller + 1 == frame && frame + 1 == vm.frames.len());
+        // An async callee's promise settles on the general path (`PendingGeneralCall::settles`).
+        let returns_here = pending.last().is_some_and(|call| {
+            call.caller + 1 == frame && frame + 1 == vm.frames.len() && call.settles.is_none()
+        });
         if !returns_here {
             // A record that has not run yet runs again on the general path; one that ran (a
             // call made, `retired`) completes the loop's own frame with the value there.
@@ -12087,7 +12094,7 @@ fn lane_return_frame<H: Host>(r: Registers, ip: Ip) -> Ip {
     // the general path owns that [[Construct]] step.
     if !unsafe { (*cx).inline_calls }
         || pending.last().is_none_or(|call| {
-            call.construct_this.is_some() || call.caller_program.is_some()
+            call.construct_this.is_some() || call.caller_program.is_some() || call.settles.is_some()
         })
     {
         return exit(ip);
@@ -13531,12 +13538,12 @@ fn derive_lane_view<H: Host>(
     } else {
         LANE_ENTRY_MIN_CALL_RUN
     };
-    let mut entries = vec![false; records.len()].into_boxed_slice();
-    let mut run = 0usize;
-    for pc in (0..records.len()).rev() {
-        run = if exits[pc] { 0 } else { run + 1 };
-        entries[pc] = run >= min_run && !reads_accumulator[pc];
-    }
+    let runs = lane_runs_ahead(&decoded, &exits, min_run);
+    let entries: Box<[bool]> = runs
+        .iter()
+        .zip(&reads_accumulator)
+        .map(|(run, reads)| *run >= min_run && !reads)
+        .collect();
     let activation = function
         .parameter_registers
         .filter(|_| function.locals == 0)
@@ -14140,6 +14147,34 @@ fn may_loop(function: &Function) -> bool {
             || (instruction.op().immediate_role() == ImmediateRole::JumpTarget
                 && instruction.imm() as usize <= pc)
     })
+}
+
+/// How many lane records control reaches from each PC before one that exits, counted up
+/// to `cap`: a `Jump` continues at its target, as a resumed loop body does, and any other
+/// record at the next PC. Each pass extends every count by one step, so `cap` passes reach
+/// the fixed point the capped counts allow.
+fn lane_runs_ahead(decoded: &[WideInstruction], exits: &[bool], cap: usize) -> Vec<usize> {
+    let next = |pc: usize| match decoded[pc].op() {
+        Op::Jump => decoded[pc].imm() as usize,
+        _ => pc + 1,
+    };
+    let mut runs = vec![0usize; exits.len()];
+    for _ in 0..cap {
+        let mut changed = false;
+        for pc in (0..exits.len()).rev() {
+            let run = if exits[pc] {
+                0
+            } else {
+                (1 + runs.get(next(pc)).copied().unwrap_or(0)).min(cap)
+            };
+            changed |= run != runs[pc];
+            runs[pc] = run;
+        }
+        if !changed {
+            break;
+        }
+    }
+    runs
 }
 
 fn closes_loop(decoded: &[WideInstruction], exits: &[bool]) -> bool {
