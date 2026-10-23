@@ -2994,23 +2994,25 @@ pub(crate) fn source_line_starts(text: &str) -> impl Iterator<Item = usize> + '_
     const LINE_SEPARATOR: &[u8] = "\u{2028}".as_bytes();
     const PARAGRAPH_SEPARATOR: &[u8] = "\u{2029}".as_bytes();
     // Scanned as bytes: every terminator but LS and PS is ASCII, and those two share their
-    // UTF-8 lead byte, so no other byte needs decoding.
+    // UTF-8 lead byte, so only the three candidate bytes need a closer look.
     let bytes = text.as_bytes();
-    std::iter::once(0).chain(bytes.iter().enumerate().filter_map(move |(index, &byte)| {
-        let width = match byte {
-            b'\n' => 1,
-            // CR LF ends one line, after the LF.
-            b'\r' if bytes.get(index + 1) != Some(&b'\n') => 1,
-            lead if lead == LINE_SEPARATOR[0]
-                && (bytes[index..].starts_with(LINE_SEPARATOR)
-                    || bytes[index..].starts_with(PARAGRAPH_SEPARATOR)) =>
-            {
-                LINE_SEPARATOR.len()
-            }
-            _ => return None,
-        };
-        Some(index + width)
-    }))
+    std::iter::once(0).chain(
+        memchr::memchr3_iter(b'\n', b'\r', LINE_SEPARATOR[0], bytes).filter_map(move |index| {
+            let width = match bytes[index] {
+                b'\n' => 1,
+                // CR LF ends one line, after the LF.
+                b'\r' if bytes.get(index + 1) != Some(&b'\n') => 1,
+                b'\r' => return None,
+                _ if bytes[index..].starts_with(LINE_SEPARATOR)
+                    || bytes[index..].starts_with(PARAGRAPH_SEPARATOR) =>
+                {
+                    LINE_SEPARATOR.len()
+                }
+                _ => return None,
+            };
+            Some(index + width)
+        }),
+    )
 }
 
 impl ProgramSource {
