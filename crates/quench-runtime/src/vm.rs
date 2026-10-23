@@ -984,6 +984,16 @@ struct InLoopCallTarget {
     program: ProgramId,
     function: u32,
     env: Value,
+    push: InLoopPush,
+}
+/// How the dispatch loop pushes an in-loop callee.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InLoopPush {
+    /// An ordinary body (`CallPlan::in_loop`), whose return is the call's value.
+    Body,
+    /// An async body that never suspends (`CallPlan::settles_in_loop`), whose completion
+    /// settles the promise the call returns; only a plain call pushes it.
+    Settles,
 }
 const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     callee: Value::UNDEFINED,
@@ -992,6 +1002,7 @@ const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     program: ProgramId::MAIN,
     function: 0,
     env: Value::UNDEFINED,
+    push: InLoopPush::Body,
 };
 const STRING_CONCAT_CACHE_SIZE: usize = 64;
 /// Slots of `Vm::string_atoms`, a power of two.

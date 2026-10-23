@@ -128,11 +128,11 @@ impl<H: Host> Vm<H> {
         i: crate::bytecode::WideInstruction,
         pc: usize,
         callee: Value,
+        target: (ProgramId, u32, Value),
     ) -> Option<Result<StepResult, JsError>> {
         if i.returns_from_frame() {
             return None;
         }
-        let target = self.settling_call_target(p, callee)?;
         let promise = match self.promise_object() {
             Ok(promise) => promise,
             Err(error) => return Some(Err(error)),
