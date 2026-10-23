@@ -41,7 +41,15 @@ pub(crate) fn write(value: f64, out: &mut Vec<u8>) {
         return;
     }
     let mut shortest = ryu::Buffer::new();
-    let (digits, point) = decimal_digits(shortest.format_finite(magnitude));
+    let text = shortest.format_finite(magnitude);
+    // Ryu writes positional notation for a decimal point position in (-5, 16], within
+    // Number::toString's (-6, 21], and then the same text, but for the `.0` it gives an
+    // integer.
+    if !text.contains('e') {
+        out.extend_from_slice(text.strip_suffix(".0").unwrap_or(text).as_bytes());
+        return;
+    }
+    let (digits, point) = decimal_digits(text);
     lay_out(&digits, point, out);
 }
 
