@@ -2879,6 +2879,30 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// `delete base[key]` of a string key on an ordinary object, which runs no guest code:
+    /// the deletion's `true`. A refused deletion (a non-configurable property) has changed
+    /// nothing and takes the general path, which strict code makes an error; so does any
+    /// other base or key.
+    #[inline(never)]
+    fn lane_delete<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let (base, key) = (r.get(i.b), r.get(i.c));
+        let plain = base.direct_object_index().is_some()
+            && vm.heap.string(key).is_some()
+            && vm
+                .object_data(base)
+                .is_some_and(|data| !data.is_module_namespace() && !data.is_arguments_object());
+        if !plain || !vm.object_delete_property(code, &[base, key]).is_ok_and(|deleted| deleted == Value::TRUE) {
+            return exit(ip);
+        }
+        r.set(i.a, Value::TRUE);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
 /// A lane `GetIndex` of a symbol key whose proof records an inherited getter
 /// (`Vm::proved_symbol_getter`): the getter runs as a frameless activation of the read's
 /// record, as `lane_getter_activation` runs a field's, with the base as receiver. `Err`
@@ -3346,26 +3370,27 @@ fn lane_closure_value_of<H: Host>(cx: *mut LaneContext<H>, id: u32) -> Option<Va
     value
 }
 
-/// The object a `CreateRegExpLiteral` record makes in a frame's own lane run, whose frame
-/// names the literal's program. A pattern that fails to compile raises at its instruction
-/// through `Vm::lane_raised`; inside a lane activation, `None` leaves it to the general path.
+/// The object a `CreateRegExpLiteral` record makes in the lane: its site belongs to the
+/// running program, the frame's or an activation's (`LaneContext::program`). A pattern that
+/// fails to compile raises at its instruction through `Vm::lane_raised` in a frame's own
+/// run; inside a lane activation, `None` leaves it to the general path, which raises the
+/// same error from the site's cached record.
 #[inline(never)]
 fn lane_regexp_literal_value<H: Host>(
     cx: *mut LaneContext<H>,
     i: &LaneInstruction,
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    if !vm.lane_stack.activations.is_empty() {
-        return None;
-    }
     // SAFETY: the context's program outlives the lane run.
-    let (code, frame) = unsafe { (&*(*cx).code, (*cx).frame) };
-    let result = vm.regexp_literal(code, frame, i.imm() as usize);
+    let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
+    let result = vm.regexp_literal_of(code, program, i.imm() as usize);
     note_allocation(vm);
     match result {
         Ok(value) => Some(value),
         Err(error) => {
-            vm.lane_raised = Some(error);
+            if vm.lane_stack.activations.is_empty() {
+                vm.lane_raised = Some(error);
+            }
             None
         }
     }
@@ -3701,6 +3726,21 @@ script_handler! {
 }
 
 script_handler! {
+    /// `lane_get_field_string` of a register base whose `String.prototype` entry answers
+    /// (`Vm::string_prototype_field_hit`): one tag test and the entry's shape before the
+    /// slot. Any other read takes `lane_get_field_string` out of line.
+    fn lane_get_field_string_register<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let base = r.get(i.b);
+        let Some(value) = vm.heap.is_string(base).then(|| vm.string_prototype_field_hit(i.c)).flatten() else {
+            sibling!(lane_get_field_string::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// `lane_get_field_holder` for a receiver in a heap cell rather than the object records
     /// (`Vm::cell_holder_field_hit`): a method read from a function, as `f.apply`. A miss
     /// moves the record on as `lane_get_field_miss` decides.
@@ -3822,13 +3862,11 @@ script_handler! {
 
 script_handler! {
     /// `lane_get_length` at a site that read a string's length (`lane_get_length_other`):
-    /// a string's length first, then an array's; any other receiver takes
-    /// `lane_get_length_arguments`.
+    /// a string's length here; any other receiver, an array's included, takes
+    /// `lane_get_length` out of line, which keeps this one's registers to the string.
     fn lane_get_length_string<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let receiver = r.get(i.b);
-        let Some(length) = vm.string_length(receiver).or_else(|| vm.own_array_length(receiver)) else {
-            sibling!(lane_get_length_arguments::<H>, r, ip, Carried::script(cx))
+        let Some(length) = (unsafe { vm(cx) }).string_length(r.get(i.b)) else {
+            sibling!(lane_get_length::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, Value::length(length));
         next!(cx, r, following(ip), Carried::script(cx))
@@ -3870,7 +3908,12 @@ script_handler! {
             // A string primitive reads `String.prototype`, whatever tier its entries name,
             // where the site admits that read; any other read of one is the general read's.
             _ if string_base && (unsafe { vm(cx) }).string_field_site_cacheable(code, i.imm()) => {
-                Some(lane_get_field_string::<H>)
+                Some(single_base_handler(
+                    i.b,
+                    lane_get_field_string::<H>,
+                    lane_get_field_string_register::<H>,
+                    lane_get_field_string::<H>,
+                ))
             }
             _ if string_base => Some(lane_get_field::<H>),
             FieldSiteTier::Nested => Some(lane_get_field_nested::<H>),
@@ -8885,15 +8928,15 @@ script_handler! {
                 // A present data property records the site's entry as the general path's read
                 // does (`Vm::field_miss_data_value`): the global object changes shape as Node's
                 // lazy globals materialize, and a site that only walked would miss from then
-                // on. A global object no cache records (a dictionary shape) still answers a
-                // present data property through its shape walk. An absent name is `undefined`
-                // to `typeof` and raises on the general path otherwise.
-                match vm
-                    .field_miss_data_value(globals, atom, vm.field_cache_index(i.c))
-                    .map(Some)
-                    .or_else(|| vm.plain_global_lookup(atom))
-                {
-                    Some(Some(value)) => value,
+                // on. Only a present one: that read answers an absent key as `[[Get]]` does,
+                // where the binding raises. A global object no cache records (a dictionary
+                // shape) still answers a present data property through its shape walk. An
+                // absent name is `undefined` to `typeof` and raises on the general path
+                // otherwise.
+                match vm.plain_global_lookup(atom) {
+                    Some(Some(value)) => vm
+                        .field_miss_data_value(globals, atom, vm.field_cache_index(i.c))
+                        .unwrap_or(value),
                     Some(None) if KIND == LOAD_NAME_TYPEOF => Value::UNDEFINED,
                     _ => return exit(ip),
                 }
@@ -12577,6 +12620,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CallKnown => Some(lane_call_known::<H>),
         Op::Call => Some(lane_script_call::<H>),
         Op::CallArray => Some(lane_call_array::<H>),
+        Op::Delete => Some(lane_delete::<H>),
         Op::Construct => Some(lane_script_construct::<H>),
         Op::LoadName => Some(lane_load_name_first::<H, LOAD_NAME>),
         Op::LoadNameCall => Some(lane_load_name_first::<H, LOAD_NAME_CALL>),
