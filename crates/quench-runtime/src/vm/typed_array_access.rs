@@ -498,23 +498,35 @@ impl<H: Host> Vm<H> {
         index: usize,
         value: &TypedArrayElement,
     ) -> bool {
-        let (buffer, offset, kind) = match self.heap.get(object) {
+        let (buffer, offset, length, tracking, kind) = match self.heap.get(object) {
             Some(Cell::TypedArray {
                 buffer,
                 object,
+                length,
+                length_tracking,
                 kind,
                 ..
-            }) => (*buffer, object.offset, *kind),
+            }) => (*buffer, object.offset, *length, *length_tracking, *kind),
             _ => return false,
         };
-        if self.array_buffer_detached(buffer)
-            || self
-                .typed_array_length(object)
-                .is_none_or(|length| index >= length)
-        {
-            return true;
-        }
-        if self.array_buffer_out_of_bounds(buffer, offset, kind.width() * (index + 1)) {
+        // The element's place, from one read of the buffer: `typed_array_length` and the
+        // element's own bounds over the same length. An element past either is no write.
+        let width = kind.width();
+        let in_bounds = match self.heap.get(buffer) {
+            Some(Cell::ArrayBuffer { bytes, detached: false, .. }) => {
+                let bytes = bytes.len();
+                let length = if tracking {
+                    bytes.saturating_sub(offset) / width
+                } else if offset.saturating_add(length * width) > bytes {
+                    0
+                } else {
+                    length
+                };
+                index < length && offset.saturating_add(width * (index + 1)) <= bytes
+            }
+            _ => false,
+        };
+        if !in_bounds {
             return true;
         }
         let encoded = Self::typed_array_element_bytes(kind, value);
