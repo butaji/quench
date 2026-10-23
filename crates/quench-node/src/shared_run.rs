@@ -55,6 +55,11 @@ fn apply_allocator_policy(policy: MemoryPolicy) {
 /// (`resident_pages`) are the process's, not one runtime's. The first selection holds.
 static PROCESS_MEMORY_POLICY: std::sync::OnceLock<MemoryPolicy> = std::sync::OnceLock::new();
 
+/// The policy this process selected, once `select_memory_policy` has run.
+pub(crate) fn process_memory_policy() -> Option<MemoryPolicy> {
+    PROCESS_MEMORY_POLICY.get().copied()
+}
+
 /// Selects the process's memory policy once: the CLI's `chosen` name, else
 /// `MEMORY_POLICY_ENV`, else the default. An unknown name is an error.
 fn select_memory_policy(chosen: Option<&str>) -> Result<MemoryPolicy, String> {

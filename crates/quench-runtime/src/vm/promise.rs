@@ -1159,7 +1159,7 @@ impl<H: Host> Vm<H> {
         // its caller's, which is the realm whose objects it builds.
         let realm = match self.heap.function(callee) {
             Some(FunctionRecord { realm, .. })
-                if *realm == self.realm.globals || !self.shared_natives.contains(&callee) =>
+                if *realm == self.realm.globals || !self.is_shared_native(callee) =>
             {
                 *realm
             }
@@ -1308,7 +1308,8 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn install_promise(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let prototype = self.object();
-        self.install_promise_for_realm(program, self.native_value(Native::Promise), prototype, None)
+        let native_promise = self.native_value(Native::Promise);
+        self.install_promise_for_realm(program, native_promise, prototype, None)
     }
 
     pub(super) fn install_promise_for_realm(
@@ -5248,7 +5249,7 @@ impl<H: Host> Vm<H> {
         match constant {
             Constant::Number(value) => Value::number(value),
             Constant::WasmBits64(bits) => self.encode_bits64(bits),
-            Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(bits)),
+            Constant::WasmV128(bits) => self.heap.alloc_v128(bits),
             Constant::String(value) => self.heap.alloc_string(value.into()),
             Constant::StringUnits(value) => {
                 self.heap.alloc_string(JsString::from_units(&value))

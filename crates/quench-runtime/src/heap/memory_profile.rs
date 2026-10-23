@@ -597,6 +597,35 @@ impl Heap {
         stats
     }
 
+    /// Counts narrowable values in inline versus out-of-line named object properties. This
+    /// profile-only scan estimates whether a compact `ValueArena` representation can repay
+    /// its conversion and fallback costs on a real workload.
+    pub(crate) fn live_property_narrow_stats(&self) -> (usize, usize, usize, usize) {
+        let mut stats = (0, 0, 0, 0);
+        self.for_each_live_value(|identity| {
+            let Some(object) = self.object(identity) else {
+                return;
+            };
+            let properties = object.properties();
+            let length = self.properties.len(properties);
+            if let Some(values) = object.inline_properties() {
+                for value in values.iter().take(length) {
+                    stats.0 += 1;
+                    stats.1 += usize::from(value.to_narrow().is_some());
+                }
+                return;
+            }
+            for index in 0..length {
+                let Some(value) = self.properties.get(properties, index) else {
+                    continue;
+                };
+                stats.2 += 1;
+                stats.3 += usize::from(value.to_narrow().is_some());
+            }
+        });
+        stats
+    }
+
     fn live_value_payload_bytes(&self) -> usize {
         let mut bytes = 0;
         self.for_each_live_value(|identity| {
@@ -640,6 +669,26 @@ impl Heap {
             .fold(total, |(len, capacity), value| {
                 (len + value.0, capacity + value.1)
             })
+    }
+
+    pub(crate) fn dense_array_element_narrow_stats(&self) -> (usize, usize) {
+        let mut stats = (0, 0);
+        self.array_records.for_each_live(|_, array| {
+            for value in array.elements().as_slice() {
+                stats.0 += 1;
+                stats.1 += usize::from(value.to_narrow().is_some());
+            }
+        });
+        for object in self.slots.iter().filter_map(|slot| match slot.cell.as_ref()? {
+            Cell::Array { object } => Some(object),
+            _ => None,
+        }) {
+            for value in object.elements().as_slice() {
+                stats.0 += 1;
+                stats.1 += usize::from(value.to_narrow().is_some());
+            }
+        }
+        stats
     }
 }
 

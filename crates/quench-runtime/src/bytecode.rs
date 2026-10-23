@@ -1,6 +1,21 @@
 use smallvec::SmallVec;
 
 pub(crate) const INTRINSIC_REGEXP_BINDING: &str = "\0quench:intrinsic-regexp";
+/// Internal global bindings, which compiled code loads by name and no source text can
+/// declare: the for-in key list and its per-key enumerability check, iterator closing and
+/// `with` scope exit (`WITH_ENTER_BINDING` enters).
+pub(crate) const FOR_IN_KEYS_BINDING: &str = "\0quench:for-in-keys";
+pub(crate) const FOR_IN_KEY_IS_ENUMERABLE_BINDING: &str = "\0quench:for-in-key-is-enumerable";
+pub(crate) const ITERATOR_CLOSE_BINDING: &str = "\0quench:iterator-close";
+pub(crate) const WITH_EXIT_BINDING: &str = "\0quench:with-exit";
+/// Every internal global the realm installs on its global object.
+pub(crate) const INTERNAL_GLOBAL_BINDINGS: [&str; 5] = [
+    FOR_IN_KEYS_BINDING,
+    FOR_IN_KEY_IS_ENUMERABLE_BINDING,
+    ITERATOR_CLOSE_BINDING,
+    WITH_ENTER_BINDING,
+    WITH_EXIT_BINDING,
+];
 
 /// The native an engine-internal intrinsic name stands for: a by-name read of it resolves to
 /// that native before consulting any binding (`Vm::intrinsic_name_value`), and no source
@@ -17,9 +32,9 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
         "\0quench:object-define-property" => Native::ObjectDefineProperty,
         "\0quench:object-freeze" => Native::ObjectFreeze,
         // The iteration helpers each realm also installs on its global object.
-        "\0quench:iterator-close" => Native::IteratorClose,
-        "\0quench:for-in-keys" => Native::ForInKeys,
-        "\0quench:for-in-key-is-enumerable" => Native::ForInKeyIsEnumerable,
+        ITERATOR_CLOSE_BINDING => Native::IteratorClose,
+        FOR_IN_KEYS_BINDING => Native::ForInKeys,
+        FOR_IN_KEY_IS_ENUMERABLE_BINDING => Native::ForInKeyIsEnumerable,
         _ => return None,
     })
 }
@@ -1210,6 +1225,12 @@ pub struct Function {
     pub constructible: bool,
     pub class_initializer: bool,
     pub parameter_eval_arguments_error: bool,
+    /// A mapped `arguments` binding whose mapping nothing can observe: the body only reads
+    /// `arguments.length` and `arguments[key]`, and nothing in it rebinds a parameter
+    /// (`compile::early::ArgumentsUse`). Neither side of the mapping is ever written, so
+    /// the object keeps the mapped layout without parameter links
+    /// (`arguments_alias_parameters`).
+    pub unaliased_arguments: bool,
     pub arguments_slot: Option<u16>,
     pub simple_parameters: bool,
     pub strict: bool,
@@ -1388,6 +1409,10 @@ pub(crate) struct CallPlan {
     /// generator, async function, class constructor or field initializer and raises no
     /// parameter-scope `arguments` error.
     pub(crate) in_loop: bool,
+    /// An async function whose body never suspends (`Function::suspends`): a plain call may
+    /// push it in place as `in_loop` bodies are pushed, settling the promise it returns with
+    /// the body's completion (`PendingGeneralCall::settles`).
+    pub(crate) settles_in_loop: bool,
     /// Legacy `caller`/`arguments` reflection may observe the activation
     /// (`!has_restricted_legacy_caller_access`).
     pub(crate) legacy_reflection: bool,
@@ -1739,6 +1764,12 @@ impl Function {
         !self.is_arrow && !self.strict && self.simple_parameters
     }
 
+    /// Whether the `arguments` object's indices alias the parameters: a mapped object
+    /// whose mapping some write could observe (`unaliased_arguments`).
+    pub(crate) fn arguments_alias_parameters(&self) -> bool {
+        self.arguments_are_mapped() && !self.unaliased_arguments
+    }
+
     /// Parameters an activation binds into frame locals.
     pub(crate) const fn local_parameter_count(&self) -> u16 {
         if self.parameter_registers.is_some() {
@@ -1999,6 +2030,12 @@ impl Function {
         self.call_plan(program).plain
     }
 
+    /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
+    pub(crate) fn suspends(&self) -> bool {
+        self.instructions()
+            .any(|instruction| matches!(instruction.op(), Op::Await | Op::Yield | Op::YieldStar))
+    }
+
     /// The function's `CallPlan`, derived on first use.
     #[inline(always)]
     pub(crate) fn call_plan(&self, program: &ResidualProgram) -> CallPlan {
@@ -2013,9 +2050,10 @@ impl Function {
             // An arrow's `this` is its environment's, which its activation binds
             // (`Vm::lexical_activation_this`). One that reaches `super` reads a hidden name
             // (`activation_binding_reads`) or its home as a capture, as any closure reads one.
-            let ordinary = self.parent.is_some()
+            // Ordinary but for a rest parameter, which a frameless activation gathers
+            // (`CallEntry::Gathers`) and a plain frame does not.
+            let ordinary_with_rest = self.parent.is_some()
                 && !self.derived_constructor
-                && !self.rest
                 && self.self_binding_slot.is_none()
                 && !self.parameter_eval_arguments_error
                 && !self.inherited_with_scope
@@ -2025,6 +2063,7 @@ impl Function {
                 && !self.activation_binding_reads(atoms)
                 // A plain activation makes no closure, whichever bindings it would see.
                 && !self.instructions().any(|instruction| instruction.op() == Op::MakeClosure);
+            let ordinary = ordinary_with_rest && !self.rest;
             // A field initializer is an ordinary method call on the instance whose
             // activation keeps its implicit bindings (`activation_binding_reads`); only the
             // derived instance initializer, which `super()` runs, is entered natively.
@@ -2033,6 +2072,12 @@ impl Function {
                 && !self.is_class_constructor
                 && !self.derived_constructor
                 && !self.parameter_eval_arguments_error;
+            let settles_in_loop = self.is_async
+                && !self.is_generator
+                && !self.is_class_constructor
+                && !self.derived_constructor
+                && !self.parameter_eval_arguments_error
+                && !self.suspends();
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
             let live_parameters = self.reflects_live_parameters(program);
             let forwards_arguments = self.forwards_arguments_only();
@@ -2082,15 +2127,18 @@ impl Function {
                 environment_activation,
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
+                settles_in_loop,
                 legacy_reflection,
                 live_parameters,
                 addresses_locals,
                 forwards_arguments,
-                registers_only: ordinary
+                registers_only: ordinary_with_rest
                     && in_loop
                     && self.initial_register == InitialRegister::Undefined
                     && if self.arguments_slot.is_none() {
-                        !addresses_locals && (!legacy_reflection || live_parameters)
+                        // A rest body's activation keeps every value passed
+                        // (`CallEntry::Gathers`), which legacy reflection reads.
+                        !addresses_locals && (!legacy_reflection || live_parameters || self.rest)
                     } else {
                         reaches_only_forwarded_arguments
                     },
@@ -2213,7 +2261,7 @@ impl Function {
         });
         if self.is_generator
             || self.is_async
-            || (self.arguments_are_mapped() && self.params != 0 && !reads_only_length)
+            || (self.arguments_alias_parameters() && self.params != 0 && !reads_only_length)
             || self.local_registers.iter().any(|entry| entry.local == slot)
             || self.has_dynamic_scope_access()
         {
@@ -2252,12 +2300,7 @@ impl Function {
     pub(crate) fn has_dynamic_scope_access(&self) -> bool {
         self.inherited_with_scope
             || !self.binding_sites.is_empty()
-            || self.instructions().any(|instruction| {
-                instruction.op() == Op::ResolveName
-                    || (instruction.op().is_call_with_eval_flags()
-                        && (ImmediateLayout::direct_eval(instruction.imm())
-                            || ImmediateLayout::parameter_eval(instruction.imm())))
-            })
+            || self.instructions().any(WideInstruction::resolves_dynamic_scope)
     }
 
     /// Whether the body enters a `with` statement, whose by-name loads may denote
@@ -2328,7 +2371,7 @@ impl Function {
         }
         if slot < usize::from(self.params)
             && self.arguments_slot.is_some()
-            && self.arguments_are_mapped()
+            && self.arguments_alias_parameters()
         {
             return Some(PlainLocalSlotIneligibility::MappedArgument);
         }

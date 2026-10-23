@@ -1519,6 +1519,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// The ordinary object `{ [names[0]]: values[0], ... }`, made at its final shape
+    /// (`Vm::create_embedding_record`): what an object literal of those names makes.
+    pub fn record_rooted(&mut self, names: &'static [&'static str], values: &[RootId]) -> Result<RootId, RootedError> {
+        let result = self.vm.create_embedding_record(names, values);
+        self.completion(result)
+    }
+
     /// Create a plain object whose `[[Prototype]]` is null.
     pub fn null_object_rooted(&mut self) -> Result<RootId, RootedError> {
         let result = self.vm.create_embedding_null_object();
