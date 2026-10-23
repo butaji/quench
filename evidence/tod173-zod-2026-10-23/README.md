@@ -236,3 +236,24 @@ Raw current clean reports: `zod-current-clean-nojit.json` and
 `zod-current-clean-jit.json`. Memory-first reports:
 `zod-current-memory-first-nojit-11.json` and
 `zod-current-memory-first-jit-11.json`.
+
+## Exact field-path profile and holder-first probe screen
+
+A `profile-lane-exits` build sampled 500 rounds plus 50 warmups. The field
+probe outcomes were: 9 primary own hits, 3,892 primary misses, 2,270 ineligible
+receivers, 6,260 inherited cache hits, 5,765 shaped data reads, 668 inherited
+lookups, 2,217 getter calls, and no generic lookups. The most frequent site
+was an inherited cache hit in `zod/v4/core/schemas.cjs`, function 78, PC 13;
+it occurred 4,941 times in this screen. The instrumentation reduced Quench
+to 3,831 ops/s, so these are path counts, not timing evidence. The raw output
+includes the sampled call targets and cache-site IDs.
+
+Given the inherited-hit skew, I tried checking a site's monomorphic immediate
+prototype holder before its own-property and megamorphic paths. In paired
+11-round production screens it measured 47,506 versus 48,426 ops/s no-JIT
+(-1.9%) and 48,426 versus 47,962 JIT (+1.0%). The JIT movement is too small
+and no-JIT regresses, so I reverted the source change. Absolute RSS was
+29.53 / 22.38 MiB for the candidate, effectively the same as the clean
+baseline. Reports: `zod-holder-first-nojit-11.json` and
+`zod-holder-first-jit-11.json`; instrumented field profile:
+`zod-lane-exits-500-stdout.json` and `zod-lane-exits-500-stderr.log`.
