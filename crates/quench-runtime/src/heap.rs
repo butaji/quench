@@ -1204,7 +1204,10 @@ impl Heap {
         #[cfg(feature = "profile-aggregate")]
         {
             let kind = CellKind::String as usize;
-            let bytes = string.capacity();
+            // Do not materialize ropes in the profiler: production charges the flat payload
+            // only when it already exists. `capacity()` flattens a rope and perturbs the
+            // allocation shape the profile is meant to observe.
+            let bytes = string.flat_unit_bytes();
             self.gc_profile.allocated_kinds[kind] += 1;
             *self.allocated_variants.entry("string").or_default() += 1;
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
