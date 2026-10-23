@@ -1681,6 +1681,10 @@ pub(crate) struct Vm<H> {
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
     plain_copy_shapes: shape_memo::PlainCopyShapeMemo,
+    /// The final shapes of host records, by their names list (`create_embedding_record`).
+    embedding_record_shapes: FxHashMap<usize, u32>,
+    /// The geometry accessors typed array reads resolve to (`typed_array_geometry_read`).
+    typed_array_geometry: typed_array::TypedArrayGeometryProofs,
     function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
@@ -2626,6 +2630,7 @@ impl<H: Host> Vm<H> {
         self.transitions.clear();
         self.shape_slot_memo.clear();
         self.plain_copy_shapes.clear();
+        self.embedding_record_shapes.clear();
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
