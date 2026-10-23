@@ -447,11 +447,9 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let incoming_destroy = context.host_function_named_with_data(
         crate::host::shared_vm::operation("httpIncomingDestroy"), "_destroy", exchange_keys,
     )?;
-    let incoming_data = context.array_rooted(&[
-        incoming_constructor, emitter, incoming_read, incoming_destroy, server_exchange, client_exchange,
-    ])?;
-    let incoming_factory = context.host_function_with_data(
-        crate::host::shared_vm::operation("httpIncomingCreate"), incoming_data,
+    let incoming_factory = super::incoming::create_function(
+        context,
+        [incoming_constructor, emitter, incoming_read, incoming_destroy, server_exchange, client_exchange],
     )?;
     let incoming_factory = context.retain(incoming_factory)?;
 
@@ -1754,16 +1752,9 @@ fn header_values(
     name: &str,
 ) -> Result<Vec<String>, RootedError> {
     let values = if multiple {
-        let length_key = context.string_rooted("length");
-        let length = context.get_property_rooted(root, length_key)?;
-        let length = context
-            .rooted_value(length)
-            .and_then(Value::as_number)
-            .filter(|length| length.is_finite() && *length >= 0.0)
-            .unwrap_or(0.0) as usize;
-        let mut values = Vec::with_capacity(length);
-        for index in 0..length {
-            let item = array_item(context, root, index)?;
+        let items = context.array_like_values_rooted(root)?;
+        let mut values = Vec::with_capacity(items.len());
+        for item in items {
             values.push(header_value(context, item, name)?);
         }
         values
@@ -1794,24 +1785,19 @@ fn write_head_entries(
     context: &mut Context<'_>,
     root: RootId,
 ) -> Result<Vec<(String, Vec<String>)>, RootedError> {
-    let length_key = context.string_rooted("length");
-    let length = context.get_property_rooted(root, length_key)?;
-    let length = context
-        .rooted_value(length)
-        .and_then(Value::as_number)
-        .filter(|length| length.is_finite() && *length >= 0.0)
-        .unwrap_or(0.0) as usize;
-    if !length.is_multiple_of(3) {
+    let items = context.array_like_values_rooted(root)?;
+    let entries = items.chunks_exact(HEAD_ENTRY_FIELDS);
+    if !entries.remainder().is_empty() {
         return Err(RootedError::host(
             "shared HTTP header entries are malformed",
         ));
     }
-    let mut result = Vec::with_capacity(length / 3);
-    for index in (0..length).step_by(3) {
-        let name_root = array_item(context, root, index)?;
+    let mut result = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let &[name_root, values_root, multiple_root] = entry else {
+            unreachable!("chunks_exact yields entries of HEAD_ENTRY_FIELDS values");
+        };
         let name = header_name(context, name_root)?;
-        let values_root = array_item(context, root, index + 1)?;
-        let multiple_root = array_item(context, root, index + 2)?;
         let multiple = context
             .rooted_value(multiple_root)
             .and_then(Value::as_bool)
@@ -1821,6 +1807,9 @@ fn write_head_entries(
     }
     Ok(result)
 }
+
+/// A packed head entry's values: its name, its value or values, and whether those are a list.
+const HEAD_ENTRY_FIELDS: usize = 3;
 
 fn array_item(
     context: &mut Context<'_>,

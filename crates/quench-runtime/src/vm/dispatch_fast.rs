@@ -711,6 +711,9 @@ enum CallEntry {
     /// It keeps the values it was passed for a forwarded `arguments`
     /// (`CallPlan::forwards_arguments`, `lane_activate_keeping`).
     Keeps,
+    /// It keeps them, and its rest parameter, in the register after the others, starts as
+    /// the array of those past the others (`lane_activate_keeping`).
+    Gathers,
     /// Its body is one returning `GetField` (`returning_kind` of its first instruction),
     /// whose hit a call answers without activating it (`lane_call_read`).
     Reads,
@@ -742,7 +745,7 @@ impl CallEntry {
     /// or keeping activation, which `lane_activate_keeping` enters across programs.
     #[inline(always)]
     fn activates_across(self) -> bool {
-        matches!(self, Self::Activates | Self::Keeps)
+        matches!(self, Self::Activates | Self::Keeps | Self::Gathers)
     }
 
     /// A body a call answers by reading alone (`lane_call_leaf_read`).
@@ -837,7 +840,7 @@ impl ScriptCallTarget {
     /// It keeps the values it was passed for a forwarded `arguments`.
     #[inline(always)]
     fn forwards(&self) -> bool {
-        self.entry == CallEntry::Keeps
+        matches!(self.entry, CallEntry::Keeps | CallEntry::Gathers)
     }
 }
 
@@ -859,6 +862,9 @@ enum ThisBinding {
 /// A lane run's generation (`LaneStack::generation`), narrow so a cache entry stays one
 /// line; its wrap clears every entry, so no stale one can match a reused number.
 type ScriptGeneration = u32;
+
+/// The rest values a gathering activation collects inline before its array is made.
+const GATHERED_INLINE_VALUES: usize = 8;
 
 /// The size a script call cache entry keeps, one cache line, which each call reads.
 const SCRIPT_CALL_TARGET_BYTES: usize = 64;
@@ -8102,12 +8108,15 @@ impl<H: Host> Vm<H> {
                 None => ThisBinding::Sloppy,
             },
             lexical_this: lexical_this.flatten().unwrap_or(Value::UNDEFINED),
-            constructs: shape.constructs && !environment && !cross,
-            initializes: shape.initializes && !environment && !cross,
+            // A construction activates in place (`lane_activate`), which gathers no rest.
+            constructs: shape.constructs && !environment && !cross && !body.rest,
+            initializes: shape.initializes && !environment && !cross && !body.rest,
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
             entry: if environment {
                 CallEntry::Environment
+            } else if body.rest {
+                CallEntry::Gathers
             } else if plan.forwards_arguments {
                 CallEntry::Keeps
             } else if cross {
@@ -8208,7 +8217,7 @@ script_handler! {
         if target.entry != CallEntry::Activates {
             let handler: Handler = match target.entry {
                 CallEntry::Environment => lane_script_call_environment::<H>,
-                CallEntry::Keeps => lane_script_call_keeping::<H>,
+                CallEntry::Keeps | CallEntry::Gathers => lane_script_call_keeping::<H>,
                 _ => lane_script_call_full::<H>,
             };
             requicken(ip, handler);
@@ -10601,6 +10610,16 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     // than it has parameters.
     let keeps = target.forwards() || forwarder.is_some() || argc > usize::from(target.params);
     let window_size = if keeps { count + argc } else { count };
+    // The rest array, made before the window is: the values past the other parameters.
+    let rest = (target.entry == CallEntry::Gathers).then(|| {
+        let fixed = usize::from(target.params) - 1;
+        let passed = (fixed..argc).map(|index| match arguments {
+            ActivationArguments::Window(base) => r.get(base + index as u16),
+            // SAFETY: kept values hold `argc` values.
+            ActivationArguments::Kept(values, _) => unsafe { *values.add(index) },
+        });
+        vm.rest_parameter_array(&passed.collect::<smallvec::SmallVec<[Value; GATHERED_INLINE_VALUES]>>())
+    });
     // A call that returns its callee's completion completes its caller too, which only an
     // activation's return does in the lane. A host permitting proper tail calls
     // sends strict terminal calls to the general dispatch path instead.
@@ -10640,6 +10659,9 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         }
         if keeps {
             lane_keep_arguments(registers.add(count), r, arguments, argc);
+        }
+        if let Some(rest) = rest {
+            registers.add(usize::from(target.params) - 1).write(rest);
         }
         stack.values.set_len(window + window_size);
         Registers(registers)

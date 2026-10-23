@@ -806,7 +806,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "tlsLowercaseName" (1) => crate::modules::tls_shared_vm::identity::lowercase_name,
         method "tlsCollectAltName" (1) => crate::modules::tls_shared_vm::identity::collect_alt_name,
         method "tlsCheckServerIdentity" (2) => crate::modules::tls_shared_vm::identity::check_server_identity,
-        method "httpIncomingCreate" (5) => crate::modules::http_shared_vm::incoming::create,
+        method "httpIncomingBody" (1) => crate::modules::http_shared_vm::incoming::body,
         method "httpIncomingRead" (1) => crate::modules::http_shared_vm::incoming::read,
         method "httpIncomingDestroy" (2) => crate::modules::http_shared_vm::incoming::destroy,
         method "encodingUtf8" (0) => crate::modules::encoding_binding_shared_vm::encode,
