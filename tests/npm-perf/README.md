@@ -515,3 +515,12 @@ checksum 414318. Node `--jitless` measured 1,696.1 / 36.18 MB and Bun no-JIT
 still 5.1x behind Node and 4.6x behind Bun; this is a retained local
 improvement, not a package win. Report:
 `work/react-perf/react-loadlocal-jumpbinary-nojit-11.json`.
+
+The reverse-order `JumpBinaryFalse → LoadLocalPlain` pair had a misleadingly
+positive three-round screen when built with a stale profile: 333.6 renders/s /
+25.87 MB versus 326.9 / 27.48 for the paired control. Rebuilding with a fresh
+PGO training profile reversed the result: 307.8 / 26.26 MB versus 313.9 /
+26.58 (-2.0% throughput, -1.2% RSS), with matching output. The reverse-pair
+change was reverted. Reports:
+`work/react-perf/react-jumpbinary-loadlocal-screen-3.json` and
+`work/react-perf/react-jumpbinary-loadlocal-freshpgo-screen-3.json`.
