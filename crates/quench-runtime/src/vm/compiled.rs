@@ -595,6 +595,48 @@ struct CallContext {
 }
 
 impl CallContext {
+    /// The context of code that reads only the interrupt state: the flag, and the VM's
+    /// poll page, whose fault ends the call as terminated (`guard_fault`).
+    fn interrupt_only(interrupt: &crate::execution_interrupt::ExecutionInterrupt) -> Self {
+        let poll = interrupt.poll_page();
+        Self {
+            stack_limit: 0,
+            interrupt: interrupt.atomic_flag(),
+            table: std::ptr::null(),
+            vm: std::ptr::null_mut(),
+            env: Value::NULL,
+            entry_stack: 0,
+            guard_start: 0,
+            guard_end: 0,
+            globals: std::ptr::null(),
+            callout: 0,
+            call_reference: 0,
+            compiled: std::ptr::null(),
+            program: ProgramId::MAIN,
+            import_callouts: std::ptr::null_mut(),
+            known_callouts: std::ptr::null_mut(),
+            reference_callouts: std::ptr::null_mut(),
+            memory: Value::NULL,
+            memory_length: 0,
+            raised: None,
+            call_reference_diagnostic: 0,
+            reference_call_sites: std::ptr::null(),
+            reference_call_site_count: 0,
+            poll_start: poll.map_or(0, |(start, _)| start),
+            poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
+            reference_epoch: std::ptr::null(),
+            reference_fast_caches: std::ptr::null_mut(),
+            emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
+            emscripten_memcpy_raw_i32_hits: std::ptr::null_mut(),
+            emscripten_memcpy_early_import_hits: std::ptr::null_mut(),
+            emscripten_memcpy_cache: std::ptr::null_mut(),
+            emscripten_memcpy_leaf: 0,
+            emscripten_memcpy_leaf_hits: std::ptr::null_mut(),
+            import_callout_counts: std::ptr::null(),
+            import_callout_count: 0,
+        }
+    }
+
     /// A nested native entry shares the caller's instance and callout state,
     /// but needs its own guard-resume stack pointer and raised completion, as a
     /// nested `run_compiled` invocation would. Its stack limit is never below
@@ -1261,15 +1303,8 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
             }
             let native_entry_sample_started =
                 native_entry_should_sample.then(std::time::Instant::now);
-            let status = match guard_trampoline() {
-                Some(trampoline) => {
-                    let outer = ACTIVE_CONTEXT.with(|active| active.replace(&mut nested));
-                    let status = unsafe { trampoline(&mut nested, base, length, args, out, entry) };
-                    ACTIVE_CONTEXT.with(|active| active.set(outer));
-                    status
-                }
-                None => unsafe { entry(&mut nested, base, length, args, out) },
-            };
+            // SAFETY: as the direct path's call; the nested context outlives the call.
+            let status = unsafe { enter_native(&mut nested, base, length, args, out, entry) };
             if let Some(started) = native_entry_sample_started {
                 compiled.finish_native_entry_sample(function, started);
             }
@@ -2261,15 +2296,32 @@ impl Drop for CodeMemory {
 pub(super) struct CompiledOsrRegion(osr_loop::CompiledLoop);
 
 impl CompiledOsrRegion {
+    /// Runs the region on `registers` with `entry`'s record, through the native entry every
+    /// compiled artifact shares (`enter_native`).
+    ///
     /// # Safety
-    /// `registers` and `entry` must describe the live activation guarded by the lane.
+    /// `registers` is the running activation's register file, at least `Function::registers`
+    /// long; `entry` was built for this region from the current values of its arrays and
+    /// captures, which nothing changes while the call runs; `interrupt` is the VM's, whose
+    /// poll page the region was compiled for (`compile_osr_region`).
     pub(super) unsafe fn run(
         &self,
         registers: *mut crate::value::Value,
         entry: &LoopEntry,
+        interrupt: &crate::execution_interrupt::ExecutionInterrupt,
     ) -> LoopOutcome {
-        // SAFETY: the caller keeps the guarded activation and entry alive for this run.
-        unsafe { self.0.run(registers, entry) }
+        let mut context = CallContext::interrupt_only(interrupt);
+        let mut word = 0u64;
+        // SAFETY: as the caller promises; the code reads and writes only those and the
+        // result word.
+        let status = unsafe {
+            enter_native(&mut context, registers.addr() as u64, 0, entry.words(), &mut word, self.0.entry)
+        };
+        if i64::from(status) == TERMINATED_STATUS {
+            LoopOutcome::Terminated
+        } else {
+            LoopOutcome::decode(word)
+        }
     }
 
     pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
@@ -2293,8 +2345,9 @@ pub(super) fn analyze_osr_region(
 pub(super) fn compile_osr_region(
     region: &LoopRegion,
     observation: &Observation<'_>,
+    interrupt: &crate::execution_interrupt::ExecutionInterrupt,
 ) -> Option<CompiledOsrRegion> {
-    osr_loop::compile(region, observation).map(CompiledOsrRegion)
+    osr_loop::compile(region, observation, poll_address(interrupt)).map(CompiledOsrRegion)
 }
 
 /// A guarded JavaScript numeric function compiled from a narrow residual
@@ -6045,9 +6098,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             pending: Vec::new(),
             redirect: None,
             threading: true,
-            poll: guard_support()
-                .and_then(|_| self.vm.execution_interrupt.poll_page())
-                .map(|(start, _)| start as i64),
+            poll: poll_address(&self.vm.execution_interrupt),
             zero_extended: std::collections::HashMap::new(),
             unrolled: if program_unrolls(self.code) {
                 unrollable_loops(&instructions, plan)
@@ -6466,6 +6517,44 @@ fn guard_support() -> Option<&'static GuardSupport> {
 
 fn guard_trampoline() -> Option<Trampoline> {
     guard_support().map(|support| support.trampoline)
+}
+
+/// Where compiled code polls for termination: the VM's poll page when every entry runs
+/// through the fault-resuming trampoline, else nowhere, and code checks the context's
+/// interrupt flag.
+fn poll_address(interrupt: &crate::execution_interrupt::ExecutionInterrupt) -> Option<i64> {
+    guard_support()
+        .and_then(|_| interrupt.poll_page())
+        .map(|(start, _)| start as i64)
+}
+
+/// Runs compiled `entry` with `context`, through the trampoline where the host has one: it
+/// gives this entry its own resumable stack point, including when a compiled indirect call
+/// nests it, and a guard or poll fault returns its status.
+///
+/// # Safety
+/// `entry` is compiled code for this `Entry` signature, and `context`, `arguments` and
+/// `out` are what it reads and writes for the call's duration.
+unsafe fn enter_native(
+    context: &mut CallContext,
+    base: u64,
+    length: u64,
+    arguments: *const u64,
+    out: *mut u64,
+    entry: Entry,
+) -> u32 {
+    match guard_trampoline() {
+        Some(trampoline) => {
+            let outer = ACTIVE_CONTEXT.with(|active| active.replace(context));
+            // SAFETY: as the caller promises; the trampoline saves the caller's registers
+            // and records where a fault resumes.
+            let status = unsafe { trampoline(context, base, length, arguments, out, entry) };
+            ACTIVE_CONTEXT.with(|active| active.set(outer));
+            status
+        }
+        // SAFETY: as the caller promises.
+        None => unsafe { entry(context, base, length, arguments, out) },
+    }
 }
 
 /// A fault inside the running compiled call's guard reservation resumes at
@@ -8344,33 +8433,12 @@ impl<H: Host> Vm<H> {
             let native_entry_should_sample = compiled.note_native_entry(id as usize);
             let native_entry_sample_started =
                 native_entry_should_sample.then(std::time::Instant::now);
-            let status = match guard_trampoline() {
-                Some(trampoline) => {
-                    // The trampoline gives this entry its own resumable stack
-                    // point, including when a compiled indirect call nests it.
-                    let outer = ACTIVE_CONTEXT.with(|active| active.replace(&mut context));
-                    // SAFETY: as below; the trampoline saves the caller's registers
-                    // and records where a guard fault resumes.
-                    let status = unsafe {
-                        trampoline(
-                            &mut context,
-                            base,
-                            length,
-                            raw.as_ptr(),
-                            &mut out,
-                            function.entry,
-                        )
-                    };
-                    ACTIVE_CONTEXT.with(|active| active.set(outer));
-                    status
-                }
-                // SAFETY: the entry is compiled code for this function's
-                // signature; the context, arguments and result outlive the call,
-                // and the memory view stays valid because compiled code never
-                // grows memory.
-                None => unsafe {
-                    (function.entry)(&mut context, base, length, raw.as_ptr(), &mut out)
-                },
+            // SAFETY: the entry is compiled code for this function's
+            // signature; the context, arguments and result outlive the call,
+            // and the memory view stays valid because compiled code never
+            // grows memory.
+            let status = unsafe {
+                enter_native(&mut context, base, length, raw.as_ptr(), &mut out, function.entry)
             };
             if let Some(started) = native_entry_sample_started {
                 compiled.finish_native_entry_sample(id as usize, started);
