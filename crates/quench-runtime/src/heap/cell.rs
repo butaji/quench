@@ -3,7 +3,7 @@ use super::root::WeakHandle;
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
 use crate::value_vec::{
-    INLINE_PROPERTY_COUNT, VALUE_VEC_INTEGRITY_BITS, VALUE_VEC_START_BITS, ValueVec,
+    INLINE_PROPERTY_COUNT, VALUE_VEC_INTEGRITY_BITS, VALUE_VEC_START_BITS, ValueArena, ValueVec,
 };
 use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
@@ -12,7 +12,6 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod snapshot;
-pub(crate) use snapshot::CellDecoder;
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
 /// changed: its shape, prototype or integrity changes, and at every collection, after which a
@@ -733,11 +732,12 @@ impl AwaitState {
     }
 
     /// Its edges: the realm and promise it resumes, the generator, the suspended frame.
-    pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
-        [self.realm, self.promise]
-            .into_iter()
-            .chain(self.generator)
-            .chain(self.continuation.iter().flat_map(|continuation| continuation.roots()))
+    pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {
+        out.extend([self.realm, self.promise]);
+        out.extend(self.generator);
+        if let Some(continuation) = &self.continuation {
+            continuation.extend_roots(out);
+        }
     }
 }
 impl TypedArrayKind {
@@ -810,6 +810,9 @@ impl Native {
                 | Self::StringToUpperCase
                 | Self::StringToLowerCase
                 | Self::StringConcat
+                | Self::StringRepeat
+                | Self::StringPadStart
+                | Self::StringPadEnd
         )
     }
 
@@ -881,6 +884,25 @@ impl Native {
     /// call-forwarding natives push their target as a frame there (and run under a
     /// forwarding boundary), direct `eval` reads the calling instruction, and `with` entry
     /// and exit change the running frame's object environment.
+    /// Whether the native observes the frame stack only by calling guest code, capturing an
+    /// error's stack or making a collection due (`Host::host_function_runs_beside_activations`
+    /// for a host's), so a lane calls it with its activations frameless.
+    pub(crate) fn runs_beside_activations(self) -> bool {
+        matches!(
+            self,
+            Self::ObjectLiteralPrototype
+                | Self::ObjectKeys
+                | Self::ObjectDefineProperty
+                | Self::ObjectGetPrototypeOf
+                | Self::StringSplit
+                | Self::JsonStringify
+                | Self::ParseInt
+                | Self::ArrayShift
+                | Self::WeakMapSet
+                | Self::FinalizationRegistryRegister
+        )
+    }
+
     pub(crate) fn runs_from_lane(self) -> bool {
         !matches!(
             self,
@@ -1344,6 +1366,32 @@ impl ProtoLink {
             .contains(&self.0)
             .then(|| self.0 - PROTO_OBJECT_RECORD_BASE)
     }
+
+    /// The prototype this link names, decoded (`Object::encode_proto`'s inverse).
+    #[inline(always)]
+    pub(crate) fn prototype(self) -> Value {
+        match self.0 {
+            PROTO_NULL => Value::NULL,
+            PROTO_UNDEFINED => Value::UNDEFINED,
+            index if index < PROTO_OBJECT_RECORD_BASE => Value::heap(index),
+            index if index < PROTO_ARRAY_RECORD_BASE => {
+                Value::direct_object(index - PROTO_OBJECT_RECORD_BASE)
+            }
+            index if index < PROTO_FUNCTION_RECORD_BASE => {
+                Value::direct_array(index - PROTO_ARRAY_RECORD_BASE)
+            }
+            index if index < PROTO_PROMISE_RECORD_BASE => {
+                Value::direct_function(index - PROTO_FUNCTION_RECORD_BASE)
+            }
+            index if index < PROTO_ITERATOR_RECORD_BASE => {
+                Value::direct_promise(index - PROTO_PROMISE_RECORD_BASE)
+            }
+            index => {
+                debug_assert!(index < PROTO_RECORD_END);
+                Value::direct_iterator(index - PROTO_ITERATOR_RECORD_BASE)
+            }
+        }
+    }
 }
 
 const OBJECT_ARRAY: u32 = 1 << 28;
@@ -1668,27 +1716,7 @@ impl Object {
 
     #[inline(always)]
     pub(crate) fn proto(&self) -> Value {
-        match self.meta & PROTO_INDEX_BITS {
-            PROTO_NULL => Value::NULL,
-            PROTO_UNDEFINED => Value::UNDEFINED,
-            index if index < PROTO_OBJECT_RECORD_BASE => Value::heap(index),
-            index if index < PROTO_ARRAY_RECORD_BASE => {
-                Value::direct_object(index - PROTO_OBJECT_RECORD_BASE)
-            }
-            index if index < PROTO_FUNCTION_RECORD_BASE => {
-                Value::direct_array(index - PROTO_ARRAY_RECORD_BASE)
-            }
-            index if index < PROTO_PROMISE_RECORD_BASE => {
-                Value::direct_function(index - PROTO_FUNCTION_RECORD_BASE)
-            }
-            index if index < PROTO_ITERATOR_RECORD_BASE => {
-                Value::direct_promise(index - PROTO_PROMISE_RECORD_BASE)
-            }
-            index => {
-                debug_assert!(index < PROTO_RECORD_END);
-                Value::direct_iterator(index - PROTO_ITERATOR_RECORD_BASE)
-            }
-        }
+        self.proto_link().prototype()
     }
 
     pub(crate) fn set_proto(&mut self, proto: Value) {
@@ -1929,8 +1957,7 @@ impl Object {
         debug_assert!(slot < INLINE_PROPERTY_COUNT);
         match (self.extras_pointer(), value.to_narrow()) {
             (None, Some(narrow)) => {
-                let shift = slot as u32 * u32::BITS;
-                self.payload = self.payload & !(u64::from(u32::MAX) << shift) | u64::from(narrow) << shift;
+                self.store_payload_narrow(slot, narrow);
                 true
             }
             (None, None) => false,
@@ -1939,6 +1966,44 @@ impl Object {
                 true
             }
         }
+    }
+
+    /// Whether a cached add of `value` at `slot`, the length of this object's storage under
+    /// a shape outside dictionary storage, to this object, which admits it
+    /// (`admits_cached_add`), is a plain append (`append_plain`): the object has no extras,
+    /// so it was never a prototype, and its storage takes the value without moving: a narrow
+    /// value into a free inline slot, or any value into its arena range's spare capacity.
+    #[inline(always)]
+    pub(crate) fn admits_plain_append(&self, slot: usize, value: Value) -> bool {
+        debug_assert!(self.admits_cached_add());
+        if self.extras_pointer().is_some() {
+            return false;
+        }
+        if self.meta & OBJECT_INLINE_STORAGE != 0 {
+            return slot < INLINE_PROPERTY_COUNT && value.to_narrow().is_some();
+        }
+        ValueArena::appends_in_place(self.properties(), slot)
+    }
+
+    /// Appends `value` at `slot` and moves to `shape`, the add `admits_plain_append` admitted.
+    /// Without extras the object was never a prototype, so the move retires no proof.
+    #[inline(always)]
+    pub(crate) fn append_plain(&mut self, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
+        debug_assert!(self.admits_plain_append(slot, value));
+        match value.to_narrow().filter(|_| self.meta & OBJECT_INLINE_STORAGE != 0) {
+            Some(narrow) => self.store_payload_narrow(slot, narrow),
+            // SAFETY: `admits_plain_append` found the arena range's room for the value.
+            None => unsafe { properties.push_in_place(self.properties(), slot, value) },
+        }
+        self.set_shape(shape);
+    }
+
+    /// Stores the narrow form `narrow` at inline `slot` of the payload word, which holds the
+    /// inline values.
+    #[inline(always)]
+    fn store_payload_narrow(&mut self, slot: usize, narrow: u32) {
+        let shift = slot as u32 * u32::BITS;
+        self.payload = self.payload & !(u64::from(u32::MAX) << shift) | u64::from(narrow) << shift;
     }
 
     /// `set_inline_property` into extras: the object has them, or `value` has no narrow form.
@@ -2080,6 +2145,14 @@ impl Object {
     }
     pub(crate) fn is_extensible(&self) -> bool {
         self.properties().is_extensible()
+    }
+    /// Whether a cached add transition (`FieldAddCache`) applies to this object as to the
+    /// ordinary object that recorded it: it is extensible, and no arguments object or module
+    /// namespace, whose exotic own properties its shape does not describe.
+    #[inline(always)]
+    pub(crate) fn admits_cached_add(&self) -> bool {
+        self.is_extensible()
+            && self.extras().is_none_or(|extras| !extras.arguments_object && !extras.module_namespace)
     }
     pub(crate) fn set_extensible(&mut self, value: bool) {
         let mut properties = ValueVec::from_parts(self.meta & VALUE_VEC_INTEGRITY_BITS, 0);
@@ -2959,7 +3032,20 @@ pub(crate) struct RegExpMeta {
     pub(crate) flags: crate::vm::RegExpFlags,
     // One constructor identity owns creation realm and legacy eligibility.
     pub(crate) legacy_constructor: RegExpLegacyOwner,
-    pub(crate) matcher: Rc<quench_regexp::Regex>,
+    pub(crate) matcher: RegExpMatcher,
+}
+
+/// A RegExp's compiled matcher, or none yet: a RegExp restored from a snapshot compiles its
+/// pattern on first use (`Vm::regexp_matcher`). A snapshot holds every pattern its builtins
+/// create, which a run seldom executes; compiling them all was 5% of restoring the preloaded
+/// startup snapshot (x86_64, 2026-10-22).
+#[derive(Clone, Default)]
+pub(crate) struct RegExpMatcher(pub(crate) std::cell::OnceCell<Rc<quench_regexp::Regex>>);
+
+impl RegExpMatcher {
+    pub(crate) fn compiled(matcher: Rc<quench_regexp::Regex>) -> Self {
+        Self(std::cell::OnceCell::from(matcher))
+    }
 }
 
 impl std::fmt::Debug for RegExpMeta {

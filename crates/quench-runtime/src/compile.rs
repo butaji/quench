@@ -1545,6 +1545,23 @@ impl SpecializationMode {
     }
 }
 
+/// A named property access, by which past its unique sites a program shares cache sites
+/// (`Compiler::name_shared_cache_site`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum NamedAccess {
+    Load,
+    Store,
+}
+
+/// The name-shared cache sites (`NAME_SHARED_CACHE_SITES`) by access and atom: given out
+/// at load, with the next one to give, and read in a replay, which keeps the load's.
+enum NameSharedSites<'a> {
+    Load { sites: NameSharedSiteMap, next: u16 },
+    Replay(&'a NameSharedSiteMap),
+}
+
+type NameSharedSiteMap = FxHashMap<(NamedAccess, u32), u16>;
+
 struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
@@ -1574,6 +1591,7 @@ struct Compiler<'a> {
     functions: replay::FunctionTable<'a>,
     errors: Vec<Diagnostic>,
     cache_sites: u16,
+    name_shared_sites: NameSharedSites<'a>,
     template_sites: u32,
     method_sites: SiteTable<'a, MethodSiteSpec>,
     field_sites: SiteTable<'a, FieldSite>,
@@ -1963,6 +1981,10 @@ impl<'a> Compiler<'a> {
             functions: replay::FunctionTable::default(),
             errors: vec![],
             cache_sites: 0,
+            name_shared_sites: NameSharedSites::Load {
+                sites: FxHashMap::default(),
+                next: crate::bytecode::UNIQUE_CACHE_SITES,
+            },
             template_sites: 0,
             method_sites: SiteTable::default(),
             field_sites: SiteTable::default(),
@@ -2821,6 +2843,10 @@ impl<'a> Compiler<'a> {
                     specialized: self.mode == SpecializationMode::Enabled,
                     atoms,
                     exits: std::mem::take(&mut self.function_exits).into_boxed_slice(),
+                    name_shared_sites: match &mut self.name_shared_sites {
+                        NameSharedSites::Load { sites, .. } => std::mem::take(sites),
+                        NameSharedSites::Replay(sites) => (*sites).clone(),
+                    },
                     functions: replays,
                     #[cfg(feature = "verify-replay")]
                     released: released
@@ -2977,9 +3003,51 @@ impl<'a> Compiler<'a> {
     }
 
     fn cache_site(&mut self) -> u16 {
-        let site = self.cache_sites.min(crate::bytecode::SHARED_UNCACHED_SITE);
-        self.cache_sites = site + 1;
-        site
+        if self.cache_sites < crate::bytecode::UNIQUE_CACHE_SITES {
+            self.cache_sites += 1;
+            return self.cache_sites - 1;
+        }
+        // Past the unique sites the program spans the whole site space: the name-shared
+        // sites and the shared uncached one.
+        self.cache_sites = crate::bytecode::SHARED_UNCACHED_SITE + 1;
+        crate::bytecode::SHARED_UNCACHED_SITE
+    }
+
+    /// The site a named load or store of `atom` shares past the unique sites
+    /// (`NAME_SHARED_CACHE_SITES`): the load gives one on first use, and a replay reads the
+    /// load's, so a replayed function makes the record its load made. A load that used them
+    /// all keeps the shared uncached site.
+    fn name_shared_cache_site(&mut self, access: NamedAccess, atom: u32) -> u16 {
+        const SHARED: u16 = crate::bytecode::SHARED_UNCACHED_SITE;
+        match &mut self.name_shared_sites {
+            NameSharedSites::Replay(sites) => sites.get(&(access, atom)).copied().unwrap_or(SHARED),
+            NameSharedSites::Load { sites, next } => {
+                if let Some(&site) = sites.get(&(access, atom)) {
+                    return site;
+                }
+                if *next == SHARED {
+                    return SHARED;
+                }
+                let site = *next;
+                *next += 1;
+                sites.insert((access, atom), site);
+                site
+            }
+        }
+    }
+
+    /// The cache site instruction `op` keeps for `site`: a named field load or store emitted
+    /// with the shared uncached site takes its name's shared one instead.
+    fn emitted_cache_site(&mut self, op: Op, base: Register, site: Register, imm: u32) -> Register {
+        if site != crate::bytecode::SHARED_UNCACHED_SITE {
+            return site;
+        }
+        let access = match op {
+            Op::GetField if base != crate::bytecode::FieldBase::NESTED => NamedAccess::Load,
+            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => NamedAccess::Store,
+            _ => return site,
+        };
+        self.name_shared_cache_site(access, imm)
     }
 
     fn template_site(&mut self) -> u32 {
@@ -3077,21 +3145,41 @@ impl<'a> Compiler<'a> {
     /// The local slots a function body keeps in registers, and the promoted slots a nested
     /// function may write (clobbered). `eligible` states the activation's own conditions;
     /// the body's fixed-register facts and the register budget decide the rest. Ordinary
-    /// functions and arrows share this plan.
+    /// functions and arrows share this plan. `own_arguments` is a function's strictness and
+    /// parameters, whose own `arguments` binding a body may read; an arrow has none, so any
+    /// `arguments` it names keeps its locals in frame slots.
     #[allow(clippy::too_many_arguments)]
     fn promoted_local_plan(
         &mut self,
         eligible: bool,
+        own_arguments: Option<(bool, &[Atom])>,
         body: &[Statement<'_>],
         expression_body: Option<&Expression<'_>>,
         locals: &[Atom],
         function_scope: &FxHashSet<Atom>,
         lexical_atoms: &[Atom],
         self_binding_slot: Option<u16>,
-    ) -> (Vec<u16>, Vec<u16>) {
+    ) -> PromotedLocalPlan {
         let register_local_facts = early::fixed_register_local_facts(body, expression_body);
-        if !eligible || !register_local_facts.safe {
-            return (Vec::new(), Vec::new());
+        let rebinds_parameter = |parameters: &[Atom]| {
+            parameters
+                .iter()
+                .any(|atom| register_local_facts.bound_names.contains(&self.atoms[*atom as usize]))
+        };
+        // A strict `arguments` object is a copy of the values passed, which no parameter
+        // write reaches; a sloppy one aliases the parameters (`Function::arguments_alias_parameters`)
+        // unless the body only reads it and rebinds no parameter.
+        let unaliased_arguments = eligible
+            && register_local_facts.safe
+            && register_local_facts.arguments == early::ArgumentsUse::Reads
+            && own_arguments.is_some_and(|(strict, parameters)| !strict && !rebinds_parameter(parameters));
+        let arguments_allow_promotion = match (register_local_facts.arguments, own_arguments) {
+            (early::ArgumentsUse::None, _) => true,
+            (_, None) => false,
+            (_, Some((strict, _))) => strict || unaliased_arguments,
+        };
+        if !eligible || !register_local_facts.safe || !arguments_allow_promotion {
+            return PromotedLocalPlan { unaliased_arguments, ..Default::default() };
         }
         let arguments_atom = self.atom("arguments");
         let mut latest_local_slot = FxHashMap::default();
@@ -3126,7 +3214,7 @@ impl<'a> Compiler<'a> {
                     .contains(&self.atoms[locals[usize::from(slot)] as usize])
             })
             .collect::<Vec<_>>();
-        (promoted_local_slots, clobbered_local_slots)
+        PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments }
     }
 
     fn compile_function(
@@ -3189,7 +3277,7 @@ impl<'a> Compiler<'a> {
             .filter(|parameters| {
                 has_arguments_binding
                     && !parameter_shadows_arguments
-                    && FunctionCompiler::has_non_simple_parameters(parameters)
+                    && !FunctionCompiler::binds_parameters_directly(parameters)
             })
             .map(|_| {
                 let slot = locals.len() as u16;
@@ -3237,18 +3325,22 @@ impl<'a> Compiler<'a> {
             && options
                 .defaults
                 .is_none_or(|formal| !FunctionCompiler::has_non_simple_parameters(formal));
+        let direct_parameters = !options.rest_override
+            && options.defaults.is_none_or(FunctionCompiler::binds_parameters_directly);
         let promote_plain_locals = parent.is_some()
-            && simple_parameters
+            && direct_parameters
             && !options.async_function
             && !options.generator
             && !options.derived_constructor
             && !options.class_initializer
             && !options.implicit_super
             && options.with_depth == 0
-            && self.eval_context.is_none()
+            // A nested function's own parameters and locals are its own in eval code and host
+            // scripts too: names it does not declare resolve as they would without promotion.
             && !dynamic_eval;
-        let (promoted_local_slots, clobbered_local_slots) = self.promoted_local_plan(
+        let PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments } = self.promoted_local_plan(
             promote_plain_locals,
+            Some((root_strict, &params)),
             body,
             expression_body,
             &locals,
@@ -3413,6 +3505,7 @@ impl<'a> Compiler<'a> {
                 && !options.generator,
             class_initializer: options.class_initializer,
             parameter_eval_arguments_error: function.parameter_eval_arguments_error,
+            unaliased_arguments,
             arguments_slot,
             simple_parameters,
             strict: root_strict,
@@ -3438,6 +3531,7 @@ impl<'a> Compiler<'a> {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: function.handlers.into(),
             register_roots: Default::default(),
@@ -3646,3 +3740,13 @@ impl<'a> Compiler<'a> {
 }
 #[cfg(test)]
 mod tests;
+
+/// `Compiler::promoted_local_plan`: the local slots a body keeps in registers, those a nested
+/// function may write, and whether its mapped `arguments` is unaliased
+/// (`Function::unaliased_arguments`).
+#[derive(Default)]
+struct PromotedLocalPlan {
+    promoted_local_slots: Vec<u16>,
+    clobbered_local_slots: Vec<u16>,
+    unaliased_arguments: bool,
+}

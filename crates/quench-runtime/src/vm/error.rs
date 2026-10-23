@@ -617,6 +617,7 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        self.materialize_deferred_lane();
         let target = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !self.is_object_like(target) {
             return Err(self.type_error(program, "invalid_argument".into()));
@@ -1268,7 +1269,8 @@ impl<H: Host> Vm<H> {
                 Native::Number => Native::NumberValueOf,
                 _ => unreachable!(),
             };
-            self.set_named(program, prototype, "valueOf", self.native_value(value_of))?;
+            let native_function = self.native_value(value_of);
+            self.set_named(program, prototype, "valueOf", native_function)?;
         }
         self.install_boolean(program)?;
         self.install_bigint(program)?;
@@ -1286,17 +1288,19 @@ impl<H: Host> Vm<H> {
                     let realm = self
                         .own_property(self.realm.globals, realm_atom)
                         .ok_or_else(|| JsError("IsHTMLDDA capability requires $262".into()))?;
+                    let native_is_h_t_m_l_d_d_a = self.native_value(Native::IsHTMLDDA);
                     self.set_named(
                         program,
                         realm,
                         "IsHTMLDDA",
-                        self.native_value(Native::IsHTMLDDA),
+                        native_is_h_t_m_l_d_d_a,
                     )?;
                     continue;
                 }
                 CapabilityId::WriteLine | CapabilityId::ClockMillis => continue,
             };
-            self.global(program, global.name, self.native_value(native))?;
+            let native_function = self.native_value(native);
+            self.global(program, global.name, native_function)?;
         }
         Ok(())
     }
@@ -1355,6 +1359,8 @@ impl<H: Host> Vm<H> {
             .get(WellKnownSymbol::ToStringTag)
             .expect("well-known toStringTag symbol installed before module source intrinsics");
         self.set_symbol_property(prototype, to_string_tag, Value::UNDEFINED)?;
+        let native_abstract_module_source_to_string_tag =
+            self.native_value(Native::AbstractModuleSourceToStringTag);
         self.set_property_attributes(
             prototype,
             PropertyKey::symbol(to_string_tag),
@@ -1363,7 +1369,7 @@ impl<H: Host> Vm<H> {
                 enumerable: false,
                 configurable: true,
                 accessor: true,
-                getter: Some(self.native_value(Native::AbstractModuleSourceToStringTag)),
+                getter: Some(native_abstract_module_source_to_string_tag),
                 setter: None,
             },
         );
@@ -1713,10 +1719,11 @@ impl<H: Host> Vm<H> {
         let realm_async_generator_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(realm_async_iterator_proto)));
+        let native_iterator_next = self.native_value(Native::IteratorNext);
         self.set_builtin_value_named(
             realm_async_generator_proto,
             "next",
-            self.native_value(Native::IteratorNext),
+            native_iterator_next,
         )?;
         self.realm.intrinsics.iterator_prototypes.insert(
             global,
@@ -2326,7 +2333,8 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn install_errors(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         for &(name, native) in ERROR_CONSTRUCTORS {
-            self.global(program, name, self.native_value(native))?;
+            let native_function = self.native_value(native);
+            self.global(program, name, native_function)?;
         }
         Ok(())
     }

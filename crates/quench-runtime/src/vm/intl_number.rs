@@ -220,10 +220,11 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         self.with_call_roots(args.iter().copied().chain([this]), |vm| {
             if !vm.number_format_legacy_receiver(p, this)? {
+                let native_intl_number_format = vm.native_value(Native::IntlNumberFormat);
                 return vm.intl_number_format_construct(
                     p,
                     args,
-                    vm.native_value(Native::IntlNumberFormat),
+                    native_intl_number_format,
                 );
             }
             let Some(symbol) = vm
@@ -233,20 +234,22 @@ impl<H: Host> Vm<H> {
                 .get(&vm.realm.globals)
                 .copied()
             else {
+                let native_intl_number_format = vm.native_value(Native::IntlNumberFormat);
                 return vm.intl_number_format_construct(
                     p,
                     args,
-                    vm.native_value(Native::IntlNumberFormat),
+                    native_intl_number_format,
                 );
             };
             let fallback = vm.get_symbol_property_with_receiver(p, this, symbol, this)?;
             if !fallback.is_undefined() {
                 return Ok(this);
             }
+            let native_intl_number_format = vm.native_value(Native::IntlNumberFormat);
             let formatter = vm.intl_number_format_construct(
                 p,
                 args,
-                vm.native_value(Native::IntlNumberFormat),
+                native_intl_number_format,
             )?;
             vm.set_symbol_property(this, symbol, formatter)?;
             vm.set_property_attributes(

@@ -132,6 +132,21 @@ Set `TEST262_REPORT` or `TEST262_RATCHET` to select other paths. A
 `TEST262_BATCH_SIZE` subset still writes its report but does not update or
 compare the full-inventory ratchet.
 
+Compare engines on both suites, case by case, with `quench-bench`'s
+`conformance-compare` (Quench, Node and Bun; wall, CPU and peak RSS per process,
+aggregated per area against a 20% margin). Node and Bun run Test262 through
+`tools/test262-engine-case.cjs` and Wasm scripts that `wast-json` converts through
+`tools/wast-engine-run.cjs`; see
+[the 2026-10-22 evidence](../evidence/conformance-engines-linux-2026-10-22/README.md)
+for the commands, engine switches and caveats.
+
+`run-all --jit` and `run-test --jit` run every case in compiled execution
+(`ExecutionMode::Compiled`, the mode `quench-node --jit` uses), as the Wasm
+runner's `run --jit` does for the Wasm testsuite. Both suites must pass in both
+modes. A compiled run writes `target/test262-report-jit.json` (its provenance
+names `execution_mode`) and is held to the same ratchet and waiver manifest as
+an interpreted run: one expected pass set for both modes.
+
 For an explicitly authorized all-pass assumption, freeze expectations without
 executing any cases:
 
@@ -636,6 +651,12 @@ whole suite. A module is lowered for the mode that runs it
 calls up to a large budget, since a call costs it a frame and a dispatch, while
 the compiled mode keeps every call, since Cranelift calls cheaply and a copied
 body only adds register pressure. The residual's meaning is the same in both.
+
+`QUENCH_WASM_JIT_PERF_MAP` (diagnostics) names each compiled Wasm function in
+`/tmp/perf-PID.map` for `perf report` and writes the module's code to
+`/tmp/quench-jit-PID-BASE.bin` for `objdump -b binary --adjust-vma=0xBASE`; the
+`profile-lane-exits` feature reports, beside lane exits, the most dispatched interpreter
+records by function and instruction index (`wasm-disasm` prints the same indices).
 
 On Linux the harness binaries link position-dependent, and on x86-64 with
 `ld.lld` available they link in the trained symbol order

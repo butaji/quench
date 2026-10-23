@@ -945,8 +945,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let left = self.temporal_plain_date_slots(p, this)?;
+        let native_temporal_plain_date = self.native_value(Native::TemporalPlainDate);
         let right_value =
-            self.temporal_plain_date_from(p, self.native_value(Native::TemporalPlainDate), args)?;
+            self.temporal_plain_date_from(p, native_temporal_plain_date, args)?;
         let right = self.temporal_plain_date_slots(p, right_value)?;
         Ok(if left == right {
             Value::TRUE

@@ -81,6 +81,15 @@ impl ModuleSource {
 pub struct HostExecutionContext(pub u64);
 
 pub trait Host {
+    /// Whether host function `index` (into `functions`) observes the frame stack only by
+    /// calling guest code, capturing an error's stack or making a collection due, so a lane
+    /// may call it while its frameless activations stay frameless: each of those first makes
+    /// them frames (`Vm::materialize_deferred_lane`). A host function that reads frames any
+    /// other way (source positions, callers) must answer `false`, as the default does.
+    fn host_function_runs_beside_activations(&self, _index: usize) -> bool {
+        false
+    }
+
     /// Whether Promise lifecycle observers are active now. While none are,
     /// Promise allocation and optimized await stay free of embedding callbacks
     /// and of per-Promise host resources.
@@ -119,10 +128,14 @@ pub trait Host {
     /// Offers the host a compiled host program's compact form (`kept_compiled_program`).
     fn keep_compiled_program(&mut self, _name: &str, _parts: &[&str], _bytes: &[u8]) {}
 
-    /// A WebAssembly module's native compilation, which runs once per module, is about to
-    /// start: like `at_collection_boundary`, the code about to run (the code generator)
-    /// differs from the code that ran before it (loading, linking, instantiation).
-    fn before_wasm_native_compilation(&mut self) {}
+    /// A native compilation (a WebAssembly module's, or a JavaScript function's or loop
+    /// region's) is about to start: like `at_collection_boundary`, the code about to run (the
+    /// code generator) differs from the code that ran before it.
+    fn before_native_compilation(&mut self) {}
+
+    /// A JavaScript native compilation has finished: the code generator's code and its
+    /// scratch memory, freed by now, are no longer needed while the program runs on.
+    fn after_native_compilation(&mut self) {}
 
     /// A snapshot restore has read `bytes`, part of the snapshot the host gave it
     /// (`Runtime::restore_snapshot`), and reads them again only to decode a function's record

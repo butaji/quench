@@ -1,6 +1,9 @@
 use super::destructure::AssignmentReference;
 use super::*;
 
+/// The false edges of a test (`FunctionCompiler::condition`); most tests have one.
+pub(super) type ConditionExits = smallvec::SmallVec<[usize; 2]>;
+
 /// The TypeError message for assigning an immutable binding, as V8 words it.
 const ASSIGNMENT_TO_CONSTANT: &str = "Assignment to constant variable.";
 /// The implicit binding `ArgumentsLength` and `ArgumentGet` read, and the property the
@@ -298,8 +301,7 @@ impl FunctionCompiler<'_, '_> {
             let dst = self.reg();
             self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
             Some(dst)
-        } else if self.with_depth == 0
-            && (!self.dynamic_eval || compiler_binding)
+        } else if (compiler_binding || (self.with_depth == 0 && !self.dynamic_eval))
             && let Some((depth, slot)) = self.scopes.find(atom)
         {
             let dst = self.reg();
@@ -792,7 +794,70 @@ impl FunctionCompiler<'_, '_> {
         self.local_register(atom).map(Operand::register)
     }
 
-    pub(super) fn condition(&mut self, value: &Expression<'_>) -> usize {
+    /// The jumps `value`'s test takes to its false edge; control falls through where it is
+    /// truthy. A test applies only ToBoolean to `value`, which has no effects, so `&&`, `||`
+    /// and `!` become jumps between their operands' own tests instead of a materialized
+    /// result tested once more (`false_exits`, `true_exits`).
+    pub(super) fn condition(&mut self, value: &Expression<'_>) -> ConditionExits {
+        self.false_exits(value)
+    }
+
+    /// The jumps taken when `value` is falsy; control falls through when it is truthy.
+    fn false_exits(&mut self, value: &Expression<'_>) -> ConditionExits {
+        match value {
+            Expression::ParenthesizedExpression(inner) => self.false_exits(&inner.expression),
+            Expression::LogicalExpression(logical) if logical.operator == LogicalOperator::And => {
+                let mut exits = self.false_exits(&logical.left);
+                exits.extend(self.false_exits(&logical.right));
+                exits
+            }
+            Expression::LogicalExpression(logical) if logical.operator == LogicalOperator::Or => {
+                let truthy = self.true_exits(&logical.left);
+                let exits = self.false_exits(&logical.right);
+                self.patch_exits(&truthy);
+                exits
+            }
+            Expression::UnaryExpression(unary) if unary.operator == UnaryOperator::LogicalNot => {
+                self.true_exits(&unary.argument)
+            }
+            _ => smallvec::smallvec![self.false_exit(value)],
+        }
+    }
+
+    /// The jumps taken when `value` is truthy; control falls through when it is falsy.
+    fn true_exits(&mut self, value: &Expression<'_>) -> ConditionExits {
+        match value {
+            Expression::ParenthesizedExpression(inner) => self.true_exits(&inner.expression),
+            Expression::LogicalExpression(logical) if logical.operator == LogicalOperator::Or => {
+                let mut exits = self.true_exits(&logical.left);
+                exits.extend(self.true_exits(&logical.right));
+                exits
+            }
+            Expression::LogicalExpression(logical) if logical.operator == LogicalOperator::And => {
+                let falsy = self.false_exits(&logical.left);
+                let exits = self.true_exits(&logical.right);
+                self.patch_exits(&falsy);
+                exits
+            }
+            Expression::UnaryExpression(unary) if unary.operator == UnaryOperator::LogicalNot => {
+                self.false_exits(&unary.argument)
+            }
+            _ => {
+                let test = self.expression(value);
+                smallvec::smallvec![self.emit(Op::JumpTrue, test, 0, 0, 0)]
+            }
+        }
+    }
+
+    /// Patches every jump of `exits` to the next instruction.
+    pub(super) fn patch_exits(&mut self, exits: &[usize]) {
+        for &exit in exits {
+            self.patch(exit);
+        }
+    }
+
+    /// The single jump a test that is no `&&`, `||` or `!` takes when `value` is falsy.
+    fn false_exit(&mut self, value: &Expression<'_>) -> usize {
         if let Expression::BinaryExpression(binary) = value {
             if let Some(test) = self.typeof_test(binary) {
                 return self.emit(Op::JumpFalse, test, 0, 0, 0);
@@ -832,8 +897,8 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::JumpFalse, test, 0, 0, 0)
     }
 
-    /// A loop test's exit edge, or none when the test is a literal that is always true.
-    pub(super) fn loop_condition(&mut self, value: &Expression<'_>) -> Option<usize> {
+    /// A loop test's exit edges, or none when the test is a literal that is always true.
+    pub(super) fn loop_condition(&mut self, value: &Expression<'_>) -> Option<ConditionExits> {
         (!binding_time::always_truthy(value)).then(|| self.condition(value))
     }
 

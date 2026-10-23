@@ -154,6 +154,7 @@ mod object;
 mod shape_memo;
 mod symbol_write_proof;
 mod symbol_load_proof;
+mod private_site_home;
 mod enumerable_key_memo;
 mod name_atom_memo;
 mod object_assignment;
@@ -477,9 +478,14 @@ impl Frame {
     ) {
         debug_assert_eq!(self.locals.len(), usize::from(function.locals));
         debug_assert_eq!(self.registers.len(), usize::from(function.registers));
+        let rest = function.rest.then(|| function.params - 1);
         for entry in &function.local_registers {
-            // A promoted parameter starts as its argument and a promoted `var` as undefined.
-            let initial = if entry.local < function.params {
+            // A promoted parameter starts as its argument, a promoted rest parameter as the
+            // array its slot holds (`bind_activation_arguments`), and a promoted `var` as
+            // undefined.
+            let initial = if Some(entry.local) == rest {
+                self.locals[usize::from(entry.local)]
+            } else if entry.local < function.params {
                 args.get(usize::from(entry.local))
                     .copied()
                     .unwrap_or(Value::UNDEFINED)
@@ -675,6 +681,8 @@ struct InheritedFieldCache {
     atom: Atom,
     prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
     depth: u8,
+    /// Whether a function may stand on the chain (`Vm::function_links_answer` of the name).
+    function_links: bool,
     answer: InheritedFieldAnswer,
     /// The `prototype_layout_epoch` under which a walk last proved the chain from
     /// `proved_prototype` up to `proved_holder`, its last recorded prototype, or
@@ -731,7 +739,9 @@ struct FieldAddCache {
     /// The `prototype_layout_epoch` under which a walk last proved the chain from
     /// `proved_prototype`, or `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
     proved_epoch: u64,
-    proved_prototype: Value,
+    /// The receiver's prototype link the proof holds for, compared undecoded; a collection
+    /// advances the epoch, so it never outlives the record it names.
+    proved_prototype: ProtoLink,
 }
 /// A `FieldAddCache::proved_epoch` no epoch reaches: the chain is unproven.
 const NO_PROVED_EPOCH: u64 = u64::MAX;
@@ -744,10 +754,16 @@ impl FieldAddCache {
         prototype_depth: 0,
         prototype_shapes: [NO_FIELD_RECEIVER; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
         proved_epoch: NO_PROVED_EPOCH,
-        proved_prototype: Value::UNDEFINED,
+        proved_prototype: ProtoLink::NULL,
     };
     fn prototype_shapes(&self) -> &[u32] {
         &self.prototype_shapes[..usize::from(self.prototype_depth)]
+    }
+    /// Whether the chain proof (`proved_epoch`, `proved_prototype`) holds for a receiver
+    /// whose prototype `link` names: then the chain needs no walk.
+    #[inline(always)]
+    fn proof_holds(&self, link: ProtoLink) -> bool {
+        self.proved_epoch == crate::heap::prototype_layout_epoch() && self.proved_prototype == link
     }
 }
 /// The add transitions one site remembers, oldest first.
@@ -763,7 +779,8 @@ impl FieldAddCacheSet {
     };
     #[inline(always)]
     fn find(&self, source_shape: u32, atom: Atom) -> Option<&FieldAddCache> {
-        self.entries[..usize::from(self.len)]
+        // SAFETY: `insert` keeps `len` within the entries.
+        unsafe { self.entries.get_unchecked(..usize::from(self.len)) }
             .iter()
             .find(|cache| cache.source_shape == source_shape && cache.atom == atom)
     }
@@ -1200,6 +1217,11 @@ impl ShapeTransition {
         }
     }
 }
+/// Constructor layouts `instanceof` remembers (`Vm::instanceof_constructor_layouts`): a
+/// power of two that holds the few constructors a request's `instanceof` sites test
+/// (`Uint8Array`, `ReadableStream`, `Headers`, `Error`) without evicting one another.
+pub(crate) const INSTANCEOF_CONSTRUCTOR_LAYOUTS: usize = 4;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DictionaryTrigger {
     PropertyCount,
@@ -1455,6 +1477,9 @@ pub(super) enum StepResult {
         call_guard: crate::stack::GuestCallGuard,
         /// For `new`: the allocated receiver, the result unless the callee returns an object.
         construct_this: Option<Value>,
+        /// For an async callee pushed in place: its rooted promise
+        /// (`PendingGeneralCall::settles`).
+        settles: Option<crate::heap::RootId>,
     },
     Return(Value),
     Await {
@@ -1603,14 +1628,11 @@ pub(crate) struct Vm<H> {
     temporal_plain_time_proto: Value,
     temporal_plain_month_day_proto: Value,
     temporal_plain_year_month_proto: Value,
-    natives: Vec<(Native, Value)>,
+    natives: builtins::NativeTable,
     /// One shared string value per program atom a function name spells (`atom_string`):
     /// strings are immutable, so every closure of a plan can hold the same name value.
     /// Only program atoms and the anonymous name are kept, so the loaded program bounds it.
     atom_strings: FxHashMap<Atom, Value>,
-    /// The function values in `natives`. One native serves every realm, so it runs in the
-    /// realm of its caller rather than switching to the creator's.
-    shared_natives: FxHashSet<Value>,
     frames: Vec<Box<Frame>>,
     native_stack_frames: Vec<(usize, String)>,
     /// Emptied root lists of finished native calls, reused by the next `NativeContext`.
@@ -1645,6 +1667,12 @@ pub(crate) struct Vm<H> {
     /// The error of a call the lane made in place (`dispatch_fast::lane_call_native`), which
     /// the general loop raises at that call's instruction once the lane exits there.
     lane_raised: Option<JsError>,
+    /// A lane native call running with its activations still frameless
+    /// (`Native::runs_beside_activations`), which the first observer of the frame stack makes
+    /// frames (`materialize_deferred_lane`).
+    lane_deferred: Option<dispatch_fast::DeferredLaneCall>,
+    /// Per host function, `Host::host_function_runs_beside_activations`, derived on first use.
+    host_beside_activations: std::cell::OnceCell<Box<[bool]>>,
     /// The completion a frame's own call record returns, made by a lane activation
     /// (`dispatch_fast::lane_frame_return`), which the general loop returns from the frame
     /// at that instruction once the lane exits there.
@@ -1665,9 +1693,16 @@ pub(crate) struct Vm<H> {
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
+    plain_copy_shapes: shape_memo::PlainCopyShapeMemo,
+    /// The final shapes of host records, by their names list (`create_embedding_record`).
+    embedding_record_shapes: FxHashMap<usize, u32>,
+    /// The geometry accessors typed array reads resolve to (`typed_array_geometry_read`).
+    typed_array_geometry: typed_array::TypedArrayGeometryProofs,
     function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
+    /// Lane private-name sites' homes (`private_site_home`).
+    private_site_homes: private_site_home::PrivateSiteHomes,
     array_iteration_proof: Option<iterators::ArrayIterationProof>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
@@ -1682,12 +1717,9 @@ pub(crate) struct Vm<H> {
     /// Every atom name in id order (`atom_text`, then the names the VM appends), shared by
     /// the dynamic and module programs whose atoms are a prefix of the VM's.
     atom_sequence: Rc<crate::bytecode::AtomSequence>,
-    /// The strings most recently matched by a RegExp, most recent first, each prepared once
-    /// for repeated matching (`Vm::regexp_subject`).
+    /// The strings most recently matched by a RegExp whose search decodes them, most recent
+    /// first, each prepared once for repeated matching (`Vm::regexp_subject`).
     regexp_subjects: Vec<Rc<quench_regexp::Subject>>,
-    /// The last short subject matched, recognized by content and otherwise reused in place
-    /// once no match holds it (`Vm::regexp_subject`).
-    regexp_short_subject: Option<Rc<quench_regexp::Subject>>,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
@@ -1725,10 +1757,10 @@ pub(crate) struct Vm<H> {
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,
-    /// A non-dictionary constructor shape verified to have no own `@@hasInstance` and a
-    /// data `prototype` at the paired slot; derived from shapes, so field-cache invalidation
-    /// clears it.
-    instanceof_constructor_layout: Option<(u32, usize)>,
+    /// Non-dictionary constructor shapes verified to have no own `@@hasInstance` and a
+    /// data `prototype` at the paired slot, direct-mapped by shape; derived from shapes, so
+    /// field-cache invalidation clears them.
+    instanceof_constructor_layouts: [Option<(u32, usize)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
     /// The shapes an ordinary closure's own properties step through, without and with a
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
@@ -1954,6 +1986,18 @@ impl<H: Host> Vm<H> {
     }
     pub(crate) fn release_root(&mut self, root: RootId) -> bool {
         self.heap.release_root(root)
+    }
+    pub(crate) fn root_scoped(&mut self, value: Value) -> RootId {
+        self.heap.root_scoped(value)
+    }
+    pub(crate) fn scoped_root_height(&self) -> usize {
+        self.heap.scoped_root_height()
+    }
+    pub(crate) fn release_root_scope(&mut self, height: usize) {
+        self.heap.release_root_scope(height);
+    }
+    pub(crate) fn release_root_scope_keeping(&mut self, height: usize, keep: &[RootId]) {
+        self.heap.release_root_scope_keeping(height, keep);
     }
     pub(super) fn instantiate_global_declarations(
         &mut self,
@@ -2579,8 +2623,7 @@ impl<H: Host> Vm<H> {
         self.startup_intrinsics = Default::default();
         self.shared_async_waiters.clear();
         self.heap.reset();
-        self.natives.clear();
-        self.shared_natives.clear();
+        self.natives = Default::default();
         self.frames.clear();
         self.frame_pool.clear();
         self.realm.jobs.clear();
@@ -2599,9 +2642,12 @@ impl<H: Host> Vm<H> {
         self.shapes[0].last_child.set(NO_LAST_CHILD);
         self.transitions.clear();
         self.shape_slot_memo.clear();
+        self.plain_copy_shapes.clear();
+        self.embedding_record_shapes.clear();
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
+        self.private_site_homes.clear();
         self.array_iteration_proof = None;
         self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();
@@ -2615,7 +2661,6 @@ impl<H: Host> Vm<H> {
         self.array_index_atoms.clear();
         self.atom_classes.clear();
         self.regexp_subjects.clear();
-        self.regexp_short_subject = None;
         self.regexp_matchers.clear();
         self.atom_classes
             .resize_with(self.atom_text.len(), Default::default);
@@ -2681,7 +2726,7 @@ impl<H: Host> Vm<H> {
         self.wasm_exported_functions.clear();
         self.private_homes.clear();
         self.programs.reset(program.clone());
-        self.instanceof_constructor_layout = None;
+        self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.closure_shapes = [None; 2];
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
@@ -2718,7 +2763,7 @@ impl<H: Host> Vm<H> {
         self.install_builtins(program, scope)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins");
-        self.initialize_host(program)?;
+        self.initialize_host()?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("host_bootstrap");
         Ok(())
@@ -2966,6 +3011,10 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         target: Option<CallTarget>,
     ) -> Result<Value, JsError> {
+        // Guest code observes the frame stack; a native that runs beside activations does not.
+        if self.lane_deferred.is_some() && !self.callee_runs_beside_activations(callee) {
+            self.materialize_deferred_lane();
+        }
         if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
             return self.proxy_call(p, callee, this, args);
         }
