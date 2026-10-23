@@ -12585,3 +12585,21 @@ fn call_only_closures_make_their_prototype_when_caller_reaches_them() {
         [r#"[6,"object|true|object","object",["length,name,prototype|object|true|false|false|true|constructor|true",true]]"#]
     );
 }
+
+/// A hoisted `var` whose `.length` is read before its assignment runs reads `undefined`
+/// (Node v22 oracle): the fused field read of a promoted local counts as a read, so the
+/// local's register starts `undefined`.
+#[test]
+fn fused_field_reads_of_promoted_locals_see_undefined_before_assignment() {
+    let source = r#"
+      function beforeDecl() { try { return b.length; } catch (e) { return e.constructor.name; } var b = arguments; }
+      var out = [];
+      for (var r = 0; r < 3; r++) out.push(String(beforeDecl(1, 2)));
+      print(out.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "fused-read-before-assignment.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["TypeError,TypeError,TypeError"]);
+}
