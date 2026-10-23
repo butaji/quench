@@ -524,3 +524,15 @@ PGO training profile reversed the result: 307.8 / 26.26 MB versus 313.9 /
 change was reverted. Reports:
 `work/react-perf/react-jumpbinary-loadlocal-screen-3.json` and
 `work/react-perf/react-jumpbinary-loadlocal-freshpgo-screen-3.json`.
+
+The PGO build can optionally include React SSR samples by setting
+`QUENCH_PGO_REACT_ROUNDS` after installing `tests/npm-perf` dependencies. With
+1,000 training rounds, the three-round screen measured 394.6 renders/s /
+25.31 MB versus the generic-PGO control at 362.8 / 26.33. The 11-round paired
+run measured 346.3 / 25.62 versus 309.4 / 26.39 (+11.9% throughput, -2.9%
+RSS), with matching 24,980,000 output bytes and checksum 414318. Node `--jitless`
+measured 1,604.6 / 36.22 MB and Bun no-JIT 1,580.3 / 37.52 MB. Quench remains
+4.6x slower than both, so this profile-directed build is a substantial local
+improvement, not a package win. Linux RSS is diagnostic. Reports:
+`work/react-perf/react-profile-guided-build-screen-3.json` and
+`work/react-perf/react-profile-guided-build-nojit-11.json`.
