@@ -790,3 +790,22 @@ recorded 210 function records and zero native compiles. The wrapper's
 This explains why enabling JIT barely changes Zod throughput: the hot call path
 does not enter native code. Extending native execution across these dynamic
 operations is the primary JIT direction, with exact semantic side exits.
+
+The Pino workload uses pinned `pino@10.4.0` with structured JSON, a request
+serializer, and redaction into a synchronous in-memory sink. Timestamp and base
+fields are disabled so output checksums are stable between processes. The
+11-round, 5,000-record screen matched output across all engines. No-JIT
+throughput was 15,823 records/s for Quench, 58,140 for Node, and 44,248 for
+Bun; sampled RSS was 38.1, 31.0, and 42.3 MB. JIT throughput was 14,451 for
+Quench, 151,515 for Node, and 172,414 for Bun; sampled RSS was 34.8, 43.8,
+and 49.3 MB. Quench misses speed in both modes; JIT RSS is over 20% lower than
+both engines, while no-JIT RSS is 22.8% higher than Node and only 10% lower
+than Bun. Linux RSS remains diagnostic. Reports are local at
+`target/perf-reports/pino-json-{nojit,jit}-11.json`.
+
+JIT diagnostics show the `logRequest` wrapper has 5,250 fallback entries,
+zero native entries, and is rejected as
+`unsupported-lowering-shape-or-codegen-failure`. Its body includes object
+creation, a dynamic logger call, and redaction data access. One small getter
+compiled, but that does not cover the hot logging operation; broad generic
+call-capable execution remains necessary.
