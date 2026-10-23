@@ -74,3 +74,23 @@ The same profile identifies candidate adjacent pairs inside `v4/core/schemas.cjs
 saved. `LoadEnvLocal→Call` was already screened and lost 9.8% in no-JIT, so the
 frequency list is only a way to choose new, semantically safe candidates for
 measurement, not proof that fusion helps.
+
+## Rejected generic nested-field folding
+
+I extended the existing `this.a.b` nested-field lowering to static chains with
+other base expressions and added a getter-order/bytecode regression test. The
+test passed, including both getters in source order. An exact-source paired
+11-round screen against commit `63c6df21b` used the optimized `iteration`
+profile, so these are diagnostic results rather than production qualification:
+
+| Mode | Candidate | Control | Candidate RSS | Control RSS |
+| --- | ---: | ---: | ---: | ---: |
+| No-JIT | 12,747 ops/s | 13,029 ops/s | 33.84 MiB | 33.77 MiB |
+| JIT | 13,541 ops/s | 14,114 ops/s | 26.90 MiB | 26.86 MiB |
+
+All engines matched checksum `120000`. The candidate was 2.2% slower in
+no-JIT and 4.1% slower in JIT, with no material RSS improvement, so the source
+change and its candidate-only test were reverted. The existing nested handler
+still performs two ordered cache lookups; that nested-site work cost more than
+the saved register/dispatch work on this Zod profile. Pair frequency alone did
+not predict a win.
