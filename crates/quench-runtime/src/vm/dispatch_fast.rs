@@ -2398,16 +2398,6 @@ macro_rules! lane_return_value {
     }};
 }
 
-script_handler! {
-    /// A constant immediately returned by its function: skips writing and reloading the
-    /// temporary register while retaining `lane_return`'s activation/frame completion path.
-    fn lane_load_const_return<>(cx, r, ip, i, view) {
-        // SAFETY: the view fuses this record only with a following Return record.
-        let return_ip = unsafe { ip.add(1) };
-        lane_return_value!(cx, return_ip, i.constant())
-    }
-}
-
 /// Runs `handler` for the record at `ip` as a sibling call: the calling handler's fast path
 /// then keeps no state across a slow path that needs more registers.
 macro_rules! sibling {
@@ -13056,22 +13046,6 @@ fn derive_lane_view<H: Host>(
             pc += 2;
         } else {
             pc += 1;
-        }
-    }
-    // A constant whose next instruction returns that same register completes directly.
-    // No branch may enter the Return separately; branch-table entries are tracked too. The
-    // fused handler returns through a JavaScript activation, which a Wasm body has none of.
-    if !wasm {
-        for pc in 0..records.len().saturating_sub(1) {
-            let returned = decoded[pc + 1];
-            if records[pc].handler == lane_load_const::<H> as Handler as *const ()
-                && returned.op() == Op::Return
-                && decoded[pc].a() == returned.a()
-                && !jump_targets[pc + 1]
-                && !entry_jumps[pc + 1]
-            {
-                records[pc].handler = lane_load_const_return::<H> as Handler as *const ();
-            }
         }
     }
     // A plain move or add of a constant whose next record jumps runs with
