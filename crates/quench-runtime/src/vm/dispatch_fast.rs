@@ -2456,17 +2456,39 @@ script_handler! {
     /// non-numeric binding its window or in-place storage holds densely, saving no
     /// registers; any other load takes the general handler.
     fn lane_load_window_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
+        // A frame run whose environment storage a local access found (`lane_frame_storage`):
+        // the one read this record makes inline; every other takes the window's out of line,
+        // so this one keeps few registers.
+        if ENVIRONMENT {
+            let (slot, _) = environment_window_fields(i);
+            if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0
+                && unsafe { (*cx).env }.is_deleted()
+                && let Some((storage, _)) = lane_known_frame_storage(cx)
+                && let Some(value) = storage.dense().and_then(|dense| dense.dense_plain(slot))
+            {
+                r.set(i.a, value);
+                next!(cx, r, following(ip), view)
+            }
+            sibling!(lane_load_window_local_window::<H, true>, r, ip, view)
+        }
         let (slot, registers) = environment_window_fields(i);
-        // A frame run whose environment storage a local access found (`lane_frame_storage`).
-        if ENVIRONMENT
-            && i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0
-            && unsafe { (*cx).env }.is_deleted()
-            && let Some((storage, _)) = lane_known_frame_storage(cx)
-            && let Some(value) = storage.dense().and_then(|dense| dense.dense_plain(slot))
+        if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0
+            && !unsafe { (*cx).env }.is_deleted()
+            && let Some(value) = Some(r.get(registers + WINDOW_LOCALS + slot as u16)).filter(|value| !value.is_deleted())
         {
             r.set(i.a, value);
             next!(cx, r, following(ip), view)
         }
+        sibling!(lane_load_window_local_general::<H, false>, r, ip, view)
+    }
+}
+
+script_handler! {
+    /// `lane_load_window_local` of a binding its window or in-place storage holds densely;
+    /// any other load takes the general handler.
+    #[inline(never)]
+    fn lane_load_window_local_window<ENVIRONMENT: bool>(cx, r, ip, i, view) {
+        let (slot, registers) = environment_window_fields(i);
         if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0 && !unsafe { (*cx).env }.is_deleted() {
             let value = if ENVIRONMENT {
                 // SAFETY: as `lane_load_window_local_general`'s read of the window's storage.
@@ -2495,7 +2517,7 @@ script_handler! {
     /// slot no collection has marked since, and no collection runs in the lane, so it is
     /// young.
     fn lane_store_window_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
-        let (slot, registers) = environment_window_fields(i);
+        let (slot, _) = environment_window_fields(i);
         // A frame run's store to an initialized binding of its environment's storage, after
         // the environment's barrier.
         if ENVIRONMENT
@@ -2512,6 +2534,20 @@ script_handler! {
             }
             next!(cx, r, following(ip), view)
         }
+        if ENVIRONMENT {
+            sibling!(lane_store_window_local_window::<H, true>, r, ip, view)
+        }
+        sibling!(lane_store_window_local_window::<H, false>, r, ip, view)
+    }
+}
+
+script_handler! {
+    /// `lane_store_window_local` of a binding its window or in-place storage holds densely,
+    /// out of line so the frame run's store keeps few registers; any other store takes the
+    /// general handler.
+    #[inline(never)]
+    fn lane_store_window_local_window<ENVIRONMENT: bool>(cx, r, ip, i, view) {
+        let (slot, registers) = environment_window_fields(i);
         if !unsafe { (*cx).env }.is_deleted() && i.c == 0 {
             let binding = if ENVIRONMENT {
                 // SAFETY: as `lane_load_window_local_general`'s read of the window's storage.
@@ -3758,6 +3794,20 @@ script_handler! {
 }
 
 script_handler! {
+    /// `lane_get_field_holder_cell` of a register base: the base read from its register, and
+    /// a miss taken out of line by `lane_get_field_holder_cell`, which moves the record on.
+    fn lane_get_field_holder_cell_register<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let Some(value) = (unsafe { vm(cx) }).cell_holder_field_hit(code, r.get(i.b), i.c) else {
+            sibling!(lane_get_field_holder_cell::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// `GetField` of a register or `this` at a site with an inherited entry
     /// (`Vm::field_site_inherited`), a method read beyond the immediate prototype: that entry
     /// inline while its proof holds (`Vm::proved_inherited_field_hit`); any other read takes
@@ -3929,7 +3979,11 @@ script_handler! {
             FieldSiteTier::Holder
                 if base.is_some_and(|object| object.direct_object_index().is_none()) =>
             {
-                Some(lane_get_field_holder_cell::<H>)
+                Some(if crate::bytecode::FieldBase(i.b).register_index().is_some() {
+                    lane_get_field_holder_cell_register::<H>
+                } else {
+                    lane_get_field_holder_cell::<H>
+                })
             }
             FieldSiteTier::Holder => Some(single_base_handler(
                 i.b,
