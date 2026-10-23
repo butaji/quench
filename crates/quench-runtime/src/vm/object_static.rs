@@ -386,6 +386,9 @@ impl<H: Host> Vm<H> {
     /// the last one with an enumerable key are skipped, since they can neither
     /// add a key nor shadow one. `None` sends other chains to the generic walk.
     fn shape_for_in_keys(&mut self, receiver: Value) -> Option<Vec<Value>> {
+        if let Some(keys) = self.own_for_in_keys(receiver) {
+            return Some(keys);
+        }
         let mut chain = Vec::new();
         let mut current = receiver;
         while !current.is_null() {
@@ -430,6 +433,31 @@ impl<H: Host> Vm<H> {
             }
         }
         Some(result)
+    }
+
+    /// `shape_for_in_keys` of a receiver none of whose prototypes has an enumerable string
+    /// key, as most have not (class methods are not enumerable): a prototype then neither
+    /// adds a key nor shadows one the receiver lists first, so the keys are the receiver's
+    /// own enumerable ones, read from the shape memo (`shape_enumerable_slots`). `None`
+    /// leaves any other chain to the walk.
+    fn own_for_in_keys(&mut self, receiver: Value) -> Option<Vec<Value>> {
+        let slots = self.shape_enumerable_slots(receiver)?;
+        let mut prototype = self.object_data(receiver)?.proto();
+        while !prototype.is_null() {
+            if !self.shape_enumerable_slots(prototype)?.is_empty() {
+                return None;
+            }
+            prototype = self.object_data(prototype)?.proto();
+        }
+        Some(
+            slots
+                .iter()
+                .map(|(atom, _)| {
+                    let name = self.atom_value(*atom);
+                    self.intern_dynamic_value(name)
+                })
+                .collect(),
+        )
     }
 
     pub(super) fn object_for_in_key_is_enumerable(
