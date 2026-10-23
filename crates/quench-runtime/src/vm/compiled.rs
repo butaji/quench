@@ -52,48 +52,95 @@ pub(super) use osr_loop::{
     FieldReceiver, LoopEntry, LoopOutcome, LoopRegion, Observation, RegionRejection, Widening,
 };
 
+#[derive(Clone, Copy)]
+pub(super) enum NumberRelationDomain {
+    Int32,
+    Float64,
+}
+
 /// Emit a Number relation using the same relation dispatch as the interpreter.
-/// Only the stage-specific Cranelift condition codes live here.
+/// The domain selects its Cranelift condition codes; the operation mapping is shared.
 pub(super) fn emit_number_relation(
     builder: &mut FunctionBuilder<'_>,
     operator: u32,
     left: ir::Value,
     right: ir::Value,
+    domain: NumberRelationDomain,
 ) -> Option<ir::Value> {
     struct Emit<'a, 'f> {
         builder: &'a mut FunctionBuilder<'f>,
+        domain: NumberRelationDomain,
     }
 
     impl crate::vm::operations::NumberRelationStage<ir::Value> for Emit<'_, '_> {
         type Output = ir::Value;
 
         fn equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fcmp(FloatCC::Equal, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => self.builder.ins().icmp(IntCC::Equal, left, right),
+                NumberRelationDomain::Float64 => {
+                    self.builder.ins().fcmp(FloatCC::Equal, left, right)
+                }
+            }
         }
         fn not_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fcmp(FloatCC::NotEqual, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => self.builder.ins().icmp(IntCC::NotEqual, left, right),
+                NumberRelationDomain::Float64 => {
+                    self.builder.ins().fcmp(FloatCC::NotEqual, left, right)
+                }
+            }
         }
         fn less_than(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fcmp(FloatCC::LessThan, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => {
+                    self.builder.ins().icmp(IntCC::SignedLessThan, left, right)
+                }
+                NumberRelationDomain::Float64 => {
+                    self.builder.ins().fcmp(FloatCC::LessThan, left, right)
+                }
+            }
         }
         fn less_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder
-                .ins()
-                .fcmp(FloatCC::LessThanOrEqual, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => self
+                    .builder
+                    .ins()
+                    .icmp(IntCC::SignedLessThanOrEqual, left, right),
+                NumberRelationDomain::Float64 => self
+                    .builder
+                    .ins()
+                    .fcmp(FloatCC::LessThanOrEqual, left, right),
+            }
         }
         fn greater_than(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fcmp(FloatCC::GreaterThan, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => self
+                    .builder
+                    .ins()
+                    .icmp(IntCC::SignedGreaterThan, left, right),
+                NumberRelationDomain::Float64 => {
+                    self.builder.ins().fcmp(FloatCC::GreaterThan, left, right)
+                }
+            }
         }
         fn greater_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder
-                .ins()
-                .fcmp(FloatCC::GreaterThanOrEqual, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => self
+                    .builder
+                    .ins()
+                    .icmp(IntCC::SignedGreaterThanOrEqual, left, right),
+                NumberRelationDomain::Float64 => self
+                    .builder
+                    .ins()
+                    .fcmp(FloatCC::GreaterThanOrEqual, left, right),
+            }
         }
     }
 
     Some(
         crate::vm::operations::NumberRelation::from_operator(operator)?.apply(
-            &mut Emit { builder },
+            &mut Emit { builder, domain },
             left,
             right,
         ),
@@ -391,6 +438,7 @@ pub(super) fn compile_js_numeric_region(
                     instruction.binary_operator_field(),
                     left,
                     right,
+                    NumberRelationDomain::Float64,
                 )?;
                 let target = usize::try_from(instruction.jump_target()).ok()?;
                 let fallthrough = pc.checked_add(1)?;
