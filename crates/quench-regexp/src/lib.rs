@@ -261,8 +261,10 @@ use canonical::{ASCII_MAX, canonical};
 
 pub struct Regex {
     /// The complete matcher's program, lowered when it first runs. A pattern the byte
-    /// backend serves matches ASCII subjects without it, so it may never be needed.
-    complete: OnceCell<CompleteMatcher>,
+    /// backend serves matches ASCII subjects without it, so it may never be needed; boxed,
+    /// so such a pattern holds one word for it instead of the matcher's own size (a
+    /// `Regex` was 784 bytes, 624 of them this cell: V8-v7 RegExp keeps 443 patterns).
+    complete: OnceCell<Box<CompleteMatcher>>,
     /// The normalized source `complete` and its tree lower from.
     source: Box<str>,
     flags: Flags,
@@ -430,12 +432,12 @@ impl Regex {
         // The source stays kept either way: `tree` lowers it again when the backtracking
         // program let construction drop the tree.
         if !compiled_serves_matches {
-            let _ = complete.set(CompleteMatcher::lower(
+            let _ = complete.set(Box::new(CompleteMatcher::lower(
                 &parsed,
                 &normalized_source,
                 &names,
                 flags,
-            ));
+            )));
         }
         Ok(Self {
             complete,
@@ -481,7 +483,7 @@ impl Regex {
     fn complete(&self) -> &CompleteMatcher {
         self.complete.get_or_init(|| {
             self.with_parsed_source(|parsed| {
-                CompleteMatcher::lower(parsed, &self.source, &self.capture_names, self.flags)
+                Box::new(CompleteMatcher::lower(parsed, &self.source, &self.capture_names, self.flags))
             })
         })
     }
