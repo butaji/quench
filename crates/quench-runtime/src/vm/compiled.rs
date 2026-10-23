@@ -6602,14 +6602,16 @@ impl<H: Host> Vm<H> {
     /// Whether the JavaScript tier may still claim `function` of `program`: it runs, the
     /// function passes its candidate filter, and the tier has not declined it. The tier
     /// observes and enters functions at frame entry (`js_tier_frame_entry`), so such calls
-    /// keep their frames rather than running frameless in the lane.
+    /// keep their frames rather than running frameless in the lane. A permanently declined
+    /// function stays frameless unless diagnostics need its rejected-entry counters.
     pub(super) fn js_tier_may_claim(&self, program: &ResidualProgram, id: ProgramId, function: u32) -> bool {
         self.js_tier_runs()
             && program.kind != crate::bytecode::ProgramKind::Wasm
             && program
                 .function_get(function as usize)
                 .is_some_and(|body| super::js_compiled::function_candidate(body, program))
-            && !self.programs.js_tier_declined(id, function)
+            && (!self.programs.js_tier_declined(id, function)
+                || self.programs.js_jit_diagnostics_enabled())
     }
 
     /// The JavaScript tier at the entry of `frame`, an initialized frame at PC zero, made
