@@ -16,6 +16,10 @@ impl HostEnvironmentSlot {
     const CONSTRUCTOR_COUNT: usize = Self::Constructible as usize + 1;
 }
 
+/// Arguments a host call roots without allocating their list: all but 12 of the 906 host
+/// operations `quench-node` declares take at most this many.
+const HOST_CALL_INLINE_ARGUMENTS: usize = 6;
+
 impl<H: Host> Vm<H> {
     /// A native function's private environment: traced slots outside any scope chain.
     pub(super) fn native_environment(&mut self, slots: Vec<Value>) -> Value {
@@ -198,7 +202,7 @@ impl<H: Host> Vm<H> {
             .map_err(|error| context.finish_error(error))
     }
 
-    pub(super) fn initialize_host(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+    pub(super) fn initialize_host(&mut self) -> Result<(), JsError> {
         for index in 0..self.host.functions().len() {
             let Some(name) = self.host.functions()[index].global else {
                 continue;
@@ -206,7 +210,23 @@ impl<H: Host> Vm<H> {
             let id = u32::try_from(index)
                 .map_err(|_| JsError("host function table exceeds index space".into()))?;
             let function = self.create_host_function(HostFunctionId(id))?;
-            self.global(program, name, function)?;
+            // A host's globals are its platform's operations (timers, `fetch`,
+            // `structuredClone`), enumerable as WebIDL makes a global's operations and as
+            // Node defines them, unlike the language's own non-enumerable builtins.
+            let atom = self.intern_atom(name);
+            self.set_property_with_attributes(
+                self.realm.globals,
+                atom,
+                function,
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: true,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            )?;
         }
         let mut context = NativeContext::new(self);
         H::initialize(&mut context).map_err(|error| context.finish_error(error))
@@ -241,24 +261,34 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    /// The host operation index a host function's `environment` names (`create_host_function`):
+    /// the number itself, or its `HostEnvironmentSlot::Operation` slot.
+    pub(super) fn host_operation_index(&self, environment: Value) -> Option<u32> {
+        environment
+            .as_number()
+            .or_else(|| {
+                self.heap
+                    .environment_slot(environment, HostEnvironmentSlot::Operation as usize)
+                    .and_then(Value::as_number)
+            })
+            .filter(|value| {
+                value.is_finite() && value.fract() == 0.0 && *value >= 0.0 && *value <= f64::from(u32::MAX)
+            })
+            .map(|value| value as u32)
+    }
+
+    /// The declared name of host function `function`, for diagnostics.
+    #[cfg(feature = "profile-lane-exits")]
+    pub(super) fn host_function_name(&self, function: Value) -> Option<&'static str> {
+        let index = self.host_operation_index(self.heap.function(function)?.env)?;
+        self.host.functions().get(index as usize).map(|binding| binding.name)
+    }
+
     fn run_host_function(&mut self, receiver: Value, args: &[Value]) -> Result<Value, JsError> {
         let index = self
             .active_native_env()
-            .and_then(|environment| {
-                environment.as_number().or_else(|| {
-                    self.heap
-                        .environment_slot(environment, HostEnvironmentSlot::Operation as usize)
-                        .and_then(Value::as_number)
-                })
-            })
-            .filter(|value| {
-                value.is_finite()
-                    && value.fract() == 0.0
-                    && *value >= 0.0
-                    && *value <= f64::from(u32::MAX)
-            })
-            .ok_or_else(|| JsError("invalid host function environment".into()))?
-            as u32;
+            .and_then(|environment| self.host_operation_index(environment))
+            .ok_or_else(|| JsError("invalid host function environment".into()))?;
         let callback = self
             .host
             .functions()
@@ -275,7 +305,7 @@ impl<H: Host> Vm<H> {
         let arguments = args
             .iter()
             .map(|value| context.scoped_value(*value))
-            .collect::<Vec<_>>();
+            .collect::<smallvec::SmallVec<[_; HOST_CALL_INLINE_ARGUMENTS]>>();
         let result = callback(&mut context, receiver, &arguments);
         context.finish(result)
     }

@@ -140,6 +140,14 @@ fn register_window_in_bounds(base: u16, count: u32, registers: u16) -> bool {
         .is_some_and(|end| end <= u32::from(registers))
 }
 
+/// Whether every parameter slot is named by its binding rather than a hidden parameter name,
+/// as a list that binds directly names them.
+fn parameters_bind_directly(function: &super::Function, atoms: &super::AtomTable) -> bool {
+    function.local_atoms[..usize::from(function.params).min(function.local_atoms.len())]
+        .iter()
+        .all(|atom| usize::try_from(*atom).is_ok_and(|atom| atom < atoms.len() && !atoms[atom].starts_with('\0')))
+}
+
 fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::AtomTable) -> bool {
     let promoted = &function.local_registers;
     if promoted.is_empty() {
@@ -167,10 +175,13 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
         && !function.is_async
         && !function.is_generator
         && !function.derived_constructor
-        && !function.class_initializer
-        && function.simple_parameters
-        && !function.rest
-        && function.arguments_slot.is_none()
+        // An arrow inside an initializer owns its locals (`compile/arrow.rs`).
+        && !(function.class_initializer && !function.is_arrow)
+        // A rest parameter is promoted where the list binds its names directly
+        // (`FunctionCompiler::binds_parameters_directly`), each its own slot.
+        && (function.simple_parameters || function.rest && parameters_bind_directly(function, atoms))
+        // Promoted parameters leave their slots, which only an aliasing `arguments` reads.
+        && (function.arguments_slot.is_none() || !function.arguments_alias_parameters())
         && !function.inherited_with_scope
         && function.binding_sites.is_empty()
         && !has_dynamic_local_resolution
@@ -1038,12 +1049,7 @@ fn has_dynamic_scope_access(function: &super::Function) -> bool {
             .iter()
             .filter_map(|packed| instruction_at(function, *packed))
             .chain(function.wide.iter().copied())
-            .any(|instruction| {
-                instruction.op() == super::Op::ResolveName
-                    || (instruction.op().is_call_with_eval_flags()
-                    && (super::ImmediateLayout::direct_eval(instruction.imm())
-                        || super::ImmediateLayout::parameter_eval(instruction.imm())))
-            })
+            .any(super::WideInstruction::resolves_dynamic_scope)
 }
 
 fn selective_capture_layout_is_eligible(
@@ -1073,7 +1079,7 @@ fn selective_capture_layout_is_eligible(
             })
         });
     let mapped_parameter_is_captured =
-        function.arguments_are_mapped() && captured.iter().any(|slot| *slot < function.params);
+        function.arguments_alias_parameters() && captured.iter().any(|slot| *slot < function.params);
     // A mapped `arguments` object shares the captured parameters, so it lives in the
     // environment with them; a body that keeps no `arguments` binding maps nothing.
     let mapped_arguments_are_captured = !mapped_parameter_is_captured
@@ -1233,6 +1239,7 @@ mod tests {
             constructible: true,
             class_initializer: false,
             parameter_eval_arguments_error: false,
+            unaliased_arguments: false,
             arguments_slot: None,
             simple_parameters: true,
             strict: false,
@@ -1258,6 +1265,7 @@ mod tests {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: vec![].into(),
             register_roots: crate::bytecode::RegisterRoots::new(root != u32::MAX),

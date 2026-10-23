@@ -18,4 +18,4 @@ if [ ! -f "$path" ]; then
 fi
 
 cd "$root"
-exec cargo run -q -p quench-node-test --bin run-parallel -- --one "$path"
+exec cargo run -q --profile iteration -p quench-node-test --bin run-parallel -- --one "$path"

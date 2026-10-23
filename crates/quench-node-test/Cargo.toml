@@ -5,6 +5,10 @@ edition = "2021"
 description = "Node.js test runner for a Node-API compatibility host"
 license = "MIT"
 
+[lib]
+# No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
+doctest = false
+
 [dependencies]
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }

@@ -41,9 +41,19 @@ fn child_hash(shapes: &[Shape], child: u32) -> u64 {
 }
 
 /// Whether `child` is the cached transition from `parent` by `key`.
+#[inline]
 pub(super) fn is_transition(shapes: &[Shape], child: u32, parent: u32, key: ShapeTransitionKey) -> bool {
     let origin = origin(shapes, child);
-    origin.parent == parent && origin.transition.cache_key() == Some(key)
+    if origin.parent != parent {
+        return false;
+    }
+    // A property add, the transition most probes ask for, compares its own fields.
+    match (origin.transition, key) {
+        (ShapeTransition::Add { key: added, attributes: added_attributes, .. }, ShapeTransitionKey::Add(sought, attributes)) => {
+            added == sought && added_attributes == attributes
+        }
+        (transition, key) => transition.cache_key() == Some(key),
+    }
 }
 
 impl ShapeTransitionIndex {

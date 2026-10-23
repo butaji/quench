@@ -39,6 +39,23 @@ pub(crate) struct WideInstruction {
 }
 
 impl WideInstruction {
+    /// Whether the instruction resolves a name through bindings its function's scope chain
+    /// may hold only at run time, which needs the bindings of every enclosing activation in
+    /// its environment: a `ResolveName` of a `with` or direct-eval reference, or a direct
+    /// or parameter-scope `eval`. A strict assignment's resolution of a name no enclosing
+    /// scope binds statically (its `ResolveName` flag set,
+    /// `needs_strict_global_reference_capture`) meets only bindings a `with` or `eval`
+    /// makes, whose own functions those mark, and otherwise the global object.
+    pub(crate) fn resolves_dynamic_scope(self) -> bool {
+        match self.op() {
+            Op::ResolveName => self.boolean_field(InstructionField::B) != Some(true),
+            op if op.is_call_with_eval_flags() => {
+                ImmediateLayout::direct_eval(self.imm()) || ImmediateLayout::parameter_eval(self.imm())
+            }
+            _ => false,
+        }
+    }
+
     /// The frame-local slots this instruction reads or writes: its local-slot immediate, a
     /// fused numeric store target, and local operands. Every frame-local access names its
     /// slot one of these ways.
@@ -57,15 +74,24 @@ impl WideInstruction {
                 ) && operand.kind() == Some(super::OperandKind::Local))
                 .then(|| operand.payload())
             });
-        let field_base = match self.field_lookup() {
-            Some(super::FieldLookup::Atom { base, .. }) => base.local_index(),
-            _ => None,
-        };
         immediate
             .into_iter()
             .chain(self.numeric_local_target())
-            .chain(field_base)
+            .chain(self.local_field_base())
             .chain(operands)
+    }
+
+    /// The local slot a field lookup reads its base from (`FieldBase::local`). Only
+    /// field-lookup instructions carry a `FieldBase` in `b`; elsewhere `b` may be an
+    /// operand whose tag bits overlap the local flag.
+    pub(crate) fn local_field_base(self) -> Option<u16> {
+        if self.op().immediate_role() != ImmediateRole::FieldLookup {
+            return None;
+        }
+        match self.field_lookup()? {
+            super::FieldLookup::Atom { base, .. } => base.local_index(),
+            super::FieldLookup::Site(_) => None,
+        }
     }
 
     pub(crate) const fn new(op: Op, a: u16, b: u16, c: u16, imm: u32) -> Self {

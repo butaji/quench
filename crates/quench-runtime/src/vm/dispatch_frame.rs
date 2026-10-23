@@ -13,7 +13,16 @@ pub(super) struct GeneralCodeCursor {
     decoded: *const WideInstruction,
     /// The function's lane view, or null where the lane does not run.
     lane: *const dispatch_fast::LaneView,
+    /// The backward jumps the activation took in the general path while it may still gain a
+    /// view (`note_back_edge`); `None` once it cannot.
+    back_edges: Option<u16>,
 }
+
+/// The backward jumps a JavaScript activation takes in the general path before its function's
+/// lane view is derived and the lane runs its loop (`Vm::note_back_edge`). Deriving a view
+/// costs some hundreds of instructions per instruction of the function; a module body that
+/// loops a few times (over its exports, say) ran faster without one.
+const HOT_LOOP_BACK_EDGES: u16 = 16;
 
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
 pub(super) struct PendingGeneralCall {
@@ -26,6 +35,10 @@ pub(super) struct PendingGeneralCall {
     pub(super) destination: Register,
     /// Set for an in-loop `new`; see `StepResult::PushFrame`.
     pub(super) construct_this: Option<Value>,
+    /// The rooted promise of an async callee pushed in place (`CallPlan::settles_in_loop`):
+    /// its return resolves the promise, which is then the call's value, and an abrupt
+    /// completion rejects it and resumes the caller after the call.
+    pub(super) settles: Option<crate::heap::RootId>,
     /// The call falls into a return of its result: the caller completes with the callee's
     /// value instead of storing it. Sloppy callers keep their frame (it stays visible to
     /// legacy `caller` reflection), so this chains returns rather than replacing frames.
@@ -72,6 +85,7 @@ impl GeneralCodeCursor {
             wide: function_code.wide.as_ptr(),
             decoded,
             lane: std::ptr::null(),
+            back_edges: None,
         }
     }
 
@@ -106,13 +120,29 @@ impl<H: Host> Vm<H> {
         function: u32,
         lane: bool,
     ) -> GeneralCodeCursor {
+        let admitted = lane && self.lane_admits(program);
+        let view = if admitted { self.entry_lane_view(program_id, function) } else { std::ptr::null() };
         GeneralCodeCursor {
-            lane: if lane && self.lane_admits(program) {
-                self.entry_lane_view(program_id, function)
-            } else {
-                std::ptr::null()
-            },
+            lane: view,
+            // A JavaScript activation deferred its view; a loop that turns hot derives it.
+            back_edges: (admitted && view.is_null() && program.kind != crate::bytecode::ProgramKind::Wasm)
+                .then_some(0),
             ..GeneralCodeCursor::new(program_id, program, function)
+        }
+    }
+
+    /// Counts a backward jump of `cursor`'s activation in the general path; at
+    /// `HOT_LOOP_BACK_EDGES` its function's lane view is derived, which the lane enters at the
+    /// loop's next instruction.
+    #[inline(always)]
+    fn note_back_edge(&self, cursor: &mut GeneralCodeCursor) {
+        let Some(taken) = cursor.back_edges.as_mut() else {
+            return;
+        };
+        *taken += 1;
+        if *taken >= HOT_LOOP_BACK_EDGES {
+            cursor.back_edges = None;
+            cursor.lane = self.hot_loop_lane_view(cursor.program, cursor.function);
         }
     }
 
@@ -546,12 +576,11 @@ impl<H: Host> Vm<H> {
         frame.env = parent;
         let arrow = function.is_arrow;
         let derived = function.derived_constructor;
+        let captured_this = if arrow { self.captured_lexical_this(parent) } else { None };
         let this = if derived {
             Value::DELETED
-        } else if arrow {
-            self.captured_lexical_this(parent).unwrap_or(this)
         } else {
-            this
+            captured_this.unwrap_or(this)
         };
         frame.this = if derived || arrow {
             this
@@ -582,6 +611,9 @@ impl<H: Host> Vm<H> {
             id == super::ROOT_FUNCTION_ID
                 || function.activation_bindings_observable(&p.atoms, &p.functions),
         );
+        // An arrow whose creator's `this` binding is initialized keeps that receiver: the
+        // binding never changes once initialized (`Vm::lexical_this`).
+        frame.fixed_this |= captured_this.is_some_and(|this| !this.is_deleted());
         frame.prepare_registers_for(function);
         frame.bind_register_parameters(function, args);
         frame.initialize_promoted_registers(function, args);
@@ -633,12 +665,11 @@ impl<H: Host> Vm<H> {
         frame.env = parent;
         let arrow = function.is_arrow;
         let derived = function.derived_constructor;
+        let captured_this = if arrow { self.captured_lexical_this(parent) } else { None };
         let this = if derived {
             Value::DELETED
-        } else if arrow {
-            self.captured_lexical_this(parent).unwrap_or(this)
         } else {
-            this
+            captured_this.unwrap_or(this)
         };
         frame.this = if derived || arrow || function.strict {
             this
@@ -659,6 +690,9 @@ impl<H: Host> Vm<H> {
             id == super::ROOT_FUNCTION_ID
                 || function.activation_bindings_observable(&p.atoms, &p.functions),
         );
+        // An arrow whose creator's `this` binding is initialized keeps that receiver: the
+        // binding never changes once initialized (`Vm::lexical_this`).
+        frame.fixed_this |= captured_this.is_some_and(|this| !this.is_deleted());
         frame.prepare_registers_for(function);
         frame.bind_register_parameters(function, args);
         frame.initialize_promoted_registers(function, args);
@@ -796,7 +830,7 @@ impl<H: Host> Vm<H> {
 
     /// The rest parameter's array of the arguments past the fixed parameters.
     #[inline(never)]
-    fn rest_parameter_array(&mut self, rest: &[Value]) -> Value {
+    pub(super) fn rest_parameter_array(&mut self, rest: &[Value]) -> Value {
         self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
@@ -822,7 +856,7 @@ impl<H: Host> Vm<H> {
             ),
         });
         self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
-        if mapped {
+        if function.arguments_alias_parameters() {
             let mapping = (0..function.params.min(args.len() as u16)).collect();
             if let Some(object) = self.object_data_mut(arguments) {
                 object.set_arguments_map(mapping);
@@ -1328,6 +1362,32 @@ impl<H: Host> Vm<H> {
                 error,
             )?;
         }
+        // An error thrown at `throwing_pc` of the running frame: the loop resumes at the
+        // handler `unwind_general_loop` finds, popping in-loop activations without one.
+        macro_rules! unwind_at {
+            ($throwing_pc:expr, $error:expr) => {{
+                let mut executing = ExecutingProgram {
+                    id: executing_program,
+                    retained: current_program.take(),
+                };
+                let unwound = self.unwind_general_loop(
+                    entry_program,
+                    frame,
+                    pc,
+                    $throwing_pc,
+                    $error,
+                    &mut pending_calls,
+                    &mut cursor,
+                    &mut executing,
+                    fast_lane,
+                );
+                executing_program = executing.id;
+                current_program = executing.retained;
+                executing_residual = current_program.as_deref().unwrap_or(entry_program);
+                (frame, pc) = unwound?;
+                published_pc = &mut self.frames[frame].pc;
+            }};
+        }
         loop {
             // SAFETY: `executing_residual` points at `entry_program`, borrowed for the whole
             // call, or at the residual `current_program` keeps alive until it is replaced,
@@ -1406,11 +1466,20 @@ impl<H: Host> Vm<H> {
                         let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
                         super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
                     }
-                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName | Op::SetFieldStrict | Op::SetField | Op::LoadNameCall | Op::PrivateIn) {
+                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName | Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField | Op::LoadNameCall | Op::PrivateIn | Op::Binary | Op::JumpBinaryFalse) {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
-                        super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}", instruction.op(), Self::lane_runs(cursor.lane, pc)));
+                        // A store names its cache site and field, which tell a shared overflow site
+                        // (`SHARED_UNCACHED_SITE`) from a polymorphic one.
+                        let store = matches!(instruction.op(), Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField)
+                            .then(|| format!(" site={} field={}", instruction.c(), &p.atoms[instruction.imm() as usize]))
+                            .or_else(|| {
+                                matches!(instruction.op(), Op::LoadName | Op::LoadNameCall)
+                                    .then(|| format!(" name={}", &p.atoms[instruction.imm() as usize]))
+                            })
+                            .unwrap_or_default();
+                        super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}{store}", instruction.op(), Self::lane_runs(cursor.lane, pc)));
                     }
                     // A `Return` exit of the loop's own entry frame: which native's call into
                     // JavaScript started this nested run.
@@ -1570,6 +1639,13 @@ impl<H: Host> Vm<H> {
                 instruction_pc,
             );
             let ins = cursor.instruction(pc);
+            if self.programs.js_jit_diagnostics_enabled() {
+                self.programs.record_js_jit_general_dispatch_opcode(
+                    cursor.program,
+                    cursor.function,
+                    ins.op(),
+                );
+            }
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::count_general(
                 || {
@@ -1582,6 +1658,7 @@ impl<H: Host> Vm<H> {
                     )
                 },
                 (cursor.program.raw(), cursor.function),
+                ins.op(),
             );
             pc += 1;
             #[cfg(feature = "profile-aggregate")]
@@ -1650,6 +1727,9 @@ impl<H: Host> Vm<H> {
                         .branch_value(value.profile_kind() as usize, truthy);
                     if truthy == (ins.op() == Op::JumpTrue) {
                         pc = ins.jump_target() as usize;
+                        if pc <= instruction_pc {
+                            self.note_back_edge(&mut cursor);
+                        }
                     }
                     continue;
                 }
@@ -1670,6 +1750,9 @@ impl<H: Host> Vm<H> {
                         );
                         if !truthy {
                             pc = ins.jump_target() as usize;
+                            if pc <= instruction_pc {
+                                self.note_back_edge(&mut cursor);
+                            }
                         }
                         continue;
                     }
@@ -1759,6 +1842,8 @@ impl<H: Host> Vm<H> {
                         }) = ins.field_lookup()
                         && let Some(object) = match base.register_index() {
                             Some(register) => Some(self.read(frame, register)),
+                            // A local base (`FieldBase::local`) is the general path's read.
+                            None if base.local_index().is_some() => None,
                             None => self.frames[frame]
                                 .fixed_this
                                 .then(|| self.frames[frame].this),
@@ -1823,6 +1908,9 @@ impl<H: Host> Vm<H> {
                 // A back edge collects only once the allocation threshold is reached.
                 Op::Jump if !self.heap.should_collect() => {
                     pc = ins.jump_target() as usize;
+                    if pc <= instruction_pc {
+                        self.note_back_edge(&mut cursor);
+                    }
                     continue;
                 }
                 _ => {}
@@ -1863,6 +1951,7 @@ impl<H: Host> Vm<H> {
                         self.programs
                             .record_js_jit_interpreter_completion(program, function, elapsed_ns);
                     }
+                    let mut settle_error = None;
                     loop {
                     if let Some(mut pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);
@@ -1895,6 +1984,15 @@ impl<H: Host> Vm<H> {
                             Some(this) if !self.is_object_like(value) => this,
                             _ => value,
                         };
+                        if let Some(root) = pending.settles {
+                            let promise = self.release_settled_call_root(root);
+                            // SAFETY: as for `p` at the top of the loop.
+                            let caller_code = unsafe { &*executing_residual };
+                            if let Err(error) = self.promise_resolve_value(caller_code, promise, value) {
+                                settle_error = Some((pending.call_pc, error));
+                            }
+                            value = promise;
+                        }
                         pc = self.frames[frame].pc;
                         cursor = pending.caller_cursor.unwrap_or_else(|| {
                             self.general_cursor(
@@ -1907,6 +2005,10 @@ impl<H: Host> Vm<H> {
                         });
                         published_pc = &mut self.frames[frame].pc;
                         drop(pending.call_guard);
+                        if let Some((call_pc, error)) = settle_error.take() {
+                            unwind_at!(call_pc, error);
+                            break;
+                        }
                         if pending.returns {
                             continue;
                         }
@@ -1923,6 +2025,7 @@ impl<H: Host> Vm<H> {
                     destination,
                     call_guard,
                     construct_this,
+                    settles,
                 }) => {
                     // A callee of another program became active when its frame was pushed;
                     // the loop executes that program until the callee returns.
@@ -1947,6 +2050,7 @@ impl<H: Host> Vm<H> {
                         call_pc: instruction_pc as u32,
                         destination,
                         construct_this,
+                        settles,
                         returns: ins.returns_from_frame(),
                         call_guard: Some(call_guard),
                         caller_program,
@@ -2011,28 +2115,7 @@ impl<H: Host> Vm<H> {
                         frame: None,
                     });
                 }
-                Err(error) => {
-                    let mut executing = ExecutingProgram {
-                        id: executing_program,
-                        retained: current_program.take(),
-                    };
-                    let unwound = self.unwind_general_loop(
-                        entry_program,
-                        frame,
-                        pc,
-                        instruction_pc as u32,
-                        error,
-                        &mut pending_calls,
-                        &mut cursor,
-                        &mut executing,
-                        fast_lane,
-                    );
-                    executing_program = executing.id;
-                    current_program = executing.retained;
-                    executing_residual = current_program.as_deref().unwrap_or(entry_program);
-                    (frame, pc) = unwound?;
-                    published_pc = &mut self.frames[frame].pc;
-                }
+                Err(error) => unwind_at!(instruction_pc as u32, error),
             }
         }
     }
@@ -2095,6 +2178,20 @@ impl<H: Host> Vm<H> {
                         Err(error) => error,
                         Ok(_) => unreachable!(),
                     };
+                    // An async callee's abrupt completion rejects its promise, which the
+                    // call yields; the caller resumes after the call.
+                    if let Some(root) = pending.settles {
+                        let promise = self.release_settled_call_root(root);
+                        let caller_residual = executing.retained.clone();
+                        let caller_code = caller_residual.as_deref().unwrap_or(entry_program);
+                        match self.reject_settled_call(caller_code, promise, error) {
+                            Ok(()) => {
+                                self.write(frame, pending.destination, promise);
+                                return Ok((frame, pc));
+                            }
+                            Err(next) => error = next,
+                        }
+                    }
                 }
             }
         }

@@ -711,6 +711,69 @@ impl<H: Host> Vm<H> {
         )))
     }
 
+    /// `hasOwnProperty` or `propertyIsEnumerable` (`native`) of a string key on an object
+    /// whose own lookup runs no guest code: neither a Proxy (traps) nor a module namespace
+    /// (a deferred one evaluates its module; a binding may be uninitialized). ToPropertyKey
+    /// of a string is the string, so the answer is the general path's
+    /// (`own_property_enumerable`); `None` leaves the call to it.
+    pub(super) fn plain_own_property_query(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        receiver: Value,
+        key: Value,
+    ) -> Option<Value> {
+        let found = self.plain_own_attributes(p, receiver, key)?;
+        let holds = found.is_some_and(|attributes| {
+            native == Native::ObjectPrototypeHasOwnProperty || attributes.enumerable
+        });
+        Some(if holds { Value::TRUE } else { Value::FALSE })
+    }
+
+    /// The attributes of `object`'s own property of the string `key`, `Some(None)` when it
+    /// has none, read without guest code: `object` is neither a Proxy nor a module namespace
+    /// (`ordinary_own_string_property`). `None` for any other object or key.
+    fn plain_own_attributes(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        key: Value,
+    ) -> Option<Option<PropertyAttributes>> {
+        if matches!(self.heap.get(object), Some(Cell::Proxy { .. }))
+            || !self
+                .object_data(object)
+                .is_some_and(|data| !data.is_module_namespace() && data.deferred_module().is_none())
+        {
+            return None;
+        }
+        let text = self.heap.string(key)?.clone();
+        let atom = self.string_key_atom(key)?;
+        let found = self.ordinary_own_string_property(p, object, &text, atom).ok()?;
+        Some(found.map(|(_, attributes)| attributes))
+    }
+
+    /// `object_for_in_key_is_enumerable` of a string key along a chain whose own lookups run
+    /// no guest code (`plain_own_attributes`): the nearest own property's enumerability, or
+    /// false past the chain's end. `None` leaves the walk, a Proxy's or primitive's
+    /// included, to the general path.
+    pub(super) fn plain_for_in_key_is_enumerable(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+        key: Value,
+    ) -> Option<Value> {
+        let mut current = source;
+        loop {
+            if let Some(attributes) = self.plain_own_attributes(p, current, key)? {
+                return Some(if attributes.enumerable { Value::TRUE } else { Value::FALSE });
+            }
+            current = self.object_data(current)?.proto();
+            if current.is_null() {
+                return Some(Value::FALSE);
+            }
+        }
+    }
+
     /// Whether `key` is an own enumerable property of `target`; `None` when it
     /// is not an own property. Proxies answer through their traps.
     pub(super) fn own_property_enumerable(

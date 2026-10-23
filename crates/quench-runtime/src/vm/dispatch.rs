@@ -73,7 +73,9 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let callee = self.read(f, i.register_b());
-        let target = self.in_loop_call_target(p, callee)?;
+        let Some(target) = self.in_loop_call_target(p, callee) else {
+            return self.try_settling_call(p, f, i, pc, callee);
+        };
         #[cfg(feature = "profile-lane-exits")]
         super::lane_exits::call_target(
             self.active_program.raw(),
@@ -167,6 +169,7 @@ impl<H: Host> Vm<H> {
             destination,
             call_guard,
             construct_this: None,
+            settles: None,
         }))
     }
 
@@ -186,6 +189,27 @@ impl<H: Host> Vm<H> {
             return Some((cached.program, cached.function, cached.env));
         }
         self.resolve_in_loop_call_target(p, callee, index, epoch)
+    }
+
+    /// `in_loop_call_target` for an async callee whose body never suspends
+    /// (`CallPlan::settles_in_loop`), which only a plain call pushes (`try_settling_call`).
+    pub(super) fn settling_call_target(
+        &self,
+        p: &ResidualProgram,
+        callee: Value,
+    ) -> Option<(ProgramId, u32, Value)> {
+        let (program, function, env) = self.same_realm_user_target(callee)?;
+        let owner = if program == self.active_program {
+            p
+        } else {
+            self.programs.residual(program)?
+        };
+        (function != super::ROOT_FUNCTION_ID
+            && owner.kind != crate::bytecode::ProgramKind::Wasm
+            && owner
+                .function_get(function as usize)
+                .is_some_and(|function| function.call_plan(owner).settles_in_loop))
+        .then_some((program, function, env))
     }
 
     #[inline(never)]
@@ -1490,6 +1514,7 @@ impl<H: Host> Vm<H> {
                     destination: i.result_register(),
                     call_guard,
                     construct_this: None,
+                    settles: None,
                 });
             }
             Op::CallKnown => {
@@ -1628,6 +1653,7 @@ impl<H: Host> Vm<H> {
                             destination: i.result_register(),
                             call_guard: pushed?,
                             construct_this: Some(this),
+                            settles: None,
                         });
                     }
                 }
