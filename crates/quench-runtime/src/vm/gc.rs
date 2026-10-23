@@ -1040,11 +1040,13 @@ impl<H: Host> Vm<H> {
             while more(self) && let Some(job) = self.realm.jobs.pop_front() {
                 self.check_execution_interrupt()?;
                 self.run_pending_job(program, job, home)?;
+                // Module advancement does nothing in a realm with no module work due
+                // (`module_jobs_pending`), the common case after a job.
                 if self.module_jobs_pending() {
                     self.switch_realm_global(home);
+                    self.advance_static_module_jobs(program)?;
+                    self.advance_dynamic_import_jobs(program, true)?;
                 }
-                self.advance_static_module_jobs(program)?;
-                self.advance_dynamic_import_jobs(program, true)?;
             }
             Ok(())
         })();

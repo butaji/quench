@@ -13,17 +13,9 @@ name = "quench-node"
 path = "src/bin/quench-node.rs"
 
 [features]
-# quench-alloc stays opt-in on the RSS lane (v2-cloud-c2): linked by default it raised V8-v7
-# max RSS (static x86_64, unbolted, 2026-10-18, KiB): Crypto 4272 -> 4640, Richards 3716 ->
-# 4064, RayTrace 3884 -> 4128, DeltaBlue 3840 -> 4120, RegExp 7612 -> 7980. The Score lane
-# (v2-cloud-c) and the npm lane (v2-npm) link it by default: on npm scenarios it left peak
-# RSS unchanged and cut wall time 4-15% (x86_64 Linux VM, 4 cores, 2026-10-20: ms 105 -> 99
-# ms, chalk 125 -> 107, typescript 576 -> 505; harness imports 238M -> 229M instructions).
 default = []
 profile-memory = ["quench-runtime/profile-memory"]
 verify-replay = ["quench-runtime/verify-replay"]
-# Quench's size-classed small-object allocator as the global allocator (TOD-137).
-quench-alloc = ["dep:quench-alloc"]
 profile-allocator = ["quench-runtime/profile-allocator"]
 
 [dependencies]
@@ -51,7 +43,6 @@ oxc_semantic = { workspace = true }
 oxc_span = { workspace = true }
 oxc_syntax = { workspace = true }
 quench-stack = { path = "../quench-stack" }
-quench-alloc = { path = "../quench-alloc", optional = true }
 url = { version = "2", features = ["expose_internals"] }
 brotli = "7"
 encoding_rs = "0.8"
@@ -66,3 +57,9 @@ libz-rs-sys = "0.6.8"
 [build-dependencies]
 cc = "1"
 pkg-config = "0.3"
+
+# The global allocator on Linux; the memory policy decides whether it serves small requests
+# (`shared_run::apply_allocator_policy`). Other platforms keep the system allocator until the
+# reservation's commit behavior is measured there (macOS has no MAP_NORESERVE semantics).
+[target.'cfg(target_os = "linux")'.dependencies]
+quench-alloc = { path = "../quench-alloc" }

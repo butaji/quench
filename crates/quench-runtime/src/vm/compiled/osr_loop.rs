@@ -21,7 +21,7 @@
 //! Nothing in a region allocates, collects, or runs guest code, so the arrays, their
 //! element storage and the captures the entry read stay as they are while native code runs.
 
-use crate::bytecode::{Function, Op, Operand, OperandKind, Register, WideInstruction};
+use crate::bytecode::{FieldBase, FieldLookup, Function, Op, Operand, OperandKind, Register, WideInstruction};
 use crate::value::{Value, ValueLayout};
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, UserFuncName,
@@ -39,10 +39,12 @@ const MAX_REGION_INSTRUCTIONS: usize = 512;
 const MAX_REGION_REGISTERS: usize = 128;
 const MAX_REGION_ARRAYS: usize = 8;
 const MAX_REGION_CAPTURES: usize = 16;
+const MAX_REGION_FIELDS: usize = 16;
 /// The largest native body a region may produce.
 const MAX_CODE_BYTES: usize = 64 * 1024;
 
-/// What native code returns: the outcome in the high word, a bytecode PC in the low one.
+/// What native code writes to its result word: the outcome in the high word, a bytecode PC
+/// in the low one.
 const OUTCOME_SHIFT: u32 = u32::BITS;
 const PC_MASK: u64 = u32::MAX as u64;
 
@@ -59,6 +61,10 @@ pub(crate) enum LoopOutcome {
     /// As `Exit`, because a value the code held as an `i32` is none; the next compilation
     /// widens what the code names for the PC (`CompiledLoop::widening`).
     Widen(u32),
+    /// Termination was requested while the code ran: its poll faulted, so registers may
+    /// hold values of an unfinished iteration, which nothing reads before the request ends
+    /// the execution.
+    Terminated,
 }
 
 /// A value a compilation held as an `i32` that turned out not to be one; the next
@@ -113,7 +119,7 @@ impl Widening {
 }
 
 impl LoopOutcome {
-    fn decode(word: u64) -> Self {
+    pub(super) fn decode(word: u64) -> Self {
         let low = word & PC_MASK;
         match word >> OUTCOME_SHIFT {
             OUTCOME_RESUME => Self::Resume(low as u32),
@@ -141,6 +147,8 @@ pub(crate) struct LoopRegion {
     pub(crate) arrays: Vec<ArrayUse>,
     /// The depth-0 capture slots `LoadCapture` reads, in entry-record order.
     pub(crate) captures: Vec<u16>,
+    /// Numeric cached data fields, in entry-record order.
+    pub(crate) fields: Vec<FieldUse>,
     /// The region's instructions, from the header.
     instructions: Vec<WideInstruction>,
     /// The Number constants the region reads, by constant index.
@@ -148,6 +156,31 @@ pub(crate) struct LoopRegion {
     /// The function's live registers before each instruction (`compile::liveness`), when
     /// liveness covers it.
     live: Option<Box<[u64]>>,
+}
+
+/// Why a backward jump was excluded from OSR before native code generation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RegionRejection {
+    RegionTooLarge,
+    UnsupportedInstruction(Op),
+    RegisterLimit,
+    CaptureLimit,
+    ArrayLimit,
+    FieldLimit,
+    FieldMutation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FieldReceiver {
+    This,
+    Register(Register),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FieldUse {
+    pub(crate) receiver: FieldReceiver,
+    pub(crate) atom: crate::bytecode::Atom,
+    pub(crate) cache_site: u16,
 }
 
 impl LoopRegion {
@@ -162,8 +195,8 @@ impl LoopRegion {
     }
 }
 
-/// The entry record native code reads: the termination flag, then each capture's value,
-/// then each array's element pointer and length.
+/// The entry record native code reads: each capture's value, then each array's element
+/// pointer and length.
 pub(crate) struct LoopEntry {
     words: [u64; ENTRY_WORDS],
     length: usize,
@@ -172,18 +205,22 @@ pub(crate) struct LoopEntry {
 /// The longest array a region indexes: a negative `i32` index zero-extends past it, so one
 /// unsigned comparison bounds every `i32` index.
 const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
-const ENTRY_INTERRUPT: usize = 0;
-const ENTRY_CAPTURES: usize = 1;
+const ENTRY_CAPTURES: usize = 0;
 const WORD_BYTES: i32 = 8;
 /// An array's two entry words: its element pointer, then its length.
 const ARRAY_WORDS: usize = 2;
-const ENTRY_WORDS: usize = ENTRY_CAPTURES + MAX_REGION_CAPTURES + ARRAY_WORDS * MAX_REGION_ARRAYS;
+const ENTRY_WORDS: usize =
+    ENTRY_CAPTURES + MAX_REGION_CAPTURES + ARRAY_WORDS * MAX_REGION_ARRAYS + MAX_REGION_FIELDS;
 
 impl LoopEntry {
-    pub(crate) fn new(interrupt: &std::sync::atomic::AtomicBool) -> Self {
-        let mut words = [0; ENTRY_WORDS];
-        words[ENTRY_INTERRUPT] = std::ptr::from_ref(interrupt).addr() as u64;
-        Self { words, length: ENTRY_CAPTURES }
+    pub(crate) fn new() -> Self {
+        Self { words: [0; ENTRY_WORDS], length: ENTRY_CAPTURES }
+    }
+
+    /// The record's words, as native code reads them.
+    pub(super) fn words(&self) -> *const u64 {
+        debug_assert!(self.length <= ENTRY_WORDS);
+        self.words.as_ptr()
     }
 
     fn push(&mut self, word: u64) {
@@ -208,6 +245,10 @@ impl LoopEntry {
         self.push(elements.addr() as u64);
         self.push(length as u64);
         Some(())
+    }
+
+    pub(crate) fn push_field(&mut self, value: f64) {
+        self.push(value.to_bits());
     }
 }
 
@@ -304,7 +345,9 @@ struct Admission<'a> {
     constants: &'a [Value],
     roles: std::collections::BTreeMap<Register, Role>,
     captures: Vec<u16>,
+    pub(crate) fields: Vec<FieldUse>,
     numbers: std::collections::BTreeMap<u16, f64>,
+    writes_indexed: bool,
 }
 
 impl Admission<'_> {
@@ -362,26 +405,45 @@ pub(super) fn region(
     live: Option<&[u64]>,
     header: u32,
     backedge: u32,
-) -> Option<LoopRegion> {
+) -> Result<LoopRegion, RegionRejection> {
     let (start, end) = (header as usize, backedge as usize);
     if start > end || end >= decoded.len() || end - start >= MAX_REGION_INSTRUCTIONS {
-        return None;
+        return Err(RegionRejection::RegionTooLarge);
     }
     let mut admission = Admission {
         constants,
         roles: std::collections::BTreeMap::new(),
         captures: Vec::new(),
+        fields: Vec::new(),
         numbers: std::collections::BTreeMap::new(),
+        writes_indexed: false,
     };
     for instruction in &decoded[start..=end] {
-        admit(&mut admission, *instruction)?;
+        admit(&mut admission, *instruction)
+            .ok_or(RegionRejection::UnsupportedInstruction(instruction.op()))?;
+    }
+    if admission.fields.len() > MAX_REGION_FIELDS {
+        return Err(RegionRejection::FieldLimit);
+    }
+    if !admission.fields.is_empty()
+        && (admission.writes_indexed
+            || admission.fields.iter().any(|field| match field.receiver {
+                FieldReceiver::This => false,
+                FieldReceiver::Register(register) => decoded[start..=end]
+                    .iter()
+                    .any(|instruction| number_definition(*instruction) == Some(register)),
+            }))
+    {
+        return Err(RegionRejection::FieldMutation);
     }
     let registers = usize::from(function.registers);
     if admission.roles.keys().any(|register| usize::from(*register) >= registers)
         || admission.roles.len() > MAX_REGION_REGISTERS
-        || admission.captures.len() > MAX_REGION_CAPTURES
     {
-        return None;
+        return Err(RegionRejection::RegisterLimit);
+    }
+    if admission.captures.len() > MAX_REGION_CAPTURES {
+        return Err(RegionRejection::CaptureLimit);
     }
     let numbers = admission
         .roles
@@ -397,13 +459,16 @@ pub(super) fn region(
             Role::Number => None,
         })
         .collect();
-    (arrays.len() <= MAX_REGION_ARRAYS).then_some(())?;
-    Some(LoopRegion {
+    if arrays.len() > MAX_REGION_ARRAYS {
+        return Err(RegionRejection::ArrayLimit);
+    }
+    Ok(LoopRegion {
         header,
         backedge,
         numbers,
         arrays,
         captures: admission.captures,
+        fields: admission.fields,
         instructions: decoded[start..=end].to_vec(),
         constants: admission.numbers,
         live: live.map(Box::from),
@@ -458,7 +523,23 @@ fn admit(admission: &mut Admission<'_>, instruction: WideInstruction) -> Option<
             admission.note(base, Role::Array { written: false })?;
             admission.source(instruction.operand_c())?;
         }
+        Op::GetField => {
+            let FieldLookup::Atom { atom, base, cache_site } = instruction.field_lookup()? else {
+                return None;
+            };
+            let receiver = if base == FieldBase::THIS {
+                FieldReceiver::This
+            } else {
+                FieldReceiver::Register(base.register_index()?)
+            };
+            let field = FieldUse { receiver, atom, cache_site };
+            if !admission.fields.contains(&field) {
+                admission.fields.push(field);
+            }
+            admission.result(instruction)?;
+        }
         Op::SetIndex => {
+            admission.writes_indexed = true;
             admission.number(instruction.register_a())?;
             admission.note(instruction.register_b(), Role::Array { written: true })?;
             admission.number(instruction.register_c())?;
@@ -571,6 +652,7 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
             | Op::Unary
             | Op::ToNumeric
             | Op::GetIndex
+            | Op::GetField
     )
     .then(|| instruction.result_register())
 }
@@ -776,6 +858,7 @@ fn definition(
             Unary::BitwiseNot => Representation::Int32,
         },
         Op::GetIndex => element_representation(instruction, observation),
+        Op::GetField => Representation::Float64,
         _ => return None,
     };
     Some((instruction.result_register(), representation))
@@ -1180,41 +1263,43 @@ fn counted_loop(
     })
 }
 
-/// A compiled region: one W^X mapping, its entry, and what each `LoopOutcome::Widen` PC
-/// found was no `i32`.
+/// A compiled region: one W^X mapping, its native entry, and what each `LoopOutcome::Widen`
+/// PC found was no `i32`.
+///
+/// The entry has the compiled functions' ABI (`super::Entry`): the call context, the
+/// register file as the base, an unused length, the entry record as the arguments, and the
+/// result word, which receives the outcome; it returns a zero status, or the terminated one
+/// through the trampoline when its poll faults.
 pub(super) struct CompiledLoop {
-    _code: super::compiled::CodeMemory,
-    entry: unsafe extern "C" fn(*mut Value, *const u64) -> u64,
+    _code: super::CodeMemory,
+    pub(super) entry: super::Entry,
     widenings: std::collections::BTreeMap<u32, Widening>,
 }
 
 impl CompiledLoop {
-    /// Runs the region on `registers` with `entry`'s record.
-    ///
-    /// # Safety
-    /// `registers` is the running activation's register file, at least `Function::registers`
-    /// long; `entry` was built for this region from the current values of its arrays and
-    /// captures, which nothing changes while the call runs.
-    pub(super) unsafe fn run(&self, registers: *mut Value, entry: &LoopEntry) -> LoopOutcome {
-        debug_assert!(entry.length <= ENTRY_WORDS);
-        // SAFETY: as the caller promises; the code reads and writes only those.
-        LoopOutcome::decode(unsafe { (self.entry)(registers, entry.words.as_ptr()) })
-    }
-
     /// What a `LoopOutcome::Widen` at `pc` found was no `i32`.
     pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
         self.widenings.get(&pc).copied()
     }
+
 }
 
-/// Native code for `region` under `observation`, or `None` when Cranelift declines it.
-pub(super) fn compile(region: &LoopRegion, observation: &Observation<'_>) -> Option<CompiledLoop> {
+/// Native code for `region` under `observation`, or `None` when Cranelift declines it. Its
+/// backward jumps read `poll`, the VM's poll page, where every run enters through the
+/// trampoline (`super::poll_address`), and check the call context's interrupt flag
+/// otherwise.
+pub(super) fn compile(
+    region: &LoopRegion,
+    observation: &Observation<'_>,
+    poll: Option<i64>,
+) -> Option<CompiledLoop> {
     let isa = super::jit_backend::target_isa("speed", false)?;
     let pointer = isa.pointer_type();
     let mut signature = ir::Signature::new(isa.default_call_conv());
-    signature.params.push(AbiParam::new(pointer));
-    signature.params.push(AbiParam::new(pointer));
-    signature.returns.push(AbiParam::new(types::I64));
+    for parameter in [pointer, types::I64, types::I64, pointer, pointer] {
+        signature.params.push(AbiParam::new(parameter));
+    }
+    signature.returns.push(AbiParam::new(types::I32));
     let mut native = ir::Function::with_name_signature(
         UserFuncName::user(LOOP_NAMESPACE, region.header),
         signature,
@@ -1224,7 +1309,7 @@ pub(super) fn compile(region: &LoopRegion, observation: &Observation<'_>) -> Opt
     let counted = counted_loops(region, &webs, &representations, &captures);
     let mut context = FunctionBuilderContext::new();
     let builder = FunctionBuilder::new(&mut native, &mut context);
-    let widenings = Lowering::new(builder, region, observation, pointer, webs, representations, captures, counted)
+    let widenings = Lowering::new(builder, region, observation, pointer, webs, representations, captures, counted, poll)
         .lower(isa.frontend_config())?;
     let mut context = cranelift_codegen::Context::for_function(native);
     let compiled = context
@@ -1237,13 +1322,9 @@ pub(super) fn compile(region: &LoopRegion, observation: &Observation<'_>) -> Opt
     if code.is_empty() || code.len() > MAX_CODE_BYTES {
         return None;
     }
-    let memory = super::compiled::CodeMemory::new(code)?;
-    // SAFETY: the lowering emits `extern "C" fn(*mut Value, *const u64) -> u64`.
-    let entry = unsafe {
-        std::mem::transmute::<*mut u8, unsafe extern "C" fn(*mut Value, *const u64) -> u64>(
-            memory.pointer(),
-        )
-    };
+    let memory = super::CodeMemory::new(code)?;
+    // SAFETY: the lowering emits the `super::Entry` signature.
+    let entry = unsafe { std::mem::transmute::<*mut u8, super::Entry>(memory.pointer()) };
     Some(CompiledLoop { _code: memory, entry, widenings })
 }
 
@@ -1276,6 +1357,8 @@ struct Lowering<'a, 'b> {
     units: std::collections::BTreeSet<Register>,
     /// Each capture's value, unboxed at entry, in region order.
     captures: Vec<Typed>,
+    /// Numeric cached field values, loaded from the guarded entry record.
+    fields: Vec<Typed>,
     capture_representations: Vec<Representation>,
     blocks: Vec<ir::Block>,
     /// The region's counted loops; each has a preheader block, which every arrival at its
@@ -1288,9 +1371,16 @@ struct Lowering<'a, 'b> {
     /// Per PC the code leaves at, the block that writes back the Number registers live
     /// there and returns its parameter, the outcome word.
     leaves: std::collections::BTreeMap<u32, ir::Block>,
+    /// The cold blocks that end the run with a fixed outcome (`outcome_block`).
+    outcomes: Vec<(ir::Block, u64, u64)>,
+    context: ir::Value,
     registers: ir::Value,
     entry: ir::Value,
-    /// The host termination flag's address, loaded at entry.
+    /// The result word the outcome is written to.
+    result: ir::Value,
+    /// The VM's poll page, which backward jumps read (`compile`).
+    poll: Option<i64>,
+    /// Without a poll page, the host termination flag's address, loaded at entry.
     interrupt: Option<ir::Value>,
     /// Each array's element pointer and length, by register.
     arrays: std::collections::BTreeMap<Register, (ir::Value, ir::Value)>,
@@ -1355,11 +1445,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
         representations: Vec<Representation>,
         capture_representations: Vec<Representation>,
         counted: Vec<CountedLoop>,
+        poll: Option<i64>,
     ) -> Self {
         let start = builder.create_block();
         builder.append_block_params_for_function_params(start);
         builder.switch_to_block(start);
-        let (registers, entry) = (builder.block_params(start)[0], builder.block_params(start)[1]);
+        let &[context, registers, _, entry, result] = builder.block_params(start) else {
+            unreachable!("the entry signature has five parameters")
+        };
         let blocks = (region.header..=region.backedge).map(|_| builder.create_block()).collect();
         let straight = straight_pcs(region, &counted);
         let preheaders = counted.iter().map(|_| builder.create_block()).collect();
@@ -1390,6 +1483,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             pc: region.header,
             units,
             captures: Vec::new(),
+            fields: Vec::new(),
             capture_representations,
             blocks,
             counted,
@@ -1397,12 +1491,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
             proved_blocks,
             copy: None,
             leaves: std::collections::BTreeMap::new(),
+            outcomes: Vec::new(),
             chains: std::collections::HashMap::new(),
             exact: std::collections::BTreeMap::new(),
             encodings: std::collections::HashMap::new(),
             straight,
+            context,
             registers,
             entry,
+            result,
+            poll,
             interrupt: None,
             arrays: std::collections::BTreeMap::new(),
             widenings: std::collections::BTreeMap::new(),
@@ -1431,6 +1529,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.copy = None;
             self.preheader(index);
         }
+        self.fill_outcomes();
         self.write_back();
         self.builder.seal_all_blocks();
         self.builder.finalize(frontend);
@@ -1602,6 +1701,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
         holds
     }
 
+    /// Writes the outcome `word` to the result word and returns the status of a run that
+    /// finished.
+    fn finish(&mut self, word: ir::Value) {
+        self.builder.ins().store(flags(), word, self.result, 0);
+        let status = self.builder.ins().iconst(types::I32, 0);
+        self.builder.ins().return_(&[status]);
+    }
+
     fn outcome(&mut self, outcome: u64, low: u64) -> ir::Value {
         self.builder
             .ins()
@@ -1624,19 +1731,38 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// A block that returns not entered, naming `widening`.
     fn not_entered(&mut self, widening: Option<Widening>) -> ir::Block {
-        let current = self.builder.current_block().expect("lowering inside a block");
+        self.outcome_block(OUTCOME_NOT_ENTERED, widening.map_or(0, Widening::code))
+    }
+
+    /// A cold block that ends the run with `outcome` over `low`, filled once the body is
+    /// lowered (`fill_outcomes`): the builder leaves a block only once it is filled.
+    fn outcome_block(&mut self, outcome: u64, low: u64) -> ir::Block {
         let block = self.cold_block();
-        self.builder.switch_to_block(block);
-        let word = self.outcome(OUTCOME_NOT_ENTERED, widening.map_or(0, Widening::code));
-        self.builder.ins().return_(&[word]);
-        self.builder.switch_to_block(current);
+        self.outcomes.push((block, outcome, low));
         block
+    }
+
+    /// Fills each `outcome_block`: not entered returns at once, and every other outcome
+    /// leaves at its PC through the write-back.
+    fn fill_outcomes(&mut self) {
+        for (block, outcome, low) in std::mem::take(&mut self.outcomes) {
+            self.builder.switch_to_block(block);
+            if outcome == OUTCOME_NOT_ENTERED {
+                let word = self.outcome(outcome, low);
+                self.finish(word);
+            } else {
+                self.leave(outcome, low as u32);
+            }
+        }
     }
 
     /// Unboxes every Number register and capture in its representation, entering only when
     /// all hold such values.
     fn enter(&mut self) -> Option<()> {
-        self.interrupt = Some(self.word(ENTRY_INTERRUPT));
+        if self.poll.is_none() {
+            self.interrupt =
+                Some(self.builder.ins().load(self.pointer, flags(), self.context, super::CONTEXT_INTERRUPT));
+        }
         for (index, array) in self.region.arrays.iter().enumerate() {
             let base = ENTRY_CAPTURES + self.region.captures.len() + ARRAY_WORDS * index;
             let elements = self.word(base);
@@ -1649,6 +1775,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let otherwise = self.not_entered(Some(Widening::Capture(index as u16)));
             let value = self.unbox(bits, representation, otherwise);
             self.captures.push(Typed { value, representation });
+        }
+        let fields_start = ENTRY_CAPTURES
+            + self.region.captures.len()
+            + ARRAY_WORDS * self.region.arrays.len();
+        for index in 0..self.region.fields.len() {
+            let bits = self.word(fields_start + index);
+            let value = self.builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
+            self.fields.push(Typed { value, representation: Representation::Float64 });
         }
         // Only an entry value some read reaches is loaded and guarded.
         let registers: Vec<(Register, Definition)> = (0..self.region.numbers.len())
@@ -1825,7 +1959,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 })
                 .collect();
             self.store_registers(&registers);
-            self.builder.ins().return_(&[word]);
+            self.finish(word);
         }
     }
 
@@ -1859,12 +1993,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// A block that exits at `pc` for the general path.
     fn exit_block(&mut self, pc: u32) -> ir::Block {
-        let current = self.builder.current_block().expect("lowering inside a block");
-        let exit = self.cold_block();
-        self.builder.switch_to_block(exit);
-        self.leave(OUTCOME_EXIT, pc);
-        self.builder.switch_to_block(current);
-        exit
+        self.outcome_block(OUTCOME_EXIT, u64::from(pc))
     }
 
     /// Continues past a guard that `failed` decides, exiting at `pc` when it holds.
@@ -1898,12 +2027,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// compilation.
     fn widen_block(&mut self, pc: u32, widening: Widening) -> ir::Block {
         self.widenings.insert(pc, widening);
-        let current = self.builder.current_block().expect("lowering inside a block");
-        let exit = self.cold_block();
-        self.builder.switch_to_block(exit);
-        self.leave(OUTCOME_WIDEN, pc);
-        self.builder.switch_to_block(current);
-        exit
+        self.outcome_block(OUTCOME_WIDEN, u64::from(pc))
     }
 
     /// `guard` of an `i32` assumption: `widening` was no `i32` when it fails.
@@ -1989,12 +2113,20 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     /// Continues at `target`: its block within the region, else the lane resumes there. A
-    /// backward jump polls termination first.
+    /// backward jump polls termination first: a read of the poll page, which faults once
+    /// termination is requested (`LoopOutcome::Terminated`), else a check of the flag, which
+    /// exits at `pc`.
     fn jump(&mut self, pc: u32, target: u32) -> Option<()> {
         if target <= pc {
-            let flag = self.interrupt?;
-            let requested = self.builder.ins().atomic_load(types::I8, flags(), flag);
-            self.guard(pc, requested);
+            if let Some(poll) = self.poll {
+                // Atomic, so it is neither merged nor dropped.
+                let page = self.builder.ins().iconst(types::I64, poll);
+                self.builder.ins().atomic_load(types::I8, flags(), page);
+            } else {
+                let flag = self.interrupt?;
+                let requested = self.builder.ins().atomic_load(types::I8, flags(), flag);
+                self.guard(pc, requested);
+            }
         }
         match self.target_block(Some(pc), target) {
             Some(block) => {
@@ -2361,6 +2493,24 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.fall_through(pc)
             }
             Op::RequireObjectCoercible => self.fall_through(pc),
+            Op::GetField => {
+                let FieldLookup::Atom { atom, base, cache_site } = instruction.field_lookup()? else {
+                    return None;
+                };
+                let receiver = if base == FieldBase::THIS {
+                    FieldReceiver::This
+                } else {
+                    FieldReceiver::Register(base.register_index()?)
+                };
+                let field = self
+                    .region
+                    .fields
+                    .iter()
+                    .position(|field| field.receiver == receiver && field.atom == atom && field.cache_site == cache_site)?;
+                let value = self.fields[field];
+                self.define(instruction.result_register(), value);
+                self.fall_through(pc)
+            }
             Op::GetIndex => {
                 let base = instruction.operand_b().register_index()?;
                 let (elements, length) = self.arrays[&base];

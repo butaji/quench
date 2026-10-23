@@ -57,6 +57,22 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// Own data element `index` of an arguments object, where no parameter mapping reaches
+    /// it and no descriptor stands for it: its stored element, as `[[Get]]` finds it before
+    /// any prototype. `None` for a mapped, absent, accessor or redefined element, or any other
+    /// value.
+    pub(super) fn plain_arguments_element(&self, target: Value, index: usize) -> Option<Value> {
+        let object = self.heap.object(target)?;
+        if !object.is_arguments_object()
+            || object.has_indexed_descriptors()
+            || object.mapped_argument_slot(index).is_some()
+        {
+            return None;
+        }
+        let value = *self.heap.array_elements(target)?.get(index)?;
+        (!value.is_deleted()).then_some(value)
+    }
+
     pub(super) fn has_own_array_index(&self, target: Value, index: usize) -> bool {
         self.array_descriptor(target, index).is_some()
             || self.heap.array_elements(target).is_some() && self.own_element_present(target, index)

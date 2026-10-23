@@ -12,8 +12,12 @@
 //! is not stranded in one class. Pages are small (one base page) to keep the per-class
 //! floor small: a heap touches at most one partly used page per class. Sizes above
 //! `MAX_SMALL_BYTES`, alignments above `GRANULE_BYTES`, and any request after reservation
-//! fails go to the system allocator. The size class is derived from the `Layout` passed to
-//! `dealloc`, so no pointer is ever looked up.
+//! fails go to the system allocator. Every chunk comes from one reservation made once per
+//! process (at most `REGION_BYTES`, halved until the host grants it), so whether a block is
+//! this allocator's is one address-range compare
+//! (`owns`): a free goes to whichever allocator holds the block. That lets a process serve
+//! everything from the system allocator until it chooses this one (`QuenchAlloc::enable`),
+//! and lets an allocation fall back to the system allocator when no page can be had.
 //!
 //! Threads: each thread allocates from its own heap, so neither path takes a lock or an
 //! atomic read-modify-write. A page belongs to the heap that took it (`Page::owner`); a
@@ -26,7 +30,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::{Cell, UnsafeCell};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 
 /// One allocator page: the unit a size class takes and returns.
 pub const PAGE_BYTES: usize = 4096;
@@ -34,8 +38,16 @@ pub const PAGE_BYTES: usize = 4096;
 pub const GRANULE_BYTES: usize = 16;
 /// The largest request served from size classes.
 pub const MAX_SMALL_BYTES: usize = 1024;
-/// Address space reserved at a time; pages are faulted in only when first used.
+/// Address space a heap takes at a time; pages are faulted in only when first used.
 const CHUNK_BYTES: usize = 64 << 20;
+/// Address space reserved once, inaccessible until carved into chunks: every page this
+/// allocator hands out lies inside it (`owns`). It reserves addresses, not memory; a process
+/// that needs more than this many chunks serves the rest from the system allocator. A host
+/// that refuses this much address space (an address-space limit, or an instrumenting
+/// emulator such as Valgrind) is asked for half as much, down to one chunk.
+const REGION_BYTES: usize = 1 << 36;
+const _: () = assert!(REGION_BYTES.is_multiple_of(CHUNK_BYTES));
+const _: () = assert!(REGION_BYTES.is_power_of_two() && CHUNK_BYTES.is_power_of_two());
 /// Space before a page's first block, a multiple of the granule.
 const PAGE_HEADER_BYTES: usize = 64;
 
@@ -239,6 +251,77 @@ fn thread_heap_slow() -> *mut Heap {
     heap
 }
 
+/// The reservation's first address, or zero before it is made (or after it failed).
+static REGION_BASE: AtomicUsize = AtomicUsize::new(0);
+/// The reservation's length, stored before its base is published; zero before it is made.
+static REGION_LEN: AtomicUsize = AtomicUsize::new(0);
+/// Whether the reservation has been attempted, so a failure is not retried on every page.
+static REGION_TRIED: AtomicBool = AtomicBool::new(false);
+/// The offset in the reservation of the next chunk any heap takes.
+static REGION_NEXT: AtomicUsize = AtomicUsize::new(0);
+/// Whether small requests are served here (`QuenchAlloc::enable`); before, every request
+/// goes to the system allocator.
+static ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// The reservation's base, reserving it on first use.
+#[cold]
+fn region_base() -> usize {
+    let base = REGION_BASE.load(Ordering::Acquire);
+    if base != 0 || REGION_TRIED.swap(true, Ordering::AcqRel) {
+        return REGION_BASE.load(Ordering::Acquire);
+    }
+    let mut length = REGION_BYTES;
+    loop {
+        // SAFETY: a fresh inaccessible anonymous reservation; nothing else uses its addresses.
+        let reserved = unsafe {
+            libc::mmap(
+                ptr::null_mut(),
+                length,
+                libc::PROT_NONE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+                -1,
+                0,
+            )
+        };
+        if reserved != libc::MAP_FAILED {
+            REGION_LEN.store(length, Ordering::Relaxed);
+            REGION_BASE.store(reserved as usize, Ordering::Release);
+            return reserved as usize;
+        }
+        if length == CHUNK_BYTES {
+            return 0;
+        }
+        length /= 2;
+    }
+}
+
+/// A fresh chunk of the reservation, made writable, or `None` once it is spent.
+#[cold]
+fn take_chunk() -> Option<usize> {
+    let base = region_base();
+    if base == 0 {
+        return None;
+    }
+    let offset = REGION_NEXT.fetch_add(CHUNK_BYTES, Ordering::Relaxed);
+    if offset >= REGION_LEN.load(Ordering::Relaxed) {
+        return None;
+    }
+    let chunk = base + offset;
+    // SAFETY: a chunk of the reservation no heap has taken; pages fault in on first touch.
+    let protected = unsafe {
+        libc::mprotect(chunk as *mut libc::c_void, CHUNK_BYTES, libc::PROT_READ | libc::PROT_WRITE)
+    };
+    (protected == 0).then_some(chunk)
+}
+
+/// Whether `block` lies in this allocator's pages.
+#[inline(always)]
+pub fn owns(block: *const u8) -> bool {
+    // A block of the reservation reached this thread after its length was stored.
+    let base = REGION_BASE.load(Ordering::Relaxed);
+    base != 0 && (block as usize).wrapping_sub(base) < REGION_LEN.load(Ordering::Relaxed)
+}
+
 /// The allocator. One instance serves a process as `#[global_allocator]`; its state lives in
 /// per-thread heaps, so every instance shares it.
 pub struct QuenchAlloc;
@@ -248,11 +331,32 @@ impl QuenchAlloc {
         Self
     }
 
+    /// Serves small requests from now on; until called, every request goes to the system
+    /// allocator. Blocks either allocator handed out are freed by it (`owns`).
+    pub fn enable() {
+        ENABLED.store(true, Ordering::Relaxed);
+    }
+
     fn small_class(layout: Layout) -> Option<usize> {
         if layout.align() > GRANULE_BYTES {
             return None;
         }
         class_of(layout.size())
+    }
+
+    /// `alloc` once the switch is on: a small request from its class, any other (or one no
+    /// page can serve) from the system allocator, which then frees it (`owns`).
+    #[inline(never)]
+    unsafe fn alloc_enabled(layout: Layout) -> *mut u8 {
+        if let Some(class) = Self::small_class(layout) {
+            // SAFETY: a small class.
+            let block = unsafe { allocate(class) };
+            if !block.is_null() {
+                return block;
+            }
+        }
+        // SAFETY: forwarded unchanged.
+        unsafe { System.alloc(layout) }
     }
 }
 
@@ -386,23 +490,12 @@ impl Heap {
             return page;
         }
         if self.chunk_next == self.chunk_end {
-            // SAFETY: an anonymous private mapping; pages fault in on first touch.
-            let chunk = unsafe {
-                libc::mmap(
-                    ptr::null_mut(),
-                    CHUNK_BYTES,
-                    libc::PROT_READ | libc::PROT_WRITE,
-                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
-                    -1,
-                    0,
-                )
-            };
-            if chunk == libc::MAP_FAILED {
+            let Some(chunk) = take_chunk() else {
                 return ptr::null_mut();
-            }
-            // mmap returns page-aligned addresses; PAGE_BYTES is one base page.
-            self.chunk_next = chunk as usize;
-            self.chunk_end = chunk as usize + CHUNK_BYTES;
+            };
+            // The reservation is page-aligned and chunks are whole pages.
+            self.chunk_next = chunk;
+            self.chunk_end = chunk + CHUNK_BYTES;
         }
         let page = self.chunk_next as *mut Page;
         self.chunk_next += PAGE_BYTES;
@@ -551,40 +644,64 @@ unsafe fn take_block(page: *mut Page, class: usize) -> *mut u8 {
 unsafe impl GlobalAlloc for QuenchAlloc {
     #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if let Some(class) = Self::small_class(layout) {
-            // SAFETY: a small class.
-            let block = unsafe { allocate(class) };
-            // Null only when address space cannot be reserved: an allocation failure. The
-            // system allocator cannot stand in, since `dealloc` routes by layout alone.
-            return block;
+        // The switch first, and the enabled path out of line: until the switch is on, a
+        // request costs one load and a jump to the system allocator, with no frame of its own.
+        if ENABLED.load(Ordering::Relaxed) {
+            // SAFETY: forwarded unchanged.
+            return unsafe { Self::alloc_enabled(layout) };
         }
         // SAFETY: forwarded unchanged.
         unsafe { System.alloc(layout) }
     }
 
     #[inline]
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        if ENABLED.load(Ordering::Relaxed) {
+            if let Some(class) = Self::small_class(layout) {
+                // SAFETY: a small class.
+                let block = unsafe { allocate(class) };
+                if !block.is_null() {
+                    // SAFETY: the block holds at least `layout.size()` bytes.
+                    unsafe { block.write_bytes(0, layout.size()) };
+                    return block;
+                }
+            }
+        }
+        // The system allocator's zeroed allocation: a large one maps fresh zero pages
+        // instead of writing every byte resident.
+        // SAFETY: forwarded unchanged.
+        unsafe { System.alloc_zeroed(layout) }
+    }
+
+    #[inline]
     unsafe fn dealloc(&self, block: *mut u8, layout: Layout) {
-        if Self::small_class(layout).is_some() {
-            // SAFETY: a small layout's block came from `alloc`, which took it from its page.
+        // Until the switch is on, no block is this allocator's.
+        if ENABLED.load(Ordering::Relaxed) && owns(block) {
+            // SAFETY: a block in this allocator's pages came from `alloc`, which took it
+            // from its page.
             unsafe { free(block) };
             return;
         }
-        // SAFETY: a large layout's block came from the system allocator.
+        // SAFETY: any other block came from the system allocator.
         unsafe { System.dealloc(block, layout) }
     }
 
     #[inline]
     unsafe fn realloc(&self, block: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let old_class = Self::small_class(layout);
+        let owned = owns(block);
+        if !owned && !ENABLED.load(Ordering::Relaxed) {
+            // SAFETY: the system allocator's block, and it serves every request.
+            return unsafe { System.realloc(block, layout, new_size) };
+        }
         let new_layout = match Layout::from_size_align(new_size, layout.align()) {
             Ok(new_layout) => new_layout,
             Err(_) => return ptr::null_mut(),
         };
-        let new_class = Self::small_class(new_layout);
-        if old_class.is_some() && old_class == new_class {
+        let stays_here = ENABLED.load(Ordering::Relaxed) && Self::small_class(new_layout).is_some();
+        if owned && Self::small_class(layout) == Self::small_class(new_layout) {
             return block;
         }
-        if old_class.is_none() && new_class.is_none() {
+        if !owned && !stays_here {
             // SAFETY: both sides are the system allocator's.
             return unsafe { System.realloc(block, layout, new_size) };
         }
@@ -604,6 +721,12 @@ unsafe impl GlobalAlloc for QuenchAlloc {
 mod tests {
     use super::*;
 
+    /// The allocator under test, serving small requests.
+    fn enabled() -> QuenchAlloc {
+        QuenchAlloc::enable();
+        QuenchAlloc::new()
+    }
+
     #[test]
     fn classes_cover_every_small_size_exactly_once() {
         let mut previous = 0;
@@ -620,7 +743,7 @@ mod tests {
 
     #[test]
     fn blocks_are_reused_and_empty_pages_change_class() {
-        let allocator = QuenchAlloc::new();
+        let allocator = enabled();
         let small = Layout::from_size_align(24, 8).unwrap();
         let blocks: Vec<*mut u8> = (0..1000)
             .map(|index| unsafe {
@@ -657,7 +780,7 @@ mod tests {
 
     #[test]
     fn blocks_freed_on_other_threads_return_to_their_owner() {
-        let allocator = QuenchAlloc::new();
+        let allocator = enabled();
         let layout = Layout::from_size_align(64, 8).unwrap();
         let blocks: Vec<usize> = (0..2000)
             .map(|_| unsafe { allocator.alloc(layout) } as usize)
@@ -683,6 +806,7 @@ mod tests {
 
     #[test]
     fn exited_threads_hand_their_heap_on() {
+        QuenchAlloc::enable();
         let layout = Layout::from_size_align(32, 8).unwrap();
         let kept = std::thread::spawn(move || unsafe { QuenchAlloc::new().alloc(layout) } as usize)
             .join()
@@ -701,7 +825,7 @@ mod tests {
 
     #[test]
     fn realloc_moves_between_classes_and_the_system_allocator() {
-        let allocator = QuenchAlloc::new();
+        let allocator = enabled();
         let layout = Layout::from_size_align(40, 8).unwrap();
         unsafe {
             let block = allocator.alloc(layout);
@@ -717,6 +841,42 @@ mod tests {
                 .iter()
                 .all(|byte| *byte == 7));
             allocator.dealloc(shrunk, Layout::from_size_align(100, 8).unwrap());
+        }
+    }
+
+    #[test]
+    fn zeroed_blocks_are_zero_in_either_allocator() {
+        let allocator = enabled();
+        for size in [24, 4000] {
+            let layout = Layout::from_size_align(size, 8).unwrap();
+            unsafe {
+                let block = allocator.alloc(layout);
+                block.write_bytes(9, size);
+                allocator.dealloc(block, layout);
+                let zeroed = allocator.alloc_zeroed(layout);
+                assert!(std::slice::from_raw_parts(zeroed, size).iter().all(|byte| *byte == 0));
+                allocator.dealloc(zeroed, layout);
+            }
+        }
+    }
+
+    #[test]
+    fn frees_go_to_the_allocator_that_holds_the_block() {
+        let layout = Layout::from_size_align(48, 8).unwrap();
+        unsafe {
+            // A system block, as a request made before `enable` gets.
+            let system = System.alloc(layout);
+            assert!(!owns(system));
+            let allocator = enabled();
+            let here = allocator.alloc(layout);
+            assert!(owns(here));
+            // Grown in place of the system block: it moves here, keeping its bytes.
+            system.write_bytes(5, 48);
+            let moved = allocator.realloc(system, layout, 64);
+            assert!(owns(moved));
+            assert!(std::slice::from_raw_parts(moved, 48).iter().all(|byte| *byte == 5));
+            allocator.dealloc(moved, Layout::from_size_align(64, 8).unwrap());
+            allocator.dealloc(here, layout);
         }
     }
 }

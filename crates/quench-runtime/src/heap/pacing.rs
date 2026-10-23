@@ -278,16 +278,13 @@ impl MemoryPolicy {
         Self::ALL.into_iter().find(|policy| policy.name() == name)
     }
 
-    /// The least time between the host's returns of the memory the process no longer needs
-    /// resident (read-only code and data pages, the allocator's free pages) at its release
-    /// points: collection boundaries, library loads, compilation phases, output and exit.
-    /// Memory-first returns them at every point. Each return refaults the run's hot code, so
-    /// throughput returns them at most once per `THROUGHPUT_RESIDENT_RELEASE_INTERVAL`.
-    pub const fn resident_release_interval(self) -> std::time::Duration {
-        match self {
-            Self::Throughput => THROUGHPUT_RESIDENT_RELEASE_INTERVAL,
-            Self::MemoryFirst => std::time::Duration::ZERO,
-        }
+    /// Whether the host returns the memory the process no longer needs resident (read-only
+    /// pages, the allocator's free pages) at collection boundaries. Under throughput it does
+    /// not: releasing them after every collection refaulted the run's hot code after each
+    /// young one (EarleyBoyer, dynamic x86_64 production build, 2026-10-20: ~63K minor faults
+    /// and ~0.11 s of system time per run against ~15K and ~0.035 s without; v2-web).
+    pub const fn returns_pages_at_collections(self) -> bool {
+        matches!(self, Self::MemoryFirst)
     }
 
     /// The policy's own pacing table.
@@ -311,20 +308,6 @@ impl MemoryPolicy {
         *TUNED[self as usize].get_or_init(|| self.table().from_environment())
     }
 }
-
-/// The least time between throughput's returns of resident pages
-/// (`MemoryPolicy::resident_release_interval`). A return and the refaults of the code the
-/// run touches again cost about 1.2 ms (about 730 pages, the lodash npm scenario, x86_64 VM,
-/// 2026-10-19); at this interval that is about 1% of a long run's time. A short npm package's
-/// run ends before its first return, which had cost it a fifth of its time when every release
-/// point returned pages (path-parse scenario, Firecracker x86_64, 2026-10-23: 33.3 -> 26.7 ms,
-/// 7,138 -> 4,828 faults). With no returns at all a long run kept its bootstrap's and its
-/// loaders' pages; against that, this interval (plain x86_64 build, snapshot on, 2026-10-23)
-/// takes npm scenario peak RSS jsdom 105.7 -> 84.7 MB, @testing-library/dom 123.1 -> 95.6,
-/// playwright 101.7 -> 80.1 (Bun 91.8, 115.4, 96.5) and eslint 41.8 -> 37.5, with wall time
-/// within noise (interleaved, 15 rounds: path-parse, lodash, chalk, eslint, jsdom, semver and
-/// typescript 0.94-1.08x), and V8-v7 max RSS without JIT 0.9-5.3 MB lower on every fixture.
-const THROUGHPUT_RESIDENT_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// Throughput pacing, the default (TOD-167): the JetStream lane's table (v2-cloud-jet), which
 /// the other lanes' measurements bound. Young collections run every eighth of a live set, at
@@ -453,8 +436,8 @@ mod tests {
         }
         assert_eq!(MemoryPolicy::default(), MemoryPolicy::Throughput);
         assert_eq!(MemoryPolicy::from_name("speed"), None);
-        assert!(MemoryPolicy::MemoryFirst.resident_release_interval().is_zero());
-        assert!(!MemoryPolicy::Throughput.resident_release_interval().is_zero());
+        assert!(MemoryPolicy::MemoryFirst.returns_pages_at_collections());
+        assert!(!MemoryPolicy::Throughput.returns_pages_at_collections());
         // Throughput collects no more often than memory-first at any live size.
         let (throughput, memory_first) = (THROUGHPUT_PACING, MEMORY_FIRST_PACING);
         for live in [0, 1 << 10, 1 << 16, 1 << 20, 1 << 24] {
