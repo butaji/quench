@@ -556,8 +556,9 @@ impl<H: Host> Vm<H> {
             make_date_milliseconds(parts, false)
         };
         let prototype_atom = self.prototype_atom();
+        let native_date = self.native_value(Native::Date);
         let prototype = self
-            .own_property(self.native_value(Native::Date), prototype_atom)
+            .own_property(native_date, prototype_atom)
             .unwrap_or(self.object_proto);
         Ok(self.heap.alloc(Cell::Date {
             milliseconds,

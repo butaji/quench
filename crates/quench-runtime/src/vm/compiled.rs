@@ -6602,14 +6602,16 @@ impl<H: Host> Vm<H> {
     /// Whether the JavaScript tier may still claim `function` of `program`: it runs, the
     /// function passes its candidate filter, and the tier has not declined it. The tier
     /// observes and enters functions at frame entry (`js_tier_frame_entry`), so such calls
-    /// keep their frames rather than running frameless in the lane.
+    /// keep their frames rather than running frameless in the lane. A permanently declined
+    /// function stays frameless unless diagnostics need its rejected-entry counters.
     pub(super) fn js_tier_may_claim(&self, program: &ResidualProgram, id: ProgramId, function: u32) -> bool {
         self.js_tier_runs()
             && program.kind != crate::bytecode::ProgramKind::Wasm
             && program
                 .function_get(function as usize)
                 .is_some_and(|body| super::js_compiled::function_candidate(body, program))
-            && !self.programs.js_tier_declined(id, function)
+            && (!self.programs.js_tier_declined(id, function)
+                || self.programs.js_jit_diagnostics_enabled())
     }
 
     /// The JavaScript tier at the entry of `frame`, an initialized frame at PC zero, made
@@ -6798,6 +6800,10 @@ impl<H: Host> Vm<H> {
         let function_id = self.frames[frame].function;
         let function = program.function_get(function_id as usize)?;
         let facts = self.programs.js_entry_facts(program_id, function_id)?;
+        // Most entries are of functions no entry path can claim; diagnostics still count them.
+        if !facts.enters && !self.programs.js_jit_diagnostics_enabled() {
+            return None;
+        }
         let numeric_find_candidate = facts.numeric_find.filter(|_| jit_numeric_find_enabled());
         if let Some(candidate) = numeric_find_candidate
             && let Some(result) = self.js_jit_numeric_find_at_entry(program, frame, candidate)

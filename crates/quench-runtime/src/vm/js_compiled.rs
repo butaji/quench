@@ -5,7 +5,7 @@
 //! can load its rooted constant and preserve ordinary frame unwinding.
 
 use crate::bytecode::{
-    Constant, FieldBase, FieldLookup, Function, Op, Operand, OperandKind, ProgramKind,
+    Constant, FieldBase, FieldLookup, Function, JsDenotation, Op, Operand, OperandKind, ProgramKind,
     RETURN_REGISTER, ResidualProgram, WideInstruction,
 };
 use cranelift_codegen::ir::{
@@ -2649,8 +2649,8 @@ fn compile_numeric_with_captures(
             return None;
         }
         let instruction = packed.as_wide();
-        let result = match instruction.op() {
-            Op::GetField => {
+        let result = match instruction.op().js_denotation() {
+            JsDenotation::GetField => {
                 let inputs = numeric_field_inputs.as_ref()?;
                 let (field_index, candidate) = inputs
                     .iter()
@@ -2685,7 +2685,7 @@ fn compile_numeric_with_captures(
                     field_offset,
                 ))
             }
-            Op::LoadConst => {
+            JsDenotation::LoadConst => {
                 if instruction.returns_from_frame() || instruction.result_flags() != 0 {
                     return None;
                 }
@@ -2696,14 +2696,14 @@ fn compile_numeric_with_captures(
                 };
                 Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
             }
-            Op::Move => {
+            JsDenotation::Move => {
                 if instruction.returns_from_frame() || instruction.result_flags() != 0 {
                     return None;
                 }
                 let source = usize::from(instruction.register_b());
                 Some(*registers.get(source)?.as_ref()?)
             }
-            Op::LoadCapture => {
+            JsDenotation::CapturedValue => {
                 if instruction.returns_from_frame() || instruction.result_flags() != 0 {
                     return None;
                 }
@@ -2720,7 +2720,7 @@ fn compile_numeric_with_captures(
                         .load(types::F64, ir::MemFlagsData::trusted(), arguments, offset),
                 )
             }
-            Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+            JsDenotation::NumericBinary => {
                 if instruction.numeric_local_target().is_some()
                     || (instruction.result_flags() != 0
                         && instruction.result_flags() != RETURN_REGISTER)
@@ -2782,7 +2782,7 @@ fn compile_numeric_with_captures(
                 }
                 Some(value)
             }
-            Op::Return => {
+            JsDenotation::Return => {
                 if instruction.result_flags() != 0 || pc + 1 != function.code.len() {
                     return None;
                 }
@@ -2793,7 +2793,7 @@ fn compile_numeric_with_captures(
                 returned = true;
                 None
             }
-            _ => return None,
+            JsDenotation::Unsupported => return None,
         };
         if let Some(value) = result {
             let destination = usize::from(instruction.result_register());
@@ -4312,6 +4312,7 @@ fn operand_value(
 /// which never change, so it is derived once per function (`ProgramStore::js_entry_facts`);
 /// re-deriving them at every entry of a function the tier watches had made JIT runs execute
 /// more instructions than interpreted ones (semver npm scenario +4.6%).
+#[derive(Default)]
 pub(super) struct JsEntryFacts {
     pub(super) numeric_find: Option<JsJitNumericFind>,
     pub(super) field_increment: Option<JsJitThisFieldIncrement>,
@@ -4328,14 +4329,29 @@ pub(super) struct JsEntryFacts {
     pub(super) field_reject: bool,
     pub(super) string_hash_loop: bool,
     pub(super) string_transform: Option<JsJitStringTransform>,
+    /// Whether an entry may run native code (`Vm::js_jit_at_entry`): the function is a tier
+    /// candidate, or one of the entry patterns that run without a tier matched it.
+    pub(super) enters: bool,
 }
 
 impl JsEntryFacts {
     pub(super) fn of(program: &ResidualProgram, function: &Function) -> Self {
+        let numeric_find = numeric_find_candidate(function);
+        let field_increment = cached_this_field_increment_candidate(program, function);
+        let field_return = cached_this_field_return_candidate(function);
+        let enters = function_candidate(function, program)
+            || numeric_find.is_some()
+            || field_increment.is_some()
+            || field_return.is_some();
+        // The other facts are read only past the candidate check an entering function passes.
+        if !enters {
+            return Self::default();
+        }
         Self {
-            numeric_find: numeric_find_candidate(function),
-            field_increment: cached_this_field_increment_candidate(program, function),
-            field_return: cached_this_field_return_candidate(function),
+            enters,
+            numeric_find,
+            field_increment,
+            field_return,
             numeric_loop: has_numeric_loop_candidate(function),
             int32_bitwise: has_int32_bitwise_candidate(program, function),
             int32_identity: int32_identity_return_candidate(program, function).is_some(),

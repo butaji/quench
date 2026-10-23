@@ -56,10 +56,7 @@ impl<H: Host> Vm<H> {
             let outcome = match vm.call_user_frame(p, id, env, this, args, context) {
                 Ok(outcome) => outcome,
                 Err(error) => {
-                    let reason = error
-                        .thrown_value()
-                        .unwrap_or_else(|| vm.heap.alloc(Cell::Error(error.into_message())));
-                    vm.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+                    vm.reject_settled_call(p, promise, error)?;
                     return Ok(promise);
                 }
             };
@@ -95,6 +92,74 @@ impl<H: Host> Vm<H> {
                 }
             }
             Ok(promise)
+        })
+    }
+
+    /// Rejects an async call's `promise` with the error its body completed with.
+    pub(super) fn reject_settled_call(
+        &mut self,
+        p: &ResidualProgram,
+        promise: Value,
+        error: JsError,
+    ) -> Result<(), JsError> {
+        let reason = error
+            .thrown_value()
+            .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+        self.promise_settle(p, promise, PromiseState::Rejected, reason)
+    }
+
+    /// The promise an async call pushed in place settles (`PendingGeneralCall::settles`),
+    /// unrooted now that the call completes.
+    pub(super) fn release_settled_call_root(&mut self, root: crate::heap::RootId) -> Value {
+        let promise = self.heap.root_value(root).expect("a settling call roots its promise");
+        self.heap.release_root(root);
+        promise
+    }
+
+    /// A plain `Call` of an async function that never suspends (`CallPlan::settles_in_loop`),
+    /// pushed in place as `try_inline_user_call` pushes ordinary bodies: the call makes its
+    /// promise first, as `call_user_maybe_async` does, and the pending call settles it
+    /// with the body's completion. A failed push rejects it at once.
+    #[inline(never)]
+    pub(super) fn try_settling_call(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        i: crate::bytecode::WideInstruction,
+        pc: usize,
+        callee: Value,
+        target: (ProgramId, u32, Value),
+    ) -> Option<Result<StepResult, JsError>> {
+        if i.returns_from_frame() {
+            return None;
+        }
+        let promise = match self.promise_object() {
+            Ok(promise) => promise,
+            Err(error) => return Some(Err(error)),
+        };
+        let root = self.heap.root(promise);
+        let destination = i.result_register();
+        let this = self.read(f, i.register_c());
+        // The window is read after the promise, whose observers may run guest code.
+        let arguments: *const [Value] = self.register_window(f, i.call_window());
+        // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
+        let pushed = self.push_in_loop_call(p, f, pc, target, callee, this, unsafe { &*arguments }, destination);
+        Some(match pushed {
+            Some(Ok(StepResult::PushFrame { destination, call_guard, construct_this, .. })) => {
+                Ok(StepResult::PushFrame { destination, call_guard, construct_this, settles: Some(root) })
+            }
+            Some(Err(error)) => {
+                let promise = self.release_settled_call_root(root);
+                self.reject_settled_call(p, promise, error).map(|()| {
+                    self.write(f, destination, promise);
+                    StepResult::Continue
+                })
+            }
+            _ => {
+                // No frame was pushed: the general call makes its own promise.
+                self.release_settled_call_root(root);
+                return None;
+            }
         })
     }
 

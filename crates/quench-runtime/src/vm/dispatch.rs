@@ -73,7 +73,19 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let callee = self.read(f, i.register_b());
-        let target = self.in_loop_call_target(p, callee)?;
+        let entry = self.in_loop_call_entry(p, callee)?;
+        let target = (entry.program, entry.function, entry.env);
+        if entry.push == super::InLoopPush::Settles {
+            return self.try_settling_call(p, f, i, pc, callee, target);
+        }
+        #[cfg(feature = "profile-lane-exits")]
+        super::lane_exits::call_target(
+            self.active_program.raw(),
+            self.frames[f].function,
+            pc as u32,
+            callee,
+            target.1,
+        );
         self.profile.call_source(0);
         let window = i.call_window();
         // Collection happens only at back edges, tail calls and explicit host safepoints, none
@@ -159,6 +171,7 @@ impl<H: Host> Vm<H> {
             destination,
             call_guard,
             construct_this: None,
+            settles: None,
         }))
     }
 
@@ -171,11 +184,19 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         callee: Value,
     ) -> Option<(ProgramId, u32, Value)> {
+        self.in_loop_call_entry(p, callee)
+            .filter(|target| target.push == super::InLoopPush::Body)
+            .map(|target| (target.program, target.function, target.env))
+    }
+
+    /// The cached in-loop push of `callee`, of either kind (`InLoopPush`).
+    #[inline(always)]
+    fn in_loop_call_entry(&mut self, p: &ResidualProgram, callee: Value) -> Option<super::InLoopCallTarget> {
         let index = callee.heap_index()? as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
         let epoch = self.heap.collection_epoch();
         let cached = self.call_targets[index];
         if cached.callee == callee && cached.epoch == epoch && cached.realm == self.realm.globals {
-            return Some((cached.program, cached.function, cached.env));
+            return Some(cached);
         }
         self.resolve_in_loop_call_target(p, callee, index, epoch)
     }
@@ -187,30 +208,35 @@ impl<H: Host> Vm<H> {
         callee: Value,
         index: usize,
         epoch: u64,
-    ) -> Option<(ProgramId, u32, Value)> {
+    ) -> Option<super::InLoopCallTarget> {
         let (program, function, env) = self.same_realm_user_target(callee)?;
         let owner = if program == self.active_program {
             p
         } else {
             self.programs.residual(program)?
         };
-        if function == super::ROOT_FUNCTION_ID
-            || owner.kind == crate::bytecode::ProgramKind::Wasm
-            || !owner
-                .function_get(function as usize)
-                .is_some_and(|function| function.call_plan(owner).in_loop)
-        {
+        if function == super::ROOT_FUNCTION_ID || owner.kind == crate::bytecode::ProgramKind::Wasm {
             return None;
         }
-        self.call_targets[index] = super::InLoopCallTarget {
+        let plan = owner.function_get(function as usize)?.call_plan(owner);
+        let push = if plan.in_loop {
+            super::InLoopPush::Body
+        } else if plan.settles_in_loop {
+            super::InLoopPush::Settles
+        } else {
+            return None;
+        };
+        let target = super::InLoopCallTarget {
             callee,
             epoch,
             realm: self.realm.globals,
             program,
             function,
             env,
+            push,
         };
-        Some((program, function, env))
+        self.call_targets[index] = target;
+        Some(target)
     }
 
     /// `f.call(this, ...args)`, `f.apply(this, list)` and `Reflect.apply(f, this, list)` of
@@ -1482,6 +1508,7 @@ impl<H: Host> Vm<H> {
                     destination: i.result_register(),
                     call_guard,
                     construct_this: None,
+                    settles: None,
                 });
             }
             Op::CallKnown => {
@@ -1620,6 +1647,7 @@ impl<H: Host> Vm<H> {
                             destination: i.result_register(),
                             call_guard: pushed?,
                             construct_this: Some(this),
+                            settles: None,
                         });
                     }
                 }
