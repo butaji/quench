@@ -10855,12 +10855,12 @@ fn derive_lane_view<H: Host>(
     } else {
         LANE_ENTRY_MIN_CALL_RUN
     };
-    let mut entries = vec![false; records.len()].into_boxed_slice();
-    let mut run = 0usize;
-    for pc in (0..records.len()).rev() {
-        run = if exits[pc] { 0 } else { run + 1 };
-        entries[pc] = run >= min_run && !reads_accumulator[pc];
-    }
+    let runs = lane_runs_ahead(&decoded, &exits, min_run);
+    let entries: Box<[bool]> = runs
+        .iter()
+        .zip(&reads_accumulator)
+        .map(|(run, reads)| *run >= min_run && !reads)
+        .collect();
     let activation = function
         .parameter_registers
         .filter(|_| function.locals == 0)
@@ -11318,6 +11318,34 @@ fn may_loop(function: &Function) -> bool {
             || (instruction.op().immediate_role() == ImmediateRole::JumpTarget
                 && instruction.imm() as usize <= pc)
     })
+}
+
+/// How many lane records control reaches from each PC before one that exits, counted up
+/// to `cap`: a `Jump` continues at its target, as a resumed loop body does, and any other
+/// record at the next PC. Each pass extends every count by one step, so `cap` passes reach
+/// the fixed point the capped counts allow.
+fn lane_runs_ahead(decoded: &[WideInstruction], exits: &[bool], cap: usize) -> Vec<usize> {
+    let next = |pc: usize| match decoded[pc].op() {
+        Op::Jump => decoded[pc].imm() as usize,
+        _ => pc + 1,
+    };
+    let mut runs = vec![0usize; exits.len()];
+    for _ in 0..cap {
+        let mut changed = false;
+        for pc in (0..exits.len()).rev() {
+            let run = if exits[pc] {
+                0
+            } else {
+                (1 + runs.get(next(pc)).copied().unwrap_or(0)).min(cap)
+            };
+            changed |= run != runs[pc];
+            runs[pc] = run;
+        }
+        if !changed {
+            break;
+        }
+    }
+    runs
 }
 
 fn closes_loop(function: &Function, exits: &[bool]) -> bool {
