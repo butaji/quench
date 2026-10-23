@@ -10320,15 +10320,26 @@ fn lane_activate_environment<H: Host>(
     if returns && !lane_returning_call_admitted(cx) {
         return Err(exit(ip));
     }
-    if argc > target.params || vm.with_scope_entered {
+    // SAFETY: the context's program outlives the lane run.
+    let rest = unsafe { &*(*cx).code }.function(target.function as usize).rest;
+    if argc > target.params && !rest || vm.with_scope_entered {
         return Err(exit(ip));
     }
+    // A rest body keeps every value passed, the room sized for its parameters and the rest.
+    let extra = usize::from(argc.saturating_sub(target.params));
     if vm.lane_stack.activations.len() >= vm.lane_stack.activation_limit.get()
         || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
-            < usize::from(target.room)
+            < usize::from(target.room) + extra
     {
         return Err(lane_script_call_frame::<H>(ip));
     }
+    // The rest array, made before the window is: the values past the other parameters,
+    // which the rest parameter's local holds (`lane_activate_keeping` gathers likewise).
+    let gathered = rest.then(|| {
+        let fixed = usize::from(target.params) - 1;
+        let passed = (fixed..usize::from(argc)).map(|index| r.get(arguments + index as u16));
+        vm.rest_parameter_array(&passed.collect::<smallvec::SmallVec<[Value; GATHERED_INLINE_VALUES]>>())
+    });
     // SAFETY: the program store keeps a derived view alive with its program, and an
     // environment target's view has a window (`ScriptCallTarget::entry`).
     let layout = unsafe { (*target.view).environment_window.unwrap_unchecked() };
@@ -10357,13 +10368,19 @@ fn lane_activate_environment<H: Host>(
         // The few values a call passes are copied in place: one pass writes each as its
         // parameter's local and, after the locals, as the value a frame keeps for legacy
         // reflection, with no library copy per run.
+        let bound = usize::from(argc.min(target.params));
         for slot in 0..usize::from(argc) {
             let value = r.get(arguments + slot as u16);
-            local.add(slot).write(value);
+            if slot < bound {
+                local.add(slot).write(value);
+            }
             local.add(locals + slot).write(value);
         }
-        for slot in usize::from(argc)..locals {
+        for slot in bound..locals {
             local.add(slot).write(Value::UNDEFINED);
+        }
+        if let Some(gathered) = gathered {
+            local.add(usize::from(target.params) - 1).write(gathered);
         }
         stack.values.set_len(window + held + locals + usize::from(argc));
         Registers(registers)
