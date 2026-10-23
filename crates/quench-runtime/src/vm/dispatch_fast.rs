@@ -2929,9 +2929,7 @@ script_handler! {
             && !vm.try_append_dense_element(object, key, value)
             && !vm.try_fill_dense_hole(object, key, value)
             && !vm.try_site_symbol_set(ip.addr(), object, key, value)
-            && !vm
-                .array_index_key(key)
-                .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value))
+            && !lane_typed_array_store(ip, vm, object, key, value)
             && !vm.try_plain_string_key_set(object, key, value)
             && !key
                 .as_int()
@@ -2942,6 +2940,35 @@ script_handler! {
         }
         // Appending an element or adding a property can allocate.
         note_allocation(vm);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+/// A store of a number at an index of a typed array, which none of the array and symbol
+/// paths before it serve: the site then tries it first (`lane_set_index_typed`).
+fn lane_typed_array_store<H: Host>(ip: Ip, vm: &mut Vm<H>, object: Value, key: Value, value: Value) -> bool {
+    let stored = vm
+        .array_index_key(key)
+        .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value));
+    if stored {
+        requicken(ip, lane_set_index_typed::<H>);
+    }
+    stored
+}
+
+script_handler! {
+    /// `lane_set_index_slot` at a site that stored into a typed array: a number stored at an
+    /// index of one is the whole store, as the generic order reaches it once every array and
+    /// symbol path declines a typed array; any other store takes the generic order.
+    fn lane_set_index_typed<>(cx, r, ip, i, view) {
+        let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
+        let vm = unsafe { vm(cx) };
+        let stored = vm
+            .array_index_key(key)
+            .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value));
+        if !stored {
+            sibling!(lane_set_index_slot::<H>, r, ip, view)
+        }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
