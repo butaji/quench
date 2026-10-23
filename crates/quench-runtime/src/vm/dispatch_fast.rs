@@ -10315,7 +10315,18 @@ script_handler! {
                     };
                     Some(value)
                 }
-                RETURNING_FIELD => lane_field_value(cx, r, i),
+                // A read that meets its site's getter activates it, as `lane_get_field`
+                // does: the record returns from the frame, so the getter's completion
+                // completes this activation too (`lane_complete_activation`).
+                RETURNING_FIELD => match lane_field_value(cx, r, i) {
+                    Some(value) => Some(value),
+                    None => {
+                        return match lane_getter_activation(cx, r, ip, i) {
+                            Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+                            Err(next) => next,
+                        };
+                    }
+                },
                 RETURNING_UNARY => lane_unary_value(cx, r, i),
                 RETURNING_BINARY => lane_binary_value(cx, r, i),
                 RETURNING_OBJECT => Some(lane_object_pair(cx, r, i)),
