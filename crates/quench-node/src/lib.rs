@@ -15,7 +15,7 @@ pub use shared_run::EntryGoal;
 
 /// Every binary that links this host (the CLI and the Node test runners alike) allocates
 /// through Quench's size-classed small-object allocator, which serves small requests only
-/// once the process's memory policy asks for it (`shared_run::apply_process_policy`);
+/// once the process's memory policy asks for it (`shared_run::apply_allocator_policy`);
 /// until then, and under the memory-first policy, every request goes to the system allocator.
 #[cfg(unix)]
 #[global_allocator]
