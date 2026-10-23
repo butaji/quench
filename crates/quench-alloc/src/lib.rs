@@ -633,8 +633,28 @@ unsafe impl GlobalAlloc for QuenchAlloc {
     }
 
     #[inline]
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        if ENABLED.load(Ordering::Relaxed) {
+            if let Some(class) = Self::small_class(layout) {
+                // SAFETY: a small class.
+                let block = unsafe { allocate(class) };
+                if !block.is_null() {
+                    // SAFETY: the block holds at least `layout.size()` bytes.
+                    unsafe { block.write_bytes(0, layout.size()) };
+                    return block;
+                }
+            }
+        }
+        // The system allocator's zeroed allocation: a large one maps fresh zero pages
+        // instead of writing every byte resident.
+        // SAFETY: forwarded unchanged.
+        unsafe { System.alloc_zeroed(layout) }
+    }
+
+    #[inline]
     unsafe fn dealloc(&self, block: *mut u8, layout: Layout) {
-        if owns(block) {
+        // Until the switch is on, no block is this allocator's.
+        if ENABLED.load(Ordering::Relaxed) && owns(block) {
             // SAFETY: a block in this allocator's pages came from `alloc`, which took it
             // from its page.
             unsafe { free(block) };
@@ -799,6 +819,22 @@ mod tests {
                 .iter()
                 .all(|byte| *byte == 7));
             allocator.dealloc(shrunk, Layout::from_size_align(100, 8).unwrap());
+        }
+    }
+
+    #[test]
+    fn zeroed_blocks_are_zero_in_either_allocator() {
+        let allocator = enabled();
+        for size in [24, 4000] {
+            let layout = Layout::from_size_align(size, 8).unwrap();
+            unsafe {
+                let block = allocator.alloc(layout);
+                block.write_bytes(9, size);
+                allocator.dealloc(block, layout);
+                let zeroed = allocator.alloc_zeroed(layout);
+                assert!(std::slice::from_raw_parts(zeroed, size).iter().all(|byte| *byte == 0));
+                allocator.dealloc(zeroed, layout);
+            }
         }
     }
 
