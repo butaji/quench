@@ -5501,6 +5501,28 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// A Wasm effective address: the index operand in the memory's index type plus the
+    /// record's constant offset, as an i64. An overflow, which traps, or an operand of another
+    /// representation takes the general path.
+    fn lane_wasm_memory_address<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let (Ok(address), Some(offset)) = (
+            vm.wasm_memory_index(r.get(i.c), r.get(i.b)),
+            vm.decode_bits64(i.constant()),
+        ) else {
+            return exit(ip);
+        };
+        let Some(effective) = address.checked_add(offset) else {
+            return exit(ip);
+        };
+        let value = vm.encode_bits64(effective);
+        note_allocation(vm);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     /// A generic Wasm memory load (`crate::wasm::memory::MemoryLoad`), as vectors and the
     /// accesses no direct op names take: in place when it reads in bounds; a trap, or an
     /// operand of another representation, takes the general path, which raises it.
@@ -5545,6 +5567,17 @@ lane_handler! {
     }
 }
 
+/// A SIMD operand of static type `ty`: a vector or an i32 read from its slot directly, any
+/// other scalar as `Vm::decode_wasm_value` reads it. `None` for another representation.
+#[inline(always)]
+fn lane_simd_operand<H: Host>(vm: &Vm<H>, value: Value, ty: crate::WasmType) -> Option<crate::WasmValue> {
+    match ty {
+        crate::WasmType::V128 => Some(crate::WasmValue::V128(u128::from_le_bytes(vm.heap.v128(value)?))),
+        crate::WasmType::I32 => Some(crate::WasmValue::I32(value.as_int()?)),
+        _ => vm.decode_wasm_value(value, ty).ok(),
+    }
+}
+
 lane_handler! {
     /// A Wasm SIMD operator (`crate::wasm::simd::SimdOperator`), which neither traps nor runs
     /// guest code: its operands decoded by their static types and its result encoded, a
@@ -5555,13 +5588,15 @@ lane_handler! {
         let Some((operator, lane)) = crate::wasm::simd::SimdOperator::from_selector(i.imm()) else {
             return exit(ip);
         };
-        let Ok(left) = vm.decode_wasm_value(r.get(i.b), operator.left_type()) else {
+        let Some(left) = lane_simd_operand(vm, r.get(i.b), operator.left_type()) else {
             return exit(ip);
         };
-        let right = match operator.right_type().map(|ty| vm.decode_wasm_value(r.get(i.c), ty)) {
+        let right = match operator.right_type() {
             None => None,
-            Some(Ok(right)) => Some(right),
-            Some(Err(_)) => return exit(ip),
+            Some(ty) => match lane_simd_operand(vm, r.get(i.c), ty) {
+                Some(right) => Some(right),
+                None => return exit(ip),
+            },
         };
         let value = vm.encode_wasm_value(operator.apply(left, right, lane));
         note_allocation(vm);
@@ -5578,12 +5613,10 @@ lane_handler! {
         let Some(indices) = vm.heap.v128(i.constant()) else {
             return exit(ip);
         };
-        let (Ok(crate::WasmValue::V128(left)), Ok(crate::WasmValue::V128(right))) = (
-            vm.decode_wasm_value(r.get(i.b), crate::WasmType::V128),
-            vm.decode_wasm_value(r.get(i.c), crate::WasmType::V128),
-        ) else {
+        let (Some(left), Some(right)) = (vm.heap.v128(r.get(i.b)), vm.heap.v128(r.get(i.c))) else {
             return exit(ip);
         };
+        let (left, right) = (u128::from_le_bytes(left), u128::from_le_bytes(right));
         let value = vm.encode_wasm_value(crate::WasmValue::V128(crate::wasm::simd::shuffle(left, right, indices)));
         note_allocation(vm);
         r.set(i.a, value);
@@ -12413,6 +12446,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::WasmGlobalGet => Some(lane_global_get::<H>),
         Op::WasmSimd => Some(lane_wasm_simd::<H>),
         Op::WasmMemoryLoad => Some(lane_wasm_memory_load::<H>),
+        Op::WasmMemoryAddress => Some(lane_wasm_memory_address::<H>),
         Op::WasmMemoryStore => Some(lane_wasm_memory_store::<H>),
         Op::WasmSimdShuffle => Some(lane_wasm_simd_shuffle::<H>),
         Op::WasmGlobalSet => Some(lane_global_set::<H>),
