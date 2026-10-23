@@ -66,7 +66,6 @@ const TRIM_THRESHOLD_VARIABLE: &str = "MALLOC_TRIM_THRESHOLD_";
 /// The allocator setting and page releases the process's `policy` takes, applied once when
 /// it is selected (`select_memory_policy`); an explicit `TRIM_THRESHOLD_VARIABLE` wins.
 fn apply_process_policy(policy: MemoryPolicy) {
-    crate::host::resident_pages::apply_policy(policy);
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     if policy == MemoryPolicy::Throughput && std::env::var_os(TRIM_THRESHOLD_VARIABLE).is_none() {
         // SAFETY: mallopt only adjusts allocator parameters.
