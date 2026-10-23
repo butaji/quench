@@ -2036,10 +2036,18 @@ impl Function {
     /// nothing else.
     /// `name` spells an atom of the function's table (the program's, or the compiler's while
     /// it lays the function out).
-    pub(crate) fn parameters_bind_directly<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
+    fn parameters_bind_directly<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
         self.local_atoms[..usize::from(self.params).min(self.local_atoms.len())]
             .iter()
             .all(|atom| usize::try_from(*atom).ok().and_then(&name).is_some_and(|name| !name.starts_with('\0')))
+    }
+
+    /// Whether each parameter lives in its own named slot: a simple list, or a rest list that
+    /// binds directly (`parameters_bind_directly`). Selective capture layouts, environment
+    /// activations and promoted locals all require it, and the compiler and the validator
+    /// read this one rule.
+    pub(crate) fn parameters_own_their_slots<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
+        self.simple_parameters || self.rest && self.parameters_bind_directly(name)
     }
 
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
@@ -2109,8 +2117,7 @@ impl Function {
                 && !self.is_class_constructor
                 // A rest list binding directly fills its slot with the gathered array
                 // (`lane_activate_environment`).
-                && (self.simple_parameters
-                    || self.rest && self.parameters_bind_directly(|atom| (atom < atoms.len()).then(|| &atoms[atom])))
+                && self.parameters_own_their_slots(|atom| atoms.get(atom))
                 && self.self_binding_slot.is_none()
                 && !self.inherited_with_scope
                 && self.local_registers.is_empty()
