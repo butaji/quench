@@ -440,3 +440,30 @@ fn locals_read_before_their_first_write_are_undefined_in_reused_frames() {
         ["1,,undefined", "undefined", "2"]
     );
 }
+
+/// A strict assignment to a name no scope binds statically resolves it before the right
+/// side runs (`needs_strict_global_reference_capture`); that resolution meets only bindings
+/// a `with` or `eval` makes, so it leaves the enclosing function's uncaptured locals in
+/// registers (fflate's module body kept every local in its environment for one such
+/// `onmessage = ...`), while `with` and `eval` bindings stay reachable.
+#[test]
+fn strict_global_assignment_keeps_enclosing_locals_in_registers() {
+    let layout = "(function () { 'use strict'; for (var i = 0; i < 3; ++i) {} function g() { undeclared = 1; } return g; })";
+    let program = Engine::specialize(layout, "strict-global.js").unwrap();
+    let outer = program.disassemble();
+    let outer = outer.split("\nfunction 2 ").next().unwrap().split("\nfunction 1 ").nth(1).unwrap();
+    assert!(!outer.contains("EnvLocal"), "{outer}");
+    assert_eq!(
+        output("(function () { 'use strict'; for (var i = 0; i < 3; ++i) {} function g() { undeclared = 1; } try { g(); } catch (e) { print(e.constructor.name + ':' + i); } })();"),
+        ["ReferenceError:3"]
+    );
+    assert_eq!(
+        output(
+            "function a() { eval('var z = 1'); var local = 7; function g() { 'use strict'; z = local + 2; } g(); return z; } print(a());
+             var o = { w: 1 }; with (o) { (function () { 'use strict'; w = 3; })(); } print(o.w);
+             function b() { var keep = 1; function c() { eval('var m = 4'); function d() { 'use strict'; m = keep + 10; } d(); return m; } return c(); } print(b());
+             print(typeof z + typeof w + typeof m);"
+        ),
+        ["9", "3", "11", "undefinedundefinedundefined"]
+    );
+}

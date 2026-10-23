@@ -1039,12 +1039,7 @@ fn has_dynamic_scope_access(function: &super::Function) -> bool {
             .iter()
             .filter_map(|packed| instruction_at(function, *packed))
             .chain(function.wide.iter().copied())
-            .any(|instruction| {
-                instruction.op() == super::Op::ResolveName
-                    || (instruction.op().is_call_with_eval_flags()
-                    && (super::ImmediateLayout::direct_eval(instruction.imm())
-                        || super::ImmediateLayout::parameter_eval(instruction.imm())))
-            })
+            .any(super::WideInstruction::resolves_dynamic_scope)
 }
 
 fn selective_capture_layout_is_eligible(
