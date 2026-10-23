@@ -102,3 +102,24 @@ behind in both modes. The binary SHA-256 is
 `e7189a58461f17530ed203bee92bd3be66968d4b39a82a0c18273dba454113f6`.
 
 Raw reports: `latest-v2-zod-no-jit-11.json` and `latest-v2-zod-jit-11.json`.
+
+## Rejected user-call metadata hoist
+
+The user-call path reads the same function metadata once to count numeric call
+targets and again to reject calls to class constructors. I tested retaining the
+first lookup for both checks. The optimized production symbol had 1,028 static
+instructions versus 1,042 for the saved control, but Linux `perf` is not
+installed here, so static instruction count is not a cycles measurement.
+
+The first pair of 11-round, 5,000-iteration screens was noisy: paired median
+throughput moved +7.2% no-JIT and -1.2% JIT. A second pair put the medians at
++3.4% and -3.6%. A higher-work confirmation (15,000 iterations per round, 11
+rounds) reversed the apparent no-JIT gain and showed regressions in both modes:
+paired median throughput -4.7% no-JIT and -5.6% JIT, with fewer than half of
+paired rounds faster. RSS fell by about 4.5% and 5.7%, but that did not make up
+for the speed loss. The source change was removed; these reports remain as a
+rejected experiment. Fewer static instructions did not predict faster execution.
+
+Raw reports: `zod-callmeta-nojit-11.json`, `zod-callmeta-jit-11.json`,
+`zod-callmeta-nojit-confirm-11.json`, `zod-callmeta-jit-confirm-11.json`,
+`zod-callmeta-long-nojit-11.json`, and `zod-callmeta-long-jit-11.json`.
