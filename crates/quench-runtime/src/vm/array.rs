@@ -566,6 +566,10 @@ impl<H: Host> Vm<H> {
                 if next.saturating_add(length) as f64 > MAX_SAFE_INTEGER {
                     return Err(vm.type_error(p, "array concat length exceeds safe integer".into()));
                 }
+                if vm.concat_dense(target, next, item, length) {
+                    next += length;
+                    continue;
+                }
                 for index in 0..length {
                     let source_key = Value::number(index as f64);
                     if vm.has_property(p, item, source_key)? {
@@ -578,6 +582,36 @@ impl<H: Host> Vm<H> {
             vm.set_array_like_length(p, target, next)?;
             Ok(target)
         })
+    }
+
+    /// `concat`'s copy of the `length` elements of a spreadable `item` onto `target` from
+    /// `start`, as one append: `item` is a dense array without holes, so every index is an
+    /// own data element and HasProperty and Get observe nothing, and `target` a dense array
+    /// exactly `start` long, whose CreateDataProperty of each next index is that append.
+    /// `false` leaves the copy to the generic steps.
+    fn concat_dense(&mut self, target: Value, start: usize, item: Value, length: usize) -> bool {
+        if self.dense_array_length(item) != Some(length)
+            || self.dense_array_length(target) != Some(start)
+            || start.saturating_add(length) > MAX_ARRAY_LENGTH
+        {
+            return false;
+        }
+        let Some(source) = self.heap.array(item) else {
+            unreachable!("matched an array above");
+        };
+        let values = source.elements()[..length].to_vec();
+        if values.iter().any(|value| value.is_deleted()) {
+            return false;
+        }
+        let Some(object) = self.heap.array_mut(target) else {
+            unreachable!("matched an array above");
+        };
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        let capacity = elements.capacity();
+        elements.extend_from_slice(&values);
+        let grown = elements.capacity() - capacity;
+        self.heap.charge_payload_growth(grown * size_of::<Value>());
+        true
     }
 
     pub(super) fn array_push_native(
