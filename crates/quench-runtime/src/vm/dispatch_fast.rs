@@ -7441,8 +7441,10 @@ script_handler! {
 
 script_handler! {
     /// A `LoadName` of a global object property (`lane_load_name_first`) that no global
-    /// lexical binding shadows: the global object's cached field (`Vm::cached_field_hit`).
-    /// Any other read, including a cache miss, takes the general path, which caches it.
+    /// lexical binding shadows: the global object's cached field (`Vm::cached_field_hit`),
+    /// or the getter of the accessor its site cached (`Vm::cached_field_getter`), as Node
+    /// defines `Buffer`, activated with the global object as receiver as a field read's is
+    /// (`lane_activate_getter`). Any other read takes the general path, which caches it.
     fn lane_load_global_name<CALL: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
@@ -7451,10 +7453,22 @@ script_handler! {
         if vm.realm.global_lexical_declarations.contains(&atom) {
             return exit(ip);
         }
-        let super::object::FieldCacheProbe::Hit(value) =
-            vm.cached_field_hit(code, vm.realm.globals, i.c)
-        else {
-            return exit(ip);
+        let globals = vm.realm.globals;
+        let super::object::FieldCacheProbe::Hit(value) = vm.cached_field_hit(code, globals, i.c) else {
+            let Some(getter) = vm.cached_field_getter(globals, atom, vm.field_cache_index(i.c)) else {
+                return exit(ip);
+            };
+            if !unsafe { (*cx).script_calls } {
+                return exit(ip);
+            }
+            // A binding of the global object's environment calls with an `undefined` receiver.
+            if CALL {
+                r.set(i.b, Value::UNDEFINED);
+            }
+            return match lane_activate_getter(cx, r, ip, getter, globals) {
+                Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+                Err(next) => next,
+            };
         };
         r.set(i.a, value);
         if CALL {
