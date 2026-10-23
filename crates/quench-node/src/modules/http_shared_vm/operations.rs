@@ -389,23 +389,9 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let prototype = context.get_property_rooted(weak_map, key)?;
     let key = context.string_rooted("set");
     let map_set = context.get_property_rooted(prototype, key)?;
-    // A finished response's host entry lives as long as its JavaScript object: a keep-alive
-    // connection serves many responses and must not keep every one of them.
-    let release =
-        context.host_function(crate::host::shared_vm::operation("httpResponseRelease"))?;
-    let key = context.string_rooted("FinalizationRegistry");
-    let registry_constructor = context.get_property_rooted(global, key)?;
-    let registry =
-        context.construct_rooted(registry_constructor, registry_constructor, &[release])?;
-    let key = context.string_rooted("prototype");
-    let registry_prototype = context.get_property_rooted(registry_constructor, key)?;
-    let key = context.string_rooted("register");
-    let register = context.get_property_rooted(registry_prototype, key)?;
     let tracking = super::state::ResponseTracking {
         responses: context.retain(responses)?,
         map_set: context.retain(map_set)?,
-        registry: context.retain(registry)?,
-        register: context.retain(register)?,
     };
     context
         .host_mut()
@@ -1255,11 +1241,6 @@ pub(crate) fn response_initialize(
         tracking.responses,
         &[response, exchange_id],
     )?;
-    context.call_rooted(
-        tracking.register,
-        tracking.registry,
-        &[response, exchange_id],
-    )?;
     Ok(exchange_id)
 }
 
@@ -1809,42 +1790,6 @@ const RESPONSE_FINISH_CHANNEL: &str = "http.server.response.finish";
 
 /// The finalization callback of a collected response object: a finished response's host
 /// entry goes with it. An unfinished one stays until its socket closes.
-pub(crate) fn response_release(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let id = argument_id(context, args.first().copied())?;
-    let state = context.host_mut().shared_state();
-    let released = {
-        let mut host = state.borrow_mut();
-        let terminal = host
-            .http
-            .responses
-            .get(&id)
-            .is_some_and(|response| response.lifecycle.is_terminal());
-        if terminal {
-            host.http.responses.remove(&id)
-        } else {
-            None
-        }
-    };
-    // The record goes as every retired response does (`poll::retire_response`): its owner's
-    // weak reference and its request context with it, or each served response would leave
-    // both behind.
-    if let Some(response) = released {
-        if let Some(owner) = response.owner {
-            context.release_host_weak_root(owner);
-        }
-        let stores =
-            crate::modules::async_hooks_shared_vm::retire_context(&state, response.async_id);
-        for root in stores {
-            context.release_root(root);
-        }
-    }
-    Ok(context.undefined())
-}
-
 pub(crate) fn response_destroy(
     context: &mut Context<'_>,
     _: RootId,

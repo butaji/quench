@@ -307,7 +307,7 @@ measured on the same binary and lost.
 
 | Term of §1 | Mechanism | Evidence |
 |---|---|---|
-| headroom | `MemoryPolicy` selects one of two pacing tables; MemoryFirst's young minimum is 2^13 (768 cost ×0.80 Score for 0.63 → 0.64 max RSS) | `tod167-young-and-release-sweep-…`, `tod167-young-minimum-board-…` |
+| headroom | `MemoryPolicy` selects one of two pacing tables; MemoryFirst's young minimum is 2^12: against 2^13, max RSS −76 to −416 KiB on 14 of 16 V8-v7 rows for Score ×0.86–0.91 on four fixtures (768 cost ×0.80 Score) | `tod137-young-minimum-4096-…`, `tod167-young-and-release-sweep-…` |
 | code (steady state) | MemoryFirst releases read-only pages and runs `malloc_trim` at every collection boundary | `tod137-collection-code-release-…` |
 | transients (compile) | Read-only pages released before every native compile (Wasm, JS function, OSR region); read-only and free malloc pages after every JS compile: `--jit` max RSS −1 to −3.5 MB on five fixtures | `tod137-jit-compile-release-…` (TOD-185) |
 | retention (strings) | Regexp replace reads a rope through one unkept flattening: RegExp −0.5 to −0.6 MB | `tod137-replace-unkept-…` (TOD-184) |
@@ -339,6 +339,7 @@ measured on the same binary and lost.
 | Dense array growth 1.5× | Crypto −88/−100 KiB; DeltaBlue `--jit` +184, RayTrace `--jit` +128, RegExp +108 | `tod137-array-growth-rejected-…` |
 | Charge property-arena growth toward the next collection | Max RSS 0.619 → 0.617 of Throughput (RegExp −0.2 MB), Score −1.6% | branch `meas-gc-charge-arena`, TOD-137 comment |
 | Release the worker stack below the current frame at MemoryFirst collections | −148 to +216 KiB per row (5 runs, unbolted same-layout static builds): no consistent change; the stack is about 110 KiB resident and regrows to the same depth | branch `cand-gc-stack-release`, TOD-137 comment |
+| `MADV_RANDOM` on the clean segments under MemoryFirst (no readahead into the page cache) | +56 to +228 KiB on 14 of 16 rows against current v2-gc (5 runs, unbolted static, same tree) | branch `cand-gc-random-text`, TOD-137 comment |
 
 ### 8.3 Where the peak is now (MemoryFirst, no JIT)
 
