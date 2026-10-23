@@ -2319,9 +2319,8 @@ impl Heap {
                     if Self::marked(&self.marks, index_usize) {
                         promoted += 1;
                     } else if let Some(cell) = slot.cell.take() {
+                        // Its mark bit is already clear: the test above found it so.
                         reclaim(properties, index_usize, cell);
-                        self.marks[index_usize / 64]
-                            .fetch_and(!(1 << (index_usize % 64)), Ordering::Relaxed);
                     }
                 }
                 self.young.clear();

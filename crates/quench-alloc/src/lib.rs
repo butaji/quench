@@ -255,21 +255,27 @@ fn thread_heap_slow() -> *mut Heap {
 static REGION_BASE: AtomicUsize = AtomicUsize::new(0);
 /// The reservation's length, stored before its base is published; zero before it is made.
 static REGION_LEN: AtomicUsize = AtomicUsize::new(0);
-/// Whether the reservation has been attempted, so a failure is not retried on every page.
-static REGION_TRIED: AtomicBool = AtomicBool::new(false);
+/// The one attempt at the reservation, so a failure is not retried on every page. Threads
+/// that ask while it runs wait for it: one that read "attempted" before the base was stored
+/// had taken no chunk and served its request from the system allocator (seen as a parallel
+/// test's heap reserving a page its own frees should have covered).
+static REGION_RESERVED: std::sync::Once = std::sync::Once::new();
 /// The offset in the reservation of the next chunk any heap takes.
 static REGION_NEXT: AtomicUsize = AtomicUsize::new(0);
 /// Whether small requests are served here (`QuenchAlloc::enable`); before, every request
 /// goes to the system allocator.
 static ENABLED: AtomicBool = AtomicBool::new(false);
 
-/// The reservation's base, reserving it on first use.
+/// The reservation's base, reserving it on first use; zero if it failed.
 #[cold]
 fn region_base() -> usize {
-    let base = REGION_BASE.load(Ordering::Acquire);
-    if base != 0 || REGION_TRIED.swap(true, Ordering::AcqRel) {
-        return REGION_BASE.load(Ordering::Acquire);
-    }
+    // `Once` waits on a futex and never allocates, so the allocator may use it.
+    REGION_RESERVED.call_once(reserve_region);
+    REGION_BASE.load(Ordering::Acquire)
+}
+
+/// Reserves the region, halving the request down to one chunk until the kernel grants it.
+fn reserve_region() {
     let mut length = REGION_BYTES;
     loop {
         // SAFETY: a fresh inaccessible anonymous reservation; nothing else uses its addresses.
@@ -286,10 +292,10 @@ fn region_base() -> usize {
         if reserved != libc::MAP_FAILED {
             REGION_LEN.store(length, Ordering::Relaxed);
             REGION_BASE.store(reserved as usize, Ordering::Release);
-            return reserved as usize;
+            return;
         }
         if length == CHUNK_BYTES {
-            return 0;
+            return;
         }
         length /= 2;
     }
@@ -785,6 +791,9 @@ mod tests {
         let blocks: Vec<usize> = (0..2000)
             .map(|_| unsafe { allocator.alloc(layout) } as usize)
             .collect();
+        // Served by this thread's heap, not the system allocator: otherwise their frees could
+        // not come back to it.
+        assert!(blocks.iter().all(|block| owns(*block as *const u8)));
         let reserved = unsafe { (*thread_heap()).chunk_next };
         std::thread::scope(|scope| {
             for part in blocks.chunks(500) {
