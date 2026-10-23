@@ -392,3 +392,20 @@ Candidate binary SHA-256: `9eef4ec9e77aa004cb3571f058fc779afc28207d291746acde5d3
 control binary SHA-256: `fdaa50d80f42bda6424eb4ca42dedb29db9f1daed084a06e0c7472b4c9ee6a86`.
 Reports: `zod-capture-field-fusion-no-jit-11.json` and
 `zod-capture-field-fusion-jit-11.json`.
+
+## Direct initialized captured-environment read (rejected)
+
+The Zod profile counted 1.47 million `LoadEnvLocal` operations. I tried a
+guarded interpreter fast path that reads an initialized captured slot directly
+from its environment, preserving the general path for root frames, uncaptured
+slots, TDZ values, and mapped arguments. The full runtime suite passed (900
+tests).
+
+Paired production screens of 11 interleaved rounds measured the candidate
+0.5% slower than control no-JIT and 1.6% slower JIT. RSS ratios were 1.003
+no-JIT and 0.997 JIT, effectively unchanged. The implementation was reverted.
+
+Candidate binary SHA-256: `b44229e8c27b4a3c84a633f47791f4aa64b8fbdf50762d4c45fc5050c8c5278c`;
+control binary SHA-256: `fdaa50d80f42bda6424eb4ca42dedb29db9f1daed084a06e0c7472b4c9ee6a86`.
+Reports: `zod-envlocal-direct-no-jit-11.json` and
+`zod-envlocal-direct-jit-11.json`.
