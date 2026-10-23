@@ -1,0 +1,4 @@
+n=25000 after: {"closures":25000,"medianGcMs":"6.40","heapUsedMiB":"3.4","check":312487500} before: {"closures":25000,"medianGcMs":"5.90","heapUsedMiB":"5.1","check":312487500}
+n=50000 after: {"closures":50000,"medianGcMs":"15.40","heapUsedMiB":"6.3","check":1249975000} before: {"closures":50000,"medianGcMs":"11.38","heapUsedMiB":"9.8","check":1249975000}
+n=100000 after: {"closures":100000,"medianGcMs":"29.73","heapUsedMiB":"12.2","check":4999950000} before: {"closures":100000,"medianGcMs":"22.76","heapUsedMiB":"19.1","check":4999950000}
+n=200000 after: {"closures":200000,"medianGcMs":"57.92","heapUsedMiB":"23.9","check":19999900000} before: {"closures":200000,"medianGcMs":"46.86","heapUsedMiB":"37.6","check":19999900000}

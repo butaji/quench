@@ -1,0 +1,21 @@
+# run 1
+{"label":"baseline","rssKiB":12292,"hwmKiB":12372,"heapUsed":538337}
+{"label":"new Array(N) held","rssKiB":7908,"hwmKiB":12212,"heapUsed":414824}
+{"label":"closure held","rssKiB":16092,"hwmKiB":22892,"heapUsed":8414976}
+{"holeyHeapBytesPerElement":"-0.12","filledHeapBytesPerElement":"8.00","filledRssBytesPerElement":"8.38","heavyTaskMs":"5.4"}
+{"label":"closure dropped","rssKiB":8604,"hwmKiB":22892,"heapUsed":415889}
+{"residualHeapBytes":1065,"residualRssKiB":696}
+# run 2
+{"label":"baseline","rssKiB":10364,"hwmKiB":10444,"heapUsed":538337}
+{"label":"new Array(N) held","rssKiB":7112,"hwmKiB":10296,"heapUsed":414824}
+{"label":"closure held","rssKiB":15412,"hwmKiB":22300,"heapUsed":8414976}
+{"holeyHeapBytesPerElement":"-0.12","filledHeapBytesPerElement":"8.00","filledRssBytesPerElement":"8.50","heavyTaskMs":"6.7"}
+{"label":"closure dropped","rssKiB":7932,"hwmKiB":22300,"heapUsed":415889}
+{"residualHeapBytes":1065,"residualRssKiB":820}
+# run 3
+{"label":"baseline","rssKiB":10364,"hwmKiB":10444,"heapUsed":538337}
+{"label":"new Array(N) held","rssKiB":7108,"hwmKiB":10296,"heapUsed":414824}
+{"label":"closure held","rssKiB":15412,"hwmKiB":22300,"heapUsed":8414976}
+{"holeyHeapBytesPerElement":"-0.12","filledHeapBytesPerElement":"8.00","filledRssBytesPerElement":"8.50","heavyTaskMs":"5.2"}
+{"label":"closure dropped","rssKiB":7932,"hwmKiB":22300,"heapUsed":415889}
+{"residualHeapBytes":1065,"residualRssKiB":824}
