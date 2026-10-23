@@ -80,7 +80,7 @@ pub(super) trait NumberArithmeticStage<T> {
 }
 
 macro_rules! number_arithmetic {
-    ($($operation:ident => $operator:ident, $stage_method:ident;)+) => {
+    ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub(super) enum NumberArithmetic { $($operation),+ }
 
@@ -105,15 +105,49 @@ macro_rules! number_arithmetic {
                     $(Self::$operation => stage.$stage_method(left, right)),+
                 }
             }
+
+            /// The Number arithmetic operation denoted by a JavaScript bytecode
+            /// and its operator. General `Binary` accepts every arithmetic row;
+            /// specialized bytecodes are accepted only for their corresponding
+            /// operator, as recorded in this table.
+            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
+                if instruction == Op::Binary {
+                    return Self::from_operator(operator);
+                }
+                $(number_arithmetic!(
+                    @specialized_instruction
+                    instruction,
+                    operator,
+                    Self::$operation,
+                    $operator,
+                    $specialized_instruction
+                );)+
+                None
+            }
+        }
+    };
+    (
+        @specialized_instruction
+        $instruction:ident,
+        $operator:ident,
+        $operation:expr,
+        $operator_name:ident,
+        None
+    ) => {};
+    (@specialized_instruction $instruction:ident, $operator:ident, $operation:expr, $operator_name:ident, $specialized_instruction:ident) => {
+        if $instruction == Op::$specialized_instruction
+            && $operator == BinaryOperator::$operator_name as u32
+        {
+            return Some($operation);
         }
     };
 }
 
 number_arithmetic! {
-    Add => Addition, add;
-    Subtract => Subtraction, subtract;
-    Multiply => Multiplication, multiply;
-    Divide => Division, divide;
+    Add => Addition, add, NumericAdd;
+    Subtract => Subtraction, subtract, None;
+    Multiply => Multiplication, multiply, NumericMultiply;
+    Divide => Division, divide, None;
 }
 
 /// The int32 operations used by JavaScript bitwise expressions. Keeping their
@@ -309,29 +343,19 @@ const NUMERIC_BINARY_OPERATORS: [BinaryOperator; NUMERIC_BINARY_OPERATOR_COUNT] 
 ];
 
 /// Binary operator `op` of two integers where the integers alone decide its result: a
-/// comparison's boolean, or the integer operators' result (`numeric_integer_result`); `None`
-/// for any other operator and for a result the integer case leaves to Numbers. One match, so
-/// the common operators take one branch.
+/// comparison's boolean through the shared relation definition, or the integer operators'
+/// result (`numeric_integer_result`); `None` for any other operator and for a result the
+/// integer case leaves to Numbers.
 #[inline(always)]
 pub(super) fn integer_binary(op: u32, left: i32, right: i32) -> Option<Value> {
-    const EQUALITY: u32 = BinaryOperator::Equality as u32;
-    const STRICT_EQUALITY: u32 = BinaryOperator::StrictEquality as u32;
-    const INEQUALITY: u32 = BinaryOperator::Inequality as u32;
-    const STRICT_INEQUALITY: u32 = BinaryOperator::StrictInequality as u32;
-    const LESS_THAN: u32 = BinaryOperator::LessThan as u32;
-    const LESS_EQUAL: u32 = BinaryOperator::LessEqualThan as u32;
-    const GREATER_THAN: u32 = BinaryOperator::GreaterThan as u32;
-    const GREATER_EQUAL: u32 = BinaryOperator::GreaterEqualThan as u32;
-    let boolean = |holds: bool| if holds { Value::TRUE } else { Value::FALSE };
-    Some(match op {
-        EQUALITY | STRICT_EQUALITY => boolean(left == right),
-        INEQUALITY | STRICT_INEQUALITY => boolean(left != right),
-        LESS_THAN => boolean(left < right),
-        LESS_EQUAL => boolean(left <= right),
-        GREATER_THAN => boolean(left > right),
-        GREATER_EQUAL => boolean(left >= right),
-        _ => return numeric_integer_result(numeric_binary_operator(op)?, left, right),
-    })
+    if let Some(relation) = NumberRelation::from_operator(op) {
+        return Some(if relation.apply(&mut PartialOrderStage, left, right) {
+            Value::TRUE
+        } else {
+            Value::FALSE
+        });
+    }
+    numeric_integer_result(numeric_binary_operator(op)?, left, right)
 }
 
 /// `number_relation` of two integers alone: `None` for any other pair. Few values stay live,
@@ -386,6 +410,45 @@ fn numeric_number_result(operator: BinaryOperator, left: f64, right: f64) -> f64
         BinaryOperator::Remainder => left % right,
         BinaryOperator::Exponential => exponentiate(left, right),
         _ => unreachable!("numeric operator table only contains numeric operators"),
+    }
+}
+
+#[cfg(test)]
+mod numeric_instruction_tests {
+    use super::{NumberArithmetic, Op};
+    use oxc_ast::ast::BinaryOperator;
+
+    #[test]
+    fn arithmetic_bytecode_denotations_come_from_the_operation_table() {
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(Op::Binary, BinaryOperator::Addition as u32),
+            Some(NumberArithmetic::Add)
+        );
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(Op::NumericAdd, BinaryOperator::Addition as u32),
+            Some(NumberArithmetic::Add)
+        );
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(
+                Op::NumericMultiply,
+                BinaryOperator::Multiplication as u32
+            ),
+            Some(NumberArithmetic::Multiply)
+        );
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(
+                Op::NumericAdd,
+                BinaryOperator::Multiplication as u32
+            ),
+            None
+        );
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(
+                Op::NumericMultiply,
+                BinaryOperator::Addition as u32
+            ),
+            None
+        );
     }
 }
 
