@@ -1506,6 +1506,15 @@ impl<'a, H: Host> NativeContext<'a, H> {
         root
     }
 
+    /// Create a JavaScript string from text decoded out of data (a file's or a buffer's
+    /// bytes), which is not looked up among the atoms as `string_rooted`'s property keys are:
+    /// hashing a long decoded text to find no atom cost as much as copying it.
+    pub fn decoded_string_rooted(&mut self, text: &str) -> RootId {
+        let root = self.vm.decoded_string_rooted(text);
+        self.roots.push(root);
+        root
+    }
+
     /// Create a JavaScript string from UTF-16 code units without Unicode-scalar loss.
     pub fn string_units_rooted(&mut self, units: &[u16]) -> RootId {
         let root = self.vm.string_units_rooted(units);
