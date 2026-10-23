@@ -10,7 +10,8 @@ pub(super) enum DiagnosticProperty {
 
 impl<H: Host> Vm<H> {
     /// `constructor[@@species]`. Every intrinsic `get [Symbol.species]` returns its receiver
-    /// and observes nothing, so an own accessor that still holds one answers without a call.
+    /// and observes nothing, so an own accessor that still holds one answers without a call
+    /// (`has_intrinsic_species_getter`).
     pub(super) fn species_of(
         &mut self,
         p: &ResidualProgram,
@@ -19,8 +20,20 @@ impl<H: Host> Vm<H> {
         let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
             return Ok(Value::UNDEFINED);
         };
-        let intrinsic_getter = self
-            .property_attributes(constructor, PropertyKey::symbol(species))
+        if self.has_intrinsic_species_getter(constructor) {
+            Ok(constructor)
+        } else {
+            self.get_index(p, constructor, species)
+        }
+    }
+
+    /// Whether `constructor`'s own `@@species` is an accessor whose getter is an intrinsic
+    /// `get [Symbol.species]`, which returns its receiver and observes nothing.
+    pub(super) fn has_intrinsic_species_getter(&self, constructor: Value) -> bool {
+        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
+            return false;
+        };
+        self.property_attributes(constructor, PropertyKey::symbol(species))
             .and_then(|attributes| attributes.getter.filter(|_| attributes.accessor))
             .is_some_and(|getter| {
                 matches!(
@@ -30,12 +43,7 @@ impl<H: Host> Vm<H> {
                         ..
                     }) if native.is_intrinsic_species_getter()
                 )
-            });
-        if intrinsic_getter {
-            Ok(constructor)
-        } else {
-            self.get_index(p, constructor, species)
-        }
+            })
     }
 
     pub(super) fn diagnostic_own_property(&self, object: Value, key: PropertyKey) -> DiagnosticProperty {
@@ -436,6 +444,17 @@ impl<H: Host> Vm<H> {
         self.plain_property_get(object, PropertyKey::string(atom))
     }
 
+    /// A global object binding's lookup where it runs no guest code: a present data
+    /// property of the global object or its ordinary prototypes, or `Some(None)` for an
+    /// absent name (`plain_property_lookup`). `None` for any lookup the shapes alone do not
+    /// answer.
+    pub(super) fn plain_global_lookup(&self, atom: Atom) -> Option<Option<Value>> {
+        if !self.plain_named_key(atom) {
+            return None;
+        }
+        self.plain_property_lookup(self.realm.globals, PropertyKey::string(atom))
+    }
+
     /// Whether `atom` names a property that ordinary shapes alone decide: no private, index,
     /// `length` or legacy function key.
     #[inline]
@@ -563,7 +582,11 @@ impl<H: Host> Vm<H> {
         match self.heap.get(key)? {
             // A host-private symbol names only an own property, which the general path reads.
             Cell::Symbol(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate => {
-                self.plain_proved_get(object, PropertyKey::symbol(key))
+                match self.heap.array(object) {
+                    // No proof records an array's shape; the walk reads it as ordinary.
+                    Some(_) => self.plain_property_get(object, PropertyKey::symbol(key)),
+                    None => self.plain_proved_get(object, PropertyKey::symbol(key)),
+                }
             }
             _ => None,
         }
@@ -758,9 +781,15 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: PropertyKey,
     ) -> Option<Option<Value>> {
+        // An array is ordinary for a symbol key: only index keys and `length` are exotic.
+        let symbol = key.symbol_value().is_some();
         let mut current = object;
         loop {
-            let data = self.heap.ordinary_object(current)?;
+            let data = match self.heap.ordinary_object(current) {
+                Some(data) => data,
+                None if symbol && self.heap.array(current).is_some() => self.heap.object(current)?,
+                None => return None,
+            };
             if data.is_module_namespace() || data.deferred_module().is_some() {
                 return None;
             }
@@ -1064,6 +1093,74 @@ impl<H: Host> Vm<H> {
         Some(PrivateBrand { home: *self.private_homes.get(&key)?, name: atom })
     }
 
+    /// The private brand of `atom` at lane site `site` of `function`, whose frame captures
+    /// from `environment`: the home the site found last for that environment
+    /// (`PrivateSiteHomes`), else the running frame's home (`private_name_home`) when `frame`
+    /// is set, or the memoized one (`memoized_private_brand`) for a frameless activation.
+    /// `None` leaves the access to the general path.
+    pub(super) fn site_private_brand(
+        &mut self,
+        p: &ResidualProgram,
+        site: usize,
+        environment: Value,
+        function: u32,
+        frame: bool,
+        atom: Atom,
+    ) -> Option<PrivateBrand> {
+        let epoch = self.heap.collection_epoch();
+        if let Some(home) = self.private_site_homes.home(site, environment, epoch) {
+            return Some(PrivateBrand { home, name: atom });
+        }
+        let brand = if frame {
+            PrivateBrand { home: self.private_name_home(p, atom)?, name: atom }
+        } else {
+            self.memoized_private_brand(p, environment, function, atom)?
+        };
+        if p.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty()) {
+            self.private_site_homes.record(site, environment, epoch, brand.home);
+        }
+        Some(brand)
+    }
+
+    /// The private method or accessor that `object`, which carries `brand`, reads at lane site
+    /// `site`, whose function captures from `environment`: the element the site recorded under
+    /// the brand's home (`PrivateSiteHomes::element`), else the one `[[Get]]`'s walk of the
+    /// object's chain meets, recorded for the next read. `None` leaves the read to the general
+    /// path: a missing getter, a proxy on the chain, or a site without a recorded home.
+    pub(super) fn site_private_element(
+        &self,
+        site: usize,
+        environment: Value,
+        brand: PrivateBrand,
+        object: Value,
+    ) -> Option<super::private_site_home::PrivateElement> {
+        use super::private_site_home::PrivateElement;
+        let epoch = self.heap.collection_epoch();
+        if let Some(element) = self.private_site_homes.element(site, environment, epoch, brand.home) {
+            return Some(element);
+        }
+        let key = PropertyKey::string(brand.name);
+        let mut link = object;
+        let element = loop {
+            if matches!(self.heap.get(link), Some(Cell::Proxy { .. })) {
+                return None;
+            }
+            if let Some(attributes) = self.property_attributes(link, key) {
+                break if attributes.accessor {
+                    PrivateElement::Getter(attributes.getter?)
+                } else {
+                    PrivateElement::Method(self.own_property(link, brand.name)?)
+                };
+            }
+            link = self.object_data(link)?.proto();
+            if link.is_null() {
+                return None;
+            }
+        };
+        self.private_site_homes.record_element(site, environment, epoch, brand.home, element);
+        Some(element)
+    }
+
     /// `private_field_value` through `memoized_private_brand`.
     pub(super) fn memoized_private_field_value(
         &self,
@@ -1075,22 +1172,6 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         let brand = self.memoized_private_brand(p, environment, function, atom)?;
         self.object_data(target)?.private_field(brand)
-    }
-
-    /// `set_private_field_value` through `memoized_private_brand`.
-    pub(super) fn memoized_set_private_field_value(
-        &mut self,
-        p: &ResidualProgram,
-        environment: Value,
-        function: u32,
-        target: Value,
-        atom: Atom,
-        value: Value,
-    ) -> bool {
-        let Some(brand) = self.memoized_private_brand(p, environment, function, atom) else {
-            return false;
-        };
-        self.object_data_mut(target).is_some_and(|object| object.set_private_field(brand, value))
     }
 
     /// The store of private field `atom` of `target` under the running frame's home for the

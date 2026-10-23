@@ -4,9 +4,10 @@
 # usage: tools/pgo-build.sh [PROFILE]   (default: production)
 #
 # 1. Builds an instrumented quench-node into target/pgo-instrumented.
-# 2. Runs the training corpus: the interpreter curriculum micro programs and the Node
-#    compatibility fixtures. The scored engine suites under quench-bench/js-engine-benchmark
-#    are never run, so the profile describes general workloads, not benchmark identity.
+# 2. Runs the training corpus: the interpreter curriculum micro programs, the numbered
+#    diagnostic micros and the Node compatibility fixtures. The scored engine suites under
+#    quench-bench/js-engine-benchmark are never run, so the profile describes general
+#    workloads, not benchmark identity.
 # 3. Builds PROFILE with the merged profile; the binary lands at target/PROFILE/quench-node,
 #    where the benchmark tooling reads it.
 #
@@ -36,6 +37,11 @@ curriculum_budget_ms=6000
 # QUENCH_PGO_REACT_ROUNDS=N. Keep this off by default so production builds stay independent
 # of npm fixture installation; the npm performance workflow can opt in when measuring React.
 react_training_rounds="${QUENCH_PGO_REACT_ROUNDS:-0}"
+# The curriculum stages interpreter mechanisms and runs no regular expression, string
+# search or typed-memory work; the numbered diagnostic micros (quench-bench/micros, one
+# operation family each, the same `microRun` protocol) cover those families, so a library
+# path such as the RegExp matcher is not laid out as cold code. Each runs this long.
+micros_budget_ms=1500
 
 host="$(rustc -vV | sed -n 's/^host: //p')"
 llvm_profdata="$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-profdata"
@@ -84,15 +90,20 @@ export LLVM_PROFILE_FILE="$data_dir/quench-%4m.profraw"
 drivers_dir="$target_dir/pgo-curriculum"
 rm -rf "$drivers_dir"
 mkdir -p "$drivers_dir"
-for program in quench-bench/deegen-curriculum/*.js; do
-    driver="$drivers_dir/$(basename "$program")"
-    {
-        cat "$program"
-        printf '\nconst trainingEnd = Date.now() + %d;\nwhile (Date.now() < trainingEnd) microRun();\n' \
-            "$curriculum_budget_ms"
-    } >"$driver"
-    run_limited "$instrumented" "$driver" >/dev/null 2>&1 || true
-done
+train_micro_programs() {
+    local corpus="$1" budget_ms="$2" program driver
+    for program in "$corpus"/[0-9]*.js; do
+        driver="$drivers_dir/$(basename "$corpus")-$(basename "$program")"
+        {
+            cat "$program"
+            printf '\nconst trainingEnd = Date.now() + %d;\nwhile (Date.now() < trainingEnd) microRun();\n' \
+                "$budget_ms"
+        } >"$driver"
+        run_limited "$instrumented" "$driver" >/dev/null 2>&1 || true
+    done
+}
+train_micro_programs quench-bench/deegen-curriculum "$curriculum_budget_ms"
+train_micro_programs quench-bench/micros "$micros_budget_ms"
 for _ in $(seq "$curriculum_repeats"); do
     run_limited "$instrumented" quench-bench/property-get.js >/dev/null 2>&1 || true
 done

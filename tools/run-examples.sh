@@ -2,10 +2,10 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-binary="$root/target/debug/quench-node"
+binary="$root/target/iteration/quench-node"
 
 if [[ ! -x "$binary" ]]; then
-  cargo build --quiet --manifest-path "$root/Cargo.toml" -p quench-node
+  cargo build --quiet --profile iteration --manifest-path "$root/Cargo.toml" -p quench-node
 fi
 
 run_example() {

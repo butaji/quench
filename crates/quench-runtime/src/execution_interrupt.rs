@@ -1,8 +1,12 @@
 //! Owned execution cancellation. Neither the handle nor native wakeups carry a Vm.
 use std::sync::{
     Arc, Mutex, Weak,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
+
+/// The lane floor (`ExecutionInterrupt::lane_floor`) that sends a run's next safepoint jump
+/// through its slow path: no stack address lies at or above it.
+pub(crate) const LANE_FLOOR_RAISED: usize = usize::MAX;
 type NativeWaker = dyn Fn() + Send + Sync;
 #[derive(Default)]
 struct State {
@@ -10,6 +14,10 @@ struct State {
     wakers: Mutex<Vec<Weak<NativeWaker>>>,
     /// The page compiled code reads at its interrupt checks, once code asks for it.
     poll: std::sync::OnceLock<Option<PollPage>>,
+    /// The stack floor of the owner's running lane (`dispatch_fast`): a taken safepoint jump
+    /// with the stack pointer below it leaves through the slow path. A request raises it, so
+    /// the lane's safepoints test only the floor.
+    lane_floor: AtomicUsize,
 }
 
 /// A readable page that a termination request makes unreadable: compiled code reads it at
@@ -87,6 +95,9 @@ impl ExecutionInterrupt {
         }
         // Either this request sees the poll page or the page's creation sees the request.
         std::sync::atomic::fence(Ordering::SeqCst);
+        // Either the running lane sees the raised floor or its entry sees the request
+        // (`dispatch_fast`'s `run_fast_lane`).
+        self.state.lane_floor.store(LANE_FLOOR_RAISED, Ordering::SeqCst);
         if let Some(Some(page)) = self.state.poll.get() {
             page.close();
         }
@@ -106,6 +117,10 @@ impl ExecutionInterrupt {
     }
     pub fn is_termination_requested(&self) -> bool {
         self.state.requested.load(Ordering::Acquire)
+    }
+    /// The owner's lane floor, which lives as long as this handle's state.
+    pub(crate) fn lane_floor(&self) -> &AtomicUsize {
+        &self.state.lane_floor
     }
     /// Register a native, idempotent cancellation wakeup for a blocked operation.
     /// The caller holds the strong callback only while its native wait is active.

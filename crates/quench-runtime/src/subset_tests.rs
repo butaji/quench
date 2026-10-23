@@ -1,23 +1,14 @@
-use quench_runtime::{Engine, Host, Runtime};
-use std::{cell::RefCell, rc::Rc};
+//! Language-subset regressions, once an integration test binary that compiled its own VM.
 
-#[derive(Clone, Default)]
-struct Capture(Rc<RefCell<Vec<String>>>);
-impl Host for Capture {
-    fn write_line(&mut self, text: &str) {
-        self.0.borrow_mut().push(text.into());
-    }
-    fn clock_millis(&mut self) -> f64 {
-        0.0
-    }
-}
+use crate::test_host::TestHost;
+use crate::{Engine, Runtime};
 
 fn output(source: &str) -> Vec<String> {
-    let host = Capture::default();
+    let host = TestHost::default();
     let view = host.clone();
     let program = Engine::specialize(source, "test.js").unwrap();
     Runtime::new(host).execute(&program).unwrap();
-    Rc::try_unwrap(view.0).unwrap().into_inner()
+    view.lines().clone()
 }
 
 #[test]
@@ -43,7 +34,7 @@ fn nested_super_initialization_preserves_caller_receivers() {
       })();
     "#;
     for generic in [false, true] {
-        let host = Capture::default();
+        let host = TestHost::default();
         let program = if generic {
             Engine::specialize_unspecialized(source, "nested-super.js")
         } else {
@@ -51,7 +42,7 @@ fn nested_super_initialization_preserves_caller_receivers() {
         }
         .unwrap();
         Runtime::new(host.clone()).execute(&program).unwrap();
-        assert_eq!(*host.0.borrow(), ["42", "true"]);
+        assert_eq!(*host.lines(), ["42", "true"]);
     }
 }
 
@@ -65,13 +56,13 @@ fn residual_binary_round_trip_preserves_execution() {
     ).unwrap();
     assert!(program.disassemble().contains("StoreVarBinding"));
     program.write_binary(&path).unwrap();
-    let decoded = quench_runtime::ResidualProgram::read_binary(&path).unwrap();
+    let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
     std::fs::remove_file(path).unwrap();
-    let host = Capture::default();
+    let host = TestHost::default();
     let view = host.clone();
     Runtime::new(host).execute(&decoded).unwrap();
     assert_eq!(
-        Rc::try_unwrap(view.0).unwrap().into_inner(),
+        view.lines().clone(),
         [
             "12345678901234567890",
             "true",
@@ -205,14 +196,14 @@ fn numeric_dispatch_class_is_data_derived_and_semantics_neutral() {
             std::process::id()
         ));
         program.write_binary(&path).unwrap();
-        let decoded = quench_runtime::ResidualProgram::read_binary(&path).unwrap();
+        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
         std::fs::remove_file(path).unwrap();
         let generic = Engine::specialize_unspecialized(&source, "numeric-tdz.js").unwrap();
         for program in [&program, &decoded, &generic] {
-            let host = Capture::default();
+            let host = TestHost::default();
             let view = host.clone();
             Runtime::new(host).execute(program).unwrap();
-            assert_eq!(view.0.borrow().as_slice(), ["true"]);
+            assert_eq!(view.lines().as_slice(), ["true"]);
         }
     }
 }
@@ -252,12 +243,12 @@ fn native_stack_scopes_are_ordered_truthful_and_unwind_safe() {
         "Error.prepareStackTrace = (error, sites) => JSON.stringify(sites.map(site => [site.getFunctionName(), site.isNative(), site.getFileName(), site.getLineNumber(), site.getColumnNumber()])); function capture() { const error = new Error('scope'); return error.stack; }",
         "native-stack.js",
     ).unwrap();
-    let mut runtime = Runtime::new(Capture::default());
+    let mut runtime = Runtime::new(TestHost::default());
     runtime.execute(&program).unwrap();
     let global = runtime.global_root().unwrap();
     let key = runtime.string_rooted("capture");
     let capture = runtime.get_property_rooted(global, key).unwrap();
-    let undefined = runtime.root(quench_runtime::Value::UNDEFINED);
+    let undefined = runtime.root(crate::Value::UNDEFINED);
     let result = runtime
         .with_native_stack_frame("outer", |runtime| {
             runtime.with_native_stack_frame("inner", |runtime| {
@@ -293,7 +284,7 @@ fn throw_preserves_identity_without_hooks_and_retains_source_through_binary() {
         Engine::specialize_unspecialized,
     ] {
         let program = compile(SOURCE, "throw-snapshot.js").unwrap();
-        let mut runtime = Runtime::new(Capture::default());
+        let mut runtime = Runtime::new(TestHost::default());
         let error = runtime.execute(&program).unwrap_err();
         let (file, line, column, text) = error.source_location().expect("escaping throw location");
         assert_eq!(
@@ -309,7 +300,7 @@ fn throw_preserves_identity_without_hooks_and_retains_source_through_binary() {
         let path =
             std::env::temp_dir().join(format!("quench-throw-snapshot-{}.qbc", std::process::id()));
         program.write_binary(&path).unwrap();
-        let restored = quench_runtime::ResidualProgram::read_binary(&path).unwrap();
+        let restored = crate::ResidualProgram::read_binary(&path).unwrap();
         std::fs::remove_file(path).unwrap();
         let error = runtime.execute(&restored).unwrap_err();
         let (file, line, column, text) = error.source_location().unwrap();
@@ -447,5 +438,32 @@ fn locals_read_before_their_first_write_are_undefined_in_reused_frames() {
              junk(); print(g()); junk(); print(maybe()); print(assigned());"
         ),
         ["1,,undefined", "undefined", "2"]
+    );
+}
+
+/// A strict assignment to a name no scope binds statically resolves it before the right
+/// side runs (`needs_strict_global_reference_capture`); that resolution meets only bindings
+/// a `with` or `eval` makes, so it leaves the enclosing function's uncaptured locals in
+/// registers (fflate's module body kept every local in its environment for one such
+/// `onmessage = ...`), while `with` and `eval` bindings stay reachable.
+#[test]
+fn strict_global_assignment_keeps_enclosing_locals_in_registers() {
+    let layout = "(function () { 'use strict'; for (var i = 0; i < 3; ++i) {} function g() { undeclared = 1; } return g; })";
+    let program = Engine::specialize(layout, "strict-global.js").unwrap();
+    let outer = program.disassemble();
+    let outer = outer.split("\nfunction 2 ").next().unwrap().split("\nfunction 1 ").nth(1).unwrap();
+    assert!(!outer.contains("EnvLocal"), "{outer}");
+    assert_eq!(
+        output("(function () { 'use strict'; for (var i = 0; i < 3; ++i) {} function g() { undeclared = 1; } try { g(); } catch (e) { print(e.constructor.name + ':' + i); } })();"),
+        ["ReferenceError:3"]
+    );
+    assert_eq!(
+        output(
+            "function a() { eval('var z = 1'); var local = 7; function g() { 'use strict'; z = local + 2; } g(); return z; } print(a());
+             var o = { w: 1 }; with (o) { (function () { 'use strict'; w = 3; })(); } print(o.w);
+             function b() { var keep = 1; function c() { eval('var m = 4'); function d() { 'use strict'; m = keep + 10; } d(); return m; } return c(); } print(b());
+             print(typeof z + typeof w + typeof m);"
+        ),
+        ["9", "3", "11", "undefinedundefinedundefined"]
     );
 }

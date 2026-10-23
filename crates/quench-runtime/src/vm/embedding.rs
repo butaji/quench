@@ -417,6 +417,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_source_stack_frames(&mut self, limit: usize) -> Vec<crate::SourceStackFrame> {
+        self.materialize_deferred_lane();
         let records: Vec<_> = self.frames.iter().rev().filter_map(|frame| {
             self.source_call_site_record(frame, false).map(|(record, module)| (frame.program, record, module))
         }).take(limit).collect();
@@ -1153,6 +1154,48 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn embedding_private_symbol(&mut self, description: Option<String>) -> Value {
         self.heap.alloc(Cell::Symbol(crate::heap::SymbolData::host_private(description)))
+    }
+
+    /// The ordinary object `{ [names[0]]: values[0], ... }` of the realm's
+    /// `Object.prototype`, whose own data properties are writable, enumerable and
+    /// configurable in `names` order, as a literal makes it: allocated at its final shape,
+    /// which the VM derives once per `names` list (`embedding_record_shapes`). `names` hold
+    /// neither an index name nor a duplicate.
+    pub(crate) fn create_embedding_record(
+        &mut self,
+        names: &'static [&'static str],
+        values: &[RootId],
+    ) -> Result<Value, JsError> {
+        debug_assert_eq!(names.len(), values.len());
+        let shape = self.embedding_record_shape(names);
+        let values = values
+            .iter()
+            .map(|root| self.embedding_value(*root))
+            .collect::<Result<smallvec::SmallVec<[Value; crate::value_vec::INLINE_PROPERTY_COUNT]>, _>>()?;
+        let (storage, inline) = self.heap.initial_object_storage(shape, &values, true);
+        let object = crate::heap::Object::with_property_storage(self.object_proto, storage, inline);
+        Ok(self.heap.alloc_object(object))
+    }
+
+    /// The shape adding `names` in order to an empty ordinary object reaches, memoized by
+    /// the list's address: a `'static` list is never freed, so its address names it.
+    fn embedding_record_shape(&mut self, names: &'static [&'static str]) -> u32 {
+        let key = names.as_ptr() as usize;
+        if let Some(shape) = self.embedding_record_shapes.get(&key) {
+            return *shape;
+        }
+        let mut shape = Self::empty_object(self.object_proto).shape();
+        for name in names {
+            debug_assert!(super::object_static::array_index(name).is_none());
+            let atom = self.intern_atom(name);
+            shape = self.transition_data_property_shape(
+                shape,
+                super::property_key::PropertyKey::string(atom),
+                super::DEFAULT_DATA_ATTRIBUTES,
+            );
+        }
+        self.embedding_record_shapes.insert(key, shape);
+        shape
     }
 
     fn create_embedding_object_with_prototype(

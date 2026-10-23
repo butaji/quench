@@ -235,22 +235,21 @@ impl<H: Host> Vm<H> {
     }
 
     #[expect(clippy::wrong_self_convention)]
+    /// ToNumber of `value` where it runs no guest code and raises nothing: an immediate
+    /// primitive or a string. `None` for any other value.
+    pub(super) fn primitive_to_number(&self, value: Value) -> Option<f64> {
+        value
+            .immediate_number()
+            .or_else(|| self.heap.string(value).map(|text| super::number::parse_number_string(&text.host_string())))
+    }
+
     pub(super) fn to_number(
         &mut self,
         program: &ResidualProgram,
         value: Value,
     ) -> Result<f64, JsError> {
-        if let Some(value) = value.as_number() {
-            return Ok(value);
-        }
-        if let Some(value) = value.as_bool() {
-            return Ok(if value { 1.0 } else { 0.0 });
-        }
-        if value.is_null() {
-            return Ok(0.0);
-        }
-        if value.is_undefined() || value.is_deleted() {
-            return Ok(f64::NAN);
+        if let Some(number) = self.primitive_to_number(value) {
+            return Ok(number);
         }
         if self.object_data(value).is_some() {
             let primitive = self.to_primitive(program, value, "number")?;
@@ -262,9 +261,6 @@ impl<H: Host> Vm<H> {
                 return Err(
                     self.type_error(program, "Cannot convert a Symbol value to a number".into())
                 );
-            }
-            _ if let Some(value) = self.heap.string(value)  => {
-                return Ok(super::number::parse_number_string(&value.host_string()));
             }
             Some(Cell::BigInt(_)) => {
                 return Err(
@@ -289,17 +285,8 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         value: Value,
     ) -> Result<String, JsError> {
-        if value.is_undefined() || value.is_deleted() {
-            return Ok("undefined".into());
-        }
-        if value.is_null() {
-            return Ok("null".into());
-        }
-        if let Some(value) = value.as_bool() {
-            return Ok(value.to_string());
-        }
-        if let Some(value) = value.as_number() {
-            return Ok(crate::number_to_string::format(value));
+        if let Some(text) = immediate_to_string(value) {
+            return Ok(text);
         }
         if self.object_data(value).is_some() {
             let primitive = self.to_primitive(program, value, "string")?;
@@ -460,4 +447,20 @@ fn typeof_name_index(kind: crate::ValueType) -> usize {
 /// The text `typeof` yields for a value of `kind`.
 fn typeof_text(kind: crate::ValueType) -> &'static str {
     crate::bytecode::TYPEOF_NAMES[typeof_name_index(kind)]
+}
+
+/// ToString where the value alone decides it: `undefined` (the deleted marker reads as it),
+/// `null`, a Boolean or a Number. `None` for a heap value, whose conversion reads its cell and
+/// may run guest code.
+pub(super) fn immediate_to_string(value: Value) -> Option<String> {
+    if value.is_undefined() || value.is_deleted() {
+        return Some("undefined".into());
+    }
+    if value.is_null() {
+        return Some("null".into());
+    }
+    if let Some(value) = value.as_bool() {
+        return Some(value.to_string());
+    }
+    value.as_number().map(crate::number_to_string::format)
 }

@@ -70,6 +70,9 @@ pub(crate) enum Widening {
     Capture(u16),
     /// The elements the region reads from the array in this register.
     Elements(Register),
+    /// A register the region never writes, held as exactly 1 so that multiplying or
+    /// dividing by it is the identity (`Lowering::units`), held something else at entry.
+    Unit(Register),
 }
 
 const OUTCOME_NOT_ENTERED: u64 = 0;
@@ -79,6 +82,8 @@ const OUTCOME_WIDEN: u64 = 3;
 /// A not-entered outcome's low word: zero, or a widening's kind bit over its payload.
 const WIDEN_REGISTER: u64 = 1 << u16::BITS;
 const WIDEN_CAPTURE: u64 = WIDEN_REGISTER << 1;
+const WIDEN_UNIT: u64 = WIDEN_CAPTURE << 1;
+const _: () = assert!(WIDEN_UNIT <= PC_MASK);
 const WIDEN_PAYLOAD: u64 = WIDEN_REGISTER - 1;
 
 impl Widening {
@@ -88,6 +93,7 @@ impl Widening {
         match self {
             Self::Register(register) => WIDEN_REGISTER | u64::from(register),
             Self::Capture(index) => WIDEN_CAPTURE | u64::from(index),
+            Self::Unit(register) => WIDEN_UNIT | u64::from(register),
             Self::Elements(_) => 0,
         }
     }
@@ -98,6 +104,8 @@ impl Widening {
             Some(Self::Register(payload))
         } else if word & WIDEN_CAPTURE != 0 {
             Some(Self::Capture(payload))
+        } else if word & WIDEN_UNIT != 0 {
+            Some(Self::Unit(payload))
         } else {
             None
         }
@@ -217,7 +225,7 @@ enum Arithmetic {
     Int32(Int32Operator),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum FloatOperator {
     Add,
     Subtract,
@@ -787,6 +795,382 @@ fn element_representation(instruction: &WideInstruction, observation: &Observati
     }
 }
 
+/// The largest step and offset a counted loop's proof takes (`Affine`). Entry values are
+/// `i32`s and trip counts stay below 2^34, so with terms this small a value's own part
+/// stays below 2^60; an invariant addend (`Term`) is an `i32` sum or a product of two such
+/// values, below 2^62.1, so every `i64` the proof computes (`Lowering::proof`) stays below
+/// 2^63.
+const MAX_AFFINE_TERM: i64 = 1 << 24;
+
+/// What an affine value of a counted loop's body counts from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Base {
+    /// Zero: the value is its offset.
+    Constant,
+    /// A capture, by its index in the region's capture order; no region instruction writes
+    /// one.
+    Capture(usize),
+    /// The register's value where the iteration starts, at the loop's header.
+    Start(Register),
+    /// A loop-invariant sum or product (`CountedLoop::terms`), by its index.
+    Term(usize),
+}
+
+/// A value every iteration of a counted loop computes alike from values the body never
+/// writes: the sum or the product of two invariant values, none of them a product, so the
+/// proof evaluates it once, exactly, from the values arriving at the header.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Term {
+    multiply: bool,
+    left: Affine,
+    right: Affine,
+}
+
+/// A value of a counted loop's body: its base's value in the iteration plus `offset`,
+/// plus the value of an invariant `addend` (a capture, a register the body never writes,
+/// or a `Term`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Affine {
+    base: Base,
+    offset: i64,
+    addend: Option<Base>,
+}
+
+impl Affine {
+    fn of(base: Base) -> Self {
+        Self { base, offset: 0, addend: None }
+    }
+
+    fn plus(self, amount: i64) -> Option<Self> {
+        let offset = self.offset.checked_add(amount)?;
+        (offset.abs() <= MAX_AFFINE_TERM).then_some(Self { offset, ..self })
+    }
+}
+
+/// A counted loop continues while its tested value is at most, or at least, its bound.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Continue {
+    AtMost,
+    AtLeast,
+}
+
+/// What a fact proves of the value an instruction of a counted loop computes, over every
+/// iteration that executes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Bound {
+    /// The key of an access lies within the length of the array in this register, so the
+    /// access needs no bounds guard.
+    Index(Register),
+    /// The `i32` sum is exact, so the arithmetic needs no overflow guard.
+    Int32,
+    /// The invariant product (`Term`) is an `i32` and no -0, so the multiplication needs no
+    /// guard.
+    Product,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Fact {
+    pc: u32,
+    value: Affine,
+    bound: Bound,
+}
+
+/// A counted loop of a region: a loop whose body, header to backward jump, is one path but
+/// for the test that leaves it, and whose test compares an induction variable with a bound
+/// the body leaves unchanged. Every arrival at its header from outside it runs the proof of
+/// its facts (`Lowering::proof`), which selects the copy of the body without their guards
+/// or the copy with them.
+#[derive(Clone, Debug)]
+struct CountedLoop {
+    header: u32,
+    backedge: u32,
+    test: u32,
+    /// The test continues while `induction` is `relation` to `bound`.
+    induction: Affine,
+    relation: Continue,
+    bound: Affine,
+    /// Each register's change per iteration, for each register the body changes by a
+    /// constant; a register the body never writes changes by zero.
+    steps: std::collections::BTreeMap<Register, i64>,
+    /// The invariant sums and products `Base::Term` names.
+    terms: Vec<Term>,
+    facts: Vec<Fact>,
+}
+
+impl CountedLoop {
+    fn contains(&self, pc: u32) -> bool {
+        (self.header..=self.backedge).contains(&pc)
+    }
+
+    /// How much a fact's base changes per iteration (`counted_loop` keeps only facts whose
+    /// bases change by a constant).
+    fn base_step(&self, base: Base) -> i64 {
+        match base {
+            Base::Start(register) => self.steps.get(&register).copied().unwrap_or(0),
+            Base::Constant | Base::Capture(_) | Base::Term(_) => 0,
+        }
+    }
+
+    /// Whether the proved copy drops the guard of the instruction at `pc`.
+    fn proves(&self, pc: u32) -> bool {
+        self.facts.iter().any(|fact| fact.pc == pc)
+    }
+}
+
+/// The counted loops of `region`, each with the facts its proof can establish under the
+/// compilation's representations: a fact needs every value it names held as an `i32`.
+fn counted_loops(
+    region: &LoopRegion,
+    webs: &Webs,
+    representations: &[Representation],
+    captures: &[Representation],
+) -> Vec<CountedLoop> {
+    (region.header..=region.backedge)
+        .filter_map(|backedge| {
+            let instruction = region.instructions[(backedge - region.header) as usize];
+            let header = instruction.jump_target();
+            (instruction.op() == Op::Jump && (region.header..backedge).contains(&header)).then_some(())?;
+            counted_loop(region, webs, representations, captures, header, backedge)
+        })
+        .collect()
+}
+
+fn counted_loop(
+    region: &LoopRegion,
+    webs: &Webs,
+    representations: &[Representation],
+    captures: &[Representation],
+    header: u32,
+    backedge: u32,
+) -> Option<CountedLoop> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let at = |pc: u32| region.instructions[(pc - region.header) as usize];
+    let body = header..backedge;
+    // One path: the test is the body's only branch, and it leaves the loop.
+    let mut test = None;
+    for pc in body.clone() {
+        let instruction = at(pc);
+        match instruction.op() {
+            Op::Jump => return None,
+            Op::JumpBinaryFalse if test.is_none() && !(header..=backedge).contains(&instruction.jump_target()) => {
+                test = Some(pc);
+            }
+            Op::JumpBinaryFalse => return None,
+            _ => {}
+        }
+    }
+    let test = test?;
+    // Control enters only at the header.
+    let enters_inside = (region.header..=region.backedge).any(|pc| {
+        let instruction = at(pc);
+        matches!(instruction.op(), Op::Jump | Op::JumpBinaryFalse)
+            && (header + 1..=backedge).contains(&instruction.jump_target())
+    });
+    if enters_inside {
+        return None;
+    }
+    let int32 = |web: Definition| representations[web] == Representation::Int32;
+    // The registers the body writes; any other register is invariant in it.
+    let written: BTreeSet<Register> = body.clone().filter_map(|pc| number_definition(at(pc))).collect();
+    let invariant = |value: &Affine| {
+        let base = |base: Base| match base {
+            Base::Start(register) => !written.contains(&register),
+            Base::Constant | Base::Capture(_) | Base::Term(_) => true,
+        };
+        base(value.base) && value.addend.is_none_or(base)
+    };
+    let mut terms: Vec<Term> = Vec::new();
+    let constant = |number: f64| int32_number(number).then(|| Affine { offset: number as i64, ..Affine::of(Base::Constant) });
+    let mut state: BTreeMap<Register, Option<Affine>> = BTreeMap::new();
+    let value = |state: &BTreeMap<Register, Option<Affine>>, register: Register| {
+        state
+            .get(&register)
+            .copied()
+            .unwrap_or(Some(Affine::of(Base::Start(register))))
+    };
+    // Whether a source the instruction at `pc` reads is held as an `i32`, and its value.
+    let source = |state: &BTreeMap<Register, Option<Affine>>, pc: u32, operand: Operand| match operand.kind()? {
+        OperandKind::Register => {
+            let register = operand.payload();
+            Some((int32(webs.read(region, pc, register)), value(state, register)))
+        }
+        OperandKind::Constant => {
+            let number = *region.constants.get(&operand.payload())?;
+            Some((int32_number(number), constant(number)))
+        }
+        OperandKind::Field | OperandKind::Local => None,
+    };
+    let mut candidates: Vec<Fact> = Vec::new();
+    let mut tested = None;
+    for pc in body.clone() {
+        let instruction = at(pc);
+        let register = |register: Register| (int32(webs.read(region, pc, register)), value(&state, register));
+        let defined = || int32(webs.defined(region, pc));
+        let result = match instruction.op() {
+            Op::LoadConst => {
+                let index = u16::try_from(instruction.constant_index()).ok()?;
+                constant(*region.constants.get(&index)?)
+            }
+            Op::LoadCapture => {
+                let slot = instruction.capture_slot();
+                let index = region.captures.iter().position(|capture| *capture == slot)?;
+                (captures[index] == Representation::Int32).then_some(Affine::of(Base::Capture(index)))
+            }
+            Op::Move | Op::ToNumeric => register(instruction.register_b()).1,
+            Op::IncDec => {
+                let (held, operand) = register(instruction.register_b());
+                let step = if instruction.boolean_flag()? { -1 } else { 1 };
+                let sum = operand.and_then(|operand| operand.plus(step));
+                if let Some(value) = sum.filter(|_| held && defined()) {
+                    candidates.push(Fact { pc, value, bound: Bound::Int32 });
+                }
+                sum
+            }
+            Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+                let left = source(&state, pc, instruction.operand_b())?;
+                let right = source(&state, pc, instruction.operand_c())?;
+                let held = left.0 && right.0 && defined();
+                // A product of invariant values that are no products is a term.
+                let factor = |value: &Affine| {
+                    invariant(value)
+                        && ![Some(value.base), value.addend].into_iter().flatten().any(|base| {
+                            matches!(base, Base::Term(term) if terms[term].multiply)
+                        })
+                };
+                let operator = arithmetic(instruction.binary_operator())?;
+                let sum = match (operator, left.1, right.1) {
+                    (Arithmetic::Float(FloatOperator::Add), Some(left), Some(right)) => match (left, right) {
+                        (_, Affine { base: Base::Constant, addend: None, offset }) => left.plus(offset),
+                        (Affine { base: Base::Constant, addend: None, offset }, _) => right.plus(offset),
+                        // An invariant value folds into the other's addend.
+                        (_, Affine { base, addend: None, offset }) if left.addend.is_none() && invariant(&right) => {
+                            Affine { addend: Some(base), ..left }.plus(offset)
+                        }
+                        (Affine { base, addend: None, offset }, _) if right.addend.is_none() && invariant(&left) => {
+                            Affine { addend: Some(base), ..right }.plus(offset)
+                        }
+                        _ => None,
+                    },
+                    (Arithmetic::Float(FloatOperator::Subtract), Some(left), Some(right))
+                        if right.base == Base::Constant && right.addend.is_none() =>
+                    {
+                        left.plus(-right.offset)
+                    }
+                    (Arithmetic::Float(FloatOperator::Multiply), Some(left), Some(right))
+                        if held && factor(&left) && factor(&right) =>
+                    {
+                        terms.push(Term { multiply: true, left, right });
+                        let value = Affine::of(Base::Term(terms.len() - 1));
+                        candidates.push(Fact { pc, value, bound: Bound::Product });
+                        Some(value)
+                    }
+                    _ => None,
+                };
+                if operator != Arithmetic::Float(FloatOperator::Multiply)
+                    && let Some(value) = sum.filter(|_| held)
+                {
+                    candidates.push(Fact { pc, value, bound: Bound::Int32 });
+                }
+                sum
+            }
+            Op::GetIndex => {
+                let array = instruction.operand_b().register_index()?;
+                if let (true, Some(value)) = source(&state, pc, instruction.operand_c())? {
+                    candidates.push(Fact { pc, value, bound: Bound::Index(array) });
+                }
+                None
+            }
+            Op::SetIndex => {
+                if let (true, Some(value)) = register(instruction.register_c()) {
+                    candidates.push(Fact { pc, value, bound: Bound::Index(instruction.register_b()) });
+                }
+                None
+            }
+            Op::JumpBinaryFalse => {
+                let left = source(&state, pc, instruction.operand_b())?;
+                let right = source(&state, pc, instruction.operand_c())?;
+                tested = Some((instruction.binary_operator_field(), left, right));
+                None
+            }
+            _ => None,
+        };
+        if let Some(register) = number_definition(instruction) {
+            state.insert(register, result);
+        }
+    }
+    let steps: BTreeMap<Register, i64> = state
+        .iter()
+        .filter_map(|(register, value)| match value {
+            Some(Affine { base: Base::Start(base), offset, addend: None }) if base == register => {
+                Some((*register, *offset))
+            }
+            _ => None,
+        })
+        .collect();
+    // How much a base changes per iteration, when it changes by a constant: a register the
+    // body never writes does not change.
+    let step = |base: Base| match base {
+        Base::Constant | Base::Capture(_) | Base::Term(_) => Some(0),
+        Base::Start(register) if !written.contains(&register) => Some(0),
+        Base::Start(register) => steps.get(&register).copied().filter(|step| step.abs() <= MAX_AFFINE_TERM),
+    };
+    // A base the proof reads at the header is an `i32` there; a term's values are, and its
+    // own values were found invariant when it was made.
+    fn held_base(base: Base, terms: &[Term], read: &dyn Fn(Register) -> bool) -> bool {
+        match base {
+            Base::Start(register) => read(register),
+            Base::Constant | Base::Capture(_) => true,
+            Base::Term(term) => [terms[term].left, terms[term].right].iter().all(|value| {
+                held_base(value.base, terms, read) && value.addend.is_none_or(|addend| held_base(addend, terms, read))
+            }),
+        }
+    }
+    let read = |register: Register| int32(webs.read(region, header, register));
+    let held = |base: Base| held_base(base, &terms, &read);
+    // An addend must not change across iterations.
+    let fixed = |value: &Affine| value.addend.is_none_or(|addend| step(addend) == Some(0) && held(addend));
+    let (operator, (left_held, left), (right_held, right)) = tested?;
+    let (left, right) = (left?, right?);
+    (left_held && right_held && held(left.base) && held(right.base) && fixed(&left) && fixed(&right)).then_some(())?;
+    // The induction variable is the side that moves; a relation with it on the right
+    // reads mirrored.
+    let (induction, bound, mirrored) = match (step(left.base)?, step(right.base)?) {
+        (moving, 0) if moving != 0 => (left, right, false),
+        (0, moving) if moving != 0 => (right, left, true),
+        _ => return None,
+    };
+    use BinaryOperator as B;
+    let operator = match operator {
+        op if op == B::LessThan as u32 => (Continue::AtMost, -1),
+        op if op == B::LessEqualThan as u32 => (Continue::AtMost, 0),
+        op if op == B::GreaterThan as u32 => (Continue::AtLeast, 1),
+        op if op == B::GreaterEqualThan as u32 => (Continue::AtLeast, 0),
+        _ => return None,
+    };
+    // `b < x` is `x > b`: the relation flips, and so does the strict bound's adjustment.
+    let (relation, adjustment) = match (operator, mirrored) {
+        (relation, false) => relation,
+        ((Continue::AtMost, adjustment), true) => (Continue::AtLeast, -adjustment),
+        ((Continue::AtLeast, adjustment), true) => (Continue::AtMost, -adjustment),
+    };
+    let facts: Vec<Fact> = candidates
+        .into_iter()
+        .filter(|fact| held(fact.value.base) && step(fact.value.base).is_some() && fixed(&fact.value))
+        .collect();
+    (!facts.is_empty()).then_some(())?;
+    Some(CountedLoop {
+        header,
+        backedge,
+        test,
+        induction,
+        relation,
+        bound: bound.plus(adjustment)?,
+        steps,
+        terms,
+        facts,
+    })
+}
+
 /// A compiled region: one W^X mapping, its entry, and what each `LoopOutcome::Widen` PC
 /// found was no `i32`.
 pub(super) struct CompiledLoop {
@@ -828,9 +1212,10 @@ pub(super) fn compile(region: &LoopRegion, observation: &Observation<'_>) -> Opt
     );
     let webs = webs(region);
     let (representations, captures) = representations(region, &webs, observation);
+    let counted = counted_loops(region, &webs, &representations, &captures);
     let mut context = FunctionBuilderContext::new();
     let builder = FunctionBuilder::new(&mut native, &mut context);
-    let widenings = Lowering::new(builder, region, observation, pointer, webs, representations, captures)
+    let widenings = Lowering::new(builder, region, observation, pointer, webs, representations, captures, counted)
         .lower(isa.frontend_config())?;
     let mut context = cranelift_codegen::Context::for_function(native);
     let compiled = context
@@ -875,10 +1260,22 @@ struct Lowering<'a, 'b> {
     variables: std::collections::BTreeMap<Definition, Variable>,
     /// The instruction being lowered, whose reads and result name webs.
     pc: u32,
+    /// The entry registers the region never writes that held exactly 1 when it compiled:
+    /// each is guarded at entry (`Widening::Unit`), and a product with or a quotient by one
+    /// is its other operand, exactly, for every double (signed zeros, infinities and NaN
+    /// alike).
+    units: std::collections::BTreeSet<Register>,
     /// Each capture's value, unboxed at entry, in region order.
     captures: Vec<Typed>,
     capture_representations: Vec<Representation>,
     blocks: Vec<ir::Block>,
+    /// The region's counted loops; each has a preheader block, which every arrival at its
+    /// header from outside it takes, and a proved copy of its body's blocks.
+    counted: Vec<CountedLoop>,
+    preheaders: Vec<ir::Block>,
+    proved_blocks: Vec<Vec<ir::Block>>,
+    /// The counted loop whose proved copy is being lowered.
+    copy: Option<usize>,
     /// Per PC the code leaves at, the block that writes back the Number registers live
     /// there and returns its parameter, the outcome word.
     leaves: std::collections::BTreeMap<u32, ir::Block>,
@@ -889,6 +1286,43 @@ struct Lowering<'a, 'b> {
     /// Each array's element pointer and length, by register.
     arrays: std::collections::BTreeMap<Register, (ir::Value, ir::Value)>,
     widenings: std::collections::BTreeMap<u32, Widening>,
+    /// Per block, the first block of the chain it continues: each block after the first
+    /// has its predecessors inside the chain (a guard's passing branch, the join of a test
+    /// whose other arm returns into the chain), so every chain block dominates the blocks
+    /// lowered after it in the chain.
+    chains: std::collections::HashMap<ir::Block, ir::Block>,
+    /// The exact `i32` results computed so far, by operator and operands, with the chain
+    /// computing them: the same arithmetic later in that chain is that result, its guards
+    /// having passed.
+    exact: std::collections::BTreeMap<(FloatOperator, ir::Value, ir::Value), (ir::Value, ir::Block)>,
+    /// The Number each canonical encoding read from memory unboxes to, mapped to the bits as
+    /// read: boxing the Number gives those bits back, so a store of it stores them.
+    encodings: std::collections::HashMap<ir::Value, ir::Value>,
+    /// Per region PC, whether control reaches its instruction only by falling through from
+    /// the one before (`straight_pcs`), so its block continues that one's chain.
+    straight: Vec<bool>,
+}
+
+/// Per region PC, whether the instruction before it is its only predecessor: no jump
+/// targets it, and it is neither the header nor a counted loop's header, which the entry
+/// and preheaders reach.
+fn straight_pcs(region: &LoopRegion, counted: &[CountedLoop]) -> Vec<bool> {
+    let count = region.instructions.len();
+    let mut predecessors = vec![Vec::new(); count];
+    for pc in region.header..=region.backedge {
+        for successor in successors(region, pc) {
+            if (region.header..=region.backedge).contains(&successor) {
+                predecessors[(successor - region.header) as usize].push(pc);
+            }
+        }
+    }
+    (region.header..=region.backedge)
+        .map(|pc| {
+            pc != region.header
+                && !counted.iter().any(|counted| counted.header == pc)
+                && predecessors[(pc - region.header) as usize] == [pc - 1]
+        })
+        .collect()
 }
 
 fn flags() -> ir::MemFlagsData {
@@ -911,12 +1345,31 @@ impl<'a, 'b> Lowering<'a, 'b> {
         webs: Webs,
         representations: Vec<Representation>,
         capture_representations: Vec<Representation>,
+        counted: Vec<CountedLoop>,
     ) -> Self {
         let start = builder.create_block();
         builder.append_block_params_for_function_params(start);
         builder.switch_to_block(start);
         let (registers, entry) = (builder.block_params(start)[0], builder.block_params(start)[1]);
         let blocks = (region.header..=region.backedge).map(|_| builder.create_block()).collect();
+        let straight = straight_pcs(region, &counted);
+        let preheaders = counted.iter().map(|_| builder.create_block()).collect();
+        let proved_blocks = counted
+            .iter()
+            .map(|counted| (counted.header..=counted.backedge).map(|_| builder.create_block()).collect())
+            .collect();
+        let written: std::collections::BTreeSet<Register> =
+            region.instructions.iter().filter_map(|instruction| number_definition(*instruction)).collect();
+        let one = Value::number(1.0);
+        let units = (0..region.numbers.len())
+            .filter(|entry| webs.entry_read[*entry])
+            .map(|entry| region.numbers[entry])
+            .filter(|register| {
+                !written.contains(register)
+                    && !observation.widened.contains(&Widening::Unit(*register))
+                    && (observation.register)(*register) == one
+            })
+            .collect();
         Self {
             builder,
             region,
@@ -926,10 +1379,19 @@ impl<'a, 'b> Lowering<'a, 'b> {
             representations,
             variables: std::collections::BTreeMap::new(),
             pc: region.header,
+            units,
             captures: Vec::new(),
             capture_representations,
             blocks,
+            counted,
+            preheaders,
+            proved_blocks,
+            copy: None,
             leaves: std::collections::BTreeMap::new(),
+            chains: std::collections::HashMap::new(),
+            exact: std::collections::BTreeMap::new(),
+            encodings: std::collections::HashMap::new(),
+            straight,
             registers,
             entry,
             interrupt: None,
@@ -945,9 +1407,20 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.enter()?;
         for pc in self.region.header..=self.region.backedge {
             let block = self.block(pc)?;
-            self.builder.switch_to_block(block);
+            self.enter_instruction(pc, block);
             self.pc = pc;
             self.instruction(pc)?;
+        }
+        for index in 0..self.counted.len() {
+            self.copy = Some(index);
+            let (header, backedge) = (self.counted[index].header, self.counted[index].backedge);
+            for pc in header..=backedge {
+                self.enter_instruction(pc, self.proved_blocks[index][(pc - header) as usize]);
+                self.pc = pc;
+                self.instruction(pc)?;
+            }
+            self.copy = None;
+            self.preheader(index);
         }
         self.write_back();
         self.builder.seal_all_blocks();
@@ -955,10 +1428,169 @@ impl<'a, 'b> Lowering<'a, 'b> {
         Some(self.widenings)
     }
 
+    /// Switches to the block of the instruction at `pc`: one only the instruction before it
+    /// reaches has all its predecessors, so it is sealed and continues that one's chain.
+    fn enter_instruction(&mut self, pc: u32, block: ir::Block) {
+        if self.straight[(pc - self.region.header) as usize] {
+            self.continue_chain(block);
+            self.builder.seal_block(block);
+        } else {
+            self.builder.switch_to_block(block);
+        }
+    }
+
     fn block(&self, pc: u32) -> Option<ir::Block> {
         (self.region.header..=self.region.backedge)
             .contains(&pc)
             .then(|| self.blocks[(pc - self.region.header) as usize])
+    }
+
+    /// The block control continues at for `target`, from the instruction at `from` or from
+    /// the entry: an arrival at a counted loop's header from outside it runs the loop's
+    /// preheader, and within a proved copy control stays in the copy.
+    fn target_block(&self, from: Option<u32>, target: u32) -> Option<ir::Block> {
+        let arrival = self.counted.iter().position(|counted| {
+            counted.header == target && !from.is_some_and(|pc| counted.contains(pc))
+        });
+        if let Some(index) = arrival {
+            return Some(self.preheaders[index]);
+        }
+        if let Some(index) = self.copy
+            && self.counted[index].contains(target)
+        {
+            return Some(self.proved_blocks[index][(target - self.counted[index].header) as usize]);
+        }
+        self.block(target)
+    }
+
+    /// Whether the code being lowered is a proved copy whose proof covers the instruction at
+    /// `pc`, so its guard is dropped.
+    fn proved(&self, pc: u32) -> bool {
+        self.copy.is_some_and(|index| self.counted[index].proves(pc))
+    }
+
+    /// The `i64` value at a counted loop's header of a base the proof reads, which
+    /// `counted_loop` found is held as an `i32` there.
+    fn start(&mut self, counted: &CountedLoop, base: Base) -> ir::Value {
+        let value = match base {
+            Base::Constant => return self.builder.ins().iconst(types::I64, 0),
+            Base::Capture(index) => self.captures[index].value,
+            Base::Start(register) => {
+                let web = self.webs.read(self.region, counted.header, register);
+                self.web(web).value
+            }
+            Base::Term(term) => {
+                let Term { multiply, left, right } = counted.terms[term];
+                let (left, right) = (self.affine_start(counted, left), self.affine_start(counted, right));
+                return if multiply { self.builder.ins().imul(left, right) } else { self.builder.ins().iadd(left, right) };
+            }
+        };
+        self.builder.ins().sextend(types::I64, value)
+    }
+
+    fn affine_start(&mut self, counted: &CountedLoop, value: Affine) -> ir::Value {
+        let start = self.start(counted, value.base);
+        let start = self.builder.ins().iadd_imm_s(start, value.offset);
+        match value.addend {
+            Some(addend) => {
+                let addend = self.start(counted, addend);
+                self.builder.ins().iadd(start, addend)
+            }
+            None => start,
+        }
+    }
+
+    /// The counted loop's preheader: runs its proof from the values arriving at the header
+    /// and continues in the proved copy when every fact holds, else in the guarded body.
+    fn preheader(&mut self, index: usize) {
+        let counted = self.counted[index].clone();
+        self.builder.switch_to_block(self.preheaders[index]);
+        let holds = self.proof(&counted);
+        let proved = self.proved_blocks[index][0];
+        let guarded = self.blocks[(counted.header - self.region.header) as usize];
+        self.builder.ins().brif(holds, proved, &[], guarded, &[]);
+    }
+
+    /// Whether every fact of `counted` holds for the iterations its arrival runs. The test
+    /// passes `trips` times and fails on the next arrival, so an instruction before the test
+    /// runs for iterations `0..=trips` and one after it for `0..trips`; an affine value is
+    /// monotonic in the iteration, so its extremes are at the first and last of them.
+    fn proof(&mut self, counted: &CountedLoop) -> ir::Value {
+        let tested = self.affine_start(counted, counted.induction);
+        let bound = self.affine_start(counted, counted.bound);
+        let step = counted.base_step(counted.induction.base);
+        let (trips, mut holds) = match (counted.relation, step > 0) {
+            // Moving toward the bound, the test passes until the value crosses it.
+            (Continue::AtMost, true) | (Continue::AtLeast, false) => {
+                let distance = match counted.relation {
+                    Continue::AtMost => self.builder.ins().isub(bound, tested),
+                    Continue::AtLeast => self.builder.ins().isub(tested, bound),
+                };
+                let span = if step.abs() == 1 {
+                    distance
+                } else {
+                    let magnitude = self.builder.ins().iconst(types::I64, step.abs());
+                    self.builder.ins().udiv(distance, magnitude)
+                };
+                let passing = self.builder.ins().iadd_imm_s(span, 1);
+                let zero = self.builder.ins().iconst(types::I64, 0);
+                let crossed = self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, distance, 0);
+                let trips = self.builder.ins().select(crossed, zero, passing);
+                (trips, self.builder.ins().iconst(types::I8, 1))
+            }
+            // Moving away from it, the test passes until the value leaves `i32`, which the
+            // guarded body meets; the proof holds only when the first test fails.
+            (Continue::AtMost, false) | (Continue::AtLeast, true) => {
+                let condition = match counted.relation {
+                    Continue::AtMost => IntCC::SignedGreaterThan,
+                    Continue::AtLeast => IntCC::SignedLessThan,
+                };
+                let fails = self.builder.ins().icmp(condition, tested, bound);
+                (self.builder.ins().iconst(types::I64, 0), fails)
+            }
+        };
+        let none = self.builder.ins().icmp_imm_s(IntCC::Equal, trips, 0);
+        let trips_after = self.builder.ins().iadd_imm_s(trips, -1);
+        for fact in &counted.facts {
+            let first = self.affine_start(counted, fact.value);
+            let step = counted.base_step(fact.value.base);
+            let last_iteration = if fact.pc < counted.test { trips } else { trips_after };
+            let travel = self.builder.ins().imul_imm_s(last_iteration, step);
+            let last = self.builder.ins().iadd(first, travel);
+            let (low, high) = if step >= 0 { (first, last) } else { (last, first) };
+            let (above, below) = match fact.bound {
+                Bound::Index(array) => {
+                    let length = self.arrays[&array].1;
+                    (
+                        self.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, low, 0),
+                        self.builder.ins().icmp(IntCC::SignedLessThan, high, length),
+                    )
+                }
+                Bound::Int32 => (
+                    self.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, low, i64::from(i32::MIN)),
+                    self.builder.ins().icmp_imm_s(IntCC::SignedLessThanOrEqual, high, i64::from(i32::MAX)),
+                ),
+                Bound::Product => {
+                    // The product is invariant (`low` is `high`); a zero one is -0 when a
+                    // factor is negative.
+                    let Base::Term(term) = fact.value.base else { unreachable!("a product fact names its term") };
+                    let Term { left, right, .. } = counted.terms[term];
+                    let (left, right) = (self.affine_start(counted, left), self.affine_start(counted, right));
+                    let signs = self.builder.ins().bor(left, right);
+                    let nonnegative = self.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, signs, 0);
+                    let nonzero = self.builder.ins().icmp_imm_s(IntCC::NotEqual, low, 0);
+                    let signed_zero_free = self.builder.ins().bor(nonnegative, nonzero);
+                    let fits = self.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, low, i64::from(i32::MIN));
+                    let fits_high = self.builder.ins().icmp_imm_s(IntCC::SignedLessThanOrEqual, high, i64::from(i32::MAX));
+                    let fits = self.builder.ins().band(fits, fits_high);
+                    (fits, signed_zero_free)
+                }
+            };
+            let within = self.builder.ins().band(above, below);
+            let within = if fact.pc < counted.test { within } else { self.builder.ins().bor(within, none) };
+            holds = self.builder.ins().band(holds, within);
+        }
+        holds
     }
 
     fn outcome(&mut self, outcome: u64, low: u64) -> ir::Value {
@@ -1022,12 +1654,20 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.registers,
                 i32::from(register) * WORD_BYTES,
             );
+            if self.units.contains(&register) {
+                let one = self.builder.ins().iconst(types::I64, Value::number(1.0).to_bits() as i64);
+                let other = self.builder.ins().icmp(IntCC::NotEqual, bits, one);
+                let otherwise = self.not_entered(Some(Widening::Unit(register)));
+                let pass = self.builder.create_block();
+                self.builder.ins().brif(other, otherwise, &[], pass, &[]);
+                self.builder.switch_to_block(pass);
+            }
             let otherwise = self.not_entered(Some(Widening::Register(register)));
             let value = self.unbox(bits, representation, otherwise);
             let variable = self.variable(web);
             self.builder.def_var(variable, value);
         }
-        let header = self.block(self.region.header)?;
+        let header = self.target_block(None, self.region.header)?;
         self.builder.ins().jump(header, &[]);
         Some(())
     }
@@ -1037,12 +1677,29 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn unbox(&mut self, bits: ir::Value, representation: Representation, otherwise: ir::Block) -> ir::Value {
         if representation == Representation::Int32 {
             let tag = self.builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
-            let is_int = self.builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::INT_TAG as i64);
-            let integer_block = self.builder.create_block();
-            self.builder.ins().brif(is_int, integer_block, &[], otherwise, &[]);
-            self.builder.switch_to_block(integer_block);
+            let other = self.builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INT_TAG as i64);
+            self.pass_unless(other, otherwise);
             return self.builder.ins().ireduce(types::I32, bits);
         }
+        let double = self.builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
+        self.unbox_float64(double, otherwise)
+    }
+
+    /// The Number a value's bits encode, given as the double they read as: every tag is a
+    /// NaN pattern, so a value that is no NaN as a double is one, which one comparison
+    /// finds; only a NaN pattern, a tagged value or a NaN double, takes the cold test of the
+    /// tag field. Anything but a Number branches to `otherwise`.
+    fn unbox_float64(&mut self, double: ir::Value, otherwise: ir::Block) -> ir::Value {
+        let entered = self.builder.current_block().expect("lowering inside a block");
+        let unordered = self.builder.ins().fcmp(FloatCC::Unordered, double, double);
+        let nan_block = self.cold_block();
+        let tagged_block = self.cold_block();
+        let integer_block = self.cold_block();
+        let join = self.builder.create_block();
+        self.builder.append_block_param(join, types::F64);
+        self.builder.ins().brif(unordered, nan_block, &[], join, &[ir::BlockArg::Value(double)]);
+        self.builder.switch_to_block(nan_block);
+        let bits = self.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), double);
         // A tag field within the tag range marks a non-double.
         let field = self.builder.ins().ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
         let offset = self.builder.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
@@ -1050,15 +1707,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .builder
             .ins()
             .icmp_imm_u(IntCC::UnsignedLessThanOrEqual, offset, ValueLayout::TAG_FIELD_SPAN as i64);
-        let double_block = self.builder.create_block();
-        let tagged_block = self.cold_block();
-        let integer_block = self.cold_block();
-        let join = self.builder.create_block();
-        self.builder.append_block_param(join, types::F64);
-        self.builder.ins().brif(tagged, tagged_block, &[], double_block, &[]);
-        self.builder.switch_to_block(double_block);
-        let double = self.builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
-        self.builder.ins().jump(join, &[ir::BlockArg::Value(double)]);
+        self.builder.ins().brif(tagged, tagged_block, &[], join, &[ir::BlockArg::Value(double)]);
         self.builder.switch_to_block(tagged_block);
         let int_field = (ValueLayout::INT_TAG >> ValueLayout::TAG_SHIFT) as i64;
         let is_int = self.builder.ins().icmp_imm_u(IntCC::Equal, field, int_field);
@@ -1067,8 +1716,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let integer = self.builder.ins().ireduce(types::I32, bits);
         let number = self.builder.ins().fcvt_from_sint(types::F64, integer);
         self.builder.ins().jump(join, &[ir::BlockArg::Value(number)]);
+        // The join's other predecessors are the cold tests, which `entered` dominates.
+        let chain = self.chain(entered);
+        self.chains.insert(join, chain);
         self.builder.switch_to_block(join);
-        self.builder.block_params(join)[0]
+        self.builder.seal_block(join);
+        let number = self.builder.block_params(join)[0];
+        self.encodings.insert(number, double);
+        number
     }
 
     /// The encoded bits of an `i32` Number.
@@ -1079,23 +1734,30 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// `Value::number(number)`'s bits: an integer when the truncation converts back to the
     /// same bits, the canonical NaN for any NaN, else the double's bits. A double its
-    /// truncation differs from (any non-integral value, and NaN) takes the short path, which
-    /// only canonicalizes NaN; integral values and infinities take the conversion.
+    /// truncation differs from, ordered (any non-integral value but NaN), takes the short
+    /// path, which is the double's bits; integral values, infinities and NaN take the
+    /// conversion.
     fn boxed_float64(&mut self, number: ir::Value) -> ir::Value {
         let truncated = self.builder.ins().trunc(number);
-        let integral = self.builder.ins().fcmp(FloatCC::Equal, truncated, number);
-        let fractional_block = self.builder.create_block();
+        let integral = self.builder.ins().fcmp(FloatCC::UnorderedOrEqual, truncated, number);
+        // Boxing on an exit's path (`write_back`) is as cold as the exit, so its blocks are
+        // laid out after the hot code too, not between a loop body's blocks.
+        let cold = self
+            .builder
+            .current_block()
+            .is_some_and(|block| self.builder.func.layout.is_cold(block));
+        let fractional_block = if cold { self.cold_block() } else { self.builder.create_block() };
         let integral_block = self.cold_block();
-        let join = self.builder.create_block();
+        let join = if cold { self.cold_block() } else { self.builder.create_block() };
         self.builder.append_block_param(join, types::I64);
+        let tested = self.builder.current_block().expect("lowering inside a block");
         self.builder.ins().brif(integral, integral_block, &[], fractional_block, &[]);
         self.builder.switch_to_block(fractional_block);
-        let bits = self.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
-        let nan = self.builder.ins().fcmp(FloatCC::Unordered, number, number);
-        let canonical = self.builder.ins().iconst(types::I64, ValueLayout::CANONICAL_NAN as i64);
-        let fractional = self.builder.ins().select(nan, canonical, bits);
+        self.builder.seal_block(fractional_block);
+        let fractional = self.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
         self.builder.ins().jump(join, &[ir::BlockArg::Value(fractional)]);
         self.builder.switch_to_block(integral_block);
+        self.builder.seal_block(integral_block);
         let integer = self.builder.ins().fcvt_to_sint_sat(types::I32, number);
         let back = self.builder.ins().fcvt_from_sint(types::F64, integer);
         let back_bits = self.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), back);
@@ -1103,15 +1765,36 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let exact = self.builder.ins().icmp(IntCC::Equal, back_bits, bits);
         let encoded = self.boxed_int32(integer);
         let integral = self.builder.ins().select(exact, encoded, bits);
+        // A NaN converts to zero, which is not exact, so only the NaN test remains.
+        let nan = self.builder.ins().fcmp(FloatCC::Unordered, number, number);
+        let canonical = self.builder.ins().iconst(types::I64, ValueLayout::CANONICAL_NAN as i64);
+        let integral = self.builder.ins().select(nan, canonical, integral);
         self.builder.ins().jump(join, &[ir::BlockArg::Value(integral)]);
+        // Both arms return from the test's block, so the join continues its chain.
+        let chain = self.chain(tested);
+        self.chains.insert(join, chain);
         self.builder.switch_to_block(join);
+        self.builder.seal_block(join);
         self.builder.block_params(join)[0]
     }
 
     fn boxed(&mut self, value: Typed) -> ir::Value {
+        let encoding = self.encoding(value);
+        if self.builder.func.dfg.value_type(encoding) == types::I64 {
+            return encoding;
+        }
+        self.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), encoding)
+    }
+
+    /// `value`'s encoding as an `i64`, or as the `f64` its bits read as when it was read
+    /// from memory (`encodings`), which a store writes unchanged.
+    fn encoding(&mut self, value: Typed) -> ir::Value {
         match value.representation {
             Representation::Int32 => self.boxed_int32(value.value),
-            Representation::Float64 => self.boxed_float64(value.value),
+            Representation::Float64 => match self.encodings.get(&value.value) {
+                Some(read) => *read,
+                None => self.boxed_float64(value.value),
+            },
         }
     }
 
@@ -1178,9 +1861,28 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// Continues past a guard that `failed` decides, exiting at `pc` when it holds.
     fn guard(&mut self, pc: u32, failed: ir::Value) {
         let exit = self.exit_block(pc);
+        self.pass_unless(failed, exit);
+    }
+
+    /// Branches to `failed_block` when `failed` holds, and continues the current chain in
+    /// a new block otherwise, sealed at once since the branch is its only predecessor.
+    fn pass_unless(&mut self, failed: ir::Value, failed_block: ir::Block) {
         let pass = self.builder.create_block();
-        self.builder.ins().brif(failed, exit, &[], pass, &[]);
-        self.builder.switch_to_block(pass);
+        self.builder.ins().brif(failed, failed_block, &[], pass, &[]);
+        self.continue_chain(pass);
+        self.builder.seal_block(pass);
+    }
+
+    /// Switches to `block`, which continues the current block's chain (`chains`).
+    fn continue_chain(&mut self, block: ir::Block) {
+        let current = self.builder.current_block().expect("lowering inside a block");
+        let head = self.chain(current);
+        self.chains.insert(block, head);
+        self.builder.switch_to_block(block);
+    }
+
+    fn chain(&self, block: ir::Block) -> ir::Block {
+        self.chains.get(&block).copied().unwrap_or(block)
     }
 
     /// A block that exits at `pc` for the general path, naming `widening` for the next
@@ -1198,9 +1900,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// `guard` of an `i32` assumption: `widening` was no `i32` when it fails.
     fn guard_int32(&mut self, pc: u32, failed: ir::Value, widening: Widening) {
         let exit = self.widen_block(pc, widening);
-        let pass = self.builder.create_block();
-        self.builder.ins().brif(failed, exit, &[], pass, &[]);
-        self.builder.switch_to_block(pass);
+        self.pass_unless(failed, exit);
     }
 
     /// The SSA variable of the web rooted at `web`.
@@ -1287,7 +1987,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let requested = self.builder.ins().atomic_load(types::I8, flags(), flag);
             self.guard(pc, requested);
         }
-        match self.block(target) {
+        match self.target_block(Some(pc), target) {
             Some(block) => {
                 self.builder.ins().jump(block, &[]);
             }
@@ -1297,7 +1997,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     fn fall_through(&mut self, pc: u32) -> Option<()> {
-        match self.block(pc + 1) {
+        match self.target_block(Some(pc), pc + 1) {
             Some(block) => {
                 self.builder.ins().jump(block, &[]);
             }
@@ -1307,7 +2007,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     /// The element index `key` names in an array of `length` elements, exiting at `pc`
-    /// unless it is an integral Number below the length.
+    /// unless it is an integral Number below the length; an `i32` key a proof covers is.
     fn index(&mut self, pc: u32, key: Typed, length: ir::Value) -> ir::Value {
         let index = match key.representation {
             // A negative index zero-extends past every length (`MAX_INDEXED_LENGTH`).
@@ -1320,8 +2020,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 index
             }
         };
-        let beyond = self.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, length);
-        self.guard(pc, beyond);
+        if !self.proved(pc) {
+            let beyond = self.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, length);
+            self.guard(pc, beyond);
+        }
         index
     }
 
@@ -1354,7 +2056,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     /// `left OP right` as `i32` arithmetic into `register`, exiting at `pc` when the exact
-    /// result is no `i32` (an overflow, or the -0 of a zero product with a negative factor).
+    /// result is no `i32` (an overflow, or the -0 of a zero product with a negative factor);
+    /// a proof covers a sum's.
     fn int32_arithmetic(
         &mut self,
         pc: u32,
@@ -1363,9 +2066,79 @@ impl<'a, 'b> Lowering<'a, 'b> {
         left: ir::Value,
         right: ir::Value,
     ) -> ir::Value {
+        let current = self.builder.current_block().expect("lowering inside a block");
+        let chain = self.chain(current);
+        // A variable read where a join's parameter proved trivial is an alias of its value.
+        let (left, right) = (self.builder.func.dfg.resolve_aliases(left), self.builder.func.dfg.resolve_aliases(right));
+        if let Some((result, computed)) = self.exact.get(&(operator, left, right)) {
+            if *computed == chain {
+                return *result;
+            }
+        }
+        let result = self.int32_arithmetic_guarded(pc, operator, register, left, right);
+        self.exact.insert((operator, left, right), (result, chain));
+        result
+    }
+
+    /// `left ± c` for a constant `c`, whose `i32` result overflows exactly when `left` lies
+    /// beyond the bound `c` leaves: the guard compares `left` with that bound before the
+    /// sum, which needs no overflow flag.
+    fn int32_offset(
+        &mut self,
+        pc: u32,
+        operator: FloatOperator,
+        register: Register,
+        left: ir::Value,
+        right: ir::Value,
+    ) -> Option<ir::Value> {
+        let (value, offset) = match operator {
+            FloatOperator::Add => match (self.int32_constant(left), self.int32_constant(right)) {
+                (_, Some(offset)) => (left, offset),
+                (Some(offset), None) => (right, offset),
+                (None, None) => return None,
+            },
+            FloatOperator::Subtract => (left, -self.int32_constant(right)?),
+            FloatOperator::Multiply | FloatOperator::Divide => return None,
+        };
+        if !self.proved(pc) && offset != 0 {
+            let (condition, bound) = if offset > 0 {
+                (IntCC::SignedGreaterThan, i64::from(i32::MAX) - offset)
+            } else {
+                (IntCC::SignedLessThan, i64::from(i32::MIN) - offset)
+            };
+            let overflow = self.builder.ins().icmp_imm_s(condition, value, bound);
+            self.guard_int32(pc, overflow, Widening::Register(register));
+        }
+        Some(self.builder.ins().iadd_imm_s(value, offset))
+    }
+
+    /// The value of an `i32` constant operand.
+    fn int32_constant(&self, value: ir::Value) -> Option<i64> {
+        let dfg = &self.builder.func.dfg;
+        let ir::ValueDef::Result(instruction, _) = dfg.value_def(dfg.resolve_aliases(value)) else {
+            return None;
+        };
+        match dfg.insts[instruction] {
+            ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } => Some(i64::from(imm.bits() as i32)),
+            _ => None,
+        }
+    }
+
+    fn int32_arithmetic_guarded(
+        &mut self,
+        pc: u32,
+        operator: FloatOperator,
+        register: Register,
+        left: ir::Value,
+        right: ir::Value,
+    ) -> ir::Value {
+        if let Some(result) = self.int32_offset(pc, operator, register, left, right) {
+            return result;
+        }
         let (result, overflow) = match operator {
             FloatOperator::Add => self.builder.ins().sadd_overflow(left, right),
             FloatOperator::Subtract => self.builder.ins().ssub_overflow(left, right),
+            FloatOperator::Multiply if self.proved(pc) => return self.builder.ins().imul(left, right),
             FloatOperator::Multiply => {
                 let (product, overflow) = self.builder.ins().smul_overflow(left, right);
                 self.guard_int32(pc, overflow, Widening::Register(register));
@@ -1374,18 +2147,27 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let zero = self.builder.ins().icmp_imm_u(IntCC::Equal, product, 0);
                 let signs_block = self.cold_block();
                 let done = self.builder.create_block();
+                let tested = self.builder.current_block().expect("lowering inside a block");
                 self.builder.ins().brif(zero, signs_block, &[], done, &[]);
                 self.builder.switch_to_block(signs_block);
+                self.builder.seal_block(signs_block);
                 let signs = self.builder.ins().bor(left, right);
                 let negative = self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, signs, 0);
                 self.guard_int32(pc, negative, Widening::Register(register));
                 self.builder.ins().jump(done, &[]);
+                // `done`'s predecessors are the test's block and the signs' passing branch,
+                // which that block dominates, so it continues the test's chain.
+                let chain = self.chain(tested);
+                self.chains.insert(done, chain);
                 self.builder.switch_to_block(done);
+                self.builder.seal_block(done);
                 return product;
             }
             FloatOperator::Divide => unreachable!("division has a Float64 result"),
         };
-        self.guard_int32(pc, overflow, Widening::Register(register));
+        if !self.proved(pc) {
+            self.guard_int32(pc, overflow, Widening::Register(register));
+        }
         result
     }
 
@@ -1466,7 +2248,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
                 let result = instruction.result_register();
-                let value = self.arithmetic(pc, operator, result, left, right);
+                let unit = |operand: Operand| operand.register_index().is_some_and(|register| self.units.contains(&register));
+                let value = match operator {
+                    // `x * 1`, `1 * x` and `x / 1` are `x` (`Lowering::units`).
+                    Arithmetic::Float(FloatOperator::Multiply) if unit(instruction.operand_c()) => left,
+                    Arithmetic::Float(FloatOperator::Multiply) if unit(instruction.operand_b()) => right,
+                    Arithmetic::Float(FloatOperator::Divide) if unit(instruction.operand_c()) => left,
+                    _ => self.arithmetic(pc, operator, result, left, right),
+                };
                 self.define(result, value);
                 self.fall_through(pc)
             }
@@ -1479,8 +2268,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 {
                     // Only the extreme the step leaves `i32` from overflows.
                     let (limit, step) = if decrement { (i32::MIN, -1) } else { (i32::MAX, 1) };
-                    let overflow = self.builder.ins().icmp_imm_s(IntCC::Equal, operand.value, i64::from(limit));
-                    self.guard_int32(pc, overflow, Widening::Register(result));
+                    if !self.proved(pc) {
+                        let overflow =
+                            self.builder.ins().icmp_imm_s(IntCC::Equal, operand.value, i64::from(limit));
+                        self.guard_int32(pc, overflow, Widening::Register(result));
+                    }
                     let value = self.builder.ins().iadd_imm_s(operand.value, step);
                     Typed { value, representation: Representation::Int32 }
                 } else {
@@ -1530,14 +2322,21 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let key = self.operand(instruction.operand_c())?;
                 let index = self.index(pc, key, length);
                 let address = self.element_address(elements, index);
-                let bits = self.builder.ins().load(types::I64, flags(), address, 0);
-                // A hole is tagged, so `unbox` sends it to the general path too.
+                // A hole is tagged, so unboxing sends it to the general path too. A Float64
+                // element loads straight into a float register.
                 let representation = element_representation(&instruction, self.observation);
-                let exit = match representation {
-                    Representation::Int32 => self.widen_block(pc, Widening::Elements(base)),
-                    Representation::Float64 => self.exit_block(pc),
+                let value = match representation {
+                    Representation::Int32 => {
+                        let bits = self.builder.ins().load(types::I64, flags(), address, 0);
+                        let widen = self.widen_block(pc, Widening::Elements(base));
+                        self.unbox(bits, representation, widen)
+                    }
+                    Representation::Float64 => {
+                        let double = self.builder.ins().load(types::F64, flags(), address, 0);
+                        let exit = self.exit_block(pc);
+                        self.unbox_float64(double, exit)
+                    }
                 };
-                let value = self.unbox(bits, representation, exit);
                 self.define(instruction.result_register(), Typed { value, representation });
                 self.fall_through(pc)
             }
@@ -1551,7 +2350,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let hole = self.builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::DELETED_TAG as i64);
                 self.guard(pc, hole);
                 let value = self.register(instruction.register_a());
-                let bits = self.boxed(value);
+                let bits = self.encoding(value);
                 self.builder.ins().store(flags(), bits, address, 0);
                 self.fall_through(pc)
             }
@@ -1572,10 +2371,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 };
                 let taken = self.builder.create_block();
                 let not_taken = self.builder.create_block();
+                let tested = self.builder.current_block().expect("lowering inside a block");
                 self.builder.ins().brif(holds, not_taken, &[], taken, &[]);
+                // Each arm's only predecessor is the test's block.
                 self.builder.switch_to_block(taken);
+                self.builder.seal_block(taken);
                 self.jump(pc, instruction.jump_target())?;
+                let chain = self.chain(tested);
+                self.chains.insert(not_taken, chain);
                 self.builder.switch_to_block(not_taken);
+                self.builder.seal_block(not_taken);
                 self.fall_through(pc)
             }
             _ => None,

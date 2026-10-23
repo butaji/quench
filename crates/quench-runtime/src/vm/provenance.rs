@@ -13,42 +13,34 @@ const FUNCTION_NAME_SHAPE_ENTRIES: usize = 1 << 8;
 /// child per site, which defeats `Shape::last_child`. Entries name shapes, so they are
 /// cleared with the transition index and whenever a collection renumbers shapes.
 pub(super) struct FunctionNameShapes {
-    entries: Box<[std::cell::Cell<Option<(u32, Atom, u32)>>]>,
+    entries: super::shape_memo::DirectMappedTable<(u32, Atom, u32), FUNCTION_NAME_SHAPE_ENTRIES>,
 }
 
 impl Default for FunctionNameShapes {
     fn default() -> Self {
-        Self {
-            entries: (0..FUNCTION_NAME_SHAPE_ENTRIES)
-                .map(|_| std::cell::Cell::new(None))
-                .collect(),
-        }
+        Self { entries: Default::default() }
     }
 }
 
 impl FunctionNameShapes {
-    fn entry(&self, shape: u32, name: Atom) -> &std::cell::Cell<Option<(u32, Atom, u32)>> {
-        let index = (name ^ shape.rotate_left(FUNCTION_NAME_SHAPE_ENTRIES.trailing_zeros()))
-            as usize
-            & (FUNCTION_NAME_SHAPE_ENTRIES - 1);
-        &self.entries[index]
+    fn index(shape: u32, name: Atom) -> usize {
+        (name ^ shape.rotate_left(FUNCTION_NAME_SHAPE_ENTRIES.trailing_zeros())) as usize
+            & (FUNCTION_NAME_SHAPE_ENTRIES - 1)
     }
 
     fn get(&self, shape: u32, name: Atom) -> Option<u32> {
-        self.entry(shape, name)
-            .get()
+        self.entries
+            .get(Self::index(shape, name))
             .filter(|&(base, atom, _)| base == shape && atom == name)
             .map(|(_, _, named)| named)
     }
 
     fn record(&self, shape: u32, name: Atom, named: u32) {
-        self.entry(shape, name).set(Some((shape, name, named)));
+        self.entries.set(Self::index(shape, name), (shape, name, named));
     }
 
     pub(super) fn clear(&self) {
-        for entry in self.entries.iter() {
-            entry.set(None);
-        }
+        self.entries.clear();
     }
 }
 
@@ -234,6 +226,11 @@ impl<H: Host> Vm<H> {
     // Keep the exact native-info transition separate from that common path.
     #[inline(never)]
     fn prepare_function_info_prototypes(&mut self, mut object: Value, atom: Atom, name: bool) {
+        // Only a function on the chain prepares anything, so a chain without one (a Buffer's
+        // `length`) needs none of the property lookups below.
+        if !self.chain_reaches_function(object) {
+            return;
+        }
         let receiver = object;
         while let Some(data) = self.object_data(object) {
             if self.proxy_parts(object).is_some() { return; }
@@ -257,6 +254,21 @@ impl<H: Host> Vm<H> {
             if self.property_attributes(object, PropertyKey::string(atom)).is_some_and(|attributes| attributes.accessor) { return; }
             object = data.proto();
         }
+    }
+
+    /// Whether the prototype chain from `object` holds a function before it ends or reaches a
+    /// proxy, where `prepare_function_info_prototypes` stops.
+    fn chain_reaches_function(&self, mut object: Value) -> bool {
+        while let Some(data) = self.object_data(object) {
+            if self.proxy_parts(object).is_some() {
+                return false;
+            }
+            if self.heap.is_function_value(object) {
+                return true;
+            }
+            object = data.proto();
+        }
+        false
     }
 
     pub(super) fn original_function_name(&self, function: Value) -> Option<Atom> {

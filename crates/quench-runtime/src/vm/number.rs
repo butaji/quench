@@ -410,6 +410,16 @@ impl<H: Host> Vm<H> {
     }
 }
 
+/// What the global `isNaN` or `isFinite` returns for the Number its argument converted to;
+/// `None` for any other native.
+pub(super) fn global_number_predicate(native: Native, number: f64) -> Option<bool> {
+    Some(match native {
+        Native::GlobalIsNaN => number.is_nan(),
+        Native::GlobalIsFinite => number.is_finite(),
+        _ => return None,
+    })
+}
+
 /// What `Number.isNaN`, `isFinite`, `isInteger` or `isSafeInteger` returns for `value`: none
 /// coerces its argument, so a non-Number answers `false`. `None` for any other native.
 pub(super) fn number_predicate(native: Native, value: Value) -> Option<bool> {
@@ -545,6 +555,51 @@ fn math_atanh(value: f64) -> f64 {
         doubled / (1.0 - magnitude)
     };
     (ATANH_LOG_SCALE * argument.ln_1p()).copysign(value)
+}
+
+/// Arguments a Math call of Numbers keeps inline (`math_numbers`); longer calls allocate.
+pub(super) const MATH_INLINE_ARGUMENTS: usize = 4;
+
+/// The value of a Math function of Number arguments that may read more than its first
+/// (`Math.max`, `Math.min`, `Math.pow`, `Math.atan2`, `Math.imul`), a missing argument being
+/// NaN as `undefined` converts; `None` for any other native. Each runs no guest code once its
+/// arguments are Numbers.
+pub(super) fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
+    let argument = |index: usize| values.get(index).copied().unwrap_or(f64::NAN);
+    Some(match native {
+        Native::MathMin | Native::MathMax => {
+            let min = native == Native::MathMin;
+            let mut result = if min { f64::INFINITY } else { f64::NEG_INFINITY };
+            for &number in values {
+                if number.is_nan() {
+                    return Some(f64::NAN);
+                }
+                // Signed zeros order as -0 < +0, which `f64::min`/`max` do not observe.
+                result = if number == 0.0 && result == 0.0 {
+                    // The minimum of zeros is -0 when either is; the maximum only when both are.
+                    let negative = if min {
+                        number.is_sign_negative() || result.is_sign_negative()
+                    } else {
+                        number.is_sign_negative() && result.is_sign_negative()
+                    };
+                    if negative { -0.0 } else { 0.0 }
+                } else if min {
+                    result.min(number)
+                } else {
+                    result.max(number)
+                };
+            }
+            result
+        }
+        Native::MathPow => super::operations::exponentiate(argument(0), argument(1)),
+        Native::MathAtan2 => super::fdlibm_math::atan2(argument(0), argument(1)),
+        Native::MathImul => {
+            let product = (crate::value::number_to_u32(argument(0)) as i32)
+                .wrapping_mul(crate::value::number_to_u32(argument(1)) as i32);
+            f64::from(product)
+        }
+        _ => return None,
+    })
 }
 
 /// The value of a Math function of one Number argument (`Math.sqrt` and its kin); `None`
