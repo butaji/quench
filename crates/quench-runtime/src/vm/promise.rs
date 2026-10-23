@@ -1689,7 +1689,7 @@ impl<H: Host> Vm<H> {
             let specifier = vm.to_string(p, specifier)?;
             let module_type = vm.validate_dynamic_import_options(p, options)?;
             let referrer = vm.active_script_or_module(p);
-            let resolution = vm.host.resolve_dynamic_import(&referrer, &specifier);
+            let resolution = vm.host_resolved_module(&referrer, &specifier);
             match resolution {
                 Err(error) => return Err(vm.module_load_error(p, error)),
                 Ok(Some(module)) => {
@@ -2882,20 +2882,11 @@ impl<H: Host> Vm<H> {
         };
         let local_slots = local_slots(root);
         let mut values = Vec::with_capacity(imports.len());
-        // One import statement's bindings come together and name one module: it is resolved
-        // (and its source read) once for them, and only the latest is kept, so the sources of
-        // a long import list are never all held at once.
-        let mut resolved: Option<(&str, crate::ModuleSource)> = None;
         for import in imports {
-            let module = match resolved.take() {
-                Some((source, module)) if source == import.source => module,
-                _ => self
-                    .host
-                    .resolve_dynamic_import(referrer, &import.source)
-                    .map_err(|error| self.module_load_error(p, error))?
-                    .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?,
-            };
-            let module = &resolved.insert((&import.source, module)).1;
+            let module = &self
+                .host_resolved_module(referrer, &import.source)
+                .map_err(|error| self.module_load_error(p, error))?
+                .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?;
             let local = self
                 .lookup_atom(&import.local)
                 .and_then(|atom| local_slots.get(&atom).copied())
@@ -3331,6 +3322,24 @@ impl<H: Host> Vm<H> {
     }
 
     /// Resolve a static module request and, for an evaluation, validate its type.
+    /// The module the host loads for `specifier` from `referrer`, resolved once until the next
+    /// collection (`Vm::resolved_module_requests`). A failed load is not kept.
+    pub(super) fn host_resolved_module(
+        &mut self,
+        referrer: &str,
+        specifier: &str,
+    ) -> Result<Option<ModuleSource>, crate::ModuleLoadError> {
+        let key = (referrer.to_owned(), specifier.to_owned());
+        if let Some(module) = self.resolved_module_requests.get(&key) {
+            return Ok(Some(module.clone()));
+        }
+        let module = self.host.resolve_dynamic_import(referrer, specifier)?;
+        if let Some(module) = &module {
+            self.resolved_module_requests.insert(key, module.clone());
+        }
+        Ok(module)
+    }
+
     fn resolve_module_request(
         &mut self,
         p: &ResidualProgram,
@@ -3338,8 +3347,7 @@ impl<H: Host> Vm<H> {
         request: &crate::bytecode::ModuleRequest,
     ) -> Result<Option<ModuleSource>, JsError> {
         let module = self
-            .host
-            .resolve_dynamic_import(referrer, &request.source)
+            .host_resolved_module(referrer, &request.source)
             .map_err(|error| self.module_load_error(p, error))?;
         if let Some(module) = &module
             && request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
@@ -4512,8 +4520,7 @@ impl<H: Host> Vm<H> {
         {
             return Ok(Some(ModuleSource::text(name.clone(), "")));
         }
-        self.host
-            .resolve_dynamic_import(referrer, source)
+        self.host_resolved_module(referrer, source)
             .map_err(|error| self.module_load_error(p, error))
     }
 
@@ -5001,8 +5008,7 @@ impl<H: Host> Vm<H> {
                     | crate::compile::StaticModuleReexport::Namespace { source, .. } => source,
                 };
                 let dependency = self
-                    .host
-                    .resolve_dynamic_import(&module.name, source)
+                    .host_resolved_module(&module.name, source)
                     .map_err(|error| self.module_load_error(p, error))?;
                 let Some(dependency) = dependency else {
                     return Ok(StaticModuleGraph::LinkError);

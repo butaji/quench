@@ -293,6 +293,7 @@ impl<H: Host> Vm<H> {
             gc_root_count: _,
             gc_owned_root_count: _,
             frame_pool: _,
+            pending_call_stacks: _,
             lane_stack: _,
             execution_mode: _,
             execution_interrupt: _,
@@ -395,6 +396,8 @@ impl<H: Host> Vm<H> {
             // Each process keeps its own budget.
             dynamic_functions_to_keep: _,
             lane_deferred: _,
+            // Resolutions are the process's (its files), not the snapshot's.
+            resolved_module_requests: _,
             host_beside_activations: _,
         } = self;
         let Realm {

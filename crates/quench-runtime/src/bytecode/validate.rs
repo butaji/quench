@@ -140,14 +140,6 @@ fn register_window_in_bounds(base: u16, count: u32, registers: u16) -> bool {
         .is_some_and(|end| end <= u32::from(registers))
 }
 
-/// Whether every parameter slot is named by its binding rather than a hidden parameter name,
-/// as a list that binds directly names them.
-fn parameters_bind_directly(function: &super::Function, atoms: &super::AtomTable) -> bool {
-    function.local_atoms[..usize::from(function.params).min(function.local_atoms.len())]
-        .iter()
-        .all(|atom| usize::try_from(*atom).is_ok_and(|atom| atom < atoms.len() && !atoms[atom].starts_with('\0')))
-}
-
 fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::AtomTable) -> bool {
     let promoted = &function.local_registers;
     if promoted.is_empty() {
@@ -179,7 +171,7 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
         && !(function.class_initializer && !function.is_arrow)
         // A rest parameter is promoted where the list binds its names directly
         // (`FunctionCompiler::binds_parameters_directly`), each its own slot.
-        && (function.simple_parameters || function.rest && parameters_bind_directly(function, atoms))
+        && (function.simple_parameters || function.rest && function.parameters_bind_directly(|atom| (atom < atoms.len()).then(|| &atoms[atom])))
         // Promoted parameters leave their slots, which only an aliasing `arguments` reads.
         && (function.arguments_slot.is_none() || !function.arguments_alias_parameters())
         && !function.inherited_with_scope
