@@ -491,6 +491,7 @@ impl FunctionCompiler<'_, '_> {
             parent: self.function_id,
             with_depth: self.with_depth,
             inherited_strict: self.strict,
+            prototype_unobservable: self.owner.prototype_unobservable.contains(&value.span.start),
         };
         let function = self.owner.compile_plain_function(value, context);
         let dst = self.reg();

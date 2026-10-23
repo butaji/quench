@@ -91,6 +91,11 @@ impl AtomTable {
         }
     }
 
+    /// The atom's text, or `None` for an id outside the table.
+    pub(crate) fn get(&self, atom: usize) -> Option<&str> {
+        (atom < self.len()).then(|| &self[atom])
+    }
+
     pub(crate) fn iter(&self) -> impl ExactSizeIterator<Item = &str> {
         (0..self.len()).map(|index| &self[index])
     }

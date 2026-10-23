@@ -2123,7 +2123,7 @@ fn listener_path(transport: &Transport, id: u64) -> Option<&str> {
     }
 }
 
-pub(super) fn register_socket(
+pub(crate) fn register_socket(
     context: &mut NativeContext<'_, NodeHost>,
     socket: RootId,
     id: u64,
