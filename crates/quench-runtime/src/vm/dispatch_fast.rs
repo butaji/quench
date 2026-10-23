@@ -3794,6 +3794,20 @@ script_handler! {
 }
 
 script_handler! {
+    /// `lane_get_field_holder_cell` of a register base: the base read from its register, and
+    /// a miss taken out of line by `lane_get_field_holder_cell`, which moves the record on.
+    fn lane_get_field_holder_cell_register<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let Some(value) = (unsafe { vm(cx) }).cell_holder_field_hit(code, r.get(i.b), i.c) else {
+            sibling!(lane_get_field_holder_cell::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// `GetField` of a register or `this` at a site with an inherited entry
     /// (`Vm::field_site_inherited`), a method read beyond the immediate prototype: that entry
     /// inline while its proof holds (`Vm::proved_inherited_field_hit`); any other read takes
@@ -3965,7 +3979,11 @@ script_handler! {
             FieldSiteTier::Holder
                 if base.is_some_and(|object| object.direct_object_index().is_none()) =>
             {
-                Some(lane_get_field_holder_cell::<H>)
+                Some(if crate::bytecode::FieldBase(i.b).register_index().is_some() {
+                    lane_get_field_holder_cell_register::<H>
+                } else {
+                    lane_get_field_holder_cell::<H>
+                })
             }
             FieldSiteTier::Holder => Some(single_base_handler(
                 i.b,
