@@ -4681,25 +4681,13 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
         .heap
         .alloc(crate::heap::Cell::Error("suspended scope".into()));
     let held_atom = vm.intern_atom("held");
-    let continuation = Continuation {
-        context: super::activation::CallContext::Internal,
-        reflected_parameters: 0,
-        original_arguments: vec![original],
-        program: super::program_store::ProgramId::MAIN,
-        active_iterators: vec![],
-        with_objects: vec![scope],
-        function: 0,
-        pc: 0,
-        env: live,
-        this: Value::UNDEFINED,
-        locals: vec![],
-        dynamic_bindings: vec![(held_atom, held)],
-        registers: vec![],
-        completion: Completion::Yield(Value::UNDEFINED),
-        captured: false,
-        resume_register: None,
-        promise: Value::UNDEFINED,
-    };
+    let mut frame = Box::new(super::Frame::empty(super::program_store::ProgramId::MAIN, 0));
+    frame.original_arguments = vec![original];
+    frame.with_objects = vec![scope];
+    frame.env = live;
+    frame.dynamic_bindings = vec![(held_atom, held)];
+    let continuation =
+        Continuation::suspend(frame, Completion::Yield(Value::UNDEFINED), None, Value::UNDEFINED);
     let state = vm.heap.alloc(crate::heap::Cell::AwaitState(Box::new(
         crate::heap::AwaitState {
             continuation: Some(Box::new(continuation)),
@@ -4719,7 +4707,7 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
         Some(state) => state.continuation.take(),
         _ => panic!("await state"),
     };
-    assert_eq!(take(&mut vm).unwrap().original_arguments, [original]);
+    assert_eq!(take(&mut vm).unwrap().frame.original_arguments, [original]);
     assert!(take(&mut vm).is_none());
     vm.collect_now(&program);
     assert!(!vm.heap.is_live(live));
@@ -7006,7 +6994,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 .map(|v| vm.heap.weak_handle(*v).unwrap())
                 .collect::<Vec<_>>();
             let atom = vm.intern_atom("binding");
-            let mut frame = super::Frame {
+            let frame = super::Frame {
                 context: CallContext::Internal,
                 reflected_parameters: 0,
                 original_arguments: vec![],
@@ -7033,17 +7021,11 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 js_jit_interpreter_started: None,
                 fixed_this: false,
             };
-            let continuation = Continuation::from_frame(
-                &mut frame,
+            let continuation = Continuation::suspend(
+                Box::new(frame),
                 completion(completion_value),
                 Some(0),
                 promise,
-            );
-            assert!(
-                frame.locals.is_empty()
-                    && frame.dynamic_bindings.is_empty()
-                    && frame.registers.is_empty()
-                    && frame.active_iterators.is_empty()
             );
             let roots = vm.heap.root_count_for_test();
             let owner = if generator {
@@ -7112,7 +7094,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
             };
             assert_eq!(resumed.completion, completion(completion_value));
             assert_eq!(resumed.promise, promise);
-            let resumed = resumed.into_frame(0);
+            let resumed = resumed.resume(0);
             assert_eq!(resumed.locals, [local]);
             assert_eq!(resumed.dynamic_bindings, [(atom, binding)]);
             assert_eq!(resumed.registers, [register, iterator, Value::FALSE]);
@@ -10674,13 +10656,15 @@ fn js_jit_compiles_numeric_capture_arithmetic_and_guards_mutation() {
 fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
-          function mask(value) { return value & 7; }
+          function mask(value) { return value ^ 7; }
           for (let index = -20; index < 20; index++) {
-            if (mask(index) !== (index & 7)) throw Error('int32 bitwise');
+            if (mask(index) !== (index ^ 7)) throw Error('int32 bitwise');
           }
-          if (mask(2.5) !== 2) throw Error('fraction fallback');
-          if (mask(4294967296) !== 0) throw Error('range fallback');
-          if (mask('13') !== 5) throw Error('coercion fallback');
+          if (mask(2.5) !== (2 ^ 7)) throw Error('fraction fallback');
+          if (mask(4294967296) !== 7) throw Error('range fallback');
+          if (mask(4294967295) !== (-1 ^ 7)) throw Error('unsigned range fallback');
+          if (mask(NaN) !== 7) throw Error('non-finite fallback');
+          if (mask('13') !== 10) throw Error('coercion fallback');
           let bigintThrew = false;
           try { mask(13n); } catch (error) { bigintThrew = error instanceof TypeError; }
           if (!bigintThrew) throw Error('bigint fallback');
@@ -12704,4 +12688,30 @@ fn fused_field_reads_of_promoted_locals_see_undefined_before_assignment() {
     let program = Engine::specialize(source, "fused-read-before-assignment.js").unwrap();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["TypeError,TypeError,TypeError"]);
+}
+
+#[test]
+fn absent_index_reads_of_ordinary_objects_still_see_every_holder_on_the_chain() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      const plain = { length: 3 };
+      for (let i = 0; i < 3; i++) check(plain[i], undefined, 'plain miss');
+      check(Array.from(plain, (_, i) => i * 2).join(), '0,2,4', 'array-like from');
+      check(Object.create({ 7: 'p' })[7], 'p', 'prototype property');
+      check(Object.create(['a', 'b'])[1], 'b', 'array prototype');
+      check(Object.create(new String('xy'))[1], 'y', 'string wrapper prototype');
+      check(Object.create(new Uint8Array([4, 5]))[1], 5, 'typed array prototype');
+      const getter = {}; Object.defineProperty(getter, 9, { get() { return 'g'; } });
+      check(Object.create(getter)[9], 'g', 'inherited getter');
+      check((function () { return Object.create(arguments)[0]; })('arg'), 'arg', 'arguments prototype');
+      const proxied = Object.create(new Proxy({}, { get: (_, key) => 'proxy ' + key }));
+      check(proxied[3], 'proxy 3', 'proxy prototype');
+      Object.prototype[11] = 'shared';
+      check({}[11], 'shared', 'Object.prototype index');
+      delete Object.prototype[11];
+      check({}[11], undefined, 'deleted Object.prototype index');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "absent-index.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "absent-index.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
 }
