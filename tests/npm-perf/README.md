@@ -793,6 +793,15 @@ This explains why enabling JIT barely changes Zod throughput: the hot call path
 does not enter native code. Extending native execution across these dynamic
 operations is the primary JIT direction, with exact semantic side exits.
 
+A same-build 11-round no-JIT comparison tested the existing `memory-first`
+policy at 5,000 rounds and 250 warmups. It lowered Quench's sampled RSS from
+27.9 MB to 16.3 MB (-41.6%), but also lowered throughput from 37,594 to
+31,201 operations/s (-17.0%). The shared checksum was 120,000. Node measured
+91,743 operations/s / 50.2 MB and Bun 79,051 / 38.2 MB in this run, so the
+policy still loses throughput to both competitors and fails the joint target.
+This is an allocator/GC tradeoff screen, not a win; reports are local at
+`target/perf-reports/zod-memory-policy-{throughput,memory-first}-nojit-11.json`.
+
 The Pino workload uses pinned `pino@10.4.0` with structured JSON, a request
 serializer, and redaction into a synchronous in-memory sink. Timestamp and base
 fields are disabled so output checksums are stable between processes. The
