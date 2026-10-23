@@ -279,15 +279,11 @@ impl MemoryPolicy {
     }
 
     /// Whether the host returns the memory the process no longer needs resident (read-only
-    /// code and data pages, the allocator's free pages) at its release points: collection
-    /// boundaries, library loads, compilation phases, output and exit. Under throughput it
-    /// does not: each release refaulted the run's hot code. After collections that was each
+    /// pages, the allocator's free pages) at collection boundaries. Under throughput it does
+    /// not: releasing them after every collection refaulted the run's hot code after each
     /// young one (EarleyBoyer, dynamic x86_64 production build, 2026-10-20: ~63K minor faults
-    /// and ~0.11 s of system time per run against ~15K and ~0.035 s without; v2-web); at the
-    /// loads and phases of a short npm package's run, a fifth of its time (path-parse npm
-    /// scenario, Firecracker x86_64, 2026-10-23: 33.3 -> 26.7 ms, 7,138 -> 4,828 faults, peak
-    /// RSS 12.7 -> 18.5 MB; eslint 136.5 -> 126.9 ms, 31.2 -> 42.0 MB).
-    pub const fn returns_resident_pages(self) -> bool {
+    /// and ~0.11 s of system time per run against ~15K and ~0.035 s without; v2-web).
+    pub const fn returns_pages_at_collections(self) -> bool {
         matches!(self, Self::MemoryFirst)
     }
 
@@ -440,8 +436,8 @@ mod tests {
         }
         assert_eq!(MemoryPolicy::default(), MemoryPolicy::Throughput);
         assert_eq!(MemoryPolicy::from_name("speed"), None);
-        assert!(MemoryPolicy::MemoryFirst.returns_resident_pages());
-        assert!(!MemoryPolicy::Throughput.returns_resident_pages());
+        assert!(MemoryPolicy::MemoryFirst.returns_pages_at_collections());
+        assert!(!MemoryPolicy::Throughput.returns_pages_at_collections());
         // Throughput collects no more often than memory-first at any live size.
         let (throughput, memory_first) = (THROUGHPUT_PACING, MEMORY_FIRST_PACING);
         for live in [0, 1 << 10, 1 << 16, 1 << 20, 1 << 24] {
