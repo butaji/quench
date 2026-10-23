@@ -47,3 +47,16 @@ sweeps compare only within a few percent. Decisions use paired medians or callgr
 ## Re-baselined sweep at `711e270e` (2026-10-23, new host kernel)
 
 The host moved from kernel fc-v140 to `6.18.44-fc-v153` (still Intel Xeon @ 2.10 GHz, 4 vCPU) and runs about 15% slower (the same binary scores 19.8 vs 23.2 on hash-map), so the Bun rows above no longer pair with new Quench runs. `scores-711e270e-host2.txt` pairs quench `711e270e` (v2-merged `d836ef374` merged in) with Bun 1.4.2 `BUN_JSC_useJIT=0` re-run on the same host, one round each, run alone. **Score geomean 0.817 of Bun no-JIT; max RSS geomean 1.44× smaller.** At or above 1.2× Bun on score: json-parse-inspector 1.26, hash-map 1.21 and the Wasm tests except argon2 (sqlite3 2.14, zlib 3.27, HashSet 3.91, gcc-loops 4.15, quicksort 3.17, tsf 2.55). At or above 1.2× smaller RSS: 22/34; RSS losses: postcss-wtb 0.93, doxbee-promise 0.87, babel-wtb 0.98. Furthest behind on score: argon2-wasm 0.23, doxbee-async 0.25, web-ssr 0.34, doxbee-promise 0.37, json-stringify 0.42, async-fs 0.45, sync-fs 0.47.
+
+## Paired sweep at 740c3c6c1 (2026-10-23)
+
+Quench (`quench-node`, release, HEAD 740c3c6c1) and Bun (`BUN_JSC_useJIT=0`) run back to
+back on each test (`psweep.sh`: one `rsscmp.py` call per test), so host throughput drift
+affects both sides of each ratio alike. Host: Linux 6.18.44-fc-v153, Xeon 2.10GHz, 4 vCPU.
+Raw rows: `paired-740c3c6c-raw.txt`; ratios: `paired-740c3c6c-ratios.txt`.
+
+Geomean score 0.790× Bun no-JIT, max RSS 1.53× smaller; 7/34 tests at ≥1.2× score
+(stanford-crypto-sha256 and the six Wasm tests other than argon2), 25/34 at ≥1.2× smaller RSS.
+The lowest score ratios are argon2-wasm 0.23, web-ssr 0.32, doxbee-async 0.34,
+bigint-noble-ed25519 0.36, chai 0.38, validatorjs 0.39, doxbee-promise 0.41, async-fs 0.42.
+RSS is above Bun on babel-wtb, postcss-wtb (0.95) and doxbee-promise (0.92).

@@ -1630,8 +1630,8 @@ impl ObjectExtras {
             + self.module_bindings.capacity() * std::mem::size_of::<(Atom, ProgramId, u16)>()
             + self.deferred_module.as_ref().map_or(0, |module| {
                 module.name.capacity()
-                    + module.source.capacity()
-                    + module.original_bytes.as_ref().map_or(0, Vec::capacity)
+                    + module.source.len()
+                    + module.original_bytes.as_ref().map_or(0, |bytes| bytes.len())
             })
             + self.private_elements.capacity() * std::mem::size_of::<PrivateElement>()
             + self

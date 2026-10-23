@@ -11175,6 +11175,60 @@ fn js_jit_lowers_guarded_numeric_field_reads_from_nonzero_formal() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_lowers_guarded_numeric_field_reads_from_captured_objects() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function makeReader() {
+            const state = {value: 7};
+            function read() { return state.value * 2; }
+            return {read, state};
+          }
+          const reader = makeReader();
+          for (let index = 0; index < 40; index++) {
+            if (reader.read() !== 14) throw Error('captured numeric field');
+          }
+          reader.state.value = '8';
+          if (reader.read() !== 16) throw Error('captured field type guard');
+          let reads = 0;
+          Object.defineProperty(reader.state, 'value', {
+            configurable: true,
+            get() { reads++; return 9; }
+          });
+          if (reader.read() !== 18 || reads !== 1) throw Error('captured accessor fallback');
+        "#,
+        "js-jit-captured-object-field.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "read")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function_id)
+    else {
+        panic!("captured-object numeric field region should compile");
+    };
+    assert_eq!(compiled.numeric_field_inputs().len(), 1);
+    assert!(matches!(
+        compiled.numeric_field_inputs()[0].receiver,
+        super::js_compiled::JsJitFieldReceiver::Capture { .. }
+    ));
+    assert!(compiled.native_entries() >= 9);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_lowers_multiple_guarded_this_field_reads_into_arithmetic() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -12712,6 +12766,42 @@ fn absent_index_reads_of_ordinary_objects_still_see_every_holder_on_the_chain() 
       check({}[11], undefined, 'deleted Object.prototype index');
     "#;
     for program in [Engine::compile(crate::ExecutionRequest { source, name: "absent-index.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "absent-index.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn array_fill_stores_plainly_only_where_no_prototype_claims_the_index() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      check(Array(5).fill(7).join(), '7,7,7,7,7', 'holes');
+      check([1, 2, 3, 4].fill(0, 1, -1).join(), '1,0,0,4', 'range');
+      const seen = [];
+      const proto = Object.create(Array.prototype);
+      Object.defineProperty(proto, 2, { set(value) { seen.push(value); }, configurable: true });
+      const holed = Object.setPrototypeOf([1, , , 4], proto);
+      holed.fill(9);
+      check(seen.join(), '9', 'inherited setter');
+      check(Object.keys(holed).join(), '0,1,3', 'setter index stays a hole');
+      Object.prototype[1] = 'shared';
+      Object.defineProperty(Object.prototype, 1, { value: 'readonly', writable: false, configurable: true });
+      const blocked = Array(3);
+      let blockedThrew = false;
+      try { blocked.fill(5); } catch (e) { blockedThrew = e instanceof TypeError; }
+      check(blockedThrew, true, 'read-only inherited index throws');
+      check(blocked.hasOwnProperty(1), false, 'read-only inherited index stays a hole');
+      check(blocked[0], 5, 'indices before it store');
+      delete Object.prototype[1];
+      let threw = false;
+      try { Object.freeze([1, 2]).fill(0); } catch (e) { threw = e instanceof TypeError; }
+      check(threw, true, 'frozen');
+      threw = false;
+      try { Object.seal(Array(2)).fill(0); } catch (e) { threw = e instanceof TypeError; }
+      check(threw, true, 'sealed holes');
+      check(Object.seal([1, 2]).fill(3).join(), '3,3', 'sealed present');
+      check(Array.prototype.fill.call({ length: 2 }, 1)[1], 1, 'array-like');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "array-fill.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "array-fill.js").unwrap()] {
         Vm::new(TestHost::default()).execute(&program).unwrap();
     }
 }
