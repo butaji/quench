@@ -1106,7 +1106,7 @@ impl<H: Host> Vm<H> {
                 Ok((rejected, promise))
             })
         })?;
-        self.enqueue_async_resume(p, continuation, promise, Some(generator), rejected, false)?;
+        self.enqueue_async_resume(p, Some(continuation), promise, Some(generator), rejected, false)?;
         Ok(promise)
     }
 
@@ -1576,7 +1576,7 @@ impl<H: Host> Vm<H> {
                         Some(destination),
                         promise,
                     );
-                    vm.enqueue_async_resume(p, continuation, promise, Some(generator), value, false)?;
+                    vm.enqueue_async_resume(p, Some(continuation), promise, Some(generator), value, false)?;
                 }
                 Ok(_) => {
                     vm.pool_frame(frame);
@@ -1610,14 +1610,15 @@ impl<H: Host> Vm<H> {
         );
         if let Some(record) = self.generator_record_mut(generator) {
             record.running = !delegated;
-            record.continuation = Some(continuation.clone());
+            record.continuation = Some(continuation);
         }
         if delegated {
             let result = self.iterator_result(value, false)?;
             self.promise_resolve_value(p, promise, result)?;
             return Ok(());
         }
-        self.enqueue_async_resume(p, continuation, promise, Some(generator), value, true)
+        // The yield awaits its value first; its continuation stays in the record.
+        self.enqueue_async_resume(p, None, promise, Some(generator), value, true)
     }
 
     pub(super) fn finish_async_generator(
