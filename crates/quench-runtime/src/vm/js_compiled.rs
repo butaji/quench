@@ -2843,7 +2843,13 @@ fn branch_number_comparison(
         local_state,
         right,
     )?;
-    super::compiled::emit_number_relation(builder, operator, lhs, rhs)
+    super::compiled::emit_number_relation(
+        builder,
+        operator,
+        lhs,
+        rhs,
+        super::compiled::NumberRelationDomain::Float64,
+    )
 }
 
 fn branch_numeric_operand(
@@ -3329,8 +3335,13 @@ fn compile_numeric_loop(
                     (Op::Binary, value)
                         if super::operations::NumberRelation::from_operator(value).is_some() =>
                     {
-                        let condition =
-                            super::compiled::emit_number_relation(&mut builder, value, left, right)?;
+                        let condition = super::compiled::emit_number_relation(
+                            &mut builder,
+                            value,
+                            left,
+                            right,
+                            super::compiled::NumberRelationDomain::Float64,
+                        )?;
                         let one = builder.ins().iconst(types::I8, 1);
                         let zero = builder.ins().iconst(types::I8, 0);
                         let result = builder.ins().select(condition, one, zero);
@@ -3439,6 +3450,7 @@ fn compile_numeric_loop(
                     instruction.binary_operator_field(),
                     left,
                     right,
+                    super::compiled::NumberRelationDomain::Float64,
                 )?;
                 let target = usize::try_from(instruction.jump_target()).ok()?;
                 emit_numeric_loop_conditional(
@@ -3963,7 +3975,13 @@ fn comparison(
         registers,
         strings,
     )?;
-    super::compiled::emit_number_relation(builder, operator, left, right)
+    super::compiled::emit_number_relation(
+        builder,
+        operator,
+        left,
+        right,
+        super::compiled::NumberRelationDomain::Float64,
+    )
 }
 
 fn numeric_operand(

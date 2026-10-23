@@ -2498,15 +2498,29 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let operator = instruction.binary_operator_field();
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
-                let holds = if left.representation == Representation::Int32
+                let (left, right, domain) = if left.representation == Representation::Int32
                     && right.representation == Representation::Int32
                 {
-                    let condition = integer_comparison(operator)?;
-                    self.body.builder.ins().icmp(condition, left.value, right.value)
+                    (
+                        left.value,
+                        right.value,
+                        super::NumberRelationDomain::Int32,
+                    )
                 } else {
                     let (left, right) = (self.float(left), self.float(right));
-                    super::emit_number_relation(&mut self.body.builder, operator, left, right)?
+                    (
+                        left,
+                        right,
+                        super::NumberRelationDomain::Float64,
+                    )
                 };
+                let holds = super::emit_number_relation(
+                    &mut self.body.builder,
+                    operator,
+                    left,
+                    right,
+                    domain,
+                )?;
                 let taken = self.body.builder.create_block();
                 let not_taken = self.body.builder.create_block();
                 let tested = self.body.builder.current_block().expect("lowering inside a block");
@@ -2524,40 +2538,4 @@ impl<'a, 'b> Lowering<'a, 'b> {
             _ => None,
         }
     }
-}
-
-/// `comparison` of two `i32` Numbers.
-fn integer_comparison(operator: u32) -> Option<IntCC> {
-    struct IntegerCondition;
-
-    impl super::super::operations::NumberRelationStage<()> for IntegerCondition {
-        type Output = IntCC;
-
-        fn equal(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::Equal
-        }
-        fn not_equal(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::NotEqual
-        }
-        fn less_than(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::SignedLessThan
-        }
-        fn less_equal(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::SignedLessThanOrEqual
-        }
-        fn greater_than(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::SignedGreaterThan
-        }
-        fn greater_equal(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::SignedGreaterThanOrEqual
-        }
-    }
-
-    Some(
-        super::super::operations::NumberRelation::from_operator(operator)?.apply(
-            &mut IntegerCondition,
-            (),
-            (),
-        ),
-    )
 }
