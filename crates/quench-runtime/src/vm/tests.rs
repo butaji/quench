@@ -3436,13 +3436,14 @@ fn dynamic_constructor_roots_release_after_prototype_completion() {
                 } else {
                     vm.own_property(vm.realm.globals, prototype_atom).unwrap()
                 };
+                let constructor = vm.native_value(native);
                 let argument = vm.heap.alloc_string("return 42".into());
                 let weak_argument = vm.heap.weak_handle(argument).unwrap();
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
                 let result = vm.construct_value_with_new_target(
                     &program,
-                    vm.native_value(native),
+                    constructor,
                     target,
                     &[argument],
                 );

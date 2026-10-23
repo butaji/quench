@@ -659,7 +659,7 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
-        roots.extend(self.natives.iter().map(|(_, value)| *value));
+        roots.extend(self.natives.roots());
         roots.extend(self.atom_strings.values().copied());
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {

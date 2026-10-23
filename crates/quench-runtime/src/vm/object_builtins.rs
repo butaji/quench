@@ -115,15 +115,17 @@ impl<H: Host> Vm<H> {
             );
         }
         self.set_builtin_named(program, object, "keys", Native::ObjectKeys)?;
+        let native_for_in_keys = self.native_value(Native::ForInKeys);
         self.global(
             program,
             "\0quench:for-in-keys",
-            self.native_value(Native::ForInKeys),
+            native_for_in_keys,
         )?;
+        let native_for_in_key_is_enumerable = self.native_value(Native::ForInKeyIsEnumerable);
         self.global(
             program,
             "\0quench:for-in-key-is-enumerable",
-            self.native_value(Native::ForInKeyIsEnumerable),
+            native_for_in_key_is_enumerable,
         )?;
         let proxy = self.native_value(Native::Proxy);
         self.set_builtin_function_name(proxy, "Proxy")?;
