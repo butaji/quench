@@ -2915,6 +2915,30 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// `delete base[key]` of a string key on an ordinary object, which runs no guest code:
+    /// the deletion's `true`. A refused deletion (a non-configurable property) has changed
+    /// nothing and takes the general path, which strict code makes an error; so does any
+    /// other base or key.
+    #[inline(never)]
+    fn lane_delete<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let (base, key) = (r.get(i.b), r.get(i.c));
+        let plain = base.direct_object_index().is_some()
+            && vm.heap.string(key).is_some()
+            && vm
+                .object_data(base)
+                .is_some_and(|data| !data.is_module_namespace() && !data.is_arguments_object());
+        if !plain || !vm.object_delete_property(code, &[base, key]).is_ok_and(|deleted| deleted == Value::TRUE) {
+            return exit(ip);
+        }
+        r.set(i.a, Value::TRUE);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
 /// A lane `GetIndex` of a symbol key whose proof records an inherited getter
 /// (`Vm::proved_symbol_getter`): the getter runs as a frameless activation of the read's
 /// record, as `lane_getter_activation` runs a field's, with the base as receiver. `Err`
@@ -3382,26 +3406,27 @@ fn lane_closure_value_of<H: Host>(cx: *mut LaneContext<H>, id: u32) -> Option<Va
     value
 }
 
-/// The object a `CreateRegExpLiteral` record makes in a frame's own lane run, whose frame
-/// names the literal's program. A pattern that fails to compile raises at its instruction
-/// through `Vm::lane_raised`; inside a lane activation, `None` leaves it to the general path.
+/// The object a `CreateRegExpLiteral` record makes in the lane: its site belongs to the
+/// running program, the frame's or an activation's (`LaneContext::program`). A pattern that
+/// fails to compile raises at its instruction through `Vm::lane_raised` in a frame's own
+/// run; inside a lane activation, `None` leaves it to the general path, which raises the
+/// same error from the site's cached record.
 #[inline(never)]
 fn lane_regexp_literal_value<H: Host>(
     cx: *mut LaneContext<H>,
     i: &LaneInstruction,
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    if !vm.lane_stack.activations.is_empty() {
-        return None;
-    }
     // SAFETY: the context's program outlives the lane run.
-    let (code, frame) = unsafe { (&*(*cx).code, (*cx).frame) };
-    let result = vm.regexp_literal(code, frame, i.imm() as usize);
+    let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
+    let result = vm.regexp_literal_of(code, program, i.imm() as usize);
     note_allocation(vm);
     match result {
         Ok(value) => Some(value),
         Err(error) => {
-            vm.lane_raised = Some(error);
+            if vm.lane_stack.activations.is_empty() {
+                vm.lane_raised = Some(error);
+            }
             None
         }
     }
@@ -8428,14 +8453,22 @@ impl<H: Host> Vm<H> {
         program: ProgramId,
         env: Value,
     ) -> *const crate::heap::EnvironmentSlots {
-        // A frameless activation's function has no environment of its own.
-        let capture = match self.environment_capture_slots(env, false, 0) {
-            Some((slots, None)) => slots
-                .dense()
-                .map_or(std::ptr::null(), |slots| slots as *const crate::heap::EnvironmentSlots),
-            _ => return std::ptr::null(),
+        // A frameless activation's function has no environment of its own: its depth-0
+        // captures are the closure environment's dense slots (`Vm::environment_capture_slots`),
+        // read here with the facts the store tag needs from the same cell.
+        let Some(Cell::Environment { function, slots, scope, .. }) = self.heap.get(env) else {
+            return std::ptr::null();
         };
-        if !capture.is_null() && self.admits_every_direct_store(code, program, env) {
+        if *function == u32::MAX || *function == super::ROOT_FUNCTION_ID {
+            return std::ptr::null();
+        }
+        let Some(dense) = slots.dense() else {
+            return std::ptr::null();
+        };
+        let capture: *const crate::heap::EnvironmentSlots = dense;
+        if super::environment::direct_store_owner(code, program, *function, scope)
+            .is_some_and(super::environment::owner_admits_every_direct_store)
+        {
             self.heap.remember_cell(env);
             return capture.map_addr(|address| address | CAPTURE_STORES);
         }
@@ -12676,6 +12709,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CallKnown => Some(lane_call_known::<H>),
         Op::Call => Some(lane_script_call::<H>),
         Op::CallArray => Some(lane_call_array::<H>),
+        Op::Delete => Some(lane_delete::<H>),
         Op::Construct => Some(lane_script_construct::<H>),
         Op::LoadName => Some(lane_load_name_first::<H, LOAD_NAME>),
         Op::LoadNameCall => Some(lane_load_name_first::<H, LOAD_NAME_CALL>),

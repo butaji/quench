@@ -5,7 +5,7 @@
 //! can load its rooted constant and preserve ordinary frame unwinding.
 
 use crate::bytecode::{
-    Constant, FieldBase, FieldLookup, Function, JsDenotation, Op, Operand, OperandKind, ProgramKind,
+    Constant, FieldBase, FieldLookup, Function, Op, Operand, OperandKind, ProgramKind,
     RETURN_REGISTER, ResidualProgram, WideInstruction,
 };
 use cranelift_codegen::ir::{
@@ -20,6 +20,10 @@ pub(super) struct JsJitArtifact {
     pub(super) code: Vec<u8>,
     /// The number of formal parameters read from the argument array.
     pub(super) params: usize,
+    /// Entry guards require every formal argument to be a signed Int32.
+    /// Direct compiled calls must apply this same predicate before using the
+    /// artifact's checked conversion instructions.
+    pub(super) requires_signed_int32_arguments: bool,
     /// Numeric results retain the original ABI; string results return the selected Return PC.
     pub(super) result: JsJitResultKind,
     /// A cached data property on parameter zero supplies the native numeric input.
@@ -47,6 +51,10 @@ pub(super) struct JsJitNumericFieldInput {
 pub(super) enum JsJitFieldReceiver {
     This,
     Parameter(u16),
+    Capture {
+        register: u16,
+        capture: JsJitCaptureArgument,
+    },
 }
 
 /// A field getter that can return a cached data-property value without
@@ -86,7 +94,7 @@ pub(super) struct JsJitNumericFind {
     pub(super) return_register: crate::bytecode::Register,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct JsJitCaptureArgument {
     pub(super) depth: u16,
     pub(super) slot: u16,
@@ -127,7 +135,7 @@ pub(super) enum JsJitStringTransform {
 // be delayed by a large, uninterruptible compiled body.
 const MAX_INSTRUCTIONS: usize = 256;
 const MAX_REGISTERS: usize = 256;
-const MAX_CODE_BYTES: usize = 64 * 1024;
+pub(super) const MAX_CODE_BYTES: usize = 64 * 1024;
 const MAX_PARAMETERS: usize = 8;
 const MAX_CAPTURE_ARGUMENTS: usize = 4;
 const MAX_NUMERIC_FIELD_INPUTS: usize = 4;
@@ -454,6 +462,7 @@ fn compile_int32_identity(function_id: u32, return_pc: u32) -> Option<JsJitArtif
     Some(JsJitArtifact {
         code,
         params: 1,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::Int32Identity(return_pc),
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -682,6 +691,7 @@ fn compile_capture_number(
     Some(JsJitArtifact {
         code,
         params: 0,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::CaptureNumber(capture),
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -814,9 +824,9 @@ pub(super) fn cached_numeric_field_argument_candidate(
     candidate
 }
 
-/// Collect cached reads from `this` and parameters in pure regions. Field values
-/// are guarded and supplied as separate ABI inputs, so native code never holds
-/// a guest heap reference.
+/// Collect cached reads from `this`, parameters, and captured objects in pure
+/// regions. Field values are guarded and supplied as separate ABI inputs, so
+/// native code never holds a guest heap reference.
 pub(super) fn cached_numeric_field_inputs_candidate(
     function: &Function,
 ) -> Option<smallvec::SmallVec<[JsJitNumericFieldInput; MAX_NUMERIC_FIELD_INPUTS]>> {
@@ -833,8 +843,8 @@ pub(super) fn cached_numeric_field_inputs_candidate(
         // checks; the new multi-field path targets zero-argument `this` helpers.
         return None;
     }
-    let mut inputs: smallvec::SmallVec<[_; MAX_NUMERIC_FIELD_INPUTS]> =
-        smallvec::SmallVec::new();
+    let mut inputs: smallvec::SmallVec<[_; MAX_NUMERIC_FIELD_INPUTS]> = smallvec::SmallVec::new();
+    let mut captured_registers = [None; MAX_REGISTERS];
     let mut branch_seen = false;
     for (pc, packed) in function.code.iter().copied().enumerate() {
         if packed.is_wide() {
@@ -861,6 +871,15 @@ pub(super) fn cached_numeric_field_inputs_candidate(
                 .filter(|parameter| *parameter < function.params)
             {
                 JsJitFieldReceiver::Parameter(parameter)
+            } else if let Some(register) = base.register_index() {
+                let capture = captured_registers
+                    .get(usize::from(register))
+                    .copied()
+                    .flatten()?;
+                if function.params != 0 {
+                    return None;
+                }
+                JsJitFieldReceiver::Capture { register, capture }
             } else {
                 return None;
             };
@@ -879,11 +898,19 @@ pub(super) fn cached_numeric_field_inputs_candidate(
             if inputs.len() > MAX_NUMERIC_FIELD_INPUTS {
                 return None;
             }
+        } else if instruction.op() == Op::LoadCapture {
+            if instruction.returns_from_frame() || instruction.result_flags() != 0 {
+                return None;
+            }
+            *captured_registers.get_mut(usize::from(instruction.result_register()))? =
+                Some(JsJitCaptureArgument {
+                    depth: instruction.capture_depth(),
+                    slot: instruction.capture_slot(),
+                });
         } else if !matches!(
             instruction.op(),
             Op::LoadConst
                 | Op::Move
-                | Op::LoadCapture
                 | Op::Binary
                 | Op::NumericAdd
                 | Op::NumericMultiply
@@ -906,6 +933,35 @@ pub(super) fn cached_numeric_field_inputs_candidate(
             }
             branch_seen = true;
         }
+        if !matches!(instruction.op(), Op::LoadCapture) {
+            let result_register = match instruction.op() {
+                Op::LoadConst
+                | Op::Move
+                | Op::GetField
+                | Op::Binary
+                | Op::NumericAdd
+                | Op::NumericMultiply
+                | Op::Unary => Some(instruction.result_register()),
+                _ => None,
+            };
+            if let Some(register) = result_register {
+                *captured_registers.get_mut(usize::from(register))? = None;
+            }
+        }
+    }
+    let has_branches = function.code.iter().any(|packed| {
+        !packed.is_wide()
+            && matches!(
+                packed.as_wide().op(),
+                Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
+            )
+    });
+    if has_branches
+        && inputs
+            .iter()
+            .any(|input| matches!(input.receiver, JsJitFieldReceiver::Capture { .. }))
+    {
+        return None;
     }
     (!inputs.is_empty()).then_some(inputs)
 }
@@ -1659,6 +1715,7 @@ fn compile_string_hash_loop(
     Some(JsJitArtifact {
         code,
         params: 1,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::StringHashLoop,
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -1772,6 +1829,7 @@ fn compile_string_transform(
     Some(JsJitArtifact {
         code,
         params: 1,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::StringTransform(transform),
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -1866,15 +1924,34 @@ fn compile_number_domain_boolean_tree(
                 successors.push(pc + 1);
             }
             Op::LoadCapture => {
-                if !capture_arguments.iter().any(|capture| {
-                    capture.depth == instruction.capture_depth()
-                        && capture.slot == instruction.capture_slot()
-                }) {
-                    return None;
+                let captured_object_receiver =
+                    numeric_field_inputs.as_ref().is_some_and(|inputs| {
+                        inputs.iter().any(|input| {
+                            matches!(input.receiver,
+                                JsJitFieldReceiver::Capture {
+                                    register,
+                                    capture,
+                                } if register == instruction.result_register()
+                                    && capture.depth == instruction.capture_depth()
+                                    && capture.slot == instruction.capture_slot())
+                        })
+                    });
+                if captured_object_receiver {
+                    *state
+                        .registers
+                        .get_mut(usize::from(instruction.result_register()))? =
+                        BranchValue::Unknown;
+                } else {
+                    if !capture_arguments.iter().any(|capture| {
+                        capture.depth == instruction.capture_depth()
+                            && capture.slot == instruction.capture_slot()
+                    }) {
+                        return None;
+                    }
+                    *state
+                        .registers
+                        .get_mut(usize::from(instruction.result_register()))? = BranchValue::Number;
                 }
-                *state
-                    .registers
-                    .get_mut(usize::from(instruction.result_register()))? = BranchValue::Number;
                 successors.push(pc + 1);
             }
             Op::GetField => {
@@ -1888,6 +1965,7 @@ fn compile_number_domain_boolean_tree(
                     let expected_base = match input.receiver {
                         JsJitFieldReceiver::This => FieldBase::THIS,
                         JsJitFieldReceiver::Parameter(parameter) => FieldBase(parameter),
+                        JsJitFieldReceiver::Capture { register, .. } => FieldBase(register),
                     };
                     if !matches!(
                         instruction.field_lookup(),
@@ -2589,6 +2667,7 @@ fn compile_number_domain_boolean_tree(
     Some(JsJitArtifact {
         code,
         params,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::Boolean,
         field_argument,
         numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.into_vec()),
@@ -2823,287 +2902,26 @@ fn compile_numeric_with_captures(
 ) -> Option<JsJitArtifact> {
     let function = program.function_get(function_id as usize)?;
     if !function_candidate(function, program)
-        || function
-            .code
-            .iter()
-            .any(|instruction| instruction.is_wide())
+        || function.code.iter().any(|instruction| instruction.is_wide())
     {
         return None;
     }
 
-    let params = usize::from(function.params);
-    // A field read at entry is supplied by the VM's guarded monomorphic
-    // cache. The native region sees only its numeric data-property value;
-    // cache misses, accessors and non-numeric values stay in the interpreter.
+    // The straight-line scalar region is bounded and has no safepoint or callout.
     let numeric_field_inputs = cached_numeric_field_inputs_candidate(function);
     let field_argument = if numeric_field_inputs.is_some() {
         None
     } else {
         cached_numeric_field_argument_candidate(function)
     };
-    let isa = super::jit_backend::target_isa("speed", true)?;
-
-    let mut signature = ir::Signature::new(isa.default_call_conv());
-    signature.params.push(AbiParam::new(isa.pointer_type()));
-    signature.returns.push(AbiParam::new(types::F64));
-    let name = UserFuncName::user(0x5155_454e, function_id);
-    let mut native = ir::Function::with_name_signature(name, signature);
-    let mut builder_context = FunctionBuilderContext::new();
-    let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
-
-    let entry = builder.create_block();
-    builder.append_block_params_for_function_params(entry);
-    builder.switch_to_block(entry);
-    builder.seal_block(entry);
-    let arguments = builder.block_params(entry)[0];
-
-    // Registers are SSA values here. The validated plain activation places its
-    // promoted parameter locals in registers 0..params.
-    let mut registers = vec![None; usize::from(function.registers)];
-    // Plain locals can be represented by SSA values when the region is
-    // straight-line: every read must follow a compiled write. Missing writes
-    // reject the region so initialization and lexical semantics stay in the VM.
-    let mut locals = vec![None; usize::from(function.locals)];
-    for (index, register) in registers.iter_mut().take(params).enumerate() {
-        if numeric_field_inputs.as_ref().is_some_and(|inputs| {
-            inputs.iter().any(|input| {
-                input.receiver == JsJitFieldReceiver::Parameter(index as u16)
-            })
-        })
-        {
-            // The object receiver is supplied through its guarded field value,
-            // not interpreted as a numeric argument by native code.
-            continue;
-        }
-        let offset = i32::try_from(index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
-        *register = Some(builder.ins().load(
-            types::F64,
-            ir::MemFlagsData::trusted(),
-            arguments,
-            offset,
-        ));
-    }
-
-    let mut returned = false;
-    for (pc, packed) in function.code.iter().copied().enumerate() {
-        if returned || packed.is_wide() {
-            return None;
-        }
-        let instruction = packed.as_wide();
-        let result = match instruction.op().js_denotation() {
-            JsDenotation::GetField => {
-                let inputs = numeric_field_inputs.as_ref()?;
-                let (field_index, candidate) = inputs
-                    .iter()
-                    .enumerate()
-                    .find(|(_, candidate)| candidate.pc == pc)?;
-                if instruction.returns_from_frame()
-                    || instruction.result_flags() != 0
-                    || instruction.writes_current_this()
-                {
-                    return None;
-                }
-                let expected_base = match candidate.receiver {
-                    JsJitFieldReceiver::This => FieldBase::THIS,
-                    JsJitFieldReceiver::Parameter(parameter) => FieldBase(parameter),
-                };
-                if !matches!(
-                    instruction.field_lookup(),
-                    Some(FieldLookup::Atom { base, cache_site, .. })
-                        if base == expected_base && cache_site == candidate.cache_site
-                ) {
-                    return None;
-                }
-                let field_argument_index = params
-                    .checked_add(captures.len())?
-                    .checked_add(field_index)?;
-                let field_offset =
-                    i32::try_from(field_argument_index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
-                Some(builder.ins().load(
-                    types::F64,
-                    ir::MemFlagsData::trusted(),
-                    arguments,
-                    field_offset,
-                ))
-            }
-            JsDenotation::LoadConst => {
-                if instruction.returns_from_frame() || instruction.result_flags() != 0 {
-                    return None;
-                }
-                let Constant::Number(value) =
-                    program.constants.get(instruction.constant_index())?
-                else {
-                    return None;
-                };
-                Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
-            }
-            JsDenotation::Move => {
-                if instruction.returns_from_frame() || instruction.result_flags() != 0 {
-                    return None;
-                }
-                let source = usize::from(instruction.register_b());
-                Some(*registers.get(source)?.as_ref()?)
-            }
-            JsDenotation::PlainLocalStore => {
-                if instruction.returns_from_frame() || instruction.result_flags() != 0 {
-                    return None;
-                }
-                let value = *registers
-                    .get(usize::from(instruction.register_a()))?
-                    .as_ref()?;
-                *locals.get_mut(instruction.local_slot())? = Some(value);
-                if let Some(register) = instruction.optional_register_b() {
-                    *registers.get_mut(usize::from(register))? = Some(value);
-                }
-                None
-            }
-            JsDenotation::PlainLocalLoad => {
-                if instruction.returns_from_frame()
-                    || instruction.result_flags() != 0
-                    || instruction.numeric_local_target().is_some()
-                {
-                    return None;
-                }
-                Some(*locals.get(instruction.local_slot())?.as_ref()?)
-            }
-            JsDenotation::CapturedValue => {
-                if instruction.returns_from_frame() || instruction.result_flags() != 0 {
-                    return None;
-                }
-                let capture = captures.iter().position(|capture| {
-                    capture.depth == instruction.capture_depth()
-                        && capture.slot == instruction.capture_slot()
-                })?;
-                let argument_index = params.checked_add(capture)?;
-                let offset =
-                    i32::try_from(argument_index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
-                Some(
-                    builder
-                        .ins()
-                        .load(types::F64, ir::MemFlagsData::trusted(), arguments, offset),
-                )
-            }
-            JsDenotation::NumericBinary => {
-                if instruction.numeric_local_target().is_some()
-                    || (instruction.result_flags() != 0
-                        && instruction.result_flags() != RETURN_REGISTER)
-                {
-                    return None;
-                }
-                let left =
-                    operand_value(&mut builder, program, instruction.operand_b(), &registers)?;
-                let right =
-                    operand_value(&mut builder, program, instruction.operand_c(), &registers)?;
-                let value = match (instruction.op(), instruction.binary_operator()) {
-                    (Op::Binary, op)
-                        if super::operations::NumberArithmetic::from_operator(op).is_some() =>
-                    {
-                        super::compiled::emit_number_arithmetic(
-                            &mut builder,
-                            op,
-                            left,
-                            right,
-                        )?
-                    }
-                    (Op::Binary, op)
-                        if (op == BinaryOperator::BitwiseAnd as u32
-                            || op == BinaryOperator::BitwiseOR as u32
-                            || op == BinaryOperator::BitwiseXOR as u32)
-                            && has_int32_bitwise_candidate(program, function) =>
-                    {
-                        let left = builder.ins().fcvt_to_sint(types::I32, left);
-                        let right = builder.ins().fcvt_to_sint(types::I32, right);
-                        let value = match op {
-                            x if x == BinaryOperator::BitwiseAnd as u32 => {
-                                builder.ins().band(left, right)
-                            }
-                            x if x == BinaryOperator::BitwiseOR as u32 => {
-                                builder.ins().bor(left, right)
-                            }
-                            _ => builder.ins().bxor(left, right),
-                        };
-                        builder.ins().fcvt_from_sint(types::F64, value)
-                    }
-                    (Op::NumericAdd, op)
-                        if super::operations::NumberArithmetic::from_operator(op)
-                            == Some(super::operations::NumberArithmetic::Add) =>
-                    {
-                        super::compiled::emit_number_arithmetic(
-                            &mut builder,
-                            op,
-                            left,
-                            right,
-                        )?
-                    }
-                    (Op::NumericMultiply, op)
-                        if super::operations::NumberArithmetic::from_operator(op)
-                            == Some(super::operations::NumberArithmetic::Multiply) =>
-                    {
-                        super::compiled::emit_number_arithmetic(
-                            &mut builder,
-                            op,
-                            left,
-                            right,
-                        )?
-                    }
-                    _ => return None,
-                };
-                if instruction.returns_from_frame() {
-                    // The residual marks this operation as the semantic
-                    // return edge. Later bytecodes are unreachable; return
-                    // through the native ABI, then resume at the residual's
-                    // terminal Return so normal frame unwinding still runs.
-                    builder.ins().return_(&[value]);
-                    returned = true;
-                    break;
-                }
-                Some(value)
-            }
-            JsDenotation::Return => {
-                if instruction.result_flags() != 0 || pc + 1 != function.code.len() {
-                    return None;
-                }
-                let value = *registers
-                    .get(usize::from(instruction.register_a()))?
-                    .as_ref()?;
-                builder.ins().return_(&[value]);
-                returned = true;
-                None
-            }
-            JsDenotation::Unsupported => return None,
-        };
-        if let Some(value) = result {
-            let destination = usize::from(instruction.result_register());
-            *registers.get_mut(destination)? = Some(value);
-        }
-    }
-    if !returned {
-        return None;
-    }
-
-    builder.finalize(isa.frontend_config());
-    let mut context = cranelift_codegen::Context::for_function(native);
-    let compiled = context
-        .compile(
-            &*isa,
-            &mut cranelift_codegen::control::ControlPlane::default(),
-        )
-        .ok()?;
-    if !compiled.buffer.relocs().is_empty() {
-        return None;
-    }
-    let code = compiled.code_buffer().to_vec();
-    if code.is_empty() || code.len() > MAX_CODE_BYTES {
-        return None;
-    }
-    Some(JsJitArtifact {
-        code,
-        params,
-        result: JsJitResultKind::Number,
+    super::compiled::compile_js_numeric_region(
+        program,
+        function_id,
+        captures,
+        numeric_field_inputs.as_deref(),
         field_argument,
-        numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.into_vec()),
-        capture_arguments: captures.to_vec(),
-    })
+        has_int32_bitwise_candidate(program, function),
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3515,40 +3333,16 @@ fn compile_numeric_loop(
                         Some((NumericFlowKind::Number, result))
                     }
                     (Op::Binary, value)
-                        if value == BinaryOperator::BitwiseOR as u32
-                            || value == BinaryOperator::BitwiseXOR as u32
-                            || value == BinaryOperator::BitwiseAnd as u32
-                            || value == BinaryOperator::ShiftLeft as u32
-                            || value == BinaryOperator::ShiftRight as u32
-                            || value == BinaryOperator::ShiftRightZeroFill as u32 =>
+                        if super::operations::NumberBitwise::from_operator(value).is_some() =>
                     {
                         let left = numeric_to_i32(&mut builder, left);
                         let right = numeric_to_i32(&mut builder, right);
-                        let shift = builder.ins().band_imm_u(right, 31);
-                        let integer = match value {
-                            value if value == BinaryOperator::BitwiseOR as u32 => {
-                                builder.ins().bor(left, right)
-                            }
-                            value if value == BinaryOperator::BitwiseXOR as u32 => {
-                                builder.ins().bxor(left, right)
-                            }
-                            value if value == BinaryOperator::BitwiseAnd as u32 => {
-                                builder.ins().band(left, right)
-                            }
-                            value if value == BinaryOperator::ShiftLeft as u32 => {
-                                builder.ins().ishl(left, shift)
-                            }
-                            value if value == BinaryOperator::ShiftRight as u32 => {
-                                builder.ins().sshr(left, shift)
-                            }
-                            _ => builder.ins().ushr(left, shift),
-                        };
-                        let result = if value == BinaryOperator::ShiftRightZeroFill as u32 {
-                            let unsigned = builder.ins().uextend(types::I64, integer);
-                            builder.ins().fcvt_from_uint(types::F64, unsigned)
-                        } else {
-                            builder.ins().fcvt_from_sint(types::F64, integer)
-                        };
+                        let result = super::compiled::emit_number_bitwise_i32(
+                            &mut builder,
+                            value,
+                            left,
+                            right,
+                        )?;
                         Some((NumericFlowKind::Number, result))
                     }
                     (Op::NumericAdd, value)
@@ -3745,6 +3539,7 @@ fn compile_numeric_loop(
     Some(JsJitArtifact {
         code,
         params,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::NumberInterruptible,
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -4121,6 +3916,7 @@ fn compile_string_branches(
     Some(JsJitArtifact {
         code,
         params,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::StringReturnPc(return_sites),
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -4453,6 +4249,7 @@ fn compile_field_reject(
     Some(JsJitArtifact {
         code,
         params: 1,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::FieldReject {
             resume_pc,
             resume_register,
@@ -4509,7 +4306,12 @@ fn eligible(function: &Function, program: &crate::bytecode::ResidualProgram) -> 
         || !function.handlers.is_empty()
         || (!function.plain_activation(program)
             && !activation_is_irrelevant(function)
-            && numeric_capture_candidate(function).is_none())
+            && numeric_capture_candidate(function).is_none()
+            && !cached_numeric_field_inputs_candidate(function).is_some_and(|inputs| {
+                inputs.iter().any(|input| {
+                    matches!(input.receiver, JsJitFieldReceiver::Capture { .. })
+                })
+            }))
     {
         return false;
     }
@@ -4557,28 +4359,6 @@ fn activation_is_irrelevant(function: &Function) -> bool {
                     | Op::Return
             )
         })
-}
-
-fn operand_value(
-    builder: &mut FunctionBuilder<'_>,
-    program: &ResidualProgram,
-    operand: crate::bytecode::Operand,
-    registers: &[Option<ir::Value>],
-) -> Option<ir::Value> {
-    match operand.kind()? {
-        OperandKind::Register => registers
-            .get(usize::from(operand.register_index()?))?
-            .as_ref()
-            .copied(),
-        OperandKind::Constant => {
-            let Constant::Number(value) = program.constants.get(usize::from(operand.payload()))?
-            else {
-                return None;
-            };
-            Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
-        }
-        OperandKind::Field | OperandKind::Local => None,
-    }
 }
 
 /// What the tier finds in a function at its entries, before it has a compiled form: the shapes

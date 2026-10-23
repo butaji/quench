@@ -299,17 +299,13 @@ impl<H: Host> Vm<H> {
             .filter(|value| !value.is_deleted())
     }
 
-    /// `base[key]` for a non-negative integer key that names no element of a plain array
-    /// and that nothing on its prototype chain holds: `undefined`, as [[Get]] finds it. An
+    /// `base[key]` for a non-negative integer key that neither an ordinary object or array
+    /// `base` nor anything on its prototype chain holds: `undefined`, as [[Get]] finds it. An
     /// object on the chain holds the index as an element of an array, as a property keyed by
     /// the index's canonical atom (none exists without one, `lookup_array_index_atom`), or
     /// through exotic behaviour, where this declines.
     pub(super) fn absent_array_element(&self, base: Value, key: Value) -> Option<Value> {
         let index = usize::try_from(key.as_int()?).ok()?;
-        let elements = self.heap.array(base)?.elements();
-        if elements.get(index).is_some_and(|value| !value.is_deleted()) {
-            return None;
-        }
         let atom = self.lookup_array_index_atom(index).map(PropertyKey::string);
         let mut current = base;
         loop {

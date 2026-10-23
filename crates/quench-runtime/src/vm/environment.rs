@@ -1976,11 +1976,7 @@ impl<H: Host> Vm<H> {
         else {
             return false;
         };
-        direct_store_owner(p, program, *function, scope).is_some_and(|owner| {
-            owner.self_binding_slot.is_none()
-                && (0..usize::from(owner.params))
-                    .all(|parameter| super::arguments::mapped_arguments_slot(owner, parameter).is_none())
-        })
+        direct_store_owner(p, program, *function, scope).is_some_and(owner_admits_every_direct_store)
     }
 
     fn store_environment_binding(
@@ -2592,7 +2588,16 @@ fn environment_admits_direct_store(
 /// `environment_admits_direct_store` may admit: not the root's, a function-less layer's or
 /// another program's.
 #[inline(always)]
-fn direct_store_owner<'p>(
+/// Whether a store to any captured slot of `owner`'s environment is the whole write: no slot
+/// is its own name's binding (`Function::self_binding_slot`) or a parameter a mapped
+/// `arguments` object aliases. A mapped object aliases every parameter or none, so parameter 0
+/// answers for all of them.
+pub(super) fn owner_admits_every_direct_store(owner: &crate::bytecode::Function) -> bool {
+    owner.self_binding_slot.is_none()
+        && (owner.params == 0 || super::arguments::mapped_arguments_slot(owner, 0).is_none())
+}
+
+pub(super) fn direct_store_owner<'p>(
     p: &'p ResidualProgram,
     program: super::ProgramId,
     function: u32,

@@ -16,7 +16,7 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 use std::{
     cell::{Cell, RefCell},
     ffi::{c_char, c_void, CStr, CString},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 mod abi;
@@ -29,6 +29,14 @@ mod values;
 mod work;
 
 pub(crate) use abi::*;
+
+pub(crate) fn wake_fd() -> Option<std::os::fd::RawFd> {
+    work::wake_fd()
+}
+
+pub(crate) fn drain_wake() {
+    work::drain_wake();
+}
 
 type Context<'a> = NativeContext<'a, NodeHost>;
 
@@ -59,7 +67,7 @@ pub(crate) struct Env {
     /// Weakly held targets whose finalizers run once the collector clears them.
     finalizers: RefCell<Vec<lifecycle::WeakFinalizer>>,
     /// Work completed off the VM thread, delivered by the event loop.
-    events: Arc<Mutex<std::collections::VecDeque<work::Event>>>,
+    events: Arc<work::EventQueue>,
     /// Outstanding work that keeps the event loop alive.
     pending_async_work: Cell<usize>,
     threadsafe_functions: RefCell<Vec<*mut work::ThreadsafeFunction>>,
@@ -122,7 +130,7 @@ impl Env {
             cleanup_hooks: RefCell::new(Vec::new()),
             external_memory: Cell::new(0),
             finalizers: RefCell::new(Vec::new()),
-            events: Arc::default(),
+            events: work::new_events().map_err(RootedError::host)?,
             pending_async_work: Cell::new(0),
             threadsafe_functions: RefCell::new(Vec::new()),
         });

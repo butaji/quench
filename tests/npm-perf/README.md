@@ -878,3 +878,122 @@ The React JIT diagnostic recorded zero native entries across 58 functions;
 the hottest render functions fell back 42,680–215,160 times each in a
 200-render sample. The next runtime change should target broad native coverage
 for closure/capture-heavy functions and validate both throughput and RSS.
+
+## Added package workloads (October 23, 2026)
+
+The pinned dependency set now includes all ten requested npm packages:
+React/react-dom, Next, Vite, esbuild, sharp, Fastify, Undici, ws, Pino, and
+Zod. The added workloads cover Next dynamic route matching and `NextResponse`
+JSON, Vite's TSX transform, esbuild's TSX transform, and sharp raw-image resize
+plus WebP encoding. Inputs, lockfile and binary hashes, versions, parity
+checksums, medians, and sampled RSS are retained in
+[`evidence/tod173-npm-10-2026-10-23/`](../../evidence/tod173-npm-10-2026-10-23/).
+
+Five-run Linux diagnostics show no package win. Quench must exceed both
+comparators' throughput by 20% and reduce both maximum RSS values by 20%; Linux
+RSS here is sampled every 50 ms and cannot qualify a result.
+
+| Workload / phase | Quench ops/s / MiB | Node ops/s / MiB | Bun ops/s / MiB | Result |
+| --- | ---: | ---: | ---: | --- |
+| esbuild no-JIT | 305 / 59.29 | 899 / 64.28 | 965 / 56.88 | Loses speed and Bun RSS |
+| esbuild JIT | 334 / 59.15 | 1,042 / 80.15 | 1,104 / 67.06 | Loses speed |
+| sharp no-JIT | 367 / 50.54 | 453 / 56.18 | 452 / 52.20 | Closest no-JIT; misses both gates |
+| sharp JIT | 360 / 46.53 | 441 / 68.57 | 450 / 61.06 | RSS improves, speed loses |
+| Next no-JIT, 20k rounds | 4,196 / 53.22 | 19,342 / 42.18 | 112,360 / 46.14 | Loses both |
+| Next JIT, 20k rounds | 4,314 / 39.56 | 81,301 / 60.04 | 210,526 / 52.52 | RSS improves, speed loses |
+| Vite no-JIT, 500 rounds | 8,333 / 68.88 | unavailable | 13,889 / 59.13 | Node `--jitless` cannot load Oxc WASM |
+| Vite JIT, 500 rounds | 8,333 / 56.69 | 27,778 / 70.86 | 31,250 / 66.42 | Loses speed |
+| Undici no-JIT | 1,984 / 60.07 | unavailable | 3,257 / 46.64 | Node `--jitless` cannot load llhttp WASM |
+
+Next's extended 20,000-operation samples remove the clock-resolution artifact
+in the earlier short runs. The output matched across all participating
+engines. The extended JIT sample shows lower Quench RSS, but throughput is
+about 19x below Node and 49x below Bun. Sharp's native work and asynchronous
+Node-API completion path make it the nearest candidate: with JIT, Quench RSS is
+24% below Bun, but throughput remains about 20% below Bun and 18% below Node.
+The small package sweep does not justify a runtime change yet; further work
+needs function-level profiling and paired candidate/control screens.
+
+Vite and Undici node no-JIT omissions are explicit in their reports and do not
+mean a runtime result was invented. Bun and Quench run those phases. All package
+screens have `qualificationReady: false`; compare them as host-local
+performance diagnostics only. The Zod study and its source-rejected candidates
+remain documented separately in `evidence/tod173-zod-2026-10-23/`.
+
+### sharp async follow-up
+
+Added `sharp-metadata.cjs` for the common encoded-image metadata path and
+`sharp-resize-concurrent.cjs` for four overlapping resize/encode calls. The
+`sharp-resize-effort0.cjs` preview variant checks whether cheaper encoding
+exposes runtime overhead. Their five-run reports and paired controls are in the
+evidence directory above.
+
+A native Node-API completion wake was prototyped after profiling showed the
+idle loop checked addon work on its 1 ms poll interval. The current Linux path
+uses `eventfd` in the same `ppoll` call as network descriptors, so socket
+readiness still wakes immediately; other Unix targets use a nonblocking socket
+pair. The metadata case improved from about 820 to 4,000 ops/s over the original
+Quench binary, but it remains slower than Node and Bun. Against the socket-pair
+implementation, eventfd was within 3% in metadata and within 2% in concurrent
+resize. Four-way resize throughput is near parity, with Quench using less
+sampled RSS, but it does not reach the 20% speed advantage. The effort-zero
+variant also loses throughput. This is a useful async-path improvement, not a
+package win. Linux RSS remains diagnostic.
+
+### Next response generation versus route matching
+
+The original `next-route-response.cjs` includes `await response.json()`, which
+profiles show spends most of its runtime in Undici's `Response` and body
+stream. Added `next-route-generate.cjs` to measure the typical server path:
+match a dynamic route, construct `NextResponse.json`, and hand off its body
+stream without parsing the response in the handler. Added
+`next-route-match.cjs` to isolate Next's matcher and parameter extraction.
+
+Five-run Linux diagnostics: generation measured 5,112 / 67.81 MiB no-JIT and
+4,965 / 47.72 MiB JIT for Quench, versus Node at 26,596 / 70.00 and
+58,140 / 84.10, and Bun at 113,636 / 37.26 and 208,333 / 6.15. Matcher-only
+measured 56,818 / 25.64 MiB no-JIT and 64,516 / 17.73 MiB JIT, versus Node
+at 322,581 / 24.83 and 555,556 / 33.65, and Bun at 212,766 / 33.25 and
+625,000 / 1.90. The short Bun samples understate RSS. These scenarios do not
+win. They locate Next's largest cost in response construction and streams,
+while route matching by itself is much faster but still behind both engines.
+
+`next-response-json.cjs` isolates the underlying `Response.json()` constructor.
+Quench measured 11,601 ops/s no-JIT and 12,821 JIT, versus Node at 48,544 and
+94,340. Bun's 625k/833k measurements came from very short samples, so its
+throughput and RSS are timer/sampling limited and not a reliable comparison.
+The constructor alone is much faster than Next's wrapper, but still loses to
+Node; no Next path wins.
+
+`next-response-components.cjs` separates `JSON.stringify`, string and byte
+`Response` construction, and `Response.json()`. Its final body read verifies
+the generated stream content after the timed loop. Quench's latest five-run
+diagnostics measured 13,405 / 107.7 MiB no-JIT and 13,012 / 87.4 MiB JIT for
+`Response.json()`, versus Node at 53,050 / 145.7 and 96,154 / 161.7. Bun's
+response-construction samples ran below 50 ms and cannot support throughput or
+RSS claims. The build embeds a checked Undici source override that specializes
+the private byte array and the common status-only options; custom headers and
+status text retain the generic path. A direct state allocation variant was
+rejected after inconsistent JIT results. Latest same-source paired results
+were within run noise, and this package remains behind Node and Bun. Linux RSS
+is diagnostic only.
+
+After the latest `v2-merged` synchronization, the same screen measured
+`Response.json()` at 13,812 / 108.0 MiB no-JIT and 12,240 / 87.4 MiB JIT for
+Quench, versus Node at 54,054 / 145.6 and 109,890 / 163.2. Next route
+generation measured 6,061 / 69.2 and 5,848 / 48.7 for Quench, versus Node at
+28,902 / 79.6 and 57,471 / 88.5. Same-source controls stayed within run
+variation. The response and Next workloads still do not win; Bun samples are
+too short to qualify. Post-merge reports are in
+`evidence/tod173-next-response-2026-10-23/`.
+
+For the private JSON-byte stream, removing explicit no-op `pull` and `cancel`
+callbacks produced a repeatable paired `iteration` improvement of about 10–12%
+for `Response.json()` in both modes. Next route generation improved about 7%
+no-JIT and was flat in JIT. The current production candidate measured 15,588 /
+89.7 MiB no-JIT and 13,387 / 69.2 MiB JIT for the response constructor, and
+6,281 / 63.2 MiB and 6,427 / 42.5 MiB for route generation. Node remains 3.2–
+10.7x faster on the reliable rows; Bun's samples are too short to qualify. The
+optimization is retained as a component gain, not a package win. Paired
+iteration and production reports with `noop` in their names are in the evidence
+folder.

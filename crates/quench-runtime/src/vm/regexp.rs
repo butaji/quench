@@ -2268,7 +2268,17 @@ impl<H: Host> Vm<H> {
         frame: usize,
         site_index: usize,
     ) -> Result<Value, JsError> {
-        let program = self.frames[frame].program;
+        self.regexp_literal_of(p, self.frames[frame].program, site_index)
+    }
+
+    /// The new RegExp object regular expression literal site `site_index` of `p`, the
+    /// residual of `program`, evaluates to.
+    pub(super) fn regexp_literal_of(
+        &mut self,
+        p: &ResidualProgram,
+        program: ProgramId,
+        site_index: usize,
+    ) -> Result<Value, JsError> {
         let site = p
             .regexp_literal_sites
             .get(site_index)
