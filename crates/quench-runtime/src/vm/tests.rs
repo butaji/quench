@@ -10506,6 +10506,64 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_compiles_number_unary_plus_and_negation_with_exact_fallback() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function plus(value) { return +value; }
+          function negate(value) { return -value; }
+          const values = [0, -0, Infinity, -Infinity, NaN];
+          for (let index = 0; index < 40; index++) {
+            const value = values[index % values.length];
+            if (!Object.is(plus(value), value)) throw Error('unary plus');
+            if (!Object.is(negate(value), -value)) throw Error('unary negation');
+          }
+          if (plus('7') !== 7) throw Error('unary plus coercion fallback');
+          let plusThrew = false;
+          try { plus(7n); } catch (error) { plusThrew = error instanceof TypeError; }
+          if (!plusThrew) throw Error('unary plus BigInt fallback');
+          if (negate(7n) !== -7n) throw Error('unary negation BigInt fallback');
+          let coercions = 0;
+          const boxed = { valueOf() { coercions++; return 5; } };
+          if (negate(boxed) !== -5 || coercions !== 1) throw Error('unary effectful fallback');
+        "#,
+        "js-jit-number-unary.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    for name in ["plus", "negate"] {
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(compiled)) =
+            vm.programs
+                .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should compile its Number unary denotation");
+        };
+        assert!(
+            compiled.uses_shared_entry(),
+            "{name} should use the common VM native-entry ABI"
+        );
+        assert!(
+            compiled.native_entries() > 0,
+            "{name} should have entered native code before the fallback checks"
+        );
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_straight_line_plain_local_temporaries() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"

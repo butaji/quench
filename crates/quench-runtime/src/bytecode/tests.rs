@@ -17,6 +17,7 @@ fn generated_js_denotations_cover_the_native_numeric_lowerings() {
     assert_eq!(Op::Binary.js_denotation(), JsDenotation::NumericBinary);
     assert_eq!(Op::NumericAdd.js_denotation(), JsDenotation::NumericBinary);
     assert_eq!(Op::NumericMultiply.js_denotation(), JsDenotation::NumericBinary);
+    assert_eq!(Op::Unary.js_denotation(), JsDenotation::NumericUnary);
     assert_eq!(Op::Return.js_denotation(), JsDenotation::Return);
     assert_eq!(Op::Call.js_denotation(), JsDenotation::Unsupported);
 }
