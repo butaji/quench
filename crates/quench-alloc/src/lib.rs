@@ -13,7 +13,8 @@
 //! floor small: a heap touches at most one partly used page per class. Sizes above
 //! `MAX_SMALL_BYTES`, alignments above `GRANULE_BYTES`, and any request after reservation
 //! fails go to the system allocator. Every chunk comes from one reservation made once per
-//! process (`REGION_BYTES`), so whether a block is this allocator's is one address compare
+//! process (at most `REGION_BYTES`, halved until the host grants it), so whether a block is
+//! this allocator's is one address-range compare
 //! (`owns`): a free goes to whichever allocator holds the block. That lets a process serve
 //! everything from the system allocator until it chooses this one (`QuenchAlloc::enable`),
 //! and lets an allocation fall back to the system allocator when no page can be had.
@@ -41,9 +42,12 @@ pub const MAX_SMALL_BYTES: usize = 1024;
 const CHUNK_BYTES: usize = 64 << 20;
 /// Address space reserved once, inaccessible until carved into chunks: every page this
 /// allocator hands out lies inside it (`owns`). It reserves addresses, not memory; a process
-/// that needs more than this many chunks serves the rest from the system allocator.
+/// that needs more than this many chunks serves the rest from the system allocator. A host
+/// that refuses this much address space (an address-space limit, or an instrumenting
+/// emulator such as Valgrind) is asked for half as much, down to one chunk.
 const REGION_BYTES: usize = 1 << 36;
 const _: () = assert!(REGION_BYTES.is_multiple_of(CHUNK_BYTES));
+const _: () = assert!(REGION_BYTES.is_power_of_two() && CHUNK_BYTES.is_power_of_two());
 /// Space before a page's first block, a multiple of the granule.
 const PAGE_HEADER_BYTES: usize = 64;
 
@@ -249,6 +253,8 @@ fn thread_heap_slow() -> *mut Heap {
 
 /// The reservation's first address, or zero before it is made (or after it failed).
 static REGION_BASE: AtomicUsize = AtomicUsize::new(0);
+/// The reservation's length, stored before its base is published; zero before it is made.
+static REGION_LEN: AtomicUsize = AtomicUsize::new(0);
 /// Whether the reservation has been attempted, so a failure is not retried on every page.
 static REGION_TRIED: AtomicBool = AtomicBool::new(false);
 /// The offset in the reservation of the next chunk any heap takes.
@@ -264,22 +270,29 @@ fn region_base() -> usize {
     if base != 0 || REGION_TRIED.swap(true, Ordering::AcqRel) {
         return REGION_BASE.load(Ordering::Acquire);
     }
-    // SAFETY: a fresh inaccessible anonymous reservation; nothing else uses its addresses.
-    let reserved = unsafe {
-        libc::mmap(
-            ptr::null_mut(),
-            REGION_BYTES,
-            libc::PROT_NONE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
-            -1,
-            0,
-        )
-    };
-    if reserved == libc::MAP_FAILED {
-        return 0;
+    let mut length = REGION_BYTES;
+    loop {
+        // SAFETY: a fresh inaccessible anonymous reservation; nothing else uses its addresses.
+        let reserved = unsafe {
+            libc::mmap(
+                ptr::null_mut(),
+                length,
+                libc::PROT_NONE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+                -1,
+                0,
+            )
+        };
+        if reserved != libc::MAP_FAILED {
+            REGION_LEN.store(length, Ordering::Relaxed);
+            REGION_BASE.store(reserved as usize, Ordering::Release);
+            return reserved as usize;
+        }
+        if length == CHUNK_BYTES {
+            return 0;
+        }
+        length /= 2;
     }
-    REGION_BASE.store(reserved as usize, Ordering::Release);
-    reserved as usize
 }
 
 /// A fresh chunk of the reservation, made writable, or `None` once it is spent.
@@ -290,7 +303,7 @@ fn take_chunk() -> Option<usize> {
         return None;
     }
     let offset = REGION_NEXT.fetch_add(CHUNK_BYTES, Ordering::Relaxed);
-    if offset >= REGION_BYTES {
+    if offset >= REGION_LEN.load(Ordering::Relaxed) {
         return None;
     }
     let chunk = base + offset;
@@ -304,8 +317,9 @@ fn take_chunk() -> Option<usize> {
 /// Whether `block` lies in this allocator's pages.
 #[inline(always)]
 pub fn owns(block: *const u8) -> bool {
+    // A block of the reservation reached this thread after its length was stored.
     let base = REGION_BASE.load(Ordering::Relaxed);
-    base != 0 && (block as usize).wrapping_sub(base) < REGION_BYTES
+    base != 0 && (block as usize).wrapping_sub(base) < REGION_LEN.load(Ordering::Relaxed)
 }
 
 /// The allocator. One instance serves a process as `#[global_allocator]`; its state lives in
