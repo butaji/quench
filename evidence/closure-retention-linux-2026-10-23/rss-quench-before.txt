@@ -1,0 +1,21 @@
+# run 1
+{"label":"baseline","rssKiB":12324,"hwmKiB":12384,"heapUsed":538404}
+{"label":"new Array(N) held","rssKiB":7928,"hwmKiB":12364,"heapUsed":421306}
+{"label":"closure held","rssKiB":16132,"hwmKiB":32908,"heapUsed":8421458}
+{"holeyHeapBytesPerElement":"-0.12","filledHeapBytesPerElement":"8.00","filledRssBytesPerElement":"8.40","heavyTaskMs":"310.1"}
+{"label":"closure dropped","rssKiB":8612,"hwmKiB":32908,"heapUsed":422371}
+{"residualHeapBytes":1065,"residualRssKiB":684}
+# run 2
+{"label":"baseline","rssKiB":10408,"hwmKiB":10472,"heapUsed":538404}
+{"label":"new Array(N) held","rssKiB":7136,"hwmKiB":10516,"heapUsed":421306}
+{"label":"closure held","rssKiB":15444,"hwmKiB":32444,"heapUsed":8421458}
+{"holeyHeapBytesPerElement":"-0.12","filledHeapBytesPerElement":"8.00","filledRssBytesPerElement":"8.51","heavyTaskMs":"332.5"}
+{"label":"closure dropped","rssKiB":7896,"hwmKiB":32444,"heapUsed":422371}
+{"residualHeapBytes":1065,"residualRssKiB":760}
+# run 3
+{"label":"baseline","rssKiB":10408,"hwmKiB":10472,"heapUsed":538404}
+{"label":"new Array(N) held","rssKiB":7136,"hwmKiB":10516,"heapUsed":421306}
+{"label":"closure held","rssKiB":15444,"hwmKiB":32444,"heapUsed":8421458}
+{"holeyHeapBytesPerElement":"-0.12","filledHeapBytesPerElement":"8.00","filledRssBytesPerElement":"8.51","heavyTaskMs":"312.7"}
+{"label":"closure dropped","rssKiB":7896,"hwmKiB":32444,"heapUsed":422371}
+{"residualHeapBytes":1065,"residualRssKiB":760}

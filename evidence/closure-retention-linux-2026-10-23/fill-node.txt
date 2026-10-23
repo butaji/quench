@@ -1,0 +1,21 @@
+big holey [1000000,"data","data",true]
+partial range [1,0,0,0,5]
+negative start [1,9,9]
+empty range [1,2,3]
+holey dense [[1,7,7,7,5],["0","1","2","3","4"]]
+sparse small range [1000000,["10","11"],1]
+proto setter [["x"],["0","1","2","4"]]
+proto readonly throws TypeError
+frozen throws TypeError
+sealed holey throws TypeError
+sealed full [0,0,0]
+nonextensible holey throws TypeError
+readonly element throws TypeError
+accessor element [[5],5,5]
+subclass [true,[4,4,4]]
+subclass proto index [1,["0","1"]]
+arguments [8,8]
+array-like {"0":3,"1":3,"length":2}
+valueOf mutates [3,[0,0,0]]
+shared literal [[0,0,0],[1,2,3]]
+object values [true,3]
