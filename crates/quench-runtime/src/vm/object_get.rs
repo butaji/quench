@@ -126,7 +126,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match property {
             PropertyKey::String(atom) if !self.is_private_name(atom) => {
-                Ok(self.heap.alloc_string(self.atom_value(atom)))
+                Ok(self.atom_string(atom))
             }
             PropertyKey::Symbol(key) => Ok(key),
             PropertyKey::String(_) | PropertyKey::Private(_) => {
