@@ -82,6 +82,8 @@ pub(crate) struct Profile {
     pub dynamic_string_hits: u64,
     pub dynamic_string_misses: u64,
     pub string_concats: [u64; 2],
+    pub concat_operand_shapes: [[u64; 3]; 2],
+    pub concat_result_shapes: [u64; 2],
     pub concat_size_buckets: [u64; 8],
     pub max_concat_bytes: u64,
     pub concat_cache_hits: u64,
@@ -425,6 +427,14 @@ impl Profile {
 
     #[cfg(feature = "profile-aggregate")]
     #[inline(always)]
+    pub fn string_concat_shapes(&mut self, left: usize, right: usize, result_is_flat: bool) {
+        self.concat_operand_shapes[0][left] += 1;
+        self.concat_operand_shapes[1][right] += 1;
+        self.concat_result_shapes[usize::from(!result_is_flat)] += 1;
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    #[inline(always)]
     pub fn string_concat_size(&mut self, bytes: usize) {
         let bucket = match bytes {
             0 => 0,
@@ -700,7 +710,7 @@ impl Profile {
             gc.sweep_slots,
         );
         eprint!(
-            "{{\"kind\":\"quench-profile\",\"allocations\":{},\"allocation_kinds\":{{\"names\":[\"object\",\"array\",\"map\",\"set\",\"iterator\",\"weak_map\",\"weak_set\",\"weak_ref\",\"function\",\"environment\",\"string\",\"bigint\",\"symbol\",\"date\",\"error\"],\"size_buckets\":[0,7,15,31,63,127,255,null],\"counts\":{:?},\"payload_bytes\":{:?},\"bucket_counts\":{:?}}},\"collections\":{},\"peak_live\":{},\"peak_survivors\":{},\"max_gc_threshold\":{},\"gc\":{{\"roots\":{},\"work_items\":{},\"max_worklist\":{},\"marked\":{},\"freed\":{},\"sweep_slots\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"marked_kinds\":{:?}}},\"shape_transitions\":{{\"hits\":{},\"misses\":{}}},\"dictionary_transitions\":{{\"names\":[\"property_count\",\"deletion_pattern\",\"prototype_use\",\"module_namespace\"],\"counts\":{:?}}},\"field_cache\":{{\"hits\":{},\"misses\":{},\"tiers\":{:?},\"depths\":{:?}}},\"method_cache\":{{\"hits\":{},\"misses\":{},\"tiers\":{:?},\"refill_names\":[\"first\",\"post_gc\",\"post_mutation\"],\"refills\":{:?},\"same_target_names\":[\"gc\",\"mutation\"],\"same_targets\":{:?},\"invalidation_names\":[\"gc_candidates\",\"mutation_cleared\"],\"invalidation_entries\":{:?},\"dead_after_gc\":{}}},\"dynamic_atoms\":{},\"dynamic_strings\":{{\"hits\":{},\"misses\":{}}},\"string_concats\":{{\"coercing\":{},\"both_strings\":{},\"cache_hits\":{},\"cache_misses\":{},\"size_buckets\":{:?},\"max_bytes\":{}}},\"operand_tags\":{:?},\"binary_ops\":{:?},\"numeric_binary_paths\":{{\"names\":[\"fast_hit\",\"integer_operator_miss\",\"type_miss\"],\"counts\":{:?}}},\"branch_values\":{{\"names\":[\"undefined\",\"null\",\"boolean\",\"integer\",\"double\",\"heap\"],\"outcome_names\":[\"falsey\",\"truthy\"],\"counts\":{:?}}},\"method_argc\":{:?},\"calls\":{{\"source_names\":[\"dynamic\",\"known\",\"method\",\"this_method\",\"construct\"],\"sources\":{:?},\"target_names\":[\"native\",\"user\",\"numeric_user\"],\"targets\":{:?},\"target_argc\":{:?}}},\"terminal_calls\":{:?},\"indexed_access\":{{\"get_names\":[\"int_dense\",\"int_sparse\",\"int_missing\",\"wide_dense\",\"wide_sparse\",\"wide_missing\",\"numeric_non_array\",\"property\"],\"gets\":{:?},\"set_names\":[\"int_replace\",\"int_grow\",\"int_sparse\",\"wide_replace\",\"wide_grow\",\"wide_sparse\",\"numeric_non_array\",\"property\"],\"sets\":{:?},\"dispatch_names\":[\"get_general\",\"get_numeric\",\"set_general\",\"set_numeric\"],\"dispatches\":{:?}}},\"array_writes\":{{\"names\":[\"unique\",\"shared\"],\"counts\":{:?}}},\"dispatch_classes\":[{},{}],\"opcodes\":{{",
+            "{{\"kind\":\"quench-profile\",\"allocations\":{},\"allocation_kinds\":{{\"names\":[\"object\",\"array\",\"map\",\"set\",\"iterator\",\"weak_map\",\"weak_set\",\"weak_ref\",\"function\",\"environment\",\"string\",\"bigint\",\"symbol\",\"date\",\"error\"],\"size_buckets\":[0,7,15,31,63,127,255,null],\"counts\":{:?},\"payload_bytes\":{:?},\"bucket_counts\":{:?}}},\"collections\":{},\"peak_live\":{},\"peak_survivors\":{},\"max_gc_threshold\":{},\"gc\":{{\"roots\":{},\"work_items\":{},\"max_worklist\":{},\"marked\":{},\"freed\":{},\"sweep_slots\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"marked_kinds\":{:?}}},\"shape_transitions\":{{\"hits\":{},\"misses\":{}}},\"dictionary_transitions\":{{\"names\":[\"property_count\",\"deletion_pattern\",\"prototype_use\",\"module_namespace\"],\"counts\":{:?}}},\"field_cache\":{{\"hits\":{},\"misses\":{},\"tiers\":{:?},\"depths\":{:?}}},\"method_cache\":{{\"hits\":{},\"misses\":{},\"tiers\":{:?},\"refill_names\":[\"first\",\"post_gc\",\"post_mutation\"],\"refills\":{:?},\"same_target_names\":[\"gc\",\"mutation\"],\"same_targets\":{:?},\"invalidation_names\":[\"gc_candidates\",\"mutation_cleared\"],\"invalidation_entries\":{:?},\"dead_after_gc\":{}}},\"dynamic_atoms\":{},\"dynamic_strings\":{{\"hits\":{},\"misses\":{}}},\"string_concats\":{{\"coercing\":{},\"both_strings\":{},\"cache_hits\":{},\"cache_misses\":{},\"size_buckets\":{:?},\"max_bytes\":{},\"operand_shape_names\":[\"inline_flat\",\"shared_flat\",\"rope\"],\"operand_shapes\":{:?},\"result_shape_names\":[\"flat\",\"rope\"],\"result_shapes\":{:?}}},\"operand_tags\":{:?},\"binary_ops\":{:?},\"numeric_binary_paths\":{{\"names\":[\"fast_hit\",\"integer_operator_miss\",\"type_miss\"],\"counts\":{:?}}},\"branch_values\":{{\"names\":[\"undefined\",\"null\",\"boolean\",\"integer\",\"double\",\"heap\"],\"outcome_names\":[\"falsey\",\"truthy\"],\"counts\":{:?}}},\"method_argc\":{:?},\"calls\":{{\"source_names\":[\"dynamic\",\"known\",\"method\",\"this_method\",\"construct\"],\"sources\":{:?},\"target_names\":[\"native\",\"user\",\"numeric_user\"],\"targets\":{:?},\"target_argc\":{:?}}},\"terminal_calls\":{:?},\"indexed_access\":{{\"get_names\":[\"int_dense\",\"int_sparse\",\"int_missing\",\"wide_dense\",\"wide_sparse\",\"wide_missing\",\"numeric_non_array\",\"property\"],\"gets\":{:?},\"set_names\":[\"int_replace\",\"int_grow\",\"int_sparse\",\"wide_replace\",\"wide_grow\",\"wide_sparse\",\"numeric_non_array\",\"property\"],\"sets\":{:?},\"dispatch_names\":[\"get_general\",\"get_numeric\",\"set_general\",\"set_numeric\"],\"dispatches\":{:?}}},\"array_writes\":{{\"names\":[\"unique\",\"shared\"],\"counts\":{:?}}},\"dispatch_classes\":[{},{}],\"opcodes\":{{",
             self.allocations,
             gc.allocated_kinds,
             gc.allocated_payload_bytes,
@@ -741,6 +751,8 @@ impl Profile {
             self.concat_cache_misses,
             self.concat_size_buckets,
             self.max_concat_bytes,
+            self.concat_operand_shapes,
+            self.concat_result_shapes,
             self.operand_tags,
             self.binary_ops,
             self.numeric_binary_paths,
