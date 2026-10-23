@@ -1666,6 +1666,13 @@ impl<H: Host> Vm<H> {
                 | crate::WasmReferenceKind::DeclaredGc { .. } => crate::WasmValue::GcRef(value),
             });
         }
+        // A vector lives only in its cell, which the scalar probes below would miss first.
+        if ty == crate::WasmType::V128 {
+            return match self.heap.get(value) {
+                Some(Cell::WasmV128(bits)) => Ok(crate::WasmValue::V128(u128::from_le_bytes(*bits))),
+                _ => Err(JsError::validation("invalid Wasm scalar representation".into())),
+            };
+        }
         let bits = if let Some(bits) = value.as_int() {
             Some(crate::wasm::ScalarBits::Bits32(bits as u32))
         } else if let Some(bits) = self.decode_bits64(value) {
