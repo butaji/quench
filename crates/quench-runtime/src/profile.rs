@@ -63,6 +63,10 @@ pub(crate) struct Profile {
     pub pairs: Vec<Vec<u64>>,
     pub pair_sites: rustc_hash::FxHashMap<(u32, u32, u32), u64>,
     pub last_locations: Vec<Option<(u32, u32, usize, usize)>>,
+    /// The location before `last_locations`, for feature-only dynamic triple
+    /// counts at straight-line bytecode sites.
+    pub prior_locations: Vec<Option<(u32, u32, usize, usize)>>,
+    pub triple_sites: rustc_hash::FxHashMap<(u32, u32, u32), u64>,
     pub functions: Vec<Vec<u64>>,
     pub site_counts: Vec<Vec<Vec<u64>>>,
     pub object_literal_site_counts: rustc_hash::FxHashMap<(u32, u32, usize), u64>,
@@ -212,6 +216,22 @@ impl Profile {
         ensure_program_counter(&mut self.pairs, program, pair_count);
         if self.last_locations.len() <= frame {
             self.last_locations.resize(frame + 1, None);
+            self.prior_locations.resize(frame + 1, None);
+        }
+        if let (Some((prior_program, prior_function, prior_pc, _)),
+            Some((last_program, last_function, last_pc, _))) =
+            (self.prior_locations[frame], self.last_locations[frame])
+            && prior_program == program
+            && last_program == program
+            && prior_function == function
+            && last_function == function
+            && prior_pc + 1 == last_pc
+            && last_pc + 1 == pc
+        {
+            *self
+                .triple_sites
+                .entry((program, function, prior_pc as u32))
+                .or_default() += 1;
         }
         if let Some((last_program, last_function, last_pc, last_opcode)) =
             self.last_locations[frame]
@@ -226,6 +246,7 @@ impl Profile {
                 .entry((program, function, last_pc as u32))
                 .or_default() += 1;
         }
+        self.prior_locations[frame] = self.last_locations[frame];
         self.last_locations[frame] = Some((program, function, pc, opcode));
         #[cfg(feature = "profile-trace")]
         if self.trace.len() < 4_000_000 {
@@ -671,6 +692,12 @@ impl Profile {
             .filter(|((site_program, _, _), _)| *site_program == program_id)
             .collect();
         pair_sites.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(**count));
+        let mut triple_sites: Vec<_> = self
+            .triple_sites
+            .iter()
+            .filter(|((site_program, _, _), _)| *site_program == program_id)
+            .collect();
+        triple_sites.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(**count));
         let mut binary_modes: Vec<_> = self
             .binary_operand_modes
             .iter()
@@ -817,6 +844,22 @@ impl Profile {
                 pc,
                 crate::bytecode::Op::NAMES[code[*pc as usize].op() as usize],
                 crate::bytecode::Op::NAMES[code[*pc as usize + 1].op() as usize],
+                count
+            );
+        }
+        eprint!("],\"top_triple_sites\":[");
+        for (position, ((_, function, pc), count)) in triple_sites.iter().take(40).enumerate() {
+            if position != 0 {
+                eprint!(",");
+            }
+            let code = &program.function(*function as usize).code;
+            eprint!(
+                "{{\"function\":{},\"pc\":{},\"first\":\"{}\",\"second\":\"{}\",\"third\":\"{}\",\"count\":{}}}",
+                function,
+                pc,
+                crate::bytecode::Op::NAMES[code[*pc as usize].op() as usize],
+                crate::bytecode::Op::NAMES[code[*pc as usize + 1].op() as usize],
+                crate::bytecode::Op::NAMES[code[*pc as usize + 2].op() as usize],
                 count
             );
         }

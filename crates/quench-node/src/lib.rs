@@ -13,10 +13,10 @@ pub mod shared_run;
 pub use host::{NodeHost, NodeOutputSink};
 pub use shared_run::EntryGoal;
 
-/// Every binary that links this host (the CLI and the Node test runners alike) allocates
-/// through Quench's size-classed small-object allocator, which serves small requests only
-/// once the process's memory policy asks for it (`shared_run::apply_allocator_policy`);
+/// On Linux, every binary that links this host (the CLI and the Node test runners alike)
+/// allocates through Quench's size-classed small-object allocator, which serves small requests
+/// only once the process's memory policy asks for it (`shared_run::apply_allocator_policy`);
 /// until then, and under the memory-first policy, every request goes to the system allocator.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[global_allocator]
 static GLOBAL_ALLOCATOR: quench_alloc::QuenchAlloc = quench_alloc::QuenchAlloc::new();
