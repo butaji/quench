@@ -1097,6 +1097,7 @@ impl quench_runtime::Host for NodeHost {
         if policy.returns_pages_at_collections() {
             crate::host::resident_pages::release_read_only_pages();
             crate::host::resident_pages::release_free_heap_pages();
+            crate::host::resident_pages::release_unused_stack();
         }
         crate::host::resident_pages::note_collection();
     }
