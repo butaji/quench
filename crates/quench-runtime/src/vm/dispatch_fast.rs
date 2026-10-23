@@ -8855,10 +8855,17 @@ script_handler! {
                         Err(next) => next,
                     };
                 }
-                // A global object no cache records (a dictionary shape) still answers a present
-                // data property through its shape walk. An absent name is `undefined` to
-                // `typeof` and raises on the general path otherwise.
-                match vm.plain_global_lookup(atom) {
+                // A present data property records the site's entry as the general path's read
+                // does (`Vm::field_miss_data_value`): the global object changes shape as Node's
+                // lazy globals materialize, and a site that only walked would miss from then
+                // on. A global object no cache records (a dictionary shape) still answers a
+                // present data property through its shape walk. An absent name is `undefined`
+                // to `typeof` and raises on the general path otherwise.
+                match vm
+                    .field_miss_data_value(globals, atom, vm.field_cache_index(i.c))
+                    .map(Some)
+                    .or_else(|| vm.plain_global_lookup(atom))
+                {
                     Some(Some(value)) => value,
                     Some(None) if KIND == LOAD_NAME_TYPEOF => Value::UNDEFINED,
                     _ => return exit(ip),
