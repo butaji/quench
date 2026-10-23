@@ -524,6 +524,9 @@ fn trap_status(trap: crate::WasmTrap) -> i64 {
 /// Stack compiled code may use below its entry before a call traps as
 /// exhausted; the interpreter's own guards bound the remainder.
 const COMPILED_STACK_BUDGET: usize = 512 * 1024;
+/// Stack left for a guarded leaf-JS entry after the Rust adapter has run. The
+/// JS denotations admitted here have no calls, VM callouts, or internal polls.
+const JS_LEAF_STACK_RESERVE: usize = 16 * 1024;
 
 /// The state every compiled function receives. Field offsets are the ABI
 /// compiled code loads from.
@@ -1357,7 +1360,17 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
             let native_entry_sample_started =
                 native_entry_should_sample.then(std::time::Instant::now);
             // SAFETY: as the direct path's call; the nested context outlives the call.
-            let status = unsafe { enter_native(&mut nested, base, length, args, out, entry) };
+            let status = unsafe {
+                enter_native(
+                    &mut nested,
+                    base,
+                    length,
+                    args,
+                    out,
+                    NativeEntryMode::Resumable,
+                    entry,
+                )
+            };
             if let Some(started) = native_entry_sample_started {
                 compiled.finish_native_entry_sample(function, started);
             }
@@ -1585,6 +1598,14 @@ unsafe extern "C" fn import_callout<H: Host>(
 /// A compiled function's entry: (context, memory base, memory length,
 /// arguments, result) -> status.
 type Entry = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64, *mut u64) -> u32;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NativeEntryMode {
+    /// Use the signal-resuming entry, required by guarded memory and poll-page faults.
+    Resumable,
+    /// Use the same ABI directly for a bounded leaf with no possible native fault.
+    Leaf,
+}
 
 enum CompiledArgs<'a> {
     Values(&'a [Value]),
@@ -2368,7 +2389,15 @@ impl CompiledOsrRegion {
         // SAFETY: as the caller promises; the code reads and writes only those and the
         // result word.
         let status = unsafe {
-            enter_native(&mut context, registers.addr() as u64, 0, entry.words(), &mut word, self.0.entry)
+            enter_native(
+                &mut context,
+                registers.addr() as u64,
+                0,
+                entry.words(),
+                &mut word,
+                NativeEntryMode::Resumable,
+                self.0.entry,
+            )
         };
         if i64::from(status) == TERMINATED_STATUS {
             LoopOutcome::Terminated
@@ -2468,6 +2497,11 @@ pub(super) enum CompiledJsResult {
         resume_value: Value,
     },
     StringTransform(super::js_compiled::JsJitStringTransform, bool),
+}
+
+enum CompiledJsCallResult {
+    Value(Value),
+    ReturnConstant(u32),
 }
 
 #[derive(Clone, Copy)]
@@ -2723,6 +2757,26 @@ impl CompiledJsFunction {
         matches!(self.entry, CompiledJsEntry::CaptureNumber(_))
     }
 
+    fn native_entry_mode(&self) -> NativeEntryMode {
+        match self.entry {
+            CompiledJsEntry::NumberInterruptible(_) | CompiledJsEntry::StringHashLoop(_) => {
+                NativeEntryMode::Resumable
+            }
+            CompiledJsEntry::Number(_)
+            | CompiledJsEntry::Int32Identity { .. }
+            | CompiledJsEntry::CaptureNumber(_)
+            | CompiledJsEntry::StringTransform { .. }
+            | CompiledJsEntry::StringReturnPc(_)
+            | CompiledJsEntry::Boolean(_)
+            | CompiledJsEntry::FieldReject { .. } => NativeEntryMode::Leaf,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn uses_leaf_entry(&self) -> bool {
+        self.native_entry_mode() == NativeEntryMode::Leaf
+    }
+
     fn call_string_hash_loop(
         &self,
         units: crate::vm::wtf16::Units<'_>,
@@ -2767,6 +2821,7 @@ impl CompiledJsFunction {
             (&mut call as *mut JsNativeCall<'_>).cast(),
             interrupt,
             poll_page,
+            self.native_entry_mode(),
             js_native_entry,
         );
         (status == 0).then_some(())?;
@@ -6701,9 +6756,8 @@ fn poll_address(interrupt: &crate::execution_interrupt::ExecutionInterrupt) -> O
         .map(|(start, _)| start as i64)
 }
 
-/// Runs compiled `entry` with `context`, through the trampoline where the host has one: it
-/// gives this entry its own resumable stack point, including when a compiled indirect call
-/// nests it, and a guard or poll fault returns its status.
+/// Runs compiled `entry` through the shared ABI. Resumable entries use the host trampoline
+/// and can return from guard or poll faults; safe JS leaves use a prechecked direct entry.
 ///
 /// # Safety
 /// `entry` is compiled code for this `Entry` signature, and `context`, `arguments` and
@@ -6714,8 +6768,25 @@ unsafe fn enter_native(
     length: u64,
     arguments: *const u64,
     out: *mut u64,
+    mode: NativeEntryMode,
     entry: Entry,
 ) -> u32 {
+    if mode == NativeEntryMode::Leaf {
+        let marker = 0u8;
+        let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
+        if stack_pointer
+            < context
+                .stack_limit
+                .saturating_add(JS_LEAF_STACK_RESERVE)
+        {
+            // A low stack declines the fast path, so the VM can execute the
+            // instruction through its ordinary guarded dispatcher.
+            return 1;
+        }
+        // SAFETY: leaf artifacts have no polls, heap access, or VM callouts.
+        // Their fixed ABI arguments stay live through this bounded call.
+        return unsafe { entry(context, base, length, arguments, out) };
+    }
     match guard_trampoline() {
         Some(trampoline) => {
             let outer = ACTIVE_CONTEXT.with(|active| active.replace(context));
@@ -6730,13 +6801,13 @@ unsafe fn enter_native(
     }
 }
 
-/// Runs a JavaScript native denotation through the same entry and resumable
-/// stack used by Wasm code and OSR regions. The adapter carries only borrowed
-/// call inputs; the generated denotation itself never sees a Wasm instance.
+/// Runs a JavaScript native denotation through the shared entry ABI. The
+/// artifact selects resumable or prechecked leaf mode; inputs stay borrowed.
 fn run_native_adapter(
     payload: *mut (),
     interrupt: *const std::sync::atomic::AtomicBool,
     poll_page: Option<(usize, usize)>,
+    mode: NativeEntryMode,
     entry: Entry,
 ) -> (u32, u64) {
     let mut context = CallContext::native_adapter(payload, interrupt, poll_page);
@@ -6750,6 +6821,7 @@ fn run_native_adapter(
             0,
             std::ptr::null(),
             &mut result,
+            mode,
             entry,
         )
     };
@@ -7714,54 +7786,68 @@ impl<H: Host> Vm<H> {
         let poll_page = self.compiled_poll_page();
         let (programs, interrupt) = (&mut self.programs, self.execution_interrupt.atomic_flag());
         let function = program.function_get(function_id as usize)?;
-        let compiled = match programs.js_tier(program_id, function_id)? {
-            super::program_store::JsTierState::Compiled(compiled) => compiled,
-            _ => return None,
+        let diagnostics = programs.js_jit_diagnostics_enabled();
+        let native_result = {
+            let compiled = match programs.js_tier_ref(program_id, function_id)? {
+                super::program_store::JsTierState::Compiled(compiled) => compiled.as_ref(),
+                _ => return None,
+            };
+            // Direct calls have no callee frame from which to reload lexical
+            // captures. Those artifacts must use the ordinary frame-entry path,
+            // where the capture guards and ABI values are assembled together.
+            if compiled.field_argument().is_some()
+                || !compiled.numeric_field_inputs().is_empty()
+                || compiled.is_capture_number()
+                || !compiled.capture_arguments().is_empty()
+                || compiled.is_string_transform()
+                || compiled.is_string_hash_loop()
+                || compiled.is_field_reject()
+            {
+                return None;
+            }
+            let params = usize::from(function.params);
+            if compiled.params() != params || arguments.len() < params {
+                return None;
+            }
+            let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
+            for argument in arguments.iter().take(params) {
+                numeric_arguments.push(argument.as_number()?);
+            }
+            if compiled.is_int32_identity()
+                && !numeric_arguments
+                    .first()
+                    .is_some_and(|value| super::js_compiled::is_i32_number(*value))
+            {
+                return None;
+            }
+            compiled
+                .call(&numeric_arguments, interrupt, poll_page)
+                .and_then(|result| match result {
+                    CompiledJsResult::Number(value) => {
+                        Some(CompiledJsCallResult::Value(Value::number(value)))
+                    }
+                    CompiledJsResult::Int32Identity { value, .. } => {
+                        Some(CompiledJsCallResult::Value(Value::number(value)))
+                    }
+                    CompiledJsResult::Boolean(value) => Some(CompiledJsCallResult::Value(
+                        if value { Value::TRUE } else { Value::FALSE },
+                    )),
+                    CompiledJsResult::StringReturnPc(return_pc) => compiled
+                        .string_constant_for_return(return_pc)
+                        .map(CompiledJsCallResult::ReturnConstant),
+                    CompiledJsResult::StringTransform(_, _)
+                    | CompiledJsResult::FieldReject { .. } => None,
+                })
         };
-        // Direct calls have no callee frame from which to reload lexical
-        // captures. Those artifacts must use the ordinary frame-entry path,
-        // where the capture guards and ABI values are assembled together.
-        if compiled.field_argument().is_some()
-            || !compiled.numeric_field_inputs().is_empty()
-            || compiled.is_capture_number()
-            || !compiled.capture_arguments().is_empty()
-            || compiled.is_string_transform()
-            || compiled.is_string_hash_loop()
-            || compiled.is_field_reject()
-        {
-            return None;
-        }
-        let params = usize::from(function.params);
-        if compiled.params() != params || arguments.len() < params {
-            return None;
-        }
-        let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
-        for argument in arguments.iter().take(params) {
-            numeric_arguments.push(argument.as_number()?);
-        }
-        if compiled.is_int32_identity()
-            && !numeric_arguments
-                .first()
-                .is_some_and(|value| super::js_compiled::is_i32_number(*value))
-        {
-            return None;
-        }
-        if programs.js_jit_diagnostics_enabled() {
+        if diagnostics {
             programs.record_js_jit_entry(program_id, function_id, true, function.params);
             programs.record_js_jit_native_entry(program_id, function_id);
         }
-        match compiled.call(&numeric_arguments, interrupt, poll_page)? {
-            CompiledJsResult::Number(value) => Some(Value::number(value)),
-            CompiledJsResult::Int32Identity { value, .. } => Some(Value::number(value)),
-            CompiledJsResult::Boolean(value) => {
-                Some(if value { Value::TRUE } else { Value::FALSE })
-            }
-            CompiledJsResult::StringReturnPc(return_pc) => {
-                let constant = compiled.string_constant_for_return(return_pc)?;
+        match native_result? {
+            CompiledJsCallResult::Value(value) => Some(value),
+            CompiledJsCallResult::ReturnConstant(constant) => {
                 programs.constant(program_id, constant as usize)
             }
-            CompiledJsResult::StringTransform(_, _) => return None,
-            CompiledJsResult::FieldReject { .. } => return None,
         }
     }
 
@@ -8658,7 +8744,15 @@ impl<H: Host> Vm<H> {
             // and the memory view stays valid because compiled code never
             // grows memory.
             let status = unsafe {
-                enter_native(&mut context, base, length, raw.as_ptr(), &mut out, function.entry)
+                enter_native(
+                    &mut context,
+                    base,
+                    length,
+                    raw.as_ptr(),
+                    &mut out,
+                    NativeEntryMode::Resumable,
+                    function.entry,
+                )
             };
             if let Some(started) = native_entry_sample_started {
                 compiled.finish_native_entry_sample(id as usize, started);
