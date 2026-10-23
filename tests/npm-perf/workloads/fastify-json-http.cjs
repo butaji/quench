@@ -3,10 +3,11 @@ const http = require("node:http");
 
 const rounds = Number(process.env.QUENCH_BENCH_ROUNDS || 5000);
 const warmups = Number(process.env.QUENCH_BENCH_WARMUPS || 250);
+const concurrency = Number(process.env.QUENCH_BENCH_CONCURRENCY || 1);
 const app = fastify({ logger: false });
 const requestBody = { label: "catalog-item", count: 3, enabled: true };
 const requestJson = JSON.stringify(requestBody);
-const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+const agent = new http.Agent({ keepAlive: true, maxSockets: concurrency });
 
 app.post("/records/:id", {
   schema: {
@@ -69,24 +70,35 @@ function send(port, id) {
 
 async function main() {
   try {
+    if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
+      throw new Error("QUENCH_BENCH_CONCURRENCY must be a positive integer");
+    }
     await app.listen({ host: "127.0.0.1", port: 0 });
     const port = app.server.address().port;
-    for (let index = 0; index < warmups; index += 1) {
-      await send(port, String(index & 63));
+    for (let index = 0; index < warmups; index += concurrency) {
+      const count = Math.min(concurrency, warmups - index);
+      await Promise.all(Array.from({ length: count }, (_, offset) =>
+        send(port, String((index + offset) & 63))));
     }
 
     let bytes = 0;
     let checksum = 0;
     const start = Date.now();
-    for (let index = 0; index < rounds; index += 1) {
-      const id = String(index & 63);
-      const response = await send(port, id);
-      const expected = `{"id":"${id}","label":"catalog-item","count":3,"enabled":true}`;
-      if (response.statusCode !== 200 || response.payload !== expected) {
-        throw new Error(`Fastify response mismatch for id ${id}: ${response.statusCode} ${response.payload}`);
+    for (let index = 0; index < rounds; index += concurrency) {
+      const count = Math.min(concurrency, rounds - index);
+      const responses = await Promise.all(Array.from({ length: count }, (_, offset) => {
+        const requestIndex = index + offset;
+        return send(port, String(requestIndex & 63)).then((response) => ({ requestIndex, response }));
+      }));
+      for (const { requestIndex, response } of responses) {
+        const id = String(requestIndex & 63);
+        const expected = `{"id":"${id}","label":"catalog-item","count":3,"enabled":true}`;
+        if (response.statusCode !== 200 || response.payload !== expected) {
+          throw new Error(`Fastify response mismatch for id ${id}: ${response.statusCode} ${response.payload}`);
+        }
+        bytes += response.payload.length;
+        checksum = (checksum + response.payload.charCodeAt(requestIndex % response.payload.length)) >>> 0;
       }
-      bytes += response.payload.length;
-      checksum = (checksum + response.payload.charCodeAt(index % response.payload.length)) >>> 0;
     }
     const elapsedMs = Math.max(1, Date.now() - start);
 
@@ -95,6 +107,7 @@ async function main() {
       package: "fastify@5.12.5",
       rounds,
       warmups,
+      concurrency,
       bytes,
       checksum,
       elapsedMs,

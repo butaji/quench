@@ -8,23 +8,46 @@ with `--jit`; its production executable is `target/production/quench-node`.
 ## Fastify
 
 `fastify-json-http.cjs` measures a schema-validated JSON route over one real
-HTTP/1.1 keep-alive connection. Fastify's `inject()` path is not used because
-Quench currently rejects its shared response object before it becomes active;
-the real listener path works and is covered by the framework compatibility
-scenario. The workload checks each response's status and bytes before reporting
-the request rate. Fastify 5.12.5 and its dependencies are pinned in the lockfile.
+HTTP/1.1 keep-alive connection. `fastify-json-inject.cjs` measures the same
+route through Fastify's `app.inject()` path and checks status, body, content
+headers, and repeated `Set-Cookie` values. Fastify 5.12.5 and its dependencies
+are pinned in the lockfile.
 
 ```sh
 cd tests/npm-perf
 npm ci
 node run-workload.mjs fastify-json-http no-jit 11 ../../target/fastify-no-jit.json
 node run-workload.mjs fastify-json-http jit 11 ../../target/fastify-jit.json
+node run-workload.mjs fastify-json-inject no-jit 11 ../../target/fastify-inject-no-jit.json
+node run-workload.mjs fastify-json-inject jit 11 ../../target/fastify-inject-jit.json
 ```
+
+The inject scenario exercises virtual response records because LightMyRequest
+captures response bytes through its mock socket. The shared response header
+record remains authoritative, and the response factory projects `getHeaders()`
+from that record. Treat inject and real socket results as separate scenarios.
 
 The runner reports end-to-end client request throughput, output parity, and
 sampled peak RSS for Quench, Node, and Bun. This workload includes both the
 client request machinery and Fastify's server path, so compare identical engine
 and runtime versions on the same host.
+
+Set `QUENCH_BENCH_CONCURRENCY` to compare bounded parallel HTTP load; the
+default is one in-flight request. For example, a local 500-request, 7-round
+screen can run as:
+
+```sh
+QUENCH_BENCH_CONCURRENCY=32 QUENCH_BENCH_ROUNDS=500 \
+  QUENCH_BENCH_WARMUPS=25 \
+  node run-workload.mjs fastify-json-http no-jit 7 ../../target/fastify-concurrency32.json
+```
+
+The no-JIT concurrency sweep peaked at 32: Quench measured 1,572 requests/s /
+44.96 MB, Node `--jitless` 1,984 / 54.43 MB, and Bun no-JIT 1,866 / 49.39 MB.
+At 64 concurrent requests Quench fell to 1,534 requests/s. In the 32-request
+JIT screen, Quench measured 1,259 / 43.13 MB versus Node at 3,497 / 69.69 MB
+and Bun at 4,630 / 78.86 MB. These 7-round, 500-request samples are
+diagnostic only; Quench still loses on throughput in both phases.
 
 An 11-round, 1,000-request Linux diagnostic measured no-JIT Quench at
 304.5 requests/s / 45.56 MB sampled max RSS, Node `--jitless` at 1,658.4 /
@@ -39,6 +62,19 @@ candidate/control measured 304.5 / 45.56 MB versus 327.5 / 45.11 MB; JIT
 measured 314.5 / 43.18 MB versus 323.3 / 42.75 MB. Output parity matched, but
 the candidate lost speed and added RSS in both phases, so the runtime change
 was reverted. The paired reports are in `work/fastify-perf/`.
+
+A response-composition candidate that wrote directly into the socket's pending
+output vector also lost throughput. Paired 7-round, 500-request screens at
+concurrency 32 measured no-JIT candidate/control at 1,316 / 44.28 MB versus
+1,330 / 42.95 MB, and JIT at 1,121 / 42.17 MB versus 1,266 / 41.22 MB.
+Output parity matched; the candidate was reverted.
+
+A candidate that moved framed request bodies directly into byte-backed buffers
+to avoid the Latin-1 string round trip was also rejected. In paired 7-round,
+500-request screens at concurrency 32, no-JIT candidate/control measured
+1,344 / 46.58 MB versus 1,355 / 42.54 MB; JIT measured 1,179 / 44.08 MB
+versus 1,279 / 43.24 MB. Output parity matched, but this implementation was
+slower and used more RSS. The body conversion change was reverted.
 
 ## React / react-dom
 
