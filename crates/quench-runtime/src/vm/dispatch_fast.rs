@@ -5459,7 +5459,7 @@ lane_handler! {
     /// `lane_wasm_simd` runs an operator.
     fn lane_wasm_simd_shuffle<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let Some(&Cell::WasmV128(indices)) = vm.heap.get(i.constant()) else {
+        let Some(indices) = vm.heap.v128(i.constant()) else {
             return exit(ip);
         };
         let (Ok(crate::WasmValue::V128(left)), Ok(crate::WasmValue::V128(right))) = (
