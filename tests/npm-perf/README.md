@@ -802,6 +802,15 @@ policy still loses throughput to both competitors and fails the joint target.
 This is an allocator/GC tradeoff screen, not a win; reports are local at
 `target/perf-reports/zod-memory-policy-{throughput,memory-first}-nojit-11.json`.
 
+A feature-only call-cache census found that Zod's general-dispatch in-loop
+cache (64 entries) hit 56.9% of lookups; the lane's per-call-site links missed
+12.6%. Increasing the general cache to 256 entries was screened in five paired
+no-JIT rounds. Output matched, but paired throughput moved only +3.1% at the
+median with round deltas from -13.7% to +13.4%; sampled RSS changed by less
+than 1%. The capacity change and temporary counters were reverted because the
+gain was not reliable. Diagnostic report:
+`target/perf-reports/zod-callcache-256-screen-5-retest.json`.
+
 The Pino workload uses pinned `pino@10.4.0` with structured JSON, a request
 serializer, and redaction into a synchronous in-memory sink. Timestamp and base
 fields are disabled so output checksums are stable between processes. The
