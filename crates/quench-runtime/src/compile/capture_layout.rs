@@ -151,14 +151,14 @@ pub(super) fn apply_function(
         // No closure of this activation can exist, and no nested function captures
         // its locals: a per-iteration or block copy of the environment is unobservable
         // under the same layout conditions that let a closure's activation split.
-        if captured.is_empty() && selective_layout_is_safe(function, id, inputs)
+        if captured.is_empty() && selective_layout_is_safe(function, id, inputs, atoms)
         {
             remove_unobservable_clones(function, &captured);
         }
         return;
     }
 
-    let can_split = selective_layout_is_safe(function, id, inputs);
+    let can_split = selective_layout_is_safe(function, id, inputs, atoms);
     if can_split {
         // The runtime finds compiler bindings such as class home objects by name in
         // the environment, so they live there like captured bindings; the other
@@ -259,7 +259,7 @@ fn inherited_dynamic_scope(functions: &[FunctionFacts]) -> Vec<bool> {
 
 /// Whether the function's activation may keep its uncaptured locals out of its environment:
 /// a nested function, or a module body, whose environment nothing outside it reads by name.
-fn selective_layout_is_safe(function: &Function, id: usize, inputs: &LayoutInputs) -> bool {
+fn selective_layout_is_safe(function: &Function, id: usize, inputs: &LayoutInputs, atoms: &CompilerAtoms<'_>) -> bool {
     let nested = id != 0 && function.parent.is_some();
     let module_body = inputs.module_root && function.parent.is_none();
     (nested || module_body)
@@ -269,7 +269,8 @@ fn selective_layout_is_safe(function: &Function, id: usize, inputs: &LayoutInput
         && !function.is_class_constructor
         && !function.derived_constructor
         && !function.class_initializer
-        && function.simple_parameters
+        // A rest list binding directly names each parameter's own slot, as a simple one does.
+        && (function.simple_parameters || function.rest && function.parameters_bind_directly(|atom| atoms.get(atom)))
         && !function.has_dynamic_scope_access()
 }
 
