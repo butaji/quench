@@ -1409,6 +1409,10 @@ pub(crate) struct CallPlan {
     /// generator, async function, class constructor or field initializer and raises no
     /// parameter-scope `arguments` error.
     pub(crate) in_loop: bool,
+    /// An async function whose body never suspends (`Function::suspends`): a plain call may
+    /// push it in place as `in_loop` bodies are pushed, settling the promise it returns with
+    /// the body's completion (`PendingGeneralCall::settles`).
+    pub(crate) settles_in_loop: bool,
     /// Legacy `caller`/`arguments` reflection may observe the activation
     /// (`!has_restricted_legacy_caller_access`).
     pub(crate) legacy_reflection: bool,
@@ -2026,6 +2030,12 @@ impl Function {
         self.call_plan(program).plain
     }
 
+    /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
+    pub(crate) fn suspends(&self) -> bool {
+        self.instructions()
+            .any(|instruction| matches!(instruction.op(), Op::Await | Op::Yield | Op::YieldStar))
+    }
+
     /// The function's `CallPlan`, derived on first use.
     #[inline(always)]
     pub(crate) fn call_plan(&self, program: &ResidualProgram) -> CallPlan {
@@ -2060,6 +2070,12 @@ impl Function {
                 && !self.is_class_constructor
                 && !self.derived_constructor
                 && !self.parameter_eval_arguments_error;
+            let settles_in_loop = self.is_async
+                && !self.is_generator
+                && !self.is_class_constructor
+                && !self.derived_constructor
+                && !self.parameter_eval_arguments_error
+                && !self.suspends();
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
             let live_parameters = self.reflects_live_parameters(program);
             let forwards_arguments = self.forwards_arguments_only();
@@ -2109,6 +2125,7 @@ impl Function {
                 environment_activation,
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
+                settles_in_loop,
                 legacy_reflection,
                 live_parameters,
                 addresses_locals,
