@@ -166,6 +166,93 @@ fn emit_f64_entry_return(
     builder.ins().return_(&[status]);
 }
 
+fn read_js_numeric_operand(
+    program: &ResidualProgram,
+    body: &mut Body<'_>,
+    operand: Operand,
+    registers: &[bool],
+) -> Option<ir::Value> {
+    match operand.kind()? {
+        OperandKind::Register => {
+            let register = operand.register_index()?;
+            registers
+                .get(usize::from(register))
+                .copied()
+                .filter(|initialized| *initialized)?;
+            Some(body.read(register, crate::WasmType::F64))
+        }
+        OperandKind::Constant => {
+            let crate::bytecode::Constant::Number(value) =
+                program.constants.get(usize::from(operand.payload()))?
+            else {
+                return None;
+            };
+            Some(
+                body.builder
+                    .ins()
+                    .f64const(Ieee64::with_bits(value.to_bits())),
+            )
+        }
+        OperandKind::Field | OperandKind::Local => None,
+    }
+}
+
+/// An acyclic bytecode graph without merges. This admits pure decision trees
+/// while keeping register initialization explicit at every branch target.
+fn js_numeric_control_flow(function: &Function) -> Option<Vec<bool>> {
+    if function.code.is_empty() {
+        return None;
+    }
+    let length = function.code.len();
+    let mut reachable = vec![false; length];
+    let mut predecessors = vec![0_u8; length];
+    let mut pending = vec![0_usize];
+    while let Some(pc) = pending.pop() {
+        if reachable[pc] {
+            continue;
+        }
+        reachable[pc] = true;
+        let packed = function.code[pc];
+        if packed.is_wide() {
+            return None;
+        }
+        let instruction = packed.as_wide();
+        let successors: Vec<usize> = match instruction.op().control_flow_layout() {
+            ControlFlowLayout::Jump if instruction.op() == crate::bytecode::Op::Jump => {
+                vec![usize::try_from(instruction.jump_target()).ok()?]
+            }
+            ControlFlowLayout::ConditionalJump
+                if instruction.op() == crate::bytecode::Op::JumpBinaryFalse =>
+            {
+                vec![
+                    usize::try_from(instruction.jump_target()).ok()?,
+                    pc.checked_add(1)?,
+                ]
+            }
+            ControlFlowLayout::Terminal => Vec::new(),
+            ControlFlowLayout::Fallthrough if !instruction.returns_from_frame() => {
+                vec![pc.checked_add(1)?]
+            }
+            ControlFlowLayout::Fallthrough => Vec::new(),
+            ControlFlowLayout::Jump
+            | ControlFlowLayout::ConditionalJump
+            | ControlFlowLayout::BranchTable
+            | ControlFlowLayout::Call => return None,
+        };
+        for successor in successors {
+            if successor <= pc || successor >= length {
+                return None;
+            }
+            predecessors[successor] = predecessors[successor].checked_add(1)?;
+            if predecessors[successor] != 1 {
+                return None;
+            }
+            pending.push(successor);
+        }
+    }
+    Some(reachable)
+}
+
 pub(super) fn emit_number_bitwise_operation(
     builder: &mut FunctionBuilder<'_>,
     operation: crate::vm::operations::NumberBitwise,
@@ -223,6 +310,7 @@ pub(super) fn compile_js_numeric_region(
     int32_bitwise: bool,
 ) -> Option<super::js_compiled::JsJitArtifact> {
     let function = program.function_get(function_id as usize)?;
+    let reachable = js_numeric_control_flow(function)?;
     let params = usize::from(function.params);
     let isa = super::jit_backend::target_isa("speed", true)?;
 
@@ -236,6 +324,10 @@ pub(super) fn compile_js_numeric_region(
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     builder.seal_block(entry);
+    let blocks: Vec<_> = reachable
+        .iter()
+        .map(|reachable| reachable.then(|| builder.create_block()))
+        .collect();
     let parameters = builder.block_params(entry).to_vec();
     let context = parameters[0];
     let arguments = parameters[3];
@@ -260,13 +352,59 @@ pub(super) fn compile_js_numeric_region(
         body.write(index as u16, crate::WasmType::F64, value);
         *initialized = true;
     }
+    let mut initialized_at = vec![None; function.code.len()];
+    initialized_at[0] = Some(registers);
+    body.builder.ins().jump(blocks[0]?, &[]);
 
     let mut returned = false;
     for (pc, packed) in function.code.iter().copied().enumerate() {
-        if returned || packed.is_wide() {
+        if !reachable[pc] {
+            continue;
+        }
+        if packed.is_wide() {
             return None;
         }
+        let block = blocks[pc]?;
+        body.builder.switch_to_block(block);
+        let mut registers = initialized_at[pc].take()?;
         let instruction = packed.as_wide();
+        match instruction.op().control_flow_layout() {
+            ControlFlowLayout::Jump => {
+                let target = usize::try_from(instruction.jump_target()).ok()?;
+                initialized_at[target] = Some(registers);
+                body.builder.ins().jump(blocks[target]?, &[]);
+                continue;
+            }
+            ControlFlowLayout::ConditionalJump => {
+                if instruction.op() != crate::bytecode::Op::JumpBinaryFalse
+                    || instruction.result_flags() != 0
+                {
+                    return None;
+                }
+                let read_operand = |body: &mut Body<'_>, operand: Operand, registers: &[bool]| {
+                    read_js_numeric_operand(program, body, operand, registers)
+                };
+                let left = read_operand(&mut body, instruction.operand_b(), &registers)?;
+                let right = read_operand(&mut body, instruction.operand_c(), &registers)?;
+                let relation = emit_number_relation(
+                    &mut body.builder,
+                    instruction.binary_operator_field(),
+                    left,
+                    right,
+                )?;
+                let target = usize::try_from(instruction.jump_target()).ok()?;
+                let fallthrough = pc.checked_add(1)?;
+                initialized_at[target] = Some(registers.clone());
+                initialized_at[fallthrough] = Some(registers);
+                body.builder
+                    .ins()
+                    .brif(relation, blocks[fallthrough]?, &[], blocks[target]?, &[]);
+                continue;
+            }
+            ControlFlowLayout::Terminal | ControlFlowLayout::Fallthrough => {}
+            ControlFlowLayout::Call | ControlFlowLayout::BranchTable => return None,
+        }
+        let mut terminal = false;
         let result = match instruction.op().js_denotation() {
             JsDenotation::GetField => {
                 let inputs = numeric_field_inputs?;
@@ -419,9 +557,11 @@ pub(super) fn compile_js_numeric_region(
                 if instruction.returns_from_frame() {
                     emit_f64_entry_return(&mut body.builder, result_pointer, value);
                     returned = true;
-                    break;
+                    terminal = true;
+                    None
+                } else {
+                    Some(value)
                 }
-                Some(value)
             }
             JsDenotation::NumericBinary => {
                 if instruction.numeric_local_target().is_some()
@@ -430,34 +570,18 @@ pub(super) fn compile_js_numeric_region(
                 {
                     return None;
                 }
-                let read_operand =
-                    |body: &mut Body<'_>, operand: Operand, registers: &[bool]| match operand
-                        .kind()?
-                    {
-                        OperandKind::Register => {
-                            let register = operand.register_index()?;
-                            if *registers.get(usize::from(register))? {
-                                Some(body.read(register, crate::WasmType::F64))
-                            } else {
-                                None
-                            }
-                        }
-                        OperandKind::Constant => {
-                            let Constant::Number(value) =
-                                program.constants.get(usize::from(operand.payload()))?
-                            else {
-                                return None;
-                            };
-                            Some(
-                                body.builder
-                                    .ins()
-                                    .f64const(Ieee64::with_bits(value.to_bits())),
-                            )
-                        }
-                        OperandKind::Field | OperandKind::Local => None,
-                    };
-                let left = read_operand(&mut body, instruction.operand_b(), &registers)?;
-                let right = read_operand(&mut body, instruction.operand_c(), &registers)?;
+                let left = read_js_numeric_operand(
+                    program,
+                    &mut body,
+                    instruction.operand_b(),
+                    &registers,
+                )?;
+                let right = read_js_numeric_operand(
+                    program,
+                    &mut body,
+                    instruction.operand_c(),
+                    &registers,
+                )?;
                 let op = instruction.binary_operator();
                 let arithmetic = super::operations::NumberArithmetic::from_js_instruction(
                     instruction.op(),
@@ -484,12 +608,14 @@ pub(super) fn compile_js_numeric_region(
                 if instruction.returns_from_frame() {
                     emit_f64_entry_return(&mut body.builder, result_pointer, value);
                     returned = true;
-                    break;
+                    terminal = true;
+                    None
+                } else {
+                    Some(value)
                 }
-                Some(value)
             }
             JsDenotation::Return => {
-                if instruction.result_flags() != 0 || pc + 1 != function.code.len() {
+                if instruction.result_flags() != 0 {
                     return None;
                 }
                 let register = instruction.register_a();
@@ -499,6 +625,7 @@ pub(super) fn compile_js_numeric_region(
                 let value = body.read(register, crate::WasmType::F64);
                 emit_f64_entry_return(&mut body.builder, result_pointer, value);
                 returned = true;
+                terminal = true;
                 None
             }
             JsDenotation::Unsupported => return None,
@@ -508,11 +635,20 @@ pub(super) fn compile_js_numeric_region(
             body.write(destination as u16, crate::WasmType::F64, value);
             *registers.get_mut(destination)? = true;
         }
+        if !terminal {
+            if instruction.op().control_flow_layout() != ControlFlowLayout::Fallthrough {
+                return None;
+            }
+            let next = pc.checked_add(1)?;
+            initialized_at[next] = Some(registers);
+            body.builder.ins().jump(blocks[next]?, &[]);
+        }
     }
     if !returned {
         return None;
     }
 
+    body.builder.seal_all_blocks();
     let Body { builder, .. } = body;
     builder.finalize(isa.frontend_config());
     let code = compile_native_function(
@@ -2971,9 +3107,13 @@ fn compile_native_function<T>(
     publish: impl FnOnce(&[u8]) -> Option<T>,
 ) -> Option<T> {
     let mut context = cranelift_codegen::Context::for_function(function);
-    let compiled = context
-        .compile(isa, &mut cranelift_codegen::control::ControlPlane::default())
-        .ok()?;
+    let compiled = match context.compile(
+        isa,
+        &mut cranelift_codegen::control::ControlPlane::default(),
+    ) {
+        Ok(compiled) => compiled,
+        Err(_) => return None,
+    };
     if !compiled.buffer.relocs().is_empty() {
         return None;
     }
