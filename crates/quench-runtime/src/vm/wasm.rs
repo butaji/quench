@@ -1530,7 +1530,7 @@ impl<H: Host> Vm<H> {
         match value.bits().expect("numeric Wasm slot") {
             crate::wasm::ScalarBits::Bits32(bits) => Value::integer(bits as i32),
             crate::wasm::ScalarBits::Bits64(bits) => self.encode_bits64(bits),
-            crate::wasm::ScalarBits::Bits128(bits) => self.heap.alloc(Cell::WasmV128(bits)),
+            crate::wasm::ScalarBits::Bits128(bits) => self.heap.alloc_v128(bits),
         }
     }
 
@@ -1666,12 +1666,19 @@ impl<H: Host> Vm<H> {
                 | crate::WasmReferenceKind::DeclaredGc { .. } => crate::WasmValue::GcRef(value),
             });
         }
+        // A vector lives only in its cell, which the scalar probes below would miss first.
+        if ty == crate::WasmType::V128 {
+            return match self.heap.v128(value) {
+                Some(bits) => Ok(crate::WasmValue::V128(u128::from_le_bytes(bits))),
+                _ => Err(JsError::validation("invalid Wasm scalar representation".into())),
+            };
+        }
         let bits = if let Some(bits) = value.as_int() {
             Some(crate::wasm::ScalarBits::Bits32(bits as u32))
         } else if let Some(bits) = self.decode_bits64(value) {
             Some(crate::wasm::ScalarBits::Bits64(bits))
-        } else if let Some(Cell::WasmV128(bits)) = self.heap.get(value) {
-            Some(crate::wasm::ScalarBits::Bits128(*bits))
+        } else if let Some(bits) = self.heap.v128(value) {
+            Some(crate::wasm::ScalarBits::Bits128(bits))
         } else {
             None
         };

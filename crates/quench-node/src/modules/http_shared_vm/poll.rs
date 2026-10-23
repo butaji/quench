@@ -384,6 +384,7 @@ pub(crate) fn poll(
                                 response_id,
                                 Response {
                                     socket,
+                                    virtual_response: false,
                                     async_id: request_async_id,
                                     headers: if close_after_response {
                                         vec![("Connection".to_owned(), "close".to_owned())]
@@ -1117,6 +1118,7 @@ pub(crate) fn cleanup(
             let responses = shared.responses.into_values().collect::<Vec<_>>();
             roots.extend(shared.response_factory);
             roots.extend(shared.incoming_factory);
+            roots.extend(shared.response_tracking.into_iter().flat_map(super::state::ResponseTracking::roots));
             for socket in host.net_sockets.values_mut() {
                 roots.extend(socket.write_callbacks.drain(..));
             }

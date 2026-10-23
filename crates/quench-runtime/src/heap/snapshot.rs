@@ -28,6 +28,9 @@ impl Heap {
         if self.await_records.live_count() != 0 {
             return Err(SnapshotError::unsupported("a suspended async function"));
         }
+        if self.v128_records.live_count() != 0 {
+            return Err(SnapshotError::unsupported("a Wasm vector"));
+        }
         write_records(writer, &self.iterator_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.string_records, |writer, record: &JsString| {
             record.write_snapshot(writer);
@@ -52,14 +55,13 @@ impl Heap {
     /// A snapshot keeps no policy: the restored heap paces under the restoring runtime's.
     pub(crate) fn read_snapshot(
         reader: &mut Reader<'_>,
-        decoder: &mut CellDecoder<'_>,
         policy: super::MemoryPolicy,
     ) -> SnapshotResult<Self> {
         let mut heap = Self::new();
         heap.set_memory_policy(policy);
         let slots = reader.len()?;
         for index in 0..slots {
-            let cell = if reader.bool()? { Some(Cell::read_snapshot(reader, decoder)?) } else { None };
+            let cell = if reader.bool()? { Some(Cell::read_snapshot(reader)?) } else { None };
             let live = cell.is_some();
             heap.slots.push(Slot { cell });
             if index / 64 == heap.marks.len() {
