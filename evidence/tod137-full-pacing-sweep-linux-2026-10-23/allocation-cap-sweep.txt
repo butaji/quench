@@ -1,0 +1,16 @@
+regexp             [base] 7268/2839  [cap2] 7072/2834  [cap4] 7008/2733  [cap8] 7004/2637
+regexp       --jit [base] 7260/2790  [cap2] 7220/2734  [cap4] 7156/2846  [cap8] 7144/2880
+earley-boyer       [base] 7452/3826  [cap2] 7508/3648  [cap4] 7276/3405  [cap8] 6540/2960
+earley-boyer --jit [base] 7728/3776  [cap2] 7640/3625  [cap4] 7440/3434  [cap8] 6824/2932
+crypto             [base] 4460/2619  [cap2] 4508/2697  [cap4] 4380/2694  [cap8] 4508/2680
+crypto       --jit [base] 4792/5071  [cap2] 4840/5123  [cap4] 4932/5366  [cap8] 4940/5376
+raytrace           [base] 4276/2447  [cap2] 4232/2510  [cap4] 4268/2434  [cap8] 4224/2437
+raytrace     --jit [base] 4076/2383  [cap2] 4076/2379  [cap4] 4104/2263  [cap8] 4076/2433
+richards           [base] 3848/1496  [cap2] 3928/1440  [cap4] 3976/1440  [cap8] 4000/1457
+richards     --jit [base] 3940/1566  [cap2] 3940/1445  [cap4] 3940/1485  [cap8] 3940/1463
+deltablue          [base] 4100/1292  [cap2] 4052/1262  [cap4] 4100/1285  [cap8] 4100/1342
+deltablue    --jit [base] 4336/1188  [cap2] 4304/1278  [cap4] 4328/1126  [cap8] 4288/1269
+navier-stokes      [base] 5056/2872  [cap2] 5080/2861  [cap4] 5136/2866  [cap8] 5040/2875
+navier-stokes--jit [base] 8636/20268  [cap2] 8612/20065  [cap4] 8588/20841  [cap8] 8612/20084
+splay              [base] 32200/4527  [cap2] 32212/4441  [cap4] 32188/4125  [cap8] 32164/4526
+splay        --jit [base] 32264/4178  [cap2] 32272/4699  [cap4] 32252/4164  [cap8] 32256/4111
