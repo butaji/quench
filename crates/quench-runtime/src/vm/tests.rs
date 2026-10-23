@@ -1435,8 +1435,9 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
       Object.setPrototypeOf(inherited, prototype);
       print(inherited.answer);
       print(inherited.getAnswer());
-      var deleted = { answer: 5 };
+      var deleted = { answer: 5, other: 6 };
       delete deleted.answer;
+      delete deleted.other;
       deleted.answer = 7;
       print(deleted.answer);
     "#;
@@ -1640,6 +1641,36 @@ fn a_deletion_keeps_a_shared_shape_until_vacated_slots_outnumber_properties() {
         Some(super::DictionaryTrigger::DeletionPattern)
     );
     assert_eq!(output.borrow().as_slice(), ["14 false a,c"]);
+}
+
+#[test]
+fn deleting_the_last_added_property_returns_to_the_earlier_shape() {
+    let source = r#"
+      var base = { a: 1 };
+      var stack = { a: 1 };
+      for (var id = 1; id <= 64; id++) { stack[id] = id; stack["k" + id] = id; delete stack["k" + id]; delete stack[id]; }
+      print([Object.keys(stack), stack.a, "k1" in stack].join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "deletion-rollback.js").unwrap();
+    let shapes_before = vm.shapes.len();
+    vm.execute(&program).unwrap();
+    let global = vm.realm.globals;
+    let shape_of = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        let object = vm.own_property(global, atom).expect("global binding exists");
+        vm.object_data(object).expect("object value").shape()
+    };
+    // Each key is deleted while it is the last one added: the object is back on the shape
+    // it started with, and no deletion forked a shape of its own.
+    assert_eq!(shape_of(&mut vm, "stack"), shape_of(&mut vm, "base"));
+    let deletions = vm.shapes[shapes_before..]
+        .iter()
+        .filter(|shape| matches!(shape.transition, super::ShapeTransition::Delete { .. }))
+        .count();
+    assert_eq!(deletions, 0);
+    assert_eq!(output.borrow().as_slice(), ["a 1 false"]);
 }
 
 #[test]
@@ -10472,6 +10503,64 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
                 .js_tier(super::program_store::ProgramId::MAIN, function),
             Some(super::program_store::JsTierState::Compiled(_))
         ));
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_compiles_number_unary_plus_and_negation_with_exact_fallback() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function plus(value) { return +value; }
+          function negate(value) { return -value; }
+          const values = [0, -0, Infinity, -Infinity, NaN];
+          for (let index = 0; index < 40; index++) {
+            const value = values[index % values.length];
+            if (!Object.is(plus(value), value)) throw Error('unary plus');
+            if (!Object.is(negate(value), -value)) throw Error('unary negation');
+          }
+          if (plus('7') !== 7) throw Error('unary plus coercion fallback');
+          let plusThrew = false;
+          try { plus(7n); } catch (error) { plusThrew = error instanceof TypeError; }
+          if (!plusThrew) throw Error('unary plus BigInt fallback');
+          if (negate(7n) !== -7n) throw Error('unary negation BigInt fallback');
+          let coercions = 0;
+          const boxed = { valueOf() { coercions++; return 5; } };
+          if (negate(boxed) !== -5 || coercions !== 1) throw Error('unary effectful fallback');
+        "#,
+        "js-jit-number-unary.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    for name in ["plus", "negate"] {
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(compiled)) =
+            vm.programs
+                .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should compile its Number unary denotation");
+        };
+        assert!(
+            compiled.uses_shared_entry(),
+            "{name} should use the common VM native-entry ABI"
+        );
+        assert!(
+            compiled.native_entries() > 0,
+            "{name} should have entered native code before the fallback checks"
+        );
     }
 }
 

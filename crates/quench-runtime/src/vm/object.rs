@@ -2958,7 +2958,7 @@ impl<H: Host> Vm<H> {
             } else {
                 if self.descriptor_field(p, current, self.runtime_atoms.get)?.is_some()
                     || self.descriptor_field(p, current, self.runtime_atoms.set)?.is_some()
-                    || !self.descriptor_flag(current, "writable")
+                    || !self.descriptor_flag(current, self.runtime_atoms.writable)
                 {
                     return Ok(false);
                 }
@@ -3860,6 +3860,24 @@ impl<H: Host> Vm<H> {
         }
         next
     }
+    /// The shape `object` had before `shape` added `key` at `slot`, its last slot, when
+    /// deleting `key` can return the object to it: a plain add from an ordinary shape, and
+    /// storage that the shorter length still describes (`ValueArena::drops_last_in_place`).
+    fn shape_before_last_add(&self, object: Value, shape: u32, key: PropertyKey, slot: usize) -> Option<u32> {
+        let entry = &self.shapes[shape as usize];
+        let ShapeTransition::Add { key: added, slot: added_slot, .. } = entry.transition else {
+            return None;
+        };
+        let parent = entry.parent;
+        (added == key
+            && added_slot as usize == slot
+            && self.shape_appends_one_slot(parent, shape)
+            && self.object_data(object).is_some_and(|data| {
+                crate::value_vec::ValueArena::drops_last_in_place(data.properties(), entry.storage_len())
+            }))
+        .then_some(parent)
+    }
+
     pub(super) fn delete_shape_property(&mut self, object: Value, key: PropertyKey) {
         let Some(shape) = self.object_data(object).map(Object::shape) else {
             return;
@@ -3867,6 +3885,16 @@ impl<H: Host> Vm<H> {
         let Some(slot) = self.property_shape_slot(shape, key) else {
             return;
         };
+        if let Some(parent) = self.shape_before_last_add(object, shape, key, slot) {
+            // The object returns to the shape it had before adding `key`: transient keys added
+            // and deleted in turn (an object used as a stack of entries) fork no shapes.
+            self.object_data_mut(object)
+                .expect("object survived property deletion")
+                .set_shape(parent);
+            self.reconfigure_function_name(object, key);
+            self.invalidate_method_caches_for_key(key);
+            return;
+        }
         let next_id = self.append_cached_shape_transition(
             shape,
             ShapeTransition::Delete {

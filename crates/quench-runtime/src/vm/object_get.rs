@@ -210,17 +210,14 @@ impl<H: Host> Vm<H> {
         key: RootId,
         result: RootId,
     ) -> Result<(), JsError> {
-        let descriptor = self.object_get_own_property_descriptor(
+        let Some(descriptor) = self.own_property_descriptor_record(
             p,
-            &[
-                self.heap.root_value(target).unwrap(),
-                self.heap.root_value(key).unwrap(),
-            ],
-        )?;
-        if descriptor.is_undefined() {
+            self.heap.root_value(target).unwrap(),
+            self.heap.root_value(key).unwrap(),
+        )?
+        else {
             return Ok(());
-        }
-        let descriptor = self.own_descriptor_record(descriptor);
+        };
         if descriptor.configurable == Some(true) {
             return Ok(());
         }
@@ -325,35 +322,25 @@ impl<H: Host> Vm<H> {
                 }
                 return Ok(false);
             }
-            let descriptor = self.object_get_own_property_descriptor(
+            let descriptor = self.own_property_descriptor_record(
                 p,
-                &[
-                    self.heap.root_value(target).unwrap(),
-                    self.heap.root_value(key).unwrap(),
-                ],
+                self.heap.root_value(target).unwrap(),
+                self.heap.root_value(key).unwrap(),
             )?;
-            if !descriptor.is_undefined() && !self.descriptor_flag(descriptor, "configurable") {
-                let value_atom = self.runtime_atoms.value;
-                let writable_atom = self.intern_atom("writable");
-                let setter_atom = self.intern_atom("set");
-                let is_data = self.own_property(descriptor, value_atom).is_some()
-                    || self.own_property(descriptor, writable_atom).is_some();
+            if let Some(descriptor) = descriptor
+                && descriptor.configurable != Some(true)
+            {
+                let is_data = descriptor.has_data_fields();
                 if is_data
-                    && !self.descriptor_flag(descriptor, "writable")
-                    && self
-                        .own_property(descriptor, value_atom)
-                        .is_some_and(|target_value| {
-                            !self.same_value(self.heap.root_value(value).unwrap(), target_value)
-                        })
+                    && descriptor.writable != Some(true)
+                    && descriptor.value.is_some_and(|target_value| {
+                        !self.same_value(self.heap.root_value(value).unwrap(), target_value)
+                    })
                 {
                     return Err(self
                         .type_error(p, "proxy set trap changed a frozen target property".into()));
                 }
-                if !is_data
-                    && self
-                        .own_property(descriptor, setter_atom)
-                        .is_none_or(Value::is_undefined)
-                {
+                if !is_data && descriptor.setter.is_none_or(Value::is_undefined) {
                     return Err(self.type_error(
                         p,
                         "proxy set trap accepted a property without a setter".into(),
@@ -1308,7 +1295,7 @@ impl<H: Host> Vm<H> {
                     .function_get(*function as usize)
                     .into_iter()
                     .flat_map(|metadata| metadata.local_atoms.iter().copied())
-                    .filter(|atom| self.atom_name(*atom).starts_with("\0quench:home:"))
+                    .filter(|atom| self.atom_name(*atom).starts_with(crate::bytecode::HOME_BINDING_PREFIX))
                     .collect::<Vec<_>>();
                 for atom in home_atoms.iter().chain(&visible_homes) {
                     if homes.iter().any(|(candidate, _)| candidate == atom) {

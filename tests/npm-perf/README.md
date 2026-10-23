@@ -964,3 +964,63 @@ Quench measured 11,601 ops/s no-JIT and 12,821 JIT, versus Node at 48,544 and
 throughput and RSS are timer/sampling limited and not a reliable comparison.
 The constructor alone is much faster than Next's wrapper, but still loses to
 Node; no Next path wins.
+
+`next-response-components.cjs` separates `JSON.stringify`, string and byte
+`Response` construction, and `Response.json()`. Its final body read verifies
+the generated stream content after the timed loop. Quench's latest five-run
+diagnostics measured 13,405 / 107.7 MiB no-JIT and 13,012 / 87.4 MiB JIT for
+`Response.json()`, versus Node at 53,050 / 145.7 and 96,154 / 161.7. Bun's
+response-construction samples ran below 50 ms and cannot support throughput or
+RSS claims. The build embeds a checked Undici source override that specializes
+the private byte array and the common status-only options; custom headers and
+status text retain the generic path. A direct state allocation variant was
+rejected after inconsistent JIT results. Latest same-source paired results
+were within run noise, and this package remains behind Node and Bun. Linux RSS
+is diagnostic only.
+
+After the latest `v2-merged` synchronization, the same screen measured
+`Response.json()` at 13,812 / 108.0 MiB no-JIT and 12,240 / 87.4 MiB JIT for
+Quench, versus Node at 54,054 / 145.6 and 109,890 / 163.2. Next route
+generation measured 6,061 / 69.2 and 5,848 / 48.7 for Quench, versus Node at
+28,902 / 79.6 and 57,471 / 88.5. Same-source controls stayed within run
+variation. The response and Next workloads still do not win; Bun samples are
+too short to qualify. Post-merge reports are in
+`evidence/tod173-next-response-2026-10-23/`.
+
+For the private JSON-byte stream, removing explicit no-op `pull` and `cancel`
+callbacks produced a repeatable paired `iteration` improvement of about 10–12%
+for `Response.json()` in both modes. Next route generation improved about 7%
+no-JIT and was flat in JIT. The current production candidate measured 15,588 /
+89.7 MiB no-JIT and 13,387 / 69.2 MiB JIT for the response constructor, and
+6,281 / 63.2 MiB and 6,427 / 42.5 MiB for route generation. Node remains 3.2–
+10.7x faster on the reliable rows; Bun's samples are too short to qualify. The
+optimization is retained as a component gain, not a package win. Paired
+iteration and production reports with `noop` in their names are in the evidence
+folder.
+
+The UTF-8 response path now lets the plain-data JSON writer emit the response
+bytes directly, avoiding the intermediate JavaScript string and TextEncoder
+round trip; values requiring observable JSON behavior retain Undici's normal
+serializer. Five-run production A/B comparisons against the previous
+direct-state binary measured `Response.json()` at 22,292 versus 17,718 ops/s
+no-JIT and 22,252 versus 17,979 JIT (+25.8% and +23.8%). Sampled RSS fell
+2.4% and 4.2%. Next route generation measured 7,407 versus 7,013 ops/s no-JIT
+and 7,163 versus 7,090 JIT, with 3.1% and 4.3% lower RSS. This component
+improvement still loses throughput to Node and Bun, and Quench's RSS remains
+higher than Bun's, so neither scenario meets the package win gate. Production
+paired reports use `*utf8-production-paired-*` in
+`evidence/tod173-next-response-2026-10-23/`.
+
+### Next route-group enumeration
+
+`Object.entries()` now has a guarded direct path for ordinary shaped objects
+whose enumerable fields are plain data slots. It reads cached shape slots and
+creates the required key strings and pair arrays directly, while accessors,
+side descriptors, proxies, and other unsupported shapes retain the generic
+spec path. Production paired runs against the immediately preceding binary
+improved Next route matching by 8.3% no-JIT and 8.0% JIT; sampled RSS fell 6.3%
+and 8.0%. Route generation improved 11.4% no-JIT and 2.2% JIT, with RSS down
+4.2% and 3.5%. The route matcher still trails Node and Bun substantially, and
+route generation remains slower than both, so these are component gains rather
+than a Next win. Reports use `*entries-production-paired-*` in
+`evidence/tod173-next-response-2026-10-23/`.
