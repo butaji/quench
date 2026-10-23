@@ -12769,7 +12769,9 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CopyDataProperties => Some(lane_copy_data_properties::<H>),
         op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply => Some(lane_binary::<H>),
+        op if matches!(op.js_denotation(), crate::bytecode::JsDenotation::NumericBinary) => {
+            Some(lane_binary::<H>)
+        }
         Op::GetIndex => Some(lane_get_index::<H>),
         Op::SetIndex => Some(lane_set_index::<H>),
         Op::LoadCapture => Some(lane_load_capture::<H>),

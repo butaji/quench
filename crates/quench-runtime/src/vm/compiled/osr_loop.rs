@@ -24,7 +24,7 @@
 use crate::bytecode::{FieldBase, FieldLookup, Function, Op, Operand, OperandKind, Register, WideInstruction};
 use crate::value::{Value, ValueLayout};
 use cranelift_codegen::ir::{
-    self, AbiParam, InstBuilder, UserFuncName,
+    self, InstBuilder, UserFuncName,
     condcodes::{FloatCC, IntCC},
     types,
 };
@@ -41,7 +41,7 @@ const MAX_REGION_ARRAYS: usize = 8;
 const MAX_REGION_CAPTURES: usize = 16;
 const MAX_REGION_FIELDS: usize = 16;
 /// The largest native body a region may produce.
-const MAX_CODE_BYTES: usize = 64 * 1024;
+pub(super) const MAX_CODE_BYTES: usize = 64 * 1024;
 
 /// What native code writes to its result word: the outcome in the high word, a bytecode PC
 /// in the low one.
@@ -284,21 +284,32 @@ enum Int32Operator {
     ShiftRightUnsigned,
 }
 
-fn arithmetic(operator: u32) -> Option<Arithmetic> {
-    use BinaryOperator as B;
-    Some(match operator {
-        op if op == B::Addition as u32 => Arithmetic::Float(FloatOperator::Add),
-        op if op == B::Subtraction as u32 => Arithmetic::Float(FloatOperator::Subtract),
-        op if op == B::Multiplication as u32 => Arithmetic::Float(FloatOperator::Multiply),
-        op if op == B::Division as u32 => Arithmetic::Float(FloatOperator::Divide),
-        op if op == B::BitwiseOR as u32 => Arithmetic::Int32(Int32Operator::Or),
-        op if op == B::BitwiseAnd as u32 => Arithmetic::Int32(Int32Operator::And),
-        op if op == B::BitwiseXOR as u32 => Arithmetic::Int32(Int32Operator::Xor),
-        op if op == B::ShiftLeft as u32 => Arithmetic::Int32(Int32Operator::ShiftLeft),
-        op if op == B::ShiftRight as u32 => Arithmetic::Int32(Int32Operator::ShiftRight),
-        op if op == B::ShiftRightZeroFill as u32 => Arithmetic::Int32(Int32Operator::ShiftRightUnsigned),
-        _ => return None,
-    })
+fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
+    if let Some(operation) = super::super::operations::NumberArithmetic::from_js_instruction(
+        instruction,
+        operator,
+    ) {
+        return Some(Arithmetic::Float(match operation {
+            super::super::operations::NumberArithmetic::Add => FloatOperator::Add,
+            super::super::operations::NumberArithmetic::Subtract => FloatOperator::Subtract,
+            super::super::operations::NumberArithmetic::Multiply => FloatOperator::Multiply,
+            super::super::operations::NumberArithmetic::Divide => FloatOperator::Divide,
+        }));
+    }
+    let operation = super::super::operations::NumberBitwise::from_js_instruction(
+        instruction,
+        operator,
+    )?;
+    Some(Arithmetic::Int32(match operation {
+        super::super::operations::NumberBitwise::Or => Int32Operator::Or,
+        super::super::operations::NumberBitwise::And => Int32Operator::And,
+        super::super::operations::NumberBitwise::Xor => Int32Operator::Xor,
+        super::super::operations::NumberBitwise::ShiftLeft => Int32Operator::ShiftLeft,
+        super::super::operations::NumberBitwise::ShiftRight => Int32Operator::ShiftRight,
+        super::super::operations::NumberBitwise::ShiftRightUnsigned => {
+            Int32Operator::ShiftRightUnsigned
+        }
+    }))
 }
 
 /// A unary operator a region lowers on a Number.
@@ -479,7 +490,7 @@ fn admit(admission: &mut Admission<'_>, instruction: WideInstruction) -> Option<
             }
         }
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-            arithmetic(instruction.binary_operator())?;
+            arithmetic(instruction.op(), instruction.binary_operator())?;
             admission.result(instruction)?;
             admission.source(instruction.operand_b())?;
             admission.source(instruction.operand_c())?;
@@ -844,12 +855,16 @@ fn definition(
             let index = region.captures.iter().position(|capture| *capture == slot)?;
             captures[index]
         }
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply => match arithmetic(instruction.binary_operator())? {
-            Arithmetic::Float(FloatOperator::Divide) => Representation::Float64,
-            Arithmetic::Float(_) => both(source(instruction.operand_b()), source(instruction.operand_c())),
-            Arithmetic::Int32(Int32Operator::ShiftRightUnsigned) => Representation::Float64,
-            Arithmetic::Int32(_) => Representation::Int32,
-        },
+        Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+            match arithmetic(instruction.op(), instruction.binary_operator())? {
+                Arithmetic::Float(FloatOperator::Divide) => Representation::Float64,
+                Arithmetic::Float(_) => {
+                    both(source(instruction.operand_b()), source(instruction.operand_c()))
+                }
+                Arithmetic::Int32(Int32Operator::ShiftRightUnsigned) => Representation::Float64,
+                Arithmetic::Int32(_) => Representation::Int32,
+            }
+        }
         Op::Unary => match unary(instruction.unary_operator())? {
             Unary::Plus | Unary::Negate => registers(instruction.register_b()),
             Unary::BitwiseNot => Representation::Int32,
@@ -1126,7 +1141,7 @@ fn counted_loop(
                             matches!(base, Base::Term(term) if terms[term].multiply)
                         })
                 };
-                let operator = arithmetic(instruction.binary_operator())?;
+                let operator = arithmetic(instruction.op(), instruction.binary_operator())?;
                 let sum = match (operator, left.1, right.1) {
                     (Arithmetic::Float(FloatOperator::Add), Some(left), Some(right)) => match (left, right) {
                         (_, Affine { base: Base::Constant, addend: None, offset }) => left.plus(offset),
@@ -1260,43 +1275,15 @@ fn counted_loop(
     })
 }
 
-/// A compiled region: one W^X mapping, its native entry, and what each `LoopOutcome::Widen`
-/// PC found was no `i32`.
-///
-/// The entry has the compiled functions' ABI (`super::Entry`): the call context, the
-/// register file as the base, an unused length, the entry record as the arguments, and the
-/// result word, which receives the outcome; it returns a zero status, or the terminated one
-/// through the trampoline when its poll faults.
-pub(super) struct CompiledLoop {
-    _code: super::CodeMemory,
-    pub(super) entry: super::Entry,
-    widenings: std::collections::BTreeMap<u32, Widening>,
-}
-
-impl CompiledLoop {
-    /// What a `LoopOutcome::Widen` at `pc` found was no `i32`.
-    pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
-        self.widenings.get(&pc).copied()
-    }
-
-}
-
-/// Native code for `region` under `observation`, or `None` when Cranelift declines it. Its
-/// backward jumps read `poll`, the VM's poll page, where every run enters through the
-/// trampoline (`super::poll_address`), and check the call context's interrupt flag
-/// otherwise.
-pub(super) fn compile(
+/// Lower `region` to a shared-entry Cranelift function and return its exact-PC widening map.
+pub(super) fn lower(
     region: &LoopRegion,
     observation: &Observation<'_>,
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
     poll: Option<i64>,
-) -> Option<CompiledLoop> {
-    let isa = super::jit_backend::target_isa("speed", false)?;
+) -> Option<(ir::Function, std::collections::BTreeMap<u32, Widening>)> {
     let pointer = isa.pointer_type();
-    let mut signature = ir::Signature::new(isa.default_call_conv());
-    for parameter in [pointer, types::I64, types::I64, pointer, pointer] {
-        signature.params.push(AbiParam::new(parameter));
-    }
-    signature.returns.push(AbiParam::new(types::I32));
+    let signature = super::native_entry_signature(pointer, isa.default_call_conv());
     let mut native = ir::Function::with_name_signature(
         UserFuncName::user(LOOP_NAMESPACE, region.header),
         signature,
@@ -1308,21 +1295,7 @@ pub(super) fn compile(
     let builder = FunctionBuilder::new(&mut native, &mut context);
     let widenings = Lowering::new(builder, region, observation, pointer, webs, representations, captures, counted, poll)
         .lower(isa.frontend_config())?;
-    let mut context = cranelift_codegen::Context::for_function(native);
-    let compiled = context
-        .compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default())
-        .ok()?;
-    if !compiled.buffer.relocs().is_empty() {
-        return None;
-    }
-    let code = compiled.code_buffer();
-    if code.is_empty() || code.len() > MAX_CODE_BYTES {
-        return None;
-    }
-    let memory = super::CodeMemory::new(code)?;
-    // SAFETY: the lowering emits the `super::Entry` signature.
-    let entry = unsafe { std::mem::transmute::<*mut u8, super::Entry>(memory.pointer()) };
-    Some(CompiledLoop { _code: memory, entry, widenings })
+    Some((native, widenings))
 }
 
 /// The Cranelift user-function namespace of loop regions ("QLOP").
@@ -2392,7 +2365,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.fall_through(pc)
             }
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-                let operator = arithmetic(instruction.binary_operator())?;
+                let operator = arithmetic(instruction.op(), instruction.binary_operator())?;
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
                 let result = instruction.result_register();
