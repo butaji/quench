@@ -919,3 +919,23 @@ mean a runtime result was invented. Bun and Quench run those phases. All package
 screens have `qualificationReady: false`; compare them as host-local
 performance diagnostics only. The Zod study and its source-rejected candidates
 remain documented separately in `evidence/tod173-zod-2026-10-23/`.
+
+### sharp async follow-up
+
+Added `sharp-metadata.cjs` for the common encoded-image metadata path and
+`sharp-resize-concurrent.cjs` for four overlapping resize/encode calls. The
+`sharp-resize-effort0.cjs` preview variant checks whether cheaper encoding
+exposes runtime overhead. Their five-run reports and paired controls are in the
+evidence directory above.
+
+A native Node-API completion wake was prototyped after profiling showed the
+idle loop checked addon work on its 1 ms poll interval. The current Linux path
+uses `eventfd` in the same `ppoll` call as network descriptors, so socket
+readiness still wakes immediately; other Unix targets use a nonblocking socket
+pair. The metadata case improved from about 820 to 4,000 ops/s over the original
+Quench binary, but it remains slower than Node and Bun. Against the socket-pair
+implementation, eventfd was within 3% in metadata and within 2% in concurrent
+resize. Four-way resize throughput is near parity, with Quench using less
+sampled RSS, but it does not reach the 20% speed advantage. The effort-zero
+variant also loses throughput. This is a useful async-path improvement, not a
+package win. Linux RSS remains diagnostic.
