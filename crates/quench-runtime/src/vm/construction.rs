@@ -155,13 +155,28 @@ impl<H: Host> Vm<H> {
     /// always; a dynamic atom is kept only where its kind bounds how many there can be, as a
     /// function's name is.
     fn atom_string_kept(&mut self, atom: Atom, keep: bool) -> Value {
+        if keep {
+            if let Some(&value) = self.atom_strings.get(&atom) {
+                return value;
+            }
+            let value = self.heap.alloc_string(self.atom_value(atom));
+            self.atom_strings.insert(atom, value);
+            return value;
+        }
         if let Some(&value) = self.atom_strings.get(&atom) {
             return value;
         }
-        let value = self.heap.alloc_string(self.atom_value(atom));
-        if keep {
-            self.atom_strings.insert(atom, value);
+        let slot = atom as usize & (super::ATOM_STRING_CACHE_SIZE - 1);
+        if let Some(recent) = &self.recent_atom_strings
+            && recent[slot].0 == atom
+        {
+            return recent[slot].1;
         }
+        let value = self.heap.alloc_string(self.atom_value(atom));
+        self.recent_atom_strings
+            .get_or_insert_with(|| {
+                Box::new([(super::NO_RECENT_ATOM, Value::UNDEFINED); super::ATOM_STRING_CACHE_SIZE])
+            })[slot] = (atom, value);
         value
     }
 

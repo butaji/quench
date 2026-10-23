@@ -105,7 +105,7 @@ impl<H: Host> Vm<H> {
         {
             let keys = keys
                 .into_iter()
-                .map(|atom| self.heap.alloc_string(self.atom_value(atom)))
+                .map(|atom| self.atom_string(atom))
                 .collect();
             return Ok(self.own_keys_array(keys));
         }
