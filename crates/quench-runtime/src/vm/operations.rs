@@ -68,6 +68,82 @@ number_relations! {
     GreaterEqual => [GreaterEqualThan], greater_equal;
 }
 
+/// The four IEEE Number arithmetic operations have one operator-to-method
+/// mapping. Interpreter values and native Cranelift values supply the stage.
+pub(super) trait NumberArithmeticStage<T> {
+    type Output;
+
+    fn add(&mut self, left: T, right: T) -> Self::Output;
+    fn subtract(&mut self, left: T, right: T) -> Self::Output;
+    fn multiply(&mut self, left: T, right: T) -> Self::Output;
+    fn divide(&mut self, left: T, right: T) -> Self::Output;
+}
+
+macro_rules! number_arithmetic {
+    ($($operation:ident => $operator:ident, $stage_method:ident;)+) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub(super) enum NumberArithmetic { $($operation),+ }
+
+        impl NumberArithmetic {
+            pub(super) fn from_operator(operator: u32) -> Option<Self> {
+                $(
+                    if operator == BinaryOperator::$operator as u32 {
+                        return Some(Self::$operation);
+                    }
+                )+
+                None
+            }
+
+            #[inline(always)]
+            pub(super) fn apply<T, S: NumberArithmeticStage<T>>(
+                self,
+                stage: &mut S,
+                left: T,
+                right: T,
+            ) -> S::Output {
+                match self {
+                    $(Self::$operation => stage.$stage_method(left, right)),+
+                }
+            }
+        }
+    };
+}
+
+number_arithmetic! {
+    Add => Addition, add;
+    Subtract => Subtraction, subtract;
+    Multiply => Multiplication, multiply;
+    Divide => Division, divide;
+}
+
+struct NumberF64Stage;
+
+impl NumberArithmeticStage<f64> for NumberF64Stage {
+    type Output = f64;
+
+    #[inline(always)]
+    fn add(&mut self, left: f64, right: f64) -> Self::Output {
+        left + right
+    }
+    #[inline(always)]
+    fn subtract(&mut self, left: f64, right: f64) -> Self::Output {
+        left - right
+    }
+    #[inline(always)]
+    fn multiply(&mut self, left: f64, right: f64) -> Self::Output {
+        left * right
+    }
+    #[inline(always)]
+    fn divide(&mut self, left: f64, right: f64) -> Self::Output {
+        left / right
+    }
+}
+
+#[inline(always)]
+fn number_arithmetic_result(operation: NumberArithmetic, left: f64, right: f64) -> f64 {
+    operation.apply(&mut NumberF64Stage, left, right)
+}
+
 struct PartialOrderStage;
 
 impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
@@ -193,11 +269,10 @@ fn is_numeric_binary_operator(immediate: u32) -> bool {
 
 #[inline(always)]
 fn numeric_number_result(operator: BinaryOperator, left: f64, right: f64) -> f64 {
+    if let Some(operation) = NumberArithmetic::from_operator(operator as u32) {
+        return number_arithmetic_result(operation, left, right);
+    }
     match operator {
-        BinaryOperator::Addition => left + right,
-        BinaryOperator::Subtraction => left - right,
-        BinaryOperator::Multiplication => left * right,
-        BinaryOperator::Division => left / right,
         BinaryOperator::Remainder => left % right,
         BinaryOperator::Exponential => exponentiate(left, right),
         BinaryOperator::ShiftLeft => {
@@ -253,34 +328,6 @@ pub(super) const SUBTRACTION: u32 = BinaryOperator::Subtraction as u32;
 pub(super) const MULTIPLICATION: u32 = BinaryOperator::Multiplication as u32;
 pub(super) const DIVISION: u32 = BinaryOperator::Division as u32;
 
-/// One of the four arithmetic operators `OP` on Numbers, with the path it took; `None` for a
-/// non-Number operand. Shared by `number_binary` and the lane's operator-specialized records.
-#[inline(always)]
-pub(super) fn number_operator<const OP: u32>(
-    left: Value,
-    right: Value,
-) -> Option<(Value, crate::profile::BinaryValuePath)> {
-    match OP {
-        ADDITION => number_arithmetic(left, right, numeric_integer_add_result, |l, r| l + r),
-        SUBTRACTION => {
-            number_arithmetic(left, right, numeric_integer_subtract_result, |l, r| l - r)
-        }
-        MULTIPLICATION => {
-            number_arithmetic(left, right, numeric_integer_multiply_result, |l, r| l * r)
-        }
-        // `Value::number` keeps an exact quotient an integer, which is all the integer case
-        // would add.
-        DIVISION => {
-            let (left, right) = Value::number_pair(left, right)?;
-            Some((
-                Value::number(left / right),
-                crate::profile::BinaryValuePath::NumberFastPath,
-            ))
-        }
-        _ => None,
-    }
-}
-
 pub(super) const REMAINDER: u32 = BinaryOperator::Remainder as u32;
 pub(super) const SHIFT_LEFT: u32 = BinaryOperator::ShiftLeft as u32;
 pub(super) const SHIFT_RIGHT: u32 = BinaryOperator::ShiftRight as u32;
@@ -313,21 +360,25 @@ pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Opti
 }
 
 #[inline(always)]
-fn number_arithmetic(
+fn number_arithmetic_values(
+    operation: NumberArithmetic,
     left: Value,
     right: Value,
-    integer: fn(i32, i32) -> Value,
-    number: fn(f64, f64) -> f64,
 ) -> Option<(Value, crate::profile::BinaryValuePath)> {
-    if let Some((left, right)) = Value::int_pair(left, right) {
-        return Some((
-            integer(left, right),
-            crate::profile::BinaryValuePath::IntegerFastPath,
-        ));
+    if operation != NumberArithmetic::Divide
+        && let Some((left, right)) = Value::int_pair(left, right)
+    {
+        let value = match operation {
+            NumberArithmetic::Add => numeric_integer_add_result(left, right),
+            NumberArithmetic::Subtract => numeric_integer_subtract_result(left, right),
+            NumberArithmetic::Multiply => numeric_integer_multiply_result(left, right),
+            NumberArithmetic::Divide => unreachable!("division uses its Number fast path"),
+        };
+        return Some((value, crate::profile::BinaryValuePath::IntegerFastPath));
     }
     let (left, right) = Value::number_pair(left, right)?;
     Some((
-        Value::number(number(left, right)),
+        Value::number(number_arithmetic_result(operation, left, right)),
         crate::profile::BinaryValuePath::NumberFastPath,
     ))
 }
@@ -1406,16 +1457,13 @@ impl<H: Host> Vm<H> {
     /// An arithmetic, bitwise or shift operator applied to two numbers: the integer fast path
     /// when both are integers, otherwise the IEEE 754 result. Any other operand pair, and
     /// every other operator, is left to `binary`. The four arithmetic operators match the
-    /// immediate directly; the rest go through the operator table.
+    /// shared arithmetic stage; the rest go through the numeric operator table.
     #[inline(always)]
     pub(super) fn number_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
-        let (value, path) = match op {
-            ADDITION => number_operator::<ADDITION>(left, right)?,
-            SUBTRACTION => number_operator::<SUBTRACTION>(left, right)?,
-            MULTIPLICATION => number_operator::<MULTIPLICATION>(left, right)?,
-            DIVISION => number_operator::<DIVISION>(left, right)?,
-            _ => return self.tabled_number_binary(op, left, right),
+        let Some(operation) = NumberArithmetic::from_operator(op) else {
+            return self.tabled_number_binary(op, left, right);
         };
+        let (value, path) = number_arithmetic_values(operation, left, right)?;
         self.record_binary_value_path(op, left, right, path);
         Some(value)
     }

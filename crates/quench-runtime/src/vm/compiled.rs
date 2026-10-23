@@ -97,6 +97,43 @@ pub(super) fn emit_number_relation(
     )
 }
 
+/// Emit one of the shared IEEE Number arithmetic operations.
+pub(super) fn emit_number_arithmetic(
+    builder: &mut FunctionBuilder<'_>,
+    operator: u32,
+    left: ir::Value,
+    right: ir::Value,
+) -> Option<ir::Value> {
+    struct Emit<'a, 'f> {
+        builder: &'a mut FunctionBuilder<'f>,
+    }
+
+    impl crate::vm::operations::NumberArithmeticStage<ir::Value> for Emit<'_, '_> {
+        type Output = ir::Value;
+
+        fn add(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            self.builder.ins().fadd(left, right)
+        }
+        fn subtract(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            self.builder.ins().fsub(left, right)
+        }
+        fn multiply(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            self.builder.ins().fmul(left, right)
+        }
+        fn divide(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            self.builder.ins().fdiv(left, right)
+        }
+    }
+
+    Some(
+        crate::vm::operations::NumberArithmetic::from_operator(operator)?.apply(
+            &mut Emit { builder },
+            left,
+            right,
+        ),
+    )
+}
+
 /// How the shared VM executes JavaScript and Wasm functions. Compiled code is
 /// lazy and falls back to the interpreter; both modes use the same VM, heap,
 /// frames and host APIs.
