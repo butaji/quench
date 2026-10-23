@@ -1059,6 +1059,10 @@ enum ShapeTransitionKey {
         slot: u32,
         attributes: ShapeAttributes,
     },
+    /// A deleted property named by an atom. A deleted symbol key is in no live shape's
+    /// attributes, which root the symbols an index entry names (`Add`), so its deletion is
+    /// not indexed.
+    Delete(property_key::PropertyKey),
 }
 /// A property's attributes as a shape records them. A getter-only accessor keeps its getter
 /// in the property's slot (`SLOT_GETTER`), so its shape names no function and every object
@@ -1219,6 +1223,9 @@ impl ShapeTransition {
             // accessor values in a key, where they would become strong roots.
             Self::Descriptor { slot, attributes } if !attributes.table_accessors() => {
                 Some(ShapeTransitionKey::Descriptor { slot, attributes })
+            }
+            Self::Delete { key, .. } if key.symbol_value().is_none() => {
+                Some(ShapeTransitionKey::Delete(key))
             }
             Self::Root
             | Self::Delete { .. }
