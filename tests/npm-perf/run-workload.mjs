@@ -83,14 +83,35 @@ function engineSpecs() {
   return specs;
 }
 
-function linuxRssBytes(pid) {
-  try {
-    const status = fs.readFileSync(`/proc/${pid}/status`, "utf8");
-    const resident = status.match(/^VmHWM:\s+(\d+)\s+kB$/m) ?? status.match(/^VmRSS:\s+(\d+)\s+kB$/m);
-    return resident ? Number(resident[1]) * 1024 : 0;
-  } catch {
-    return 0;
+function linuxProcessTreeRssBytes(rootPid) {
+  const childrenByParent = new Map();
+  const rssByPid = new Map();
+  for (const entry of fs.readdirSync("/proc")) {
+    if (!/^\d+$/.test(entry)) continue;
+    try {
+      const status = fs.readFileSync(`/proc/${entry}/status`, "utf8");
+      const parent = Number(status.match(/^PPid:\s+(\d+)$/m)?.[1]);
+      const resident = Number(status.match(/^VmRSS:\s+(\d+)\s+kB$/m)?.[1] ?? 0) * 1024;
+      rssByPid.set(Number(entry), resident);
+      const children = childrenByParent.get(parent) ?? [];
+      children.push(Number(entry));
+      childrenByParent.set(parent, children);
+    } catch {
+      // A process can exit between reading the proc directory and its status.
+    }
   }
+
+  let total = 0;
+  const pending = [rootPid];
+  const visited = new Set();
+  while (pending.length) {
+    const pid = pending.pop();
+    if (visited.has(pid)) continue;
+    visited.add(pid);
+    total += rssByPid.get(pid) ?? 0;
+    pending.push(...(childrenByParent.get(pid) ?? []));
+  }
+  return total;
 }
 
 async function runLinuxChild(spec, env) {
@@ -100,8 +121,8 @@ async function runLinuxChild(spec, env) {
   let maxRssBytes = 0;
   child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
   child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
-  const sample = () => { maxRssBytes = Math.max(maxRssBytes, linuxRssBytes(child.pid)); };
-  const sampler = setInterval(sample, 2);
+  const sample = () => { maxRssBytes = Math.max(maxRssBytes, linuxProcessTreeRssBytes(child.pid)); };
+  const sampler = setInterval(sample, 50);
   sample();
   const timeout = setTimeout(() => child.kill("SIGKILL"), 300_000);
   const result = await new Promise((resolve, reject) => {
@@ -222,7 +243,7 @@ const report = {
   qualificationReady: false,
   host: { platform: process.platform, arch: process.arch, cpus: os.cpus().length },
   rssMeasurement: process.platform === "linux"
-    ? "sampled /proc/<pid>/status VmHWM every 2 ms (diagnostic only)"
+    ? "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)"
     : "maximum RSS from /usr/bin/time -l",
   inputs: {
     workloadSha256: crypto.createHash("sha256").update(source).digest("hex"),
