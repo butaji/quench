@@ -5430,6 +5430,28 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// A Wasm effective address: the index operand in the memory's index type plus the
+    /// record's constant offset, as an i64. An overflow, which traps, or an operand of another
+    /// representation takes the general path.
+    fn lane_wasm_memory_address<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let (Ok(address), Some(offset)) = (
+            vm.wasm_memory_index(r.get(i.c), r.get(i.b)),
+            vm.decode_bits64(i.constant()),
+        ) else {
+            return exit(ip);
+        };
+        let Some(effective) = address.checked_add(offset) else {
+            return exit(ip);
+        };
+        let value = vm.encode_bits64(effective);
+        note_allocation(vm);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     /// A generic Wasm memory load (`crate::wasm::memory::MemoryLoad`), as vectors and the
     /// accesses no direct op names take: in place when it reads in bounds; a trap, or an
     /// operand of another representation, takes the general path, which raises it.
@@ -12283,6 +12305,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::WasmGlobalGet => Some(lane_global_get::<H>),
         Op::WasmSimd => Some(lane_wasm_simd::<H>),
         Op::WasmMemoryLoad => Some(lane_wasm_memory_load::<H>),
+        Op::WasmMemoryAddress => Some(lane_wasm_memory_address::<H>),
         Op::WasmMemoryStore => Some(lane_wasm_memory_store::<H>),
         Op::WasmSimdShuffle => Some(lane_wasm_simd_shuffle::<H>),
         Op::WasmGlobalSet => Some(lane_global_set::<H>),
