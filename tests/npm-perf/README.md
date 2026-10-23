@@ -977,3 +977,12 @@ status text retain the generic path. A direct state allocation variant was
 rejected after inconsistent JIT results. Latest same-source paired results
 were within run noise, and this package remains behind Node and Bun. Linux RSS
 is diagnostic only.
+
+After the latest `v2-merged` synchronization, the same screen measured
+`Response.json()` at 13,812 / 108.0 MiB no-JIT and 12,240 / 87.4 MiB JIT for
+Quench, versus Node at 54,054 / 145.6 and 109,890 / 163.2. Next route
+generation measured 6,061 / 69.2 and 5,848 / 48.7 for Quench, versus Node at
+28,902 / 79.6 and 57,471 / 88.5. Same-source controls stayed within run
+variation. The response and Next workloads still do not win; Bun samples are
+too short to qualify. Post-merge reports are in
+`evidence/tod173-next-response-2026-10-23/`.

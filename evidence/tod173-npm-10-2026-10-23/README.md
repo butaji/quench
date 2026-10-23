@@ -147,3 +147,11 @@ the small response fast-path gains are not treated as established.
 Reports: `response-components-no-jit.json`, `response-components-jit.json`,
 `next-generate-no-jit.json`, and `next-generate-jit.json` in
 `evidence/tod173-next-response-2026-10-23/`.
+
+After merging the current `origin/v2-merged` checkpoint, a fresh five-run screen
+measured `Response.json()` at 13,812 / 108.0 MiB no-JIT and 12,240 / 87.4 MiB
+JIT. Node measured 54,054 / 145.6 and 109,890 / 163.2. Next route generation
+measured 6,061 / 69.2 and 5,848 / 48.7 for Quench, versus Node at 28,902 / 79.6
+and 57,471 / 88.5. Same-source Quench control rows were within measurement
+noise; Bun's samples remain under 50 ms. The merge did not change the conclusion.
+Post-merge reports use the `*-post-merge-*` names in the same evidence folder.
