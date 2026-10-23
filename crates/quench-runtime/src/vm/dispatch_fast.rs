@@ -5474,6 +5474,17 @@ lane_handler! {
     }
 }
 
+/// A SIMD operand of static type `ty`: a vector or an i32 read from its slot directly, any
+/// other scalar as `Vm::decode_wasm_value` reads it. `None` for another representation.
+#[inline(always)]
+fn lane_simd_operand<H: Host>(vm: &Vm<H>, value: Value, ty: crate::WasmType) -> Option<crate::WasmValue> {
+    match ty {
+        crate::WasmType::V128 => Some(crate::WasmValue::V128(u128::from_le_bytes(vm.heap.v128(value)?))),
+        crate::WasmType::I32 => Some(crate::WasmValue::I32(value.as_int()?)),
+        _ => vm.decode_wasm_value(value, ty).ok(),
+    }
+}
+
 lane_handler! {
     /// A Wasm SIMD operator (`crate::wasm::simd::SimdOperator`), which neither traps nor runs
     /// guest code: its operands decoded by their static types and its result encoded, a
@@ -5484,13 +5495,15 @@ lane_handler! {
         let Some((operator, lane)) = crate::wasm::simd::SimdOperator::from_selector(i.imm()) else {
             return exit(ip);
         };
-        let Ok(left) = vm.decode_wasm_value(r.get(i.b), operator.left_type()) else {
+        let Some(left) = lane_simd_operand(vm, r.get(i.b), operator.left_type()) else {
             return exit(ip);
         };
-        let right = match operator.right_type().map(|ty| vm.decode_wasm_value(r.get(i.c), ty)) {
+        let right = match operator.right_type() {
             None => None,
-            Some(Ok(right)) => Some(right),
-            Some(Err(_)) => return exit(ip),
+            Some(ty) => match lane_simd_operand(vm, r.get(i.c), ty) {
+                Some(right) => Some(right),
+                None => return exit(ip),
+            },
         };
         let value = vm.encode_wasm_value(operator.apply(left, right, lane));
         note_allocation(vm);
@@ -5507,12 +5520,10 @@ lane_handler! {
         let Some(indices) = vm.heap.v128(i.constant()) else {
             return exit(ip);
         };
-        let (Ok(crate::WasmValue::V128(left)), Ok(crate::WasmValue::V128(right))) = (
-            vm.decode_wasm_value(r.get(i.b), crate::WasmType::V128),
-            vm.decode_wasm_value(r.get(i.c), crate::WasmType::V128),
-        ) else {
+        let (Some(left), Some(right)) = (vm.heap.v128(r.get(i.b)), vm.heap.v128(r.get(i.c))) else {
             return exit(ip);
         };
+        let (left, right) = (u128::from_le_bytes(left), u128::from_le_bytes(right));
         let value = vm.encode_wasm_value(crate::WasmValue::V128(crate::wasm::simd::shuffle(left, right, indices)));
         note_allocation(vm);
         r.set(i.a, value);
