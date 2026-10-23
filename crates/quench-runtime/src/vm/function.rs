@@ -77,7 +77,28 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn function_caller(&self, function: Value) -> Value {
+    /// `function_caller`, handed out: a caller whose `prototype` was deferred
+    /// (`Function::prototype_unobservable`) gets it first, as its creation would have made
+    /// it, so the value is the ordinary function it stands for.
+    pub(super) fn function_caller_value(&mut self, function: Value) -> Result<Value, JsError> {
+        let caller = self.function_caller(function);
+        let Some(&FunctionRecord { kind: FunctionKind::User(program, id), realm, .. }) = self.heap.function(caller) else {
+            return Ok(caller);
+        };
+        let deferred = self
+            .programs
+            .get(program)
+            .is_some_and(|code| code.function_get(id as usize).is_some_and(|body| body.prototype_unobservable));
+        let atom = self.intern_atom("prototype");
+        if deferred && self.own_property(caller, atom).is_none() {
+            let parent = self.realm_object_prototype(realm);
+            let prototype = self.heap.alloc(Cell::Object(Self::empty_object(parent)));
+            self.define_instance_prototype(caller, atom, prototype, false, false)?;
+        }
+        Ok(caller)
+    }
+
+    fn function_caller(&self, function: Value) -> Value {
         let Some(mut index) = self
             .frames
             .iter()
