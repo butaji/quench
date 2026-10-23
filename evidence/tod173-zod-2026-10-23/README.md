@@ -35,3 +35,70 @@ slots and exact interpreter continuation on unsupported operations, calls, throw
 interrupts, or guard failure. No such implementation or 20% win is claimed here.
 
 Raw JSON: `zod-no-jit-baseline-5.json` and `zod-jit-baseline-5.json`.
+
+## Fresh integrated-head control
+
+The `v2-merged` head `053d759ab` was rebuilt as a clean production profile
+(without PGO) and measured on this Linux x86_64 host with Node `v24.19.0` and
+Bun `1.4.4`. Both modes ran 11 interleaved rounds of 5,000 workload rounds
+and 250 warmups. The unchanged `zod@4.6.7` input checksum matched across all
+engines. These measurements establish the current control; they are Linux
+process-tree RSS diagnostics, not Apple M4 qualification.
+
+| Mode | Quench ops/s / RSS MiB | Node ops/s / RSS MiB | Bun ops/s / RSS MiB |
+| --- | ---: | ---: | ---: |
+| No-JIT | 45,351 / 29.95 | 155,039 / 47.85 (`--jitless`) | 111,111 / 33.97 (`useJIT=false`) |
+| JIT | 42,918 / 22.82 | 500,000 / 49.88 | 588,235 / 40.95 |
+
+Quench remains behind on throughput in both modes. Its RSS is lower than both
+engines in JIT mode, but the no-JIT RSS margin over Bun is only 11.8%, short
+of the independent 20% target. The Quench binary SHA-256 is
+`f0d6b20f90bf3ffc73d23d8a93024ae9f95ce4caf6efd5bb0c4cc979cff251ad`;
+the workload and lockfile hashes are recorded in the raw reports.
+
+The current JIT profile has zero native entries for the top repeated Zod
+helpers. `unwrapMessage` fell back 3,000 times, `alloc` 2,700 times,
+`isObject` 2,400 times, and `handleArrayResult` 1,500 times in the diagnostic
+sample. `Cached.value` ran 316 interpreter entries and performs memoizing
+field writes, so its first read must retain an exact interpreter exit before
+effects. These counts guide the shared JIT owner; no package-specific runtime
+path is justified by them.
+
+Raw reports: `current-head-no-jit-11.json`, `current-head-jit-11.json`, and
+`current-head-jit-profile.txt` (with `current-head-jit-profile-output.json`
+holding the checksum output for that diagnostic run).
+
+## Array callback root reuse experiment (rejected)
+
+A production build tested reusing shared callback/receiver roots across the
+`Array.map` loop and rooting only each callback's input and output transiently.
+The targeted collection/exception test passed for both interpreter and
+specialized execution. The paired screen had the same workload and lockfile
+hashes and 11 rounds per mode. Relative to the integrated-head control, the
+candidate was +6.3% no-JIT and +5.4% JIT throughput, but in the same paired run
+it was only +2.2% and +1.6% respectively over the saved control binary. RSS
+variation was larger than the throughput delta, and no stable 20% win emerged.
+The code change was removed; these numbers are retained as a rejected,
+low-confidence experiment rather than a package win.
+
+Raw reports: `root-reuse-no-jit-11.json` and `root-reuse-jit-11.json`.
+
+## Latest lane tip control
+
+After fetching `v2-merged` and merging the latest `v2-zod` remote tip
+(`21dce0c1f`, field-cache probe diagnostics), a clean production build was
+screened again with the same workload on this Linux x86_64 host. The diagnostic
+probe feature is compile-time gated and was not enabled in this build. These
+11-round results are a fresh control for the lane tip, not a qualification run.
+
+| Mode | Quench ops/s / RSS MiB | Node ops/s / RSS MiB | Bun ops/s / RSS MiB |
+| --- | ---: | ---: | ---: |
+| No-JIT | 46,512 / 30.02 | 155,039 / 47.85 (`--jitless`) | 115,607 / 34.01 (`useJIT=false`) |
+| JIT | 42,735 / 22.78 | 512,821 / 49.44 | 540,541 / 38.19 |
+
+Quench RSS is below both comparison runtimes in both modes, but no-JIT is only
+11.7% below Bun and therefore misses the 20% RSS target. Throughput remains far
+behind in both modes. The binary SHA-256 is
+`e7189a58461f17530ed203bee92bd3be66968d4b39a82a0c18273dba454113f6`.
+
+Raw reports: `latest-v2-zod-no-jit-11.json` and `latest-v2-zod-jit-11.json`.
