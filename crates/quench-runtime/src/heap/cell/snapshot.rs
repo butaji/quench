@@ -273,8 +273,8 @@ fn write_module_source(writer: &mut Writer, module: &crate::ModuleSource) {
 fn read_module_source(reader: &mut Reader<'_>) -> SnapshotResult<crate::ModuleSource> {
     Ok(crate::ModuleSource {
         name: reader.string()?,
-        source: reader.string()?,
-        original_bytes: if reader.bool()? { Some(reader.bytes()?.to_vec()) } else { None },
+        source: reader.string()?.into(),
+        original_bytes: if reader.bool()? { Some(reader.bytes()?.into()) } else { None },
     })
 }
 

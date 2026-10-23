@@ -41,17 +41,19 @@ pub struct HostGlobal {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleSource {
     pub name: String,
-    /// The text the VM compiles.
-    pub source: String,
+    /// The text the VM compiles, shared: a resolved module is kept and handed out once per
+    /// import that names it, and copying its text each time had cost a large bundle's
+    /// whole text per import (vite npm scenario: 250 copies of a 1.36 MB module).
+    pub source: std::sync::Arc<str>,
     /// The module's bytes when they are not `source`'s UTF-8: a file that is not
     /// UTF-8, or a host interop wrapper that keeps the bytes it wraps. Absent, the
     /// bytes are `source` itself, so a module's text is never held twice.
-    pub original_bytes: Option<Vec<u8>>,
+    pub original_bytes: Option<std::sync::Arc<[u8]>>,
 }
 
 impl ModuleSource {
     /// A module whose bytes are its source text.
-    pub fn text(name: impl Into<String>, source: impl Into<String>) -> Self {
+    pub fn text(name: impl Into<String>, source: impl Into<std::sync::Arc<str>>) -> Self {
         Self { name: name.into(), source: source.into(), original_bytes: None }
     }
 
@@ -62,8 +64,8 @@ impl ModuleSource {
             Ok(source) => Self::text(name, source),
             Err(error) => {
                 let bytes = error.into_bytes();
-                let source = String::from_utf8_lossy(&bytes).into_owned();
-                Self { name: name.into(), source, original_bytes: Some(bytes) }
+                let source = String::from_utf8_lossy(&bytes).into();
+                Self { name: name.into(), source, original_bytes: Some(bytes.into()) }
             }
         }
     }
@@ -106,8 +108,8 @@ pub trait Host {
     /// A collection has finished, or a full one is starting: a host may return memory the
     /// process no longer needs resident (its read-only pages), which nothing observable
     /// depends on. At these boundaries the code about to run differs from the code that ran.
-    /// The runtime's memory policy says whether it should
-    /// (`MemoryPolicy::returns_pages_at_collections`).
+    /// The runtime's memory policy says how often it should
+    /// (`MemoryPolicy::resident_release_interval`).
     fn at_collection_boundary(&mut self, _policy: crate::MemoryPolicy) {}
 
     /// A compiled host program kept across runs: the bytes `keep_compiled_program` was given
