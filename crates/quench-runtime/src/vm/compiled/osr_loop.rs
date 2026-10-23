@@ -1298,6 +1298,31 @@ struct Lowering<'a, 'b> {
     /// The Number each canonical encoding read from memory unboxes to, mapped to the bits as
     /// read: boxing the Number gives those bits back, so a store of it stores them.
     encodings: std::collections::HashMap<ir::Value, ir::Value>,
+    /// Per region PC, whether control reaches its instruction only by falling through from
+    /// the one before (`straight_pcs`), so its block continues that one's chain.
+    straight: Vec<bool>,
+}
+
+/// Per region PC, whether the instruction before it is its only predecessor: no jump
+/// targets it, and it is neither the header nor a counted loop's header, which the entry
+/// and preheaders reach.
+fn straight_pcs(region: &LoopRegion, counted: &[CountedLoop]) -> Vec<bool> {
+    let count = region.instructions.len();
+    let mut predecessors = vec![Vec::new(); count];
+    for pc in region.header..=region.backedge {
+        for successor in successors(region, pc) {
+            if (region.header..=region.backedge).contains(&successor) {
+                predecessors[(successor - region.header) as usize].push(pc);
+            }
+        }
+    }
+    (region.header..=region.backedge)
+        .map(|pc| {
+            pc != region.header
+                && !counted.iter().any(|counted| counted.header == pc)
+                && predecessors[(pc - region.header) as usize] == [pc - 1]
+        })
+        .collect()
 }
 
 fn flags() -> ir::MemFlagsData {
@@ -1327,6 +1352,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         builder.switch_to_block(start);
         let (registers, entry) = (builder.block_params(start)[0], builder.block_params(start)[1]);
         let blocks = (region.header..=region.backedge).map(|_| builder.create_block()).collect();
+        let straight = straight_pcs(region, &counted);
         let preheaders = counted.iter().map(|_| builder.create_block()).collect();
         let proved_blocks = counted
             .iter()
@@ -1365,6 +1391,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             chains: std::collections::HashMap::new(),
             exact: std::collections::BTreeMap::new(),
             encodings: std::collections::HashMap::new(),
+            straight,
             registers,
             entry,
             interrupt: None,
@@ -1380,7 +1407,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.enter()?;
         for pc in self.region.header..=self.region.backedge {
             let block = self.block(pc)?;
-            self.builder.switch_to_block(block);
+            self.enter_instruction(pc, block);
             self.pc = pc;
             self.instruction(pc)?;
         }
@@ -1388,7 +1415,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.copy = Some(index);
             let (header, backedge) = (self.counted[index].header, self.counted[index].backedge);
             for pc in header..=backedge {
-                self.builder.switch_to_block(self.proved_blocks[index][(pc - header) as usize]);
+                self.enter_instruction(pc, self.proved_blocks[index][(pc - header) as usize]);
                 self.pc = pc;
                 self.instruction(pc)?;
             }
@@ -1399,6 +1426,17 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.builder.seal_all_blocks();
         self.builder.finalize(frontend);
         Some(self.widenings)
+    }
+
+    /// Switches to the block of the instruction at `pc`: one only the instruction before it
+    /// reaches has all its predecessors, so it is sealed and continues that one's chain.
+    fn enter_instruction(&mut self, pc: u32, block: ir::Block) {
+        if self.straight[(pc - self.region.header) as usize] {
+            self.continue_chain(block);
+            self.builder.seal_block(block);
+        } else {
+            self.builder.switch_to_block(block);
+        }
     }
 
     fn block(&self, pc: u32) -> Option<ir::Block> {
@@ -1712,11 +1750,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let integral_block = self.cold_block();
         let join = if cold { self.cold_block() } else { self.builder.create_block() };
         self.builder.append_block_param(join, types::I64);
+        let tested = self.builder.current_block().expect("lowering inside a block");
         self.builder.ins().brif(integral, integral_block, &[], fractional_block, &[]);
         self.builder.switch_to_block(fractional_block);
+        self.builder.seal_block(fractional_block);
         let fractional = self.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
         self.builder.ins().jump(join, &[ir::BlockArg::Value(fractional)]);
         self.builder.switch_to_block(integral_block);
+        self.builder.seal_block(integral_block);
         let integer = self.builder.ins().fcvt_to_sint_sat(types::I32, number);
         let back = self.builder.ins().fcvt_from_sint(types::F64, integer);
         let back_bits = self.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), back);
@@ -1729,7 +1770,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let canonical = self.builder.ins().iconst(types::I64, ValueLayout::CANONICAL_NAN as i64);
         let integral = self.builder.ins().select(nan, canonical, integral);
         self.builder.ins().jump(join, &[ir::BlockArg::Value(integral)]);
+        // Both arms return from the test's block, so the join continues its chain.
+        let chain = self.chain(tested);
+        self.chains.insert(join, chain);
         self.builder.switch_to_block(join);
+        self.builder.seal_block(join);
         self.builder.block_params(join)[0]
     }
 
@@ -2023,6 +2068,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
     ) -> ir::Value {
         let current = self.builder.current_block().expect("lowering inside a block");
         let chain = self.chain(current);
+        // A variable read where a join's parameter proved trivial is an alias of its value.
+        let (left, right) = (self.builder.func.dfg.resolve_aliases(left), self.builder.func.dfg.resolve_aliases(right));
         if let Some((result, computed)) = self.exact.get(&(operator, left, right)) {
             if *computed == chain {
                 return *result;
@@ -2033,6 +2080,50 @@ impl<'a, 'b> Lowering<'a, 'b> {
         result
     }
 
+    /// `left ± c` for a constant `c`, whose `i32` result overflows exactly when `left` lies
+    /// beyond the bound `c` leaves: the guard compares `left` with that bound before the
+    /// sum, which needs no overflow flag.
+    fn int32_offset(
+        &mut self,
+        pc: u32,
+        operator: FloatOperator,
+        register: Register,
+        left: ir::Value,
+        right: ir::Value,
+    ) -> Option<ir::Value> {
+        let (value, offset) = match operator {
+            FloatOperator::Add => match (self.int32_constant(left), self.int32_constant(right)) {
+                (_, Some(offset)) => (left, offset),
+                (Some(offset), None) => (right, offset),
+                (None, None) => return None,
+            },
+            FloatOperator::Subtract => (left, -self.int32_constant(right)?),
+            FloatOperator::Multiply | FloatOperator::Divide => return None,
+        };
+        if !self.proved(pc) && offset != 0 {
+            let (condition, bound) = if offset > 0 {
+                (IntCC::SignedGreaterThan, i64::from(i32::MAX) - offset)
+            } else {
+                (IntCC::SignedLessThan, i64::from(i32::MIN) - offset)
+            };
+            let overflow = self.builder.ins().icmp_imm_s(condition, value, bound);
+            self.guard_int32(pc, overflow, Widening::Register(register));
+        }
+        Some(self.builder.ins().iadd_imm_s(value, offset))
+    }
+
+    /// The value of an `i32` constant operand.
+    fn int32_constant(&self, value: ir::Value) -> Option<i64> {
+        let dfg = &self.builder.func.dfg;
+        let ir::ValueDef::Result(instruction, _) = dfg.value_def(dfg.resolve_aliases(value)) else {
+            return None;
+        };
+        match dfg.insts[instruction] {
+            ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } => Some(i64::from(imm.bits() as i32)),
+            _ => None,
+        }
+    }
+
     fn int32_arithmetic_guarded(
         &mut self,
         pc: u32,
@@ -2041,6 +2132,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
         left: ir::Value,
         right: ir::Value,
     ) -> ir::Value {
+        if let Some(result) = self.int32_offset(pc, operator, register, left, right) {
+            return result;
+        }
         let (result, overflow) = match operator {
             FloatOperator::Add => self.builder.ins().sadd_overflow(left, right),
             FloatOperator::Subtract => self.builder.ins().ssub_overflow(left, right),
@@ -2277,10 +2371,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 };
                 let taken = self.builder.create_block();
                 let not_taken = self.builder.create_block();
+                let tested = self.builder.current_block().expect("lowering inside a block");
                 self.builder.ins().brif(holds, not_taken, &[], taken, &[]);
+                // Each arm's only predecessor is the test's block.
                 self.builder.switch_to_block(taken);
+                self.builder.seal_block(taken);
                 self.jump(pc, instruction.jump_target())?;
+                let chain = self.chain(tested);
+                self.chains.insert(not_taken, chain);
                 self.builder.switch_to_block(not_taken);
+                self.builder.seal_block(not_taken);
                 self.fall_through(pc)
             }
             _ => None,
