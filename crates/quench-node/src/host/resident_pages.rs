@@ -77,13 +77,32 @@ fn returns_resident_pages() -> bool {
     crate::shared_run::process_memory_policy().is_some_and(quench_runtime::MemoryPolicy::returns_resident_pages)
 }
 
+/// Unmaps the read-only pages above from the resident set under a policy that returns pages
+/// (`returns_resident_pages`); the next touch of each refaults it from its file.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_read_only_pages() {
+    if returns_resident_pages() {
+        discard_read_only_pages();
+    }
+}
+
+/// Releases the read-only pages around a native compilation under every policy: the code
+/// generator's pages are not the run's, which it does not touch again, so the release
+/// refaults none of the run's code, and a native compilation is a short numeric program's
+/// peak (V8-v7 `--jit` max RSS, TOD-185: Crypto 11.6-13.2 -> 9.2-9.7 MB, NavierStokes
+/// 11.1 -> 9.1).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_at_native_compilation() {
+    discard_read_only_pages();
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_at_native_compilation() {}
+
 /// Unmaps the read-only pages above from the resident set; the next touch of each refaults it
 /// from its file.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub fn release_read_only_pages() {
-    if !returns_resident_pages() {
-        return;
-    }
+fn discard_read_only_pages() {
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
