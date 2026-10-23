@@ -111,6 +111,10 @@ struct JsonPlainWrite {
     object_lacks_to_json: Option<(u32, Value)>,
     array_lacks_to_json: Option<(u32, Value)>,
     output: JsonText,
+    /// Each key written so far, as its quoted bytes' range in `key_text`: an object's keys
+    /// recur across the objects of a payload, so each is quoted once.
+    quoted_keys: rustc_hash::FxHashMap<Atom, (u32, u32)>,
+    key_text: JsonText,
 }
 
 impl JsonPlainWrite {
@@ -121,35 +125,28 @@ impl JsonPlainWrite {
             object_lacks_to_json: None,
             array_lacks_to_json: None,
             output: JsonText::new(),
+            quoted_keys: Default::default(),
+            key_text: JsonText::new(),
         }
     }
 }
 
 /// An integer's decimal digits, as Number::toString writes them.
 fn write_json_integer(value: i32, output: &mut JsonText) {
-    let mut digits = [0u8; I32_DECIMAL_WIDTH];
-    let mut start = digits.len();
-    let mut magnitude = value.unsigned_abs();
-    loop {
-        start -= 1;
-        digits[start] = b'0' + (magnitude % DECIMAL_RADIX) as u8;
-        magnitude /= DECIMAL_RADIX;
-        if magnitude == 0 {
-            break;
-        }
-    }
-    if value < 0 {
-        output.push(b'-');
-    }
-    output.extend_from_slice(&digits[start..]);
+    output.extend_from_slice(itoa::Buffer::new().format(value).as_bytes());
 }
-
-const DECIMAL_RADIX: u32 = 10;
-/// The decimal digits of the largest `i32` magnitude, 2^31.
-const I32_DECIMAL_WIDTH: usize = 10;
 
 /// The JSON text a stringification writes: UTF-8 bytes, decoded once when it completes.
 type JsonText = Vec<u8>;
+
+/// A completed JSON text as a string. Every writer appends UTF-8: ASCII punctuation,
+/// literals and numbers, host strings, and JavaScript strings whose lone surrogates it
+/// escapes (`write_json_string`).
+fn json_text_string(text: JsonText) -> String {
+    debug_assert!(std::str::from_utf8(&text).is_ok(), "JSON text is written as UTF-8");
+    // SAFETY: as above, every byte sequence written is UTF-8.
+    unsafe { String::from_utf8_unchecked(text) }
+}
 
 fn write_json_string(value: &JsString, output: &mut JsonText) {
     match value.units() {
@@ -1115,7 +1112,7 @@ impl<H: Host> Vm<H> {
                 if !written {
                     return Ok(Value::UNDEFINED);
                 }
-                let text = String::from_utf8(plain.output).expect("JSON text is written as UTF-8");
+                let text = json_text_string(plain.output);
                 return Ok(self.heap.alloc_string(text.into()));
             }
         }
@@ -1145,7 +1142,7 @@ impl<H: Host> Vm<H> {
         if !serialized? {
             return Ok(Value::UNDEFINED);
         }
-        let text = String::from_utf8(state.output).expect("JSON text is written as UTF-8");
+        let text = json_text_string(state.output);
         Ok(self.heap.alloc_string(text.into()))
     }
 
@@ -1174,7 +1171,7 @@ impl<H: Host> Vm<H> {
         }
         if let Some(number) = value.as_number() {
             if number.is_finite() {
-                plain.output.extend_from_slice(crate::number_to_string::format(number).as_bytes());
+                crate::number_to_string::write(number, &mut plain.output);
             } else {
                 plain.output.extend_from_slice(b"null");
             }
@@ -1265,7 +1262,7 @@ impl<H: Host> Vm<H> {
             if written != 0 {
                 plain.output.push(b',');
             }
-            self.write_json_key(atom, &mut plain.output);
+            self.write_plain_json_key(atom, plain);
             plain.output.push(b':');
             match self.json_write_plain(member, plain) {
                 Some(true) => written += 1,
@@ -1559,7 +1556,7 @@ impl<H: Host> Vm<H> {
         }
         if let Some(value) = value.as_number() {
             if value.is_finite() {
-                state.output.extend_from_slice(crate::number_to_string::format(value).as_bytes());
+                crate::number_to_string::write(value, &mut state.output);
             } else {
                 state.output.extend_from_slice(b"null");
             }
@@ -1769,6 +1766,16 @@ impl<H: Host> Vm<H> {
     }
 
     /// QuoteJSONString of the property name `atom`, written from the atom's own text.
+    /// `write_json_key` through the stringification's quoted keys (`JsonPlainWrite`).
+    fn write_plain_json_key(&self, atom: Atom, plain: &mut JsonPlainWrite) {
+        let (start, end) = *plain.quoted_keys.entry(atom).or_insert_with(|| {
+            let start = plain.key_text.len();
+            self.write_json_key(atom, &mut plain.key_text);
+            (start as u32, plain.key_text.len() as u32)
+        });
+        plain.output.extend_from_slice(&plain.key_text[start as usize..end as usize]);
+    }
+
     fn write_json_key(&self, atom: Atom, output: &mut JsonText) {
         match self.atom_text(atom) {
             AtomText::Host(text) => write_json_utf8(text.as_bytes(), output),

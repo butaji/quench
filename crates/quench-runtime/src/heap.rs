@@ -1080,9 +1080,24 @@ impl Heap {
         prototype: Value,
         inline: [Value; INLINE_PROPERTY_COUNT],
     ) -> Value {
-        let object = Object::from_inline_header(header, inline);
+        let Some(object) = Object::from_inline_header(header, inline) else {
+            return self.alloc_object_with_properties_of_header(header, prototype, inline);
+        };
         debug_assert!(object.proto() == prototype);
         self.alloc_object_of(object, prototype)
+    }
+
+    /// `alloc_object_from_header` of values the payload word cannot hold: arena storage.
+    #[cold]
+    fn alloc_object_with_properties_of_header(
+        &mut self,
+        header: InlineObjectHeader,
+        prototype: Value,
+        inline: [Value; INLINE_PROPERTY_COUNT],
+    ) -> Value {
+        let shape = header.shape();
+        let length = self.properties.len(ValueVec::inline_property_storage(shape));
+        self.alloc_object_with_properties(prototype, shape, &inline[..length])
     }
 
     /// `alloc_object` of `object`, whose prototype is `prototype`.
@@ -1227,7 +1242,10 @@ impl Heap {
         #[cfg(feature = "profile-aggregate")]
         {
             let kind = CellKind::String as usize;
-            let bytes = string.capacity();
+            // Do not materialize ropes in the profiler: production charges the flat payload
+            // only when it already exists. `capacity()` flattens a rope and perturbs the
+            // allocation shape the profile is meant to observe.
+            let bytes = string.flat_unit_bytes();
             self.gc_profile.allocated_kinds[kind] += 1;
             *self.allocated_variants.entry("string").or_default() += 1;
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
@@ -1357,8 +1375,18 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) -> Value {
-        let (properties, inline_properties) = self.initial_object_storage(shape, values, true);
-        self.alloc_object(Object::with_property_storage(proto, properties, inline_properties))
+        self.properties.assert_shape_length(shape, values.len());
+        if values.len() <= INLINE_PROPERTY_COUNT
+            && let Some(object) = Object::with_inline_values(proto, shape, values)
+        {
+            return self.alloc_object(object);
+        }
+        let properties = self.properties.with_values(shape, values);
+        self.alloc_object(Object::with_property_storage(
+            proto,
+            properties,
+            [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+        ))
     }
     /// `alloc(Cell::Array { object: array })` of a fresh array, given its first named
     /// properties `values` under `shape` first: the storage steps
@@ -1412,7 +1440,7 @@ impl Heap {
         inline: bool,
     ) -> (ValueVec, [Value; INLINE_PROPERTY_COUNT]) {
         self.properties.assert_shape_length(shape, values.len());
-        if inline && values.len() <= INLINE_PROPERTY_COUNT {
+        if inline && values.len() <= INLINE_PROPERTY_COUNT && Object::inline_values_narrow(values) {
             // At most `INLINE_PROPERTY_COUNT` values: a loop over the fixed bound unrolls to
             // element moves, where one over `values` becomes a `memcpy` call.
             let inline = std::array::from_fn(|slot| values.get(slot).copied().unwrap_or(Value::UNDEFINED));
@@ -2940,9 +2968,10 @@ impl Heap {
         }
     }
     pub(crate) fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
-        let value = match object.inline_properties() {
-            Some(values) => values.get(slot).copied(),
-            None => self.properties.get(object.properties(), slot),
+        let value = match object.properties().has_inline_property_storage() {
+            true if slot < INLINE_PROPERTY_COUNT => object.inline_property(slot),
+            true => None,
+            false => self.properties.get(object.properties(), slot),
         }?;
         (!value.is_deleted()).then_some(value)
     }
@@ -2953,10 +2982,8 @@ impl Heap {
     /// As for `property_get_unchecked`.
     #[inline(always)]
     pub(crate) unsafe fn property_get_shaped(&self, object: &Object, slot: usize) -> Option<Value> {
-        if let Some(values) = object.inline_properties() {
-            debug_assert!(slot < INLINE_PROPERTY_COUNT);
-            // SAFETY: the caller proves that the property slot exists.
-            Some(unsafe { *values.get_unchecked(slot) })
+        if let Some(value) = object.inline_property(slot) {
+            Some(value)
         } else {
             // SAFETY: the caller proves that the property slot exists.
             unsafe { self.properties.get_shaped(object.properties(), slot) }
@@ -2969,10 +2996,8 @@ impl Heap {
     /// The slot exists and the object is not in dictionary storage.
     #[inline(always)]
     pub(crate) unsafe fn property_get_flat(&self, object: &Object, slot: usize) -> Value {
-        if let Some(values) = object.inline_properties() {
-            debug_assert!(slot < INLINE_PROPERTY_COUNT);
-            // SAFETY: the caller proves that the property slot exists.
-            unsafe { *values.get_unchecked(slot) }
+        if let Some(value) = object.inline_property(slot) {
+            value
         } else {
             // SAFETY: the caller proves the slot exists outside dictionary storage.
             unsafe { self.properties.get_flat(object.properties(), slot) }
@@ -2980,10 +3005,8 @@ impl Heap {
     }
     #[inline(always)]
     pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {
-        if let Some(values) = object.inline_properties() {
-            debug_assert!(slot < INLINE_PROPERTY_COUNT);
-            // SAFETY: the caller proves that the property slot exists.
-            unsafe { *values.get_unchecked(slot) }
+        if let Some(value) = object.inline_property(slot) {
+            value
         } else {
             // SAFETY: the caller proves that the property slot exists.
             unsafe { self.properties.get_unchecked(object.properties(), slot) }
@@ -2994,13 +3017,30 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
-            if data.inline_properties().is_some() {
-                data.set_inline_property(slot, value);
+            let vector = data.properties();
+            if !vector.has_inline_property_storage() {
+                Some(vector)
+            } else if data.store_inline_narrow(slot, value) {
                 return;
+            } else {
+                None
             }
-            data.properties()
         };
-        self.properties.set(vector, slot, value);
+        match vector {
+            Some(vector) => self.properties.set(vector, slot, value),
+            None => self.widen_inline_property(object, slot, value),
+        }
+    }
+
+    /// Stores `value` at inline `slot` of `object`, whose payload word cannot hold it: its
+    /// values move to the arena. The caller has applied the write barrier.
+    #[cold]
+    fn widen_inline_property(&mut self, object: Value, slot: usize, value: Value) {
+        let (data, properties) = self
+            .object_and_arena_mut(object)
+            .expect("property owner is an object");
+        let length = properties.len(data.properties());
+        widen_inline_storage(data, properties, data.shape(), length, slot, value);
     }
     #[inline(always)]
     pub(crate) unsafe fn property_set_unchecked(
@@ -3013,15 +3053,20 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
-            if data.inline_properties().is_some() {
-                debug_assert!(slot < INLINE_PROPERTY_COUNT);
-                data.set_inline_property(slot, value);
+            let vector = data.properties();
+            if !vector.has_inline_property_storage() {
+                Some(vector)
+            } else if data.store_inline_narrow(slot, value) {
                 return;
+            } else {
+                None
             }
-            data.properties()
         };
-        // SAFETY: the caller proves that the property slot exists.
-        unsafe { self.properties.set_unchecked(vector, slot, value) };
+        match vector {
+            // SAFETY: the caller proves that the property slot exists.
+            Some(vector) => unsafe { self.properties.set_unchecked(vector, slot, value) },
+            None => self.widen_inline_property(object, slot, value),
+        }
     }
     /// `property_set_unchecked` for the direct object `record_id` names, decoded once: its
     /// values are inline or a flat arena run. Without `LOGS`, `false` leaves a store the
@@ -3050,9 +3095,11 @@ impl Heap {
                 self.object_records.get_live_mut_unbarriered(record_id)
             }
         };
-        if data.inline_properties().is_some() {
-            debug_assert!(slot < INLINE_PROPERTY_COUNT);
-            data.set_inline_property(slot, value);
+        if data.properties().has_inline_property_storage() {
+            if !data.store_inline_narrow(slot, value) {
+                let length = self.properties.len(data.properties());
+                widen_inline_storage(data, &mut self.properties, data.shape(), length, slot, value);
+            }
             return true;
         }
         let vector = data.properties();
@@ -3237,7 +3284,7 @@ impl Heap {
         object_roots(trace_kind, owner, object.shape(), object.was_used_as_prototype(), work);
         object.visit_extras_roots(|value| work.push(value));
         if let Some(values) = object.inline_properties() {
-            for &value in values {
+            for value in values {
                 if value.is_heap() && !value.is_deleted() {
                     work.push(value);
                 }
@@ -3762,32 +3809,49 @@ mod offset_order_tests {
     }
 }
 
+/// Moves `data`'s inline values into an arena range of `shape`, `length` values long, with
+/// `value` at `slot`: the store its payload word cannot hold (`Object::store_inline_narrow`).
+fn widen_inline_storage(
+    data: &mut Object,
+    properties: &mut ValueArena,
+    shape: u32,
+    length: usize,
+    slot: usize,
+    value: Value,
+) {
+    let mut values = data.inline_properties().expect("inline storage");
+    values[slot] = value;
+    let moved = properties.with_values(shape, &values[..length]);
+    let previous = data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+    properties.release(previous);
+}
+
 /// `Heap::property_add` on the owner's storage: writes `value` at `slot`, the owner's
 /// storage length, and moves the owner to `shape`.
 #[inline(always)]
 fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
-    let vector = data.properties();
-    match data.inline_properties().copied() {
-        Some(_) if slot < INLINE_PROPERTY_COUNT => data.set_inline_property(slot, value),
-        Some(inline) => {
-            debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
-            // One arena range sized for the grown shape, not one for the inline values that
-            // the add then outgrows at once.
-            let mut grown = [value; INLINE_PROPERTY_COUNT + 1];
-            grown[..INLINE_PROPERTY_COUNT].copy_from_slice(&inline);
-            let moved = properties.with_values(shape, &grown);
-            data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+    let mut vector = data.properties();
+    if !vector.has_inline_property_storage() {
+        let before = vector.into_parts();
+        properties.push(&mut vector, value);
+        // An append within its range leaves the storage as it was; `set_shape` below
+        // records the grown shape.
+        if vector.into_parts() != before {
+            data.set_properties(vector);
         }
-        None => {
-            let mut vector = vector;
-            let before = vector.into_parts();
-            properties.push(&mut vector, value);
-            // An append within its range leaves the storage as it was; `set_shape` below
-            // records the grown shape.
-            if vector.into_parts() != before {
-                data.set_properties(vector);
-            }
+    } else if slot < INLINE_PROPERTY_COUNT {
+        if !data.store_inline_narrow(slot, value) {
+            widen_inline_storage(data, properties, shape, slot + 1, slot, value);
         }
+    } else {
+        debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
+        // One arena range sized for the grown shape, not one for the inline values that the
+        // add then outgrows at once.
+        let inline = data.inline_properties().expect("inline storage");
+        let mut grown = [value; INLINE_PROPERTY_COUNT + 1];
+        grown[..INLINE_PROPERTY_COUNT].copy_from_slice(&inline);
+        let moved = properties.with_values(shape, &grown);
+        data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
     }
     data.set_shape(shape);
 }

@@ -106,7 +106,15 @@ const MODULE_FACTORY: &str = r#"((initializeServer, EventEmitter, request, creat
     outgoing.end();
     return outgoing;
   };
-  return { Server, createServer, request, get, Agent, globalAgent, IncomingMessage, ServerResponse };
+  // Node's default --max-http-header-size, exposed for HTTP client libraries.
+  const maxHeaderSize = 16 * 1024;
+  const api = { Server, createServer, request, get, Agent, globalAgent, IncomingMessage, ServerResponse };
+  Object.defineProperty(api, "maxHeaderSize", {
+    configurable: true,
+    enumerable: true,
+    get() { return maxHeaderSize; },
+  });
+  return api;
 })"#;
 
 // Node's lib/https.js agent over the HTTP agent's pool state. Fastify and the AWS SDK
@@ -1764,16 +1772,32 @@ pub(crate) fn response_release(
 ) -> Result<RootId, RootedError> {
     let id = argument_id(context, args.first().copied())?;
     let state = context.host_mut().shared_state();
-    let mut host = state.borrow_mut();
-    if host
-        .http
-        .responses
-        .get(&id)
-        .is_some_and(|response| response.lifecycle.is_terminal())
-    {
-        host.http.responses.remove(&id);
+    let released = {
+        let mut host = state.borrow_mut();
+        let terminal = host
+            .http
+            .responses
+            .get(&id)
+            .is_some_and(|response| response.lifecycle.is_terminal());
+        if terminal {
+            host.http.responses.remove(&id)
+        } else {
+            None
+        }
+    };
+    // The record goes as every retired response does (`poll::retire_response`): its owner's
+    // weak reference and its request context with it, or each served response would leave
+    // both behind.
+    if let Some(response) = released {
+        if let Some(owner) = response.owner {
+            context.release_host_weak_root(owner);
+        }
+        let stores =
+            crate::modules::async_hooks_shared_vm::retire_context(&state, response.async_id);
+        for root in stores {
+            context.release_root(root);
+        }
     }
-    drop(host);
     Ok(context.undefined())
 }
 

@@ -715,8 +715,11 @@ const NO_FIELD_RECEIVER: u32 = u32::MAX;
 const NO_INHERITED_FIELD: u32 = u32::MAX;
 // A cached add proves every prototype up to this depth. Node's stream objects (an
 // `IncomingMessage` above `Readable`, `Stream`, `EventEmitter` and `Object.prototype`) add
-// their fields five prototypes below the chain's end; deeper chains stay uncached.
-const FIELD_ADD_CACHE_MAX_PROTO_DEPTH: usize = INHERITED_FIELD_CACHE_MAX_DEPTH;
+// their fields five prototypes below the chain's end; deeper chains stay uncached. Every
+// entry carries this many shapes, and recorded adds proved at most four (V8-v7, npm
+// TypeScript and ESLint census, `field_add_cache_depth_counts`, 2026-10-23), so eight keeps
+// the streams' five with room and halves the sixteen an inherited read keeps.
+const FIELD_ADD_CACHE_MAX_PROTO_DEPTH: usize = 8;
 /// Source shapes one add site remembers; the oldest is evicted beyond this. Objects whose
 /// optional fields are assigned in varying order reach one add site with several shapes.
 const FIELD_ADD_CACHE_WAYS: usize = 4;
@@ -766,50 +769,82 @@ impl FieldAddCache {
         self.proved_epoch == crate::heap::prototype_layout_epoch() && self.proved_prototype == link
     }
 }
-/// The add transitions one site remembers, oldest first.
-#[derive(Clone, Copy)]
+/// The add transitions one site remembers, oldest first. The first lives in the set and the
+/// rest, up to `FIELD_ADD_CACHE_WAYS`, in a box made when a second arrives: a site is nearly
+/// always monomorphic (1413 of 1426 sets in npm TypeScript, every set but one in V8-v7, census
+/// 2026-10-23), and four inline ways cost each site the room of four entries.
 struct FieldAddCacheSet {
     len: u8,
-    entries: [FieldAddCache; FIELD_ADD_CACHE_WAYS],
+    first: FieldAddCache,
+    rest: Option<Box<[FieldAddCache; FIELD_ADD_CACHE_WAYS - 1]>>,
 }
 impl FieldAddCacheSet {
     const EMPTY: Self = Self {
         len: 0,
-        entries: [FieldAddCache::EMPTY; FIELD_ADD_CACHE_WAYS],
+        first: FieldAddCache::EMPTY,
+        rest: None,
     };
+    /// The entries after the first, as many as the set holds.
+    #[inline(always)]
+    fn rest(&self) -> &[FieldAddCache] {
+        match &self.rest {
+            Some(rest) => &rest[..usize::from(self.len).saturating_sub(1)],
+            None => &[],
+        }
+    }
+    /// Every entry, oldest first.
+    fn entries(&self) -> impl Iterator<Item = &FieldAddCache> {
+        let first = (self.len > 0).then_some(&self.first);
+        first.into_iter().chain(self.rest())
+    }
     #[inline(always)]
     fn find(&self, source_shape: u32, atom: Atom) -> Option<&FieldAddCache> {
-        // SAFETY: `insert` keeps `len` within the entries.
-        unsafe { self.entries.get_unchecked(..usize::from(self.len)) }
-            .iter()
-            .find(|cache| cache.source_shape == source_shape && cache.atom == atom)
+        let matches = |cache: &&FieldAddCache| cache.source_shape == source_shape && cache.atom == atom;
+        if self.len > 0 && matches(&&self.first) {
+            return Some(&self.first);
+        }
+        self.rest().iter().find(matches)
     }
     #[inline(always)]
     fn find_mut(&mut self, source_shape: u32, atom: Atom) -> Option<&mut FieldAddCache> {
-        self.entries[..usize::from(self.len)]
-            .iter_mut()
-            .find(|cache| cache.source_shape == source_shape && cache.atom == atom)
+        let len = usize::from(self.len);
+        let matches = |cache: &FieldAddCache| cache.source_shape == source_shape && cache.atom == atom;
+        if len > 0 && matches(&self.first) {
+            return Some(&mut self.first);
+        }
+        let rest = self.rest.as_deref_mut()?;
+        rest[..len.saturating_sub(1)].iter_mut().find(|cache| matches(cache))
     }
     /// Replaces the entry for the same source shape and atom, else appends, evicting the oldest
     /// entry when the set is full.
     fn insert(&mut self, cache: FieldAddCache) {
+        let mut entries = [FieldAddCache::EMPTY; FIELD_ADD_CACHE_WAYS];
         let len = usize::from(self.len);
-        let kept = match self.entries[..len]
+        for (slot, entry) in entries.iter_mut().zip(self.entries()) {
+            *slot = *entry;
+        }
+        let kept = match entries[..len]
             .iter()
             .position(|entry| entry.source_shape == cache.source_shape && entry.atom == cache.atom)
         {
             Some(index) => {
-                self.entries.copy_within(index + 1..len, index);
+                entries.copy_within(index + 1..len, index);
                 len - 1
             }
             None if len == FIELD_ADD_CACHE_WAYS => {
-                self.entries.copy_within(1..len, 0);
+                entries.copy_within(1..len, 0);
                 len - 1
             }
             None => len,
         };
-        self.entries[kept] = cache;
-        self.len = (kept + 1) as u8;
+        entries[kept] = cache;
+        let len = kept + 1;
+        self.first = entries[0];
+        if len > 1 {
+            let rest = self.rest.get_or_insert_with(|| Box::new([FieldAddCache::EMPTY; FIELD_ADD_CACHE_WAYS - 1]));
+            rest[..len - 1].copy_from_slice(&entries[1..len]);
+        }
+        self.len = len as u8;
     }
 }
 const NO_FIELD_ADD_SET: u32 = u32::MAX;
@@ -1653,6 +1688,9 @@ pub(crate) struct Vm<H> {
     /// Owners with out-of-cell edges at the previous collection, which sizes the next index.
     gc_owned_root_count: usize,
     frame_pool: Vec<Box<Frame>>,
+    /// Emptied call stacks of finished general loops, one per nesting level reached: a loop
+    /// takes one on entry, so running a job allocates no stack of its own.
+    pending_call_stacks: Vec<Vec<dispatch_frame::PendingGeneralCall>>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
     /// Whether Wasm functions with a compiled denotation run as native code.
@@ -1682,6 +1720,14 @@ pub(crate) struct Vm<H> {
     /// (`Native::runs_beside_activations`), which the first observer of the frame stack makes
     /// frames (`materialize_deferred_lane`).
     lane_deferred: Option<dispatch_fast::DeferredLaneCall>,
+    /// The module the host resolved each (referrer, specifier) of a static request to since
+    /// the last collection (`Vm::resolve_module_request`). The graph's passes (collection,
+    /// pending dependencies, instantiation, evaluation) resolve each request again, and each
+    /// resolution read the file and its package scope anew: 3,824 resolutions of 863
+    /// requests, 19% of the date-fns npm scenario. A host must load the same module for the
+    /// same (referrer, specifier) each time (ECMA-262 HostLoadImportedModule), as Node's
+    /// module map does; a collection drops the sources held here.
+    resolved_module_requests: rustc_hash::FxHashMap<(String, String), crate::host::ModuleSource>,
     /// Per host function, `Host::host_function_runs_beside_activations`, derived on first use.
     host_beside_activations: std::cell::OnceCell<Box<[bool]>>,
     /// The completion a frame's own call record returns, made by a lane activation
@@ -2455,7 +2501,7 @@ impl<H: Host> Vm<H> {
         let mut field_add_cache_entries = 0usize;
         let mut field_add_cache_depth_counts = [0usize; FIELD_ADD_CACHE_MAX_PROTO_DEPTH + 1];
         for set in &self.field_add_sets {
-            for cache in &set.entries[..usize::from(set.len)] {
+            for cache in set.entries() {
                 field_add_cache_entries += 1;
                 field_add_cache_depth_counts[usize::from(cache.prototype_depth)] += 1;
             }
