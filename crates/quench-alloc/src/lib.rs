@@ -43,7 +43,7 @@ const CHUNK_BYTES: usize = 64 << 20;
 /// allocator hands out lies inside it (`owns`). It reserves addresses, not memory; a process
 /// that needs more than this many chunks serves the rest from the system allocator.
 const REGION_BYTES: usize = 1 << 36;
-const _: () = assert!(REGION_BYTES % CHUNK_BYTES == 0);
+const _: () = assert!(REGION_BYTES.is_multiple_of(CHUNK_BYTES));
 /// Space before a page's first block, a multiple of the granule.
 const PAGE_HEADER_BYTES: usize = 64;
 
@@ -615,14 +615,18 @@ unsafe fn take_block(page: *mut Page, class: usize) -> *mut u8 {
 unsafe impl GlobalAlloc for QuenchAlloc {
     #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if let Some(class) = Self::small_class(layout).filter(|_| ENABLED.load(Ordering::Relaxed)) {
-            // SAFETY: a small class.
-            let block = unsafe { allocate(class) };
-            if !block.is_null() {
-                return block;
+        // The switch first: until it is on, a request costs one load before the system
+        // allocator.
+        if ENABLED.load(Ordering::Relaxed) {
+            if let Some(class) = Self::small_class(layout) {
+                // SAFETY: a small class.
+                let block = unsafe { allocate(class) };
+                if !block.is_null() {
+                    return block;
+                }
+                // No page could be had: the system allocator stands in, and frees the block
+                // (`owns`).
             }
-            // No page could be had: the system allocator stands in, and frees the block
-            // (`owns`).
         }
         // SAFETY: forwarded unchanged.
         unsafe { System.alloc(layout) }
@@ -642,11 +646,15 @@ unsafe impl GlobalAlloc for QuenchAlloc {
 
     #[inline]
     unsafe fn realloc(&self, block: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        let owned = owns(block);
+        if !owned && !ENABLED.load(Ordering::Relaxed) {
+            // SAFETY: the system allocator's block, and it serves every request.
+            return unsafe { System.realloc(block, layout, new_size) };
+        }
         let new_layout = match Layout::from_size_align(new_size, layout.align()) {
             Ok(new_layout) => new_layout,
             Err(_) => return ptr::null_mut(),
         };
-        let owned = owns(block);
         let stays_here = ENABLED.load(Ordering::Relaxed) && Self::small_class(new_layout).is_some();
         if owned && Self::small_class(layout) == Self::small_class(new_layout) {
             return block;
