@@ -12951,3 +12951,41 @@ fn object_assign_sees_prototype_setters_added_after_a_memoized_copy() {
         Vm::new(TestHost::default()).execute(&program).unwrap();
     }
 }
+
+#[test]
+fn set_iteration_copies_only_while_the_intrinsics_iterate() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      const show = (values) => values.map(String).join(',');
+      const set = new Set([1, 2, 3]);
+      set.delete(2);
+      check(show([...set]), '1,3', 'spread skips deleted entries');
+      check(show(Array.from(set)), '1,3', 'Array.from');
+      const live = new Set([1, 2, 3]);
+      check(show(Array.from(live, (v) => { if (v === 1) { live.delete(2); live.add(9); } return v; })), '1,3,9', 'live map');
+      class Sub extends Set { *[Symbol.iterator]() { yield 'sub'; } }
+      check(show([...new Sub([1])]), 'sub', 'subclass iterator');
+      const own = new Set([1]);
+      own[Symbol.iterator] = function* () { yield 'own'; };
+      check(show(Array.from(own)), 'own', 'own iterator');
+      class Arr extends Array {}
+      const made = Arr.from(new Set([5, 6]));
+      check(made instanceof Arr && show(made), '5,6', 'subclass target');
+      const proto = Object.getPrototypeOf(new Set()[Symbol.iterator]());
+      const next = proto.next;
+      proto.next = function () { const step = next.call(this); if (!step.done) step.value = 'p' + step.value; return step; };
+      check(show([...new Set([1, 2])]), 'p1,p2', 'patched next spread');
+      check(show(Array.from(new Set([1, 2]))), 'p1,p2', 'patched next Array.from');
+      check(show(Array.from(new Set([1, 2]), (v) => v)), 'p1,p2', 'patched next mapped');
+      check(show([...new Set(new Set([1]))]), 'pp1', 'patched next in Set constructor');
+      proto.next = next;
+      const method = Set.prototype[Symbol.iterator];
+      Set.prototype[Symbol.iterator] = function* () { yield 'proto'; };
+      check(show(Array.from(new Set([1]))), 'proto', 'patched @@iterator');
+      Set.prototype[Symbol.iterator] = method;
+      check(Math.max(...new Set([4, 7])), 7, 'spread call');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "set-iteration.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "set-iteration.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
