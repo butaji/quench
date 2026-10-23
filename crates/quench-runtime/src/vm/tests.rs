@@ -10597,6 +10597,71 @@ fn js_jit_compiles_straight_line_plain_local_temporaries() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_compiles_forward_numeric_decision_trees() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function magnitude(value) {
+            if (value < 0) return -value;
+            return value;
+          }
+          for (let index = 0; index < 40; index++) {
+            if (magnitude(index - 20) !== Math.abs(index - 20)) throw Error('decision tree');
+          }
+          if (!Object.is(magnitude(-0), -0)) throw Error('signed zero');
+          if (!Number.isNaN(magnitude(NaN))) throw Error('NaN relation');
+          if (magnitude('3') !== '3') throw Error('coercive fallback');
+          let coercions = 0;
+          const boxed = { valueOf() { coercions++; return -4; } };
+          if (magnitude(boxed) !== 4 || coercions !== 2) throw Error('effectful fallback');
+        "#,
+        "js-jit-forward-decision-tree.js",
+    ))
+    .unwrap();
+    let magnitude = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "magnitude")
+        })
+        .unwrap() as u32;
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter
+        .execute(&program)
+        .expect("interpreted decision tree should preserve JS results");
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    let compiled = match vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, magnitude)
+    {
+        Some(super::program_store::JsTierState::Compiled(compiled)) => compiled,
+        Some(super::program_store::JsTierState::Rejected { reason, .. }) => {
+            panic!("the Number decision tree was rejected: {reason}");
+        }
+        Some(super::program_store::JsTierState::Hot {
+            observations,
+            numeric,
+        }) => panic!("the Number decision tree remained hot: {observations} observations, {numeric} numeric"),
+        Some(super::program_store::JsTierState::PromotionPending) => {
+            panic!("the Number decision tree remained promotion-pending");
+        }
+        Some(super::program_store::JsTierState::Unsupported) => {
+            panic!("the Number decision tree was marked unsupported");
+        }
+        None => panic!("the Number decision tree was not tier-tracked"),
+    };
+    assert!(compiled.uses_shared_entry());
+    assert!(compiled.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_enters_compiled_known_callees_without_pushing_a_frame() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"

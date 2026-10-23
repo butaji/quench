@@ -186,7 +186,8 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
                     Some(Constant::Boolean(_))
                 ))
     }) {
-        compile_numeric_loop(program, function_id, function)
+        compile_numeric(program, function_id)
+            .or_else(|| compile_numeric_loop(program, function_id, function))
             .or_else(|| compile_number_domain_boolean_tree(program, function_id, function))
             .or_else(|| compile_string_branches(program, function_id, function))
     } else {
@@ -2908,7 +2909,7 @@ fn compile_numeric_with_captures(
         return None;
     }
 
-    // The straight-line scalar region is bounded and has no safepoint or callout.
+    // Pure scalar control flow has no safepoint or callout and uses one guarded entry.
     let numeric_field_inputs = cached_numeric_field_inputs_candidate(function);
     let field_argument = if numeric_field_inputs.is_some() {
         None
