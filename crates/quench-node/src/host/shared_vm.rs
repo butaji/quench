@@ -587,7 +587,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpResponseFinish" (7) => crate::modules::http_shared_vm::response_finish,
         method "httpResponseWriteHead" (6) => crate::modules::http_shared_vm::response_write_head,
         method "httpResponseInitialize" (2) => crate::modules::http_shared_vm::response_initialize,
-        method "httpResponseRelease" (1) => crate::modules::http_shared_vm::response_release,
         method "httpResponseSend" (4) => crate::modules::http_shared_vm::response_send,
         method "assertStrictEqual" (2) => crate::modules::assert_shared_vm::strict_equal,
         method "assertNotStrictEqual" (2) => crate::modules::assert_shared_vm::not_strict_equal,
