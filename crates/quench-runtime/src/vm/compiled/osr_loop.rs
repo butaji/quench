@@ -944,8 +944,9 @@ fn counted_loops(
     (region.header..=region.backedge)
         .filter_map(|backedge| {
             let instruction = region.instructions[(backedge - region.header) as usize];
+            (instruction.op() == Op::Jump).then_some(())?;
             let header = instruction.jump_target();
-            (instruction.op() == Op::Jump && (region.header..backedge).contains(&header)).then_some(())?;
+            (region.header..backedge).contains(&header).then_some(())?;
             counted_loop(region, webs, representations, captures, header, backedge)
         })
         .collect()
