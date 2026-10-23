@@ -52,10 +52,17 @@ const DIRECT_ITERATOR_HANDLE_BITS: u64 = DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJE
 /// The string record family's code: every family bit.
 const DIRECT_STRING_HANDLE_BITS: u64 =
     DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
-/// The payload bits that code a heap value's reference family.
+/// The payload bits that code the reference families a narrow value packs.
 const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PROMISE_HANDLE_BIT;
-/// The bits that name a heap value's reference family (`Value::heap_reference`).
-const HEAP_FAMILY_MASK: u64 = TAG_MASK | HEAP_FAMILY_BITS;
+/// The Wasm vector record family's code: a bit below `HEAP_FAMILY_BITS`, every combination
+/// of which another family names. Record and legacy slot indices stay below it
+/// (`RECORD_SPACE_CAPACITY`, `MAX_HEAP_CELLS`). No narrow upper word sets it, so a vector is
+/// never narrow.
+const DIRECT_V128_HANDLE_BIT: u64 = 1 << 44;
+/// The payload bits that code a heap value's reference family (`Value::heap_reference`).
+const HEAP_REFERENCE_BITS: u64 = HEAP_FAMILY_BITS | DIRECT_V128_HANDLE_BIT;
+/// The bits that name a heap value's reference family.
+const HEAP_FAMILY_MASK: u64 = TAG_MASK | HEAP_REFERENCE_BITS;
 
 /// A narrow value: a `Value` packed into 32 bits for an object's inline property slot. Bit 0
 /// set holds a `NARROW_INTEGER_BITS` integer above it. Bit 0 clear holds a `NARROW_CODE_BITS` code above it,
@@ -153,6 +160,8 @@ pub(crate) enum HeapReference {
     FunctionRecord(u32),
     PromiseRecord(u32),
     AwaitRecord(u32),
+    /// A Wasm vector's bytes (`Heap::alloc_v128`).
+    V128Record(u32),
     IteratorRecord(u32),
     StringRecord(u32),
 }
@@ -424,6 +433,11 @@ impl Value {
     }
 
     #[inline(always)]
+    pub(crate) fn direct_v128(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_V128_HANDLE_BIT | u64::from(index))
+    }
+
+    #[inline(always)]
     pub(crate) fn direct_promise(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT | u64::from(index))
     }
@@ -461,7 +475,7 @@ impl Value {
         }
         let index = self.0 as u32;
         Some(
-            match self.0 & HEAP_FAMILY_BITS {
+            match self.0 & HEAP_REFERENCE_BITS {
                 0 => HeapReference::LegacySlot(index),
                 DIRECT_OBJECT_HANDLE_BIT => HeapReference::ObjectRecord(index),
                 DIRECT_ARRAY_HANDLE_BIT => HeapReference::ArrayRecord(index),
@@ -470,6 +484,7 @@ impl Value {
                 DIRECT_AWAIT_HANDLE_BITS => HeapReference::AwaitRecord(index),
                 DIRECT_ITERATOR_HANDLE_BITS => HeapReference::IteratorRecord(index),
                 DIRECT_STRING_HANDLE_BITS => HeapReference::StringRecord(index),
+                DIRECT_V128_HANDLE_BIT => HeapReference::V128Record(index),
                 _ => return None,
             },
         )
@@ -485,8 +500,14 @@ impl Value {
             | HeapReference::PromiseRecord(_)
             | HeapReference::AwaitRecord(_)
             | HeapReference::IteratorRecord(_)
-            | HeapReference::StringRecord(_) => None,
+            | HeapReference::StringRecord(_)
+            | HeapReference::V128Record(_) => None,
         }
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_v128_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_V128_HANDLE_BIT).then_some(self.0 as u32)
     }
 
     #[inline(always)]
