@@ -37,19 +37,18 @@ impl State {
 }
 
 /// The objects every response is registered with as it is made (`response_initialize`): a
-/// WeakMap from response to exchange id, which `_send` reads, and a FinalizationRegistry whose
-/// cleanup releases the host's entry, with the intrinsic methods that register a response.
+/// WeakMap from response to exchange id, which `_send` reads, with the intrinsic method that
+/// records a response. A finished response's host entry is retired once its object is
+/// collected (`poll::prune_collected_responses`).
 #[derive(Clone, Copy)]
 pub(crate) struct ResponseTracking {
     pub(crate) responses: RootId,
     pub(crate) map_set: RootId,
-    pub(crate) registry: RootId,
-    pub(crate) register: RootId,
 }
 
 impl ResponseTracking {
-    pub(crate) fn roots(self) -> [RootId; 4] {
-        [self.responses, self.map_set, self.registry, self.register]
+    pub(crate) fn roots(self) -> [RootId; 2] {
+        [self.responses, self.map_set]
     }
 }
 
@@ -61,8 +60,6 @@ impl crate::host::startup_snapshot::HostSnap for ResponseTracking {
         Ok(Self {
             responses: RootId::read(reader)?,
             map_set: RootId::read(reader)?,
-            registry: RootId::read(reader)?,
-            register: RootId::read(reader)?,
         })
     }
 }
@@ -79,6 +76,7 @@ pub(crate) struct ServerConnection {
     pub(crate) server: u64,
     pub(crate) received: Vec<u8>,
     pub(crate) request_dispatched: bool,
+    pub(crate) upgraded: bool,
 }
 
 pub(crate) struct Response {
