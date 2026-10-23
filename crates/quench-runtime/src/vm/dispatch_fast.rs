@@ -10061,9 +10061,9 @@ script_handler! {
     /// `arguments` binding is no forwarding one, in its frame's own lane run, as
     /// `Vm::read_arguments_binding` reads it: an unmaterialized binding answers its length
     /// and the indices it kept from the frame's values; a materialized object its own data
-    /// `length` in its creation layout (`Vm::arguments_object_length`). Any other read, an
-    /// element of a materialized object (which a mapped object aliases to the parameters)
-    /// among them, takes the general path.
+    /// `length` in its creation layout (`Vm::arguments_object_length`) and its stored
+    /// elements no parameter mapping reaches (`Vm::plain_arguments_element`). Any other read,
+    /// a mapped element (which aliases a parameter) among them, takes the general path.
     #[inline(never)]
     fn lane_frame_arguments<GET: bool>(cx, r, ip, i, view) {
         // Only a frame's own run reads its binding; no activation runs such a function.
@@ -10086,7 +10086,11 @@ script_handler! {
                 .and_then(|index| usize::try_from(index).ok())
                 .and_then(|index| kept.get(index).copied()),
             (false, false) => vm.arguments_object_length(binding),
-            (false, true) => None,
+            (false, true) => r
+                .get(i.b)
+                .as_int()
+                .and_then(|index| usize::try_from(index).ok())
+                .and_then(|index| vm.plain_arguments_element(binding, index)),
         };
         let Some(value) = value else {
             return exit(ip);
