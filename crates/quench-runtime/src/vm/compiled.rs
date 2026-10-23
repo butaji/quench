@@ -49,6 +49,54 @@ pub(super) use osr_loop::{
     FieldReceiver, LoopEntry, LoopOutcome, LoopRegion, Observation, RegionRejection, Widening,
 };
 
+/// Emit a Number relation using the same relation dispatch as the interpreter.
+/// Only the stage-specific Cranelift condition codes live here.
+pub(super) fn emit_number_relation(
+    builder: &mut FunctionBuilder<'_>,
+    operator: u32,
+    left: ir::Value,
+    right: ir::Value,
+) -> Option<ir::Value> {
+    struct Emit<'a, 'f> {
+        builder: &'a mut FunctionBuilder<'f>,
+    }
+
+    impl crate::vm::operations::NumberRelationStage<ir::Value> for Emit<'_, '_> {
+        type Output = ir::Value;
+
+        fn equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            self.builder.ins().fcmp(FloatCC::Equal, left, right)
+        }
+        fn not_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            self.builder.ins().fcmp(FloatCC::NotEqual, left, right)
+        }
+        fn less_than(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            self.builder.ins().fcmp(FloatCC::LessThan, left, right)
+        }
+        fn less_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            self.builder
+                .ins()
+                .fcmp(FloatCC::LessThanOrEqual, left, right)
+        }
+        fn greater_than(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            self.builder.ins().fcmp(FloatCC::GreaterThan, left, right)
+        }
+        fn greater_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            self.builder
+                .ins()
+                .fcmp(FloatCC::GreaterThanOrEqual, left, right)
+        }
+    }
+
+    Some(
+        crate::vm::operations::NumberRelation::from_operator(operator)?.apply(
+            &mut Emit { builder },
+            left,
+            right,
+        ),
+    )
+}
+
 /// How the shared VM executes JavaScript and Wasm functions. Compiled code is
 /// lazy and falls back to the interpreter; both modes use the same VM, heap,
 /// frames and host APIs.

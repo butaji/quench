@@ -16,44 +16,86 @@ const ODD_INTEGER_PARITY: f64 = 1.0;
 /// The comparison operators occupy the binary operator discriminants up to this one.
 pub(super) const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
 
-/// The semantic relation shared by Number interpretation and guarded native
-/// lowering. Strict and non-strict equality coincide once both operands are
-/// known to be Numbers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum NumberRelation {
-    Equal,
-    NotEqual,
-    LessThan,
-    LessEqual,
-    GreaterThan,
-    GreaterEqual,
+/// A stage supplies the machine operation for each semantic Number relation.
+/// The relation table below is shared by interpreter values and native emitters.
+pub(super) trait NumberRelationStage<T> {
+    type Output;
+
+    fn equal(&mut self, left: T, right: T) -> Self::Output;
+    fn not_equal(&mut self, left: T, right: T) -> Self::Output;
+    fn less_than(&mut self, left: T, right: T) -> Self::Output;
+    fn less_equal(&mut self, left: T, right: T) -> Self::Output;
+    fn greater_than(&mut self, left: T, right: T) -> Self::Output;
+    fn greater_equal(&mut self, left: T, right: T) -> Self::Output;
 }
 
-impl NumberRelation {
-    pub(super) fn from_operator(op: u32) -> Option<Self> {
-        Some(match op {
-            value if value == BinaryOperator::Equality as u32
-                || value == BinaryOperator::StrictEquality as u32 => Self::Equal,
-            value if value == BinaryOperator::Inequality as u32
-                || value == BinaryOperator::StrictInequality as u32 => Self::NotEqual,
-            value if value == BinaryOperator::LessThan as u32 => Self::LessThan,
-            value if value == BinaryOperator::LessEqualThan as u32 => Self::LessEqual,
-            value if value == BinaryOperator::GreaterThan as u32 => Self::GreaterThan,
-            value if value == BinaryOperator::GreaterEqualThan as u32 => Self::GreaterEqual,
-            _ => return None,
-        })
-    }
+macro_rules! number_relations {
+    ($($relation:ident => [$($operator:ident),+ $(,)?], $stage_method:ident;)+) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub(super) enum NumberRelation { $($relation),+ }
+
+        impl NumberRelation {
+            pub(super) fn from_operator(op: u32) -> Option<Self> {
+                $(
+                    if $(op == BinaryOperator::$operator as u32)||+ {
+                        return Some(Self::$relation);
+                    }
+                )+
+                None
+            }
+
+            #[inline(always)]
+            pub(super) fn apply<T, S: NumberRelationStage<T>>(
+                self,
+                stage: &mut S,
+                left: T,
+                right: T,
+            ) -> S::Output {
+                match self {
+                    $(Self::$relation => stage.$stage_method(left, right)),+
+                }
+            }
+        }
+    };
+}
+
+number_relations! {
+    Equal => [Equality, StrictEquality], equal;
+    NotEqual => [Inequality, StrictInequality], not_equal;
+    LessThan => [LessThan], less_than;
+    LessEqual => [LessEqualThan], less_equal;
+    GreaterThan => [GreaterThan], greater_than;
+    GreaterEqual => [GreaterEqualThan], greater_equal;
+}
+
+struct PartialOrderStage;
+
+impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
+    type Output = bool;
 
     #[inline(always)]
-    fn holds<T: PartialOrd>(self, left: T, right: T) -> bool {
-        match self {
-            Self::Equal => left == right,
-            Self::NotEqual => left != right,
-            Self::LessThan => left < right,
-            Self::LessEqual => left <= right,
-            Self::GreaterThan => left > right,
-            Self::GreaterEqual => left >= right,
-        }
+    fn equal(&mut self, left: T, right: T) -> Self::Output {
+        left == right
+    }
+    #[inline(always)]
+    fn not_equal(&mut self, left: T, right: T) -> Self::Output {
+        left != right
+    }
+    #[inline(always)]
+    fn less_than(&mut self, left: T, right: T) -> Self::Output {
+        left < right
+    }
+    #[inline(always)]
+    fn less_equal(&mut self, left: T, right: T) -> Self::Output {
+        left <= right
+    }
+    #[inline(always)]
+    fn greater_than(&mut self, left: T, right: T) -> Self::Output {
+        left > right
+    }
+    #[inline(always)]
+    fn greater_equal(&mut self, left: T, right: T) -> Self::Output {
+        left >= right
     }
 }
 
@@ -63,7 +105,7 @@ impl NumberRelation {
 fn number_comparison<T: PartialOrd>(op: u32, a: T, b: T) -> bool {
     NumberRelation::from_operator(op)
         .expect("comparison operators end at GreaterEqualThan")
-        .holds(a, b)
+        .apply(&mut PartialOrderStage, a, b)
 }
 
 const FIRST_NUMERIC_BINARY_OPERATOR: u32 = BinaryOperator::Addition as u32;

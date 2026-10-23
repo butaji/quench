@@ -2744,15 +2744,6 @@ fn branch_number_comparison(
     left: crate::bytecode::Operand,
     right: crate::bytecode::Operand,
 ) -> Option<ir::Value> {
-    let relation = super::operations::NumberRelation::from_operator(operator)?;
-    let code = match relation {
-        super::operations::NumberRelation::Equal => FloatCC::Equal,
-        super::operations::NumberRelation::NotEqual => FloatCC::NotEqual,
-        super::operations::NumberRelation::LessThan => FloatCC::LessThan,
-        super::operations::NumberRelation::LessEqual => FloatCC::LessThanOrEqual,
-        super::operations::NumberRelation::GreaterThan => FloatCC::GreaterThan,
-        super::operations::NumberRelation::GreaterEqual => FloatCC::GreaterThanOrEqual,
-    };
     let lhs = branch_numeric_operand(
         builder,
         variables,
@@ -2771,7 +2762,7 @@ fn branch_number_comparison(
         local_state,
         right,
     )?;
-    Some(builder.ins().fcmp(code, lhs, rhs))
+    super::compiled::emit_number_relation(builder, operator, lhs, rhs)
 }
 
 fn branch_numeric_operand(
@@ -3539,7 +3530,7 @@ fn compile_numeric_loop(
                         if super::operations::NumberRelation::from_operator(value).is_some() =>
                     {
                         let condition =
-                            builder.ins().fcmp(numeric_relation_cc(value)?, left, right);
+                            super::compiled::emit_number_relation(&mut builder, value, left, right)?;
                         let one = builder.ins().iconst(types::I8, 1);
                         let zero = builder.ins().iconst(types::I8, 0);
                         let result = builder.ins().select(condition, one, zero);
@@ -3643,11 +3634,12 @@ fn compile_numeric_loop(
                     registers,
                     instruction.operand_c(),
                 )?;
-                let condition = builder.ins().fcmp(
-                    numeric_relation_cc(instruction.binary_operator_field())?,
+                let condition = super::compiled::emit_number_relation(
+                    &mut builder,
+                    instruction.binary_operator_field(),
                     left,
                     right,
-                );
+                )?;
                 let target = usize::try_from(instruction.jump_target()).ok()?;
                 emit_numeric_loop_conditional(
                     &mut builder,
@@ -3783,19 +3775,6 @@ fn numeric_to_i32(builder: &mut FunctionBuilder<'_>, value: ir::Value) -> ir::Va
     let reduced = builder.ins().fsub(value, product);
     let truncated = builder.ins().fcvt_to_sint_sat(types::I64, reduced);
     builder.ins().ireduce(types::I32, truncated)
-}
-
-fn numeric_relation_cc(operator: u32) -> Option<FloatCC> {
-    Some(
-        match super::operations::NumberRelation::from_operator(operator)? {
-            super::operations::NumberRelation::Equal => FloatCC::Equal,
-            super::operations::NumberRelation::NotEqual => FloatCC::NotEqual,
-            super::operations::NumberRelation::LessThan => FloatCC::LessThan,
-            super::operations::NumberRelation::LessEqual => FloatCC::LessThanOrEqual,
-            super::operations::NumberRelation::GreaterThan => FloatCC::GreaterThan,
-            super::operations::NumberRelation::GreaterEqual => FloatCC::GreaterThanOrEqual,
-        },
-    )
 }
 
 fn emit_numeric_loop_backedge_poll(
@@ -4158,16 +4137,16 @@ fn comparison(
     registers: &[cranelift_frontend::Variable],
     strings: &[Option<StringJitRegister>],
 ) -> Option<ir::Value> {
-    let relation = super::operations::NumberRelation::from_operator(instruction_binary_operator(
-        instruction,
-    )?)?;
-    let code = match relation {
-        super::operations::NumberRelation::LessThan => FloatCC::LessThan,
-        super::operations::NumberRelation::LessEqual => FloatCC::LessThanOrEqual,
-        super::operations::NumberRelation::GreaterThan => FloatCC::GreaterThan,
-        super::operations::NumberRelation::GreaterEqual => FloatCC::GreaterThanOrEqual,
-        _ => return None,
-    };
+    let operator = instruction_binary_operator(instruction)?;
+    if !matches!(
+        super::operations::NumberRelation::from_operator(operator)?,
+        super::operations::NumberRelation::LessThan
+            | super::operations::NumberRelation::LessEqual
+            | super::operations::NumberRelation::GreaterThan
+            | super::operations::NumberRelation::GreaterEqual
+    ) {
+        return None;
+    }
     let left = numeric_operand(
         builder,
         program,
@@ -4182,7 +4161,7 @@ fn comparison(
         registers,
         strings,
     )?;
-    Some(builder.ins().fcmp(code, left, right))
+    super::compiled::emit_number_relation(builder, operator, left, right)
 }
 
 fn numeric_operand(
