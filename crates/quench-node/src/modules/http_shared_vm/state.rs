@@ -83,6 +83,7 @@ pub(crate) struct ServerConnection {
 
 pub(crate) struct Response {
     pub(crate) socket: u64,
+    pub(crate) virtual_response: bool,
     pub(crate) async_id: u64,
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) body: Body,
