@@ -198,3 +198,41 @@ Raw paired reports are the matching `balanced-pgo-*-no-jit.json` and
 `balanced-pgo-*-jit.json` files, plus
 `balanced-pgo-zod-parse-no-jit-11.json` and
 `balanced-pgo-zod-parse-jit-11.json`.
+
+## Current merged-source Zod profile and GC policy screen
+
+After fetching and merging the latest `v2-merged` head, I rebuilt a clean
+production binary and reran the 5,000-round workload for 11 repetitions in each
+mode. The clean interpreter measured 48,662 ops/s / 29.78 MiB; JIT measured
+47,506 / 22.50 MiB. Node measured 162,602 / 47.84 MiB no-JIT and 540,541 /
+51.05 MiB JIT. Bun measured 115,607 / 33.94 MiB and 625,000 / 39.74 MiB,
+respectively. This is the post-merge source baseline.
+
+The 5,000-round `profile-aggregate` run provides a map for the next source
+experiment. It counted 4,540,230 `GetField` bytecodes; the aggregate field
+cache reported 4,646,009 hits and 632,480 misses (88% hit rate). The most
+common adjacent pair was `GetField → GetField` at 1,289,476 occurrences. The
+method cache had no hits or misses in this workload. `finalizeIssue` and
+`aborted` were the hottest named Zod helper functions in the profile. The
+profile build ran at 7,438 operations/s, so its timing is diagnostic only.
+The compact summary is `zod-nojit-profile-aggregate-5000-summary.json`; the
+full compressed JSONL is alongside it.
+
+I tested a direct own-data field-cache return ahead of the existing three-way
+probe. It preserved workload output but measured 45,351 ops/s versus the clean
+control's 47,170 no-JIT (-3.9%) and 43,764 versus 44,150 JIT (-0.9%). I
+reverted the source change. The paired RSS samples favored the candidate, but
+its absolute RSS was effectively unchanged from the pre-experiment baseline,
+so that result was not a reliable memory win.
+
+The existing `memory-first` policy is a useful memory-only point on the curve:
+17.36 MiB / 34,014 ops/s no-JIT and 17.48 MiB / 37,736 ops/s JIT. It cuts RSS
+substantially but costs about 30% and 21% throughput against the clean build.
+This improves the RSS margin while moving throughput further from Node and Bun.
+All Linux RSS measurements are diagnostic. Raw rejected fast-path reports:
+`zod-fastfield-nojit-11.json` and `zod-fastfield-jit-11.json`.
+
+Raw current clean reports: `zod-current-clean-nojit.json` and
+`zod-current-clean-jit.json`. Memory-first reports:
+`zod-current-memory-first-nojit-11.json` and
+`zod-current-memory-first-jit-11.json`.
