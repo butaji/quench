@@ -3651,15 +3651,20 @@ script_handler! {
 
 script_handler! {
     /// `GetField` of a string primitive, which `String.prototype` answers through the
-    /// site's cache or its chain's data walk (`Vm::cached_string_field_hit`): a method read,
-    /// as `s.substring`, or an absent name, at a site `Vm::string_field_site_cacheable` admits. A miss moves the record on as
-    /// `lane_get_field_miss` decides.
+    /// site's cache (`Vm::string_prototype_field_hit`), a method read as `s.substring`, or
+    /// its chain's data walk for an absent name, at a site `Vm::string_field_site_cacheable`
+    /// admits. A miss moves the record on as `lane_get_field_miss` decides.
     fn lane_get_field_string<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
+        // The site checks (`Vm::string_field_site_cacheable`) ran when the handler was
+        // installed, so a hit reads the site's `String.prototype` entry directly; any other
+        // read is `Vm::cached_string_field_hit`'s, whose miss records the site's entry.
         let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
-            .and_then(|object| vm.cached_string_field_hit(code, object, i.imm(), i.c))
+            .filter(|object| vm.heap.is_string(*object))
+            .and_then(|object| {
+                vm.string_prototype_field_hit(i.c)
+                    .or_else(|| vm.cached_string_field_hit(unsafe { &*(*cx).code }, object, i.imm(), i.c))
+            })
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script(cx))
         };
