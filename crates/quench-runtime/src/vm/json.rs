@@ -21,6 +21,25 @@ const JSON_HEX_LETTER_VALUE_START: u16 = 10;
 const JSON_BACKSPACE: u16 = b'\x08' as u16;
 const JSON_FORM_FEED: u16 = b'\x0C' as u16;
 const JSON_WHITESPACE: [u16; 4] = [b' ' as u16, b'\t' as u16, b'\n' as u16, b'\r' as u16];
+/// The greatest unit of `JSON_WHITESPACE`: a unit above it is no whitespace, as nearly every
+/// unit a parse reads is.
+const JSON_WHITESPACE_MAX: u16 = {
+    let mut max = 0;
+    let mut index = 0;
+    while index < JSON_WHITESPACE.len() {
+        if JSON_WHITESPACE[index] > max {
+            max = JSON_WHITESPACE[index];
+        }
+        index += 1;
+    }
+    max
+};
+
+/// Whether `unit` is JSON whitespace (`JSON_WHITESPACE`).
+#[inline(always)]
+fn is_json_whitespace(unit: u16) -> bool {
+    unit <= JSON_WHITESPACE_MAX && JSON_WHITESPACE.contains(&unit)
+}
 
 enum JsonValue {
     Null,
@@ -795,7 +814,7 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
     fn whitespace(&mut self) {
         while self
             .peek()
-            .is_some_and(|unit| JSON_WHITESPACE.contains(&unit))
+            .is_some_and(is_json_whitespace)
         {
             self.index += 1;
         }
@@ -856,10 +875,10 @@ impl<H: Host> Vm<H> {
         let units: &[u16] = &wide;
         if units
             .first()
-            .is_some_and(|unit| JSON_WHITESPACE.contains(unit))
+            .is_some_and(|unit| is_json_whitespace(*unit))
             || units
                 .last()
-                .is_some_and(|unit| JSON_WHITESPACE.contains(unit))
+                .is_some_and(|unit| is_json_whitespace(*unit))
         {
             return self.syntax_error_result(p, "Invalid raw JSON text");
         }

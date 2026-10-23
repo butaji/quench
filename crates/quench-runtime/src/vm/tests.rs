@@ -6514,9 +6514,11 @@ fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
                         assert!(
                             matches!(vm.heap.get(proxy),Some(super::Cell::Proxy {target,handler,..}) if target.is_null()&&handler.is_null())
                         );
-                        keys.into_iter()
-                            .map(|value| vm.heap.weak_handle(value).unwrap())
-                            .collect::<Vec<_>>()
+                        // A key a program spells is its shared atom string (`Vm::atom_string`),
+                        // kept with the program; the symbol key is the proxy target's own.
+                        let first = vm.intern_atom("first");
+                        assert_eq!(keys[0], vm.atom_string(first));
+                        vec![vm.heap.weak_handle(keys[1]).unwrap()]
                     }
                     Err(error) => {
                         let atom = vm.intern_atom("kind");
@@ -12891,6 +12893,61 @@ fn array_fill_stores_plainly_only_where_no_prototype_claims_the_index() {
       check(Array.prototype.fill.call({ length: 2 }, 1)[1], 1, 'array-like');
     "#;
     for program in [Engine::compile(crate::ExecutionRequest { source, name: "array-fill.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "array-fill.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn define_property_keeps_its_values_through_collections_its_conversions_run() {
+    let source = r#"
+      const churn = () => { let keep = []; for (let i = 0; i < 8000; i++) keep.push({ i, s: 'x' + i }); return keep.length; };
+      const results = [];
+      for (let round = 0; round < 6; round++) {
+        const key = { toString() { churn(); return 'k' + round; } };
+        const descriptor = {
+          get enumerable() { churn(); return true; },
+          get get() { churn(); const marker = { round }; return () => marker.round; },
+        };
+        const target = Object.defineProperty({}, key, descriptor);
+        results.push(target['k' + round]);
+        if (!Object.getOwnPropertyDescriptor(target, 'k' + round).enumerable) throw Error('enumerable lost');
+        const reflected = {};
+        if (!Reflect.defineProperty(reflected, key, { get value() { churn(); return [round]; }, writable: true })) throw Error('reflect');
+        if (reflected['k' + round][0] !== round) throw Error('value lost');
+      }
+      if (results.join() !== Array.from({ length: 6 }, (_, i) => i).join()) throw Error('getter results ' + results);
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "define-roots.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "define-roots.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn object_assign_sees_prototype_setters_added_after_a_memoized_copy() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      const proto = {};
+      const src = { a: 1, b: 2 };
+      for (let i = 0; i < 4; i++) check(Object.assign(Object.create(proto), src).a, 1, 'primed');
+      let hits = 0;
+      Object.defineProperty(proto, 'a', { set(value) { hits += value; }, configurable: true });
+      const target = Object.assign(Object.create(proto), src);
+      check(hits, 1, 'setter called');
+      check(Object.prototype.hasOwnProperty.call(target, 'a'), false, 'setter kept the key off the target');
+      check(target.b, 2, 'other key copied');
+      delete proto.a;
+      Object.defineProperty(proto, 'b', { value: 0, writable: false, configurable: true });
+      let threw = false;
+      try { Object.assign(Object.create(proto), src); } catch (error) { threw = error instanceof TypeError; }
+      check(threw, true, 'read-only inherited key throws');
+      delete proto.b;
+      check(Object.assign(Object.create(proto), src).b, 2, 'plain again');
+      Object.defineProperty(Object.prototype, 'a', { set(value) { hits += 10 * value; }, configurable: true });
+      Object.assign({}, src);
+      check(hits, 11, 'Object.prototype setter');
+      delete Object.prototype.a;
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "assign-memo.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "assign-memo.js").unwrap()] {
         Vm::new(TestHost::default()).execute(&program).unwrap();
     }
 }
