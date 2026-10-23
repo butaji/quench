@@ -52,7 +52,6 @@ pub(super) struct LaneInstruction {
 
 /// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
 const NO_CALL_LINK: u16 = u16::MAX;
-const _: () = assert!(SCRIPT_CALL_TARGETS <= NO_CALL_LINK as usize);
 const _: () = assert!(std::mem::size_of::<LaneInstruction>() == 3 * std::mem::size_of::<u64>());
 
 /// The immediate, resolved by its role: a jump target becomes the byte
@@ -889,28 +888,39 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
 };
 
 /// Entries of the script call cache, in sets of `SCRIPT_TARGET_WAYS` that a hash of the
-/// callee's heap index picks (`ScriptTargets::set`), at most: Express's router calls a
-/// matcher closure per layer, some 400 distinct callees a request, which 256 entries
-/// thrashed (Callgrind: 2.4% of a ping request re-resolving). 1024 still met conflicts in
-/// their two-way sets, re-resolving 34 callees a body request (~380 instructions each);
-/// 4096 (256 KiB per table, reached only by a cache that keeps displacing live targets) cut
-/// express body and ping 1.3% (Callgrind, per request).
-const SCRIPT_CALL_TARGETS: usize = 4096;
+/// callee's heap index picks (`ScriptTargets::set`), at most, under each memory policy
+/// (`MemoryPolicy` order): Express's router calls a matcher closure per layer, some 400
+/// distinct callees a request, which 256 entries thrashed (Callgrind: 2.4% of a ping request
+/// re-resolving). 1024 still met conflicts in their two-way sets, re-resolving 34 callees a
+/// body request (~380 instructions each); 4096 (256 KiB per table, reached only by a cache
+/// that keeps displacing live targets) cut express body and ping 1.3% (Callgrind, per
+/// request). Memory-first stops at 1024: a long run that displaces a few targets at a time
+/// reaches the larger size too (EarleyBoyer, both tables: +220 KiB anonymous peak).
+const SCRIPT_CALL_TARGETS: [usize; crate::MemoryPolicy::ALL.len()] = [4096, 1024];
+
+/// The largest script call cache `policy` allows.
+fn script_call_targets(policy: crate::MemoryPolicy) -> usize {
+    SCRIPT_CALL_TARGETS[policy as usize]
+}
 /// Entries a script call cache starts with: a program that calls few distinct callees keeps
 /// 16 KiB per table resident instead of 64 (V8-v7 max RSS, both tables: about 100 KiB per
 /// fixture). A cache grows to `SCRIPT_CALL_TARGETS` by this factor each time it has
 /// displaced more live targets than it holds.
 const SCRIPT_CALL_TARGETS_INITIAL: usize = 256;
 const SCRIPT_CALL_TARGETS_GROWTH: usize = 4;
-const _: () = assert!(
-    SCRIPT_CALL_TARGETS_INITIAL.is_power_of_two()
-        && SCRIPT_CALL_TARGETS_GROWTH.is_power_of_two()
-        && SCRIPT_CALL_TARGETS_INITIAL <= SCRIPT_CALL_TARGETS
-);
+const _: () = {
+    assert!(SCRIPT_CALL_TARGETS_INITIAL.is_power_of_two() && SCRIPT_CALL_TARGETS_GROWTH.is_power_of_two());
+    let mut policy = 0;
+    while policy < SCRIPT_CALL_TARGETS.len() {
+        let most = SCRIPT_CALL_TARGETS[policy];
+        assert!(most.is_power_of_two() && SCRIPT_CALL_TARGETS_INITIAL <= most && most <= NO_CALL_LINK as usize);
+        policy += 1;
+    }
+};
 /// Entries per set: the one most recently resolved first, then the one before it, so two
 /// callees whose indices share a set both stay resolved.
 const SCRIPT_TARGET_WAYS: usize = 2;
-const _: () = assert!(SCRIPT_CALL_TARGETS.is_power_of_two() && SCRIPT_TARGET_WAYS == 2);
+const _: () = assert!(SCRIPT_TARGET_WAYS == 2);
 
 /// A script call cache (`LaneStack::script_targets`, `cross_targets`): sets of
 /// `SCRIPT_TARGET_WAYS` entries, growing from `SCRIPT_CALL_TARGETS_INITIAL` entries.
@@ -943,8 +953,9 @@ impl ScriptTargets {
     }
 
     /// Record `target` first in its set, the entry it displaces moving second; a cache that
-    /// has displaced more live targets than it holds grows, empty, before recording it.
-    fn remember(&mut self, target: ScriptCallTarget) {
+    /// has displaced more live targets than it holds grows, empty, before recording it, up to
+    /// `most` entries.
+    fn remember(&mut self, target: ScriptCallTarget, most: usize) {
         let Some(set) = self.set(target.callee) else {
             return;
         };
@@ -955,9 +966,9 @@ impl ScriptTargets {
             self.entries[set | 1] = self.entries[set];
         }
         self.entries[set] = target;
-        if self.displaced > self.entries.len() && self.entries.len() < SCRIPT_CALL_TARGETS {
+        if self.displaced > self.entries.len() && self.entries.len() < most {
             *self = Self::with_len(self.entries.len() * SCRIPT_CALL_TARGETS_GROWTH);
-            self.remember(target);
+            self.remember(target, most);
         }
     }
 
@@ -1077,7 +1088,6 @@ const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     parameters: [0; CONSTRUCT_PLAN_FIELDS],
     forwarded: None,
 };
-const _: () = assert!(SCRIPT_CALL_TARGETS.is_power_of_two());
 
 /// Activations a lane runs without VM frames, innermost last, over the
 /// bottom VM frame of the lane run. They exist only while the lane runs:
@@ -1150,14 +1160,15 @@ impl Default for LaneStack {
 }
 
 impl LaneStack {
-    /// Records a target of the running program's callee (`script_targets`).
-    fn remember_script_target(&mut self, target: ScriptCallTarget) {
-        self.script_targets.remember(target);
+    /// Records a target of the running program's callee (`script_targets`), the cache
+    /// growing up to what `policy` allows.
+    fn remember_script_target(&mut self, target: ScriptCallTarget, policy: crate::MemoryPolicy) {
+        self.script_targets.remember(target, script_call_targets(policy));
     }
 
     /// `remember_script_target` of another program's callee (`cross_targets`).
-    fn remember_cross_target(&mut self, target: ScriptCallTarget) {
-        self.cross_targets.remember(target);
+    fn remember_cross_target(&mut self, target: ScriptCallTarget, policy: crate::MemoryPolicy) {
+        self.cross_targets.remember(target, script_call_targets(policy));
     }
 
     /// Forget resolved call targets, as the general loop's call target cache is reset.
@@ -1181,14 +1192,14 @@ impl LaneStack {
 
     /// Record `target` in its set and as its function's (`function_targets`), or a `cross`
     /// one in the other programs' tables.
-    fn remember_function_target(&mut self, target: ScriptCallTarget, cross: bool) {
+    fn remember_function_target(&mut self, target: ScriptCallTarget, cross: bool, policy: crate::MemoryPolicy) {
         let index = target.function as usize & (FUNCTION_TARGETS - 1);
         if cross {
             self.cross_function_targets[index] = target;
-            self.remember_cross_target(target);
+            self.remember_cross_target(target, policy);
         } else {
             self.function_targets[index] = target;
-            self.remember_script_target(target);
+            self.remember_script_target(target, policy);
         }
     }
 
@@ -7955,10 +7966,11 @@ impl<H: Host> Vm<H> {
                 binding => (binding, Value::UNDEFINED),
             };
             let target = ScriptCallTarget { callee, env, capture, this_binding, lexical_this, ..known };
+            let policy = self.heap.memory_policy();
             if cross {
-                self.lane_stack.remember_cross_target(target);
+                self.lane_stack.remember_cross_target(target, policy);
             } else {
-                self.lane_stack.remember_script_target(target);
+                self.lane_stack.remember_script_target(target, policy);
             }
             return Some(target);
         }
@@ -8111,10 +8123,11 @@ impl<H: Host> Vm<H> {
     /// Record a resolved `target`, also as its function's unless its closure is numeric; a
     /// `cross` one among the other programs' targets.
     fn remember_target(&mut self, target: ScriptCallTarget, numeric: bool, cross: bool) {
+        let policy = self.heap.memory_policy();
         if numeric {
-            self.lane_stack.remember_script_target(target);
+            self.lane_stack.remember_script_target(target, policy);
         } else {
-            self.lane_stack.remember_function_target(target, cross);
+            self.lane_stack.remember_function_target(target, cross, policy);
         }
     }
 
