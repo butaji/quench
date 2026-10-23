@@ -12689,3 +12689,29 @@ fn fused_field_reads_of_promoted_locals_see_undefined_before_assignment() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["TypeError,TypeError,TypeError"]);
 }
+
+#[test]
+fn absent_index_reads_of_ordinary_objects_still_see_every_holder_on_the_chain() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      const plain = { length: 3 };
+      for (let i = 0; i < 3; i++) check(plain[i], undefined, 'plain miss');
+      check(Array.from(plain, (_, i) => i * 2).join(), '0,2,4', 'array-like from');
+      check(Object.create({ 7: 'p' })[7], 'p', 'prototype property');
+      check(Object.create(['a', 'b'])[1], 'b', 'array prototype');
+      check(Object.create(new String('xy'))[1], 'y', 'string wrapper prototype');
+      check(Object.create(new Uint8Array([4, 5]))[1], 5, 'typed array prototype');
+      const getter = {}; Object.defineProperty(getter, 9, { get() { return 'g'; } });
+      check(Object.create(getter)[9], 'g', 'inherited getter');
+      check((function () { return Object.create(arguments)[0]; })('arg'), 'arg', 'arguments prototype');
+      const proxied = Object.create(new Proxy({}, { get: (_, key) => 'proxy ' + key }));
+      check(proxied[3], 'proxy 3', 'proxy prototype');
+      Object.prototype[11] = 'shared';
+      check({}[11], 'shared', 'Object.prototype index');
+      delete Object.prototype[11];
+      check({}[11], undefined, 'deleted Object.prototype index');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "absent-index.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "absent-index.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
