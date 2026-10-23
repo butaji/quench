@@ -2688,7 +2688,7 @@ impl Heap {
                     trace_kind,
                     &mut last_proto,
                 );
-                work.extend(promise.record.roots());
+                promise.record.append_roots(work);
                 let mark_bits = mark_bits!(self);
                 ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
             } else {
@@ -3353,7 +3353,7 @@ impl Heap {
             Cell::PromiseResolvingState { promise, .. } => work.push(*promise),
             Cell::Promise(promise) => {
                 object(&promise.object);
-                work.extend(promise.record.roots());
+                promise.record.append_roots(work);
             }
             Cell::Date { object: value, .. }
             | Cell::TemporalDuration { object: value, .. }
