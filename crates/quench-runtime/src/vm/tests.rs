@@ -10604,8 +10604,12 @@ fn js_jit_compiles_forward_numeric_decision_trees() {
             if (value < 0) return -value;
             return value;
           }
+          function magnitudeJoined(value) {
+            return value < 0 ? -value : value;
+          }
           for (let index = 0; index < 40; index++) {
             if (magnitude(index - 20) !== Math.abs(index - 20)) throw Error('decision tree');
+            if (magnitudeJoined(index - 20) !== Math.abs(index - 20)) throw Error('decision join');
           }
           if (!Object.is(magnitude(-0), -0)) throw Error('signed zero');
           if (!Number.isNaN(magnitude(NaN))) throw Error('NaN relation');
@@ -10658,6 +10662,41 @@ fn js_jit_compiles_forward_numeric_decision_trees() {
     };
     assert!(compiled.uses_shared_entry());
     assert!(compiled.native_entries() > 0);
+
+    let joined = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "magnitudeJoined")
+        })
+        .unwrap() as u32;
+    match vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, joined)
+    {
+        Some(super::program_store::JsTierState::Compiled(compiled)) => {
+            assert!(compiled.uses_shared_entry());
+            assert!(compiled.native_entries() > 0);
+        }
+        Some(super::program_store::JsTierState::Rejected { reason, .. }) => {
+            panic!("the Number join was rejected: {reason}");
+        }
+        Some(super::program_store::JsTierState::Hot {
+            observations,
+            numeric,
+        }) => panic!("the Number join remained hot: {observations} observations, {numeric} numeric"),
+        Some(super::program_store::JsTierState::PromotionPending) => {
+            panic!("the Number join remained promotion-pending");
+        }
+        Some(super::program_store::JsTierState::Unsupported) => {
+            panic!("the Number join was marked unsupported");
+        }
+        None => panic!("the Number join was not tier-tracked"),
+    }
 }
 
 #[test]

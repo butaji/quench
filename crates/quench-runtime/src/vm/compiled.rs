@@ -244,15 +244,16 @@ fn read_js_numeric_operand(
     }
 }
 
-/// An acyclic bytecode graph without merges. This admits pure decision trees
-/// while keeping register initialization explicit at every branch target.
-fn js_numeric_control_flow(function: &Function) -> Option<Vec<bool>> {
+/// An acyclic bytecode graph and its predecessors. JS numeric regions may
+/// merge register state through the shared `Body` SSA variables; local-state
+/// branches stay rejected until local slots have an equivalent SSA view.
+fn js_numeric_control_flow(function: &Function) -> Option<(Vec<bool>, Vec<Vec<usize>>)> {
     if function.code.is_empty() {
         return None;
     }
     let length = function.code.len();
     let mut reachable = vec![false; length];
-    let mut predecessors = vec![0_u8; length];
+    let mut predecessors = vec![Vec::new(); length];
     let mut pending = vec![0_usize];
     while let Some(pc) = pending.pop() {
         if reachable[pc] {
@@ -290,14 +291,26 @@ fn js_numeric_control_flow(function: &Function) -> Option<Vec<bool>> {
             if successor <= pc || successor >= length {
                 return None;
             }
-            predecessors[successor] = predecessors[successor].checked_add(1)?;
-            if predecessors[successor] != 1 {
-                return None;
-            }
+            predecessors[successor].push(pc);
             pending.push(successor);
         }
     }
-    Some(reachable)
+    let has_join = (0..length).any(|pc| reachable[pc] && predecessors[pc].len() > 1);
+    let has_branch = function.code.iter().enumerate().any(|(pc, packed)| {
+        reachable[pc]
+            && packed.as_wide().op().control_flow_layout() == ControlFlowLayout::ConditionalJump
+    });
+    let has_local_state = function.code.iter().enumerate().any(|(pc, packed)| {
+        reachable[pc]
+            && matches!(
+                packed.as_wide().op().js_denotation(),
+                JsDenotation::PlainLocalLoad | JsDenotation::PlainLocalStore
+            )
+    });
+    if (has_join || has_branch) && has_local_state {
+        return None;
+    }
+    Some((reachable, predecessors))
 }
 
 pub(super) fn emit_number_bitwise_operation(
@@ -357,7 +370,7 @@ pub(super) fn compile_js_numeric_region(
     int32_bitwise: bool,
 ) -> Option<super::js_compiled::JsJitArtifact> {
     let function = program.function_get(function_id as usize)?;
-    let reachable = js_numeric_control_flow(function)?;
+    let (reachable, predecessors) = js_numeric_control_flow(function)?;
     let params = usize::from(function.params);
     let isa = super::jit_backend::target_isa("speed", true)?;
 
@@ -399,8 +412,8 @@ pub(super) fn compile_js_numeric_region(
         body.write(index as u16, crate::WasmType::F64, value);
         *initialized = true;
     }
-    let mut initialized_at = vec![None; function.code.len()];
-    initialized_at[0] = Some(registers);
+    let entry_registers = registers;
+    let mut initialized_after: Vec<Option<Vec<bool>>> = vec![None; function.code.len()];
     body.builder.ins().jump(blocks[0]?, &[]);
 
     let mut returned = false;
@@ -413,12 +426,30 @@ pub(super) fn compile_js_numeric_region(
         }
         let block = blocks[pc]?;
         body.builder.switch_to_block(block);
-        let mut registers = initialized_at[pc].take()?;
+        body.builder.seal_block(block);
+        let mut registers = if pc == 0 {
+            entry_registers.clone()
+        } else {
+            let mut incoming: Option<Vec<bool>> = None;
+            for predecessor in &predecessors[pc] {
+                let predecessor_state = initialized_after[*predecessor].as_ref()?.clone();
+                if let Some(incoming) = &mut incoming {
+                    for (initialized, predecessor_initialized) in
+                        incoming.iter_mut().zip(predecessor_state)
+                    {
+                        *initialized &= predecessor_initialized;
+                    }
+                } else {
+                    incoming = Some(predecessor_state);
+                }
+            }
+            incoming?
+        };
         let instruction = packed.as_wide();
         match instruction.op().control_flow_layout() {
             ControlFlowLayout::Jump => {
                 let target = usize::try_from(instruction.jump_target()).ok()?;
-                initialized_at[target] = Some(registers);
+                initialized_after[pc] = Some(registers);
                 body.builder.ins().jump(blocks[target]?, &[]);
                 continue;
             }
@@ -442,8 +473,7 @@ pub(super) fn compile_js_numeric_region(
                 )?;
                 let target = usize::try_from(instruction.jump_target()).ok()?;
                 let fallthrough = pc.checked_add(1)?;
-                initialized_at[target] = Some(registers.clone());
-                initialized_at[fallthrough] = Some(registers);
+                initialized_after[pc] = Some(registers);
                 body.builder
                     .ins()
                     .brif(relation, blocks[fallthrough]?, &[], blocks[target]?, &[]);
@@ -688,7 +718,7 @@ pub(super) fn compile_js_numeric_region(
                 return None;
             }
             let next = pc.checked_add(1)?;
-            initialized_at[next] = Some(registers);
+            initialized_after[pc] = Some(registers);
             body.builder.ins().jump(blocks[next]?, &[]);
         }
     }
