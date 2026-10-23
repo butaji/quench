@@ -143,6 +143,7 @@ fn configure_node_compat_version(root: &std::path::Path) {
 }
 
 include!("src/node_source_dependencies.rs");
+include!("src/node_source_patches.rs");
 
 /// Node's pinned library runs as guest JavaScript in the shared VM. Embedding
 /// its immutable sources makes built-ins independent of a development checkout.
@@ -185,13 +186,27 @@ fn embed_node_sources() {
     entries.sort_by(|a, b| a.0.cmp(&b.0));
     for (relative, path) in entries {
         println!("cargo:rerun-if-changed={}", path.display());
-        generated.push_str(&format!(
-            "({relative:?}, include_str!({:?})),\n",
-            path.to_str().unwrap()
-        ));
+        if let Some(source) = patch_node_source(&relative, &std::fs::read_to_string(&path).unwrap()) {
+            let output_dir = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap());
+            let override_dir = output_dir.join("node_source_overrides");
+            std::fs::create_dir_all(&override_dir).unwrap();
+            let override_path = override_dir.join("undici.js");
+            if std::fs::read_to_string(&override_path).ok().as_deref() != Some(&source) {
+                std::fs::write(&override_path, source).unwrap();
+            }
+            generated.push_str(&format!(
+                "({relative:?}, include_str!(concat!(env!(\"OUT_DIR\"), \"/node_source_overrides/undici.js\"))),\n"
+            ));
+        } else {
+            generated.push_str(&format!(
+                "({relative:?}, include_str!({:?})),\n",
+                path.to_str().unwrap()
+            ));
+        }
     }
     generated.push_str("];\n");
     let output = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("node_sources.rs");
+    println!("cargo:rerun-if-changed=src/node_source_patches.rs");
     if std::fs::read_to_string(&output).ok().as_deref() != Some(&generated) {
         std::fs::write(output, generated).unwrap();
     }

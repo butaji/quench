@@ -123,3 +123,27 @@ only a few MiB; both Bun numbers are below the reliable timing and RSS windows.
 This confirms the response stream implementation is still a major cost apart
 from Next's wrapper, but it does not produce a valid package win. Reports:
 `next-response-json-no-jit-5.json` and `next-response-json-jit-5.json`.
+
+## Next response fast-path experiment
+
+Added `next-response-components.cjs` to split JSON serialization from string,
+byte-backed, and JSON `Response` construction. A narrow Undici source override
+in Quench's build step specializes the private byte array created by
+`Response.json()` and the common status-only initialization case. It preserves
+generic construction for custom headers/status text and checks the final
+response body byte-for-byte. The direct-state allocation variant was rejected:
+its no-JIT change did not repeat in JIT.
+
+The final five-run reports measured the response constructor at 13,405 / 107.7
+MiB no-JIT and 13,012 / 87.4 MiB JIT for Quench; Node measured 53,050 / 145.7
+and 96,154 / 161.7. Bun's measured times were below 50 ms, so its throughput
+and RSS are timer/sampling limited. Next route generation measured Quench at
+6,098 / 69.1 MiB no-JIT and 5,974 / 48.6 MiB JIT, versus Node at 27,027 / 78.9
+and 66,667 / 94.4. Bun's no-JIT generation sample also ran under 50 ms; JIT
+measured 263,158 / 5.1 MiB but RSS was undersampled. These are diagnostics, not
+a package win. The latest paired same-source control was within run noise, so
+the small response fast-path gains are not treated as established.
+
+Reports: `response-components-no-jit.json`, `response-components-jit.json`,
+`next-generate-no-jit.json`, and `next-generate-jit.json` in
+`evidence/tod173-next-response-2026-10-23/`.
