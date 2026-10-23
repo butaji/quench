@@ -323,6 +323,14 @@ impl<H: Host> Vm<H> {
         self.closure_in_realm(p, id, env, self.realm.globals)
     }
 
+    /// The template recorded for closures of the active program's function `id` in `realm`.
+    #[inline(always)]
+    fn recorded_closure_template(&self, id: u32, realm: Value) -> Option<ClosureTemplate> {
+        self.closure_templates[closure_template_index(self.active_program, id)].filter(|template| {
+            template.function == id && template.program == self.active_program && template.realm == realm
+        })
+    }
+
     /// A closure's object allocated finished: its own `length`, `name` and `prototype` under
     /// `shape`, as the recorded adds would leave them, inline where they fit, else in the
     /// property arena.
@@ -378,6 +386,13 @@ impl<H: Host> Vm<H> {
         mut env: Value,
         realm: Value,
     ) -> Result<Value, JsError> {
+        // No `with` was ever entered, so no closure captures a `with` object
+        // (`Vm::with_scope_entered`): a recorded closure needs none of the scope work below.
+        if !self.with_scope_entered
+            && let Some(template) = self.recorded_closure_template(id, realm)
+        {
+            return Ok(self.closure_of_template(template, env));
+        }
         let function_plan = p.functions[id as usize].header();
         let with_objects = if env.is_null() {
             Vec::new()
@@ -393,11 +408,7 @@ impl<H: Host> Vm<H> {
         };
         let template_index = closure_template_index(self.active_program, id);
         let plain_scope = with_objects.is_empty();
-        if plain_scope
-            && let Some(template) = self.closure_templates[template_index].filter(|template| {
-                template.function == id && template.program == self.active_program && template.realm == realm
-            })
-        {
+        if plain_scope && let Some(template) = self.recorded_closure_template(id, realm) {
             return Ok(self.closure_of_template(template, env));
         }
         if !with_objects.is_empty() {
