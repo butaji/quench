@@ -733,11 +733,12 @@ impl AwaitState {
     }
 
     /// Its edges: the realm and promise it resumes, the generator, the suspended frame.
-    pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
-        [self.realm, self.promise]
-            .into_iter()
-            .chain(self.generator)
-            .chain(self.continuation.iter().flat_map(|continuation| continuation.roots()))
+    pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {
+        out.extend([self.realm, self.promise]);
+        out.extend(self.generator);
+        if let Some(continuation) = &self.continuation {
+            continuation.extend_roots(out);
+        }
     }
 }
 impl TypedArrayKind {
