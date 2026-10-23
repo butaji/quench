@@ -1767,28 +1767,30 @@ enum ClassField<'a> {
     },
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-enum ConstantKey {
+/// A constant's identity for deduplication, borrowed from it: numbers by their bits, so
+/// `-0` and each NaN payload stay distinct.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum ConstantKey<'a> {
     Number(u64),
     WasmBits64(u64),
-    WasmV128([u8; crate::wasm::V128_BYTES]),
-    String(String),
-    StringUnits(Vec<u16>),
-    BigInt(num_bigint::BigInt),
+    WasmV128(&'a [u8; crate::wasm::V128_BYTES]),
+    String(&'a str),
+    StringUnits(&'a [u16]),
+    BigInt(&'a num_bigint::BigInt),
     Boolean(bool),
     Null,
     Undefined,
 }
 
-impl From<&Constant> for ConstantKey {
-    fn from(value: &Constant) -> Self {
+impl<'a> From<&'a Constant> for ConstantKey<'a> {
+    fn from(value: &'a Constant) -> Self {
         match value {
             Constant::Number(value) => Self::Number(value.to_bits()),
             Constant::WasmBits64(bits) => Self::WasmBits64(*bits),
-            Constant::WasmV128(bits) => Self::WasmV128(*bits),
-            Constant::String(value) => Self::String(value.clone()),
-            Constant::StringUnits(value) => Self::StringUnits(value.clone()),
-            Constant::BigInt(value) => Self::BigInt(value.clone()),
+            Constant::WasmV128(bits) => Self::WasmV128(bits),
+            Constant::String(value) => Self::String(value),
+            Constant::StringUnits(value) => Self::StringUnits(value),
+            Constant::BigInt(value) => Self::BigInt(value),
             Constant::Boolean(value) => Self::Boolean(*value),
             Constant::Null => Self::Null,
             Constant::Undefined => Self::Undefined,
@@ -2964,8 +2966,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn constant(&mut self, value: Constant) -> u32 {
-        let key = ConstantKey::from(&value);
-        if let Some(index) = self.constant_index.get(&key) {
+        if let Some(index) = self.constant_index.get(ConstantKey::from(&value), &self.constants) {
             // A replay finds every constant; one at its cursor was added here at load.
             if index as usize == self.constants.len() {
                 self.constants.push(value);
@@ -2973,8 +2974,8 @@ impl<'a> Compiler<'a> {
             return index;
         }
         let index = self.constants.len() as u32;
+        self.constant_index.insert(ConstantKey::from(&value), index);
         self.constants.push(value);
-        self.constant_index.insert(key, index);
         index
     }
 
@@ -2992,10 +2993,9 @@ impl<'a> Compiler<'a> {
         let start = self.constants.len() as u32;
         for value in values {
             let index = self.constants.len() as u32;
-            let key = ConstantKey::from(&value);
             // A replay's index already holds every constant, so it is only read.
-            if self.constant_index.get(&key).is_none() {
-                self.constant_index.insert(key, index);
+            if self.constant_index.get(ConstantKey::from(&value), &self.constants).is_none() {
+                self.constant_index.insert(ConstantKey::from(&value), index);
             }
             self.constants.push(value);
         }
