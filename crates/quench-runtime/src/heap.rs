@@ -34,7 +34,7 @@ pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
 pub(crate) use collection_entries::CollectionEntries;
 use external::array_payload_bytes;
 use records::{
-    ArrayRecordSpace, AwaitRecordSpace, FunctionRecordSpace, IteratorRecordSpace,
+    ArrayRecordSpace, AwaitRecordSpace, FunctionRecordSpace, IteratorRecordSpace, V128RecordSpace,
     ObjectRecordSpace, PromiseRecordSpace, RecordFamily, StringRecordSpace,
     RecordId, RecordSweep,
 };
@@ -321,7 +321,7 @@ fn rc_drop_lock_index(address: usize) -> usize {
     (address >> 4) & (RC_DROP_LOCK_STRIPES - 1)
 }
 /// The record families `Heap::record_families` lists.
-const RECORD_FAMILIES: usize = 7;
+const RECORD_FAMILIES: usize = 8;
 
 /// Every family's mark bits, borrowed apart from the slot a trace holds (`mark_bits!`).
 #[derive(Clone, Copy)]
@@ -333,6 +333,7 @@ pub(super) struct MarkBits<'a> {
     await_records: &'a AwaitRecordSpace,
     iterator_records: &'a IteratorRecordSpace,
     string_records: &'a StringRecordSpace,
+    v128_records: &'a V128RecordSpace,
     marks: &'a [AtomicU64],
 }
 
@@ -347,6 +348,7 @@ impl MarkBits<'_> {
             Some(HeapReference::AwaitRecord(id)) => self.await_records.is_marked(id),
             Some(HeapReference::IteratorRecord(id)) => self.iterator_records.is_marked(id),
             Some(HeapReference::StringRecord(id)) => self.string_records.is_marked(id),
+            Some(HeapReference::V128Record(id)) => self.v128_records.is_marked(id),
             Some(HeapReference::LegacySlot(index)) => {
                 let index = index as usize;
                 self.marks.get(index / u64::BITS as usize).is_some_and(|word| {
@@ -369,6 +371,7 @@ macro_rules! mark_bits {
             await_records: &$heap.await_records,
             iterator_records: &$heap.iterator_records,
             string_records: &$heap.string_records,
+            v128_records: &$heap.v128_records,
             marks: &$heap.marks,
         }
     };
@@ -385,6 +388,8 @@ pub(crate) struct Heap {
     iterator_records: IteratorRecordSpace,
     /// Strings: immutable leaves, never prototypes, with no legacy-slot form.
     string_records: StringRecordSpace,
+    /// Wasm vectors: immutable leaves (`Heap::alloc_v128`), in a slot when this is full.
+    v128_records: V128RecordSpace,
     /// Allocations per cell variant (`Cell::profile_variant_name`), finer than `CellKind`.
     #[cfg(feature = "profile-aggregate")]
     allocated_variants: std::collections::BTreeMap<&'static str, u64>,
@@ -831,6 +836,7 @@ impl Heap {
             (&self.await_records, Value::direct_await),
             (&self.iterator_records, Value::direct_iterator),
             (&self.string_records, Value::direct_string),
+            (&self.v128_records, Value::direct_v128),
         ]
     }
 
@@ -846,6 +852,7 @@ impl Heap {
             (&mut self.await_records, Value::direct_await),
             (&mut self.iterator_records, Value::direct_iterator),
             (&mut self.string_records, Value::direct_string),
+            (&mut self.v128_records, Value::direct_v128),
         ]
     }
 
@@ -1156,6 +1163,35 @@ impl Heap {
             Err(state) => {
                 self.alloc_in_slot(Cell::AwaitState(Box::new(state)), self.tracks_young_cells())
             }
+        }
+    }
+
+    /// A Wasm vector of `bytes`: a vector record while one is free, else a slot. A vector is
+    /// an immutable leaf with no prototype, payload or external bytes.
+    #[inline]
+    pub(crate) fn alloc_v128(&mut self, bytes: [u8; crate::wasm::V128_BYTES]) -> Value {
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::WasmV128(bytes));
+        }
+        self.allocations += 1;
+        self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+        self.total_allocations += 1;
+        match self.v128_records.try_insert(bytes) {
+            Ok(record_id) => Value::direct_v128(record_id),
+            Err(bytes) => self.alloc_in_slot(Cell::WasmV128(bytes), self.tracks_young_cells()),
+        }
+    }
+
+    /// A Wasm vector's bytes, in its record or in a slot.
+    #[inline]
+    pub(crate) fn v128(&self, value: Value) -> Option<[u8; crate::wasm::V128_BYTES]> {
+        if let Some(record_id) = value.direct_v128_index() {
+            // SAFETY: a direct-v128 Value names an initialized record.
+            return Some(*unsafe { self.v128_records.get_live(record_id) });
+        }
+        match self.get(value)? {
+            Cell::WasmV128(bytes) => Some(*bytes),
+            _ => None,
         }
     }
 
@@ -1489,6 +1525,7 @@ impl Heap {
         self.await_records = AwaitRecordSpace::default();
         self.iterator_records = IteratorRecordSpace::default();
         self.string_records = StringRecordSpace::default();
+        self.v128_records = V128RecordSpace::default();
         self.marks.clear();
         self.free_by_slab.clear();
         self.free_slabs.clear();
@@ -1895,6 +1932,8 @@ impl Heap {
             // An await state owns no arena storage; dropping a dead one frees its unresumed
             // continuation.
             let (await_live, await_freed) = self.await_records.sweep(full, false, |_| {});
+            // A vector owns nothing beyond its record.
+            let (v128_live, v128_freed) = self.v128_records.sweep(full, false, |_| {});
             let (iterator_live, iterator_freed) =
                 self.iterator_records.sweep(full, full, |record| match record {
                     RecordSweep::Keep(record_id, iterator) => {
@@ -1959,6 +1998,7 @@ impl Heap {
                 + function_live
                 + promise_live
                 + await_live
+                + v128_live
                 + iterator_live
                 + string_live;
             #[cfg(feature = "profile-aggregate")]
@@ -1968,6 +2008,7 @@ impl Heap {
                     + function_freed
                     + promise_freed
                     + await_freed
+                    + v128_freed
                     + iterator_freed
                     + string_freed) as u64;
             }
@@ -1978,6 +2019,7 @@ impl Heap {
                 function_freed,
                 promise_freed,
                 await_freed,
+                v128_freed,
                 iterator_freed,
                 string_freed,
             );
@@ -2657,6 +2699,15 @@ impl Heap {
                         self.gc_profile.marked_kinds[CellKind::String as usize] += 1;
                     }
                 }
+            } else if let Some(record_id) = value.direct_v128_index() {
+                // A vector holds no heap edges: marking it is the whole visit.
+                if self.v128_records.mark(record_id) {
+                    #[cfg(feature = "profile-aggregate")]
+                    {
+                        self.gc_profile.marked += 1;
+                        self.gc_profile.marked_kinds[CellKind::WasmV128 as usize] += 1;
+                    }
+                }
             } else if let Some(record_id) = value.direct_await_index() {
                 if !self.await_records.mark(record_id) {
                     continue;
@@ -2806,8 +2857,9 @@ impl Heap {
                 self.iterator_records.remember(record_id)
             }
             Some(HeapReference::LegacySlot(index)) => self.remember(index as usize),
-            // A string is immutable and holds no edges, so nothing is ever stored into it.
-            Some(HeapReference::StringRecord(_)) | None => {}
+            // Strings and vectors are immutable and hold no edges, so nothing is ever stored
+            // into them.
+            Some(HeapReference::StringRecord(_) | HeapReference::V128Record(_)) | None => {}
         }
     }
     pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {

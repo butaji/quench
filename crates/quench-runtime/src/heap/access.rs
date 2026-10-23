@@ -458,7 +458,9 @@ impl Heap {
             HeapReference::IteratorRecord(record_id) => {
                 &mut unsafe { iterator_records.get_live_mut(record_id) }.object
             }
-            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) => return None,
+            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) => {
+                return None;
+            }
             HeapReference::LegacySlot(index) => {
                 slots.get_mut(index as usize)?.cell.as_mut()?.object_mut()?
             }
@@ -566,6 +568,7 @@ impl Heap {
             | HeapReference::IteratorRecord(_)
             | HeapReference::AwaitRecord(_)
             | HeapReference::StringRecord(_)
+            | HeapReference::V128Record(_)
             | HeapReference::LegacySlot(_) => None,
         }
     }
@@ -611,6 +614,7 @@ impl Heap {
             Some(HeapReference::AwaitRecord(id)) => self.await_records.is_live(id),
             Some(HeapReference::IteratorRecord(id)) => self.iterator_records.is_live(id),
             Some(HeapReference::StringRecord(id)) => self.string_records.is_live(id),
+            Some(HeapReference::V128Record(id)) => self.v128_records.is_live(id),
             None => false,
         }
     }

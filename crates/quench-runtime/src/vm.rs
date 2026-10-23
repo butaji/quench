@@ -2773,7 +2773,7 @@ impl<H: Host> Vm<H> {
         match constant {
             Constant::Number(v) => Value::number(*v),
             Constant::WasmBits64(bits) => self.encode_bits64(*bits),
-            Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(*bits)),
+            Constant::WasmV128(bits) => self.heap.alloc_v128(*bits),
             Constant::String(v) => self
                 .typeof_constant(v)
                 .unwrap_or_else(|| self.heap.alloc_string(v.clone().into())),
