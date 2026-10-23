@@ -2386,6 +2386,17 @@ pub(crate) enum ProxyKind {
 #[repr(transparent)]
 pub(crate) struct EnvironmentSlot(Value);
 
+/// What the code that can still run reads of an environment slot (`EnvironmentSlots::clear_unread`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SlotUse {
+    /// Its value.
+    Value,
+    /// Only whether it is initialized: a projection, whose reads go through it.
+    Initialization,
+    /// Nothing.
+    Unread,
+}
+
 /// What an `EnvironmentSlot` holds.
 pub(crate) enum EnvironmentSlotState {
     Owned(Value),
@@ -2703,6 +2714,42 @@ impl EnvironmentSlots {
             .map(|slot| match slot.state() {
                 EnvironmentSlotState::Owned(value) | EnvironmentSlotState::Shared(value) => value,
             })
+    }
+
+    /// The owner a sparse storage's unlisted slots share.
+    pub(crate) fn default_owner(&self) -> Option<Value> {
+        self.sparse().map(|(_, owner)| owner)
+    }
+
+    /// Clears every slot whose value no code reads, as `use_of` tells: an unread slot becomes
+    /// an uninitialized binding (`Value::DELETED`) this environment owns, and the value it owned
+    /// or owner it shared may be swept. A slot read only for whether it is initialized keeps
+    /// that state: an initialized value it owns becomes `undefined`, and a shared slot stays
+    /// shared with its owner, which the caller keeps. A sparse storage's unlisted slots stay
+    /// shared with its default owner, which the caller keeps too.
+    pub(crate) fn clear_unread(&mut self, use_of: impl Fn(usize) -> SlotUse) {
+        let clear = |slot: &mut EnvironmentSlot, index: usize| match use_of(index) {
+            SlotUse::Value => {}
+            SlotUse::Unread => *slot = EnvironmentSlot::owned(Value::DELETED),
+            SlotUse::Initialization => {
+                if matches!(slot.state(), EnvironmentSlotState::Owned(value) if !value.is_deleted()) {
+                    *slot = EnvironmentSlot::owned(Value::UNDEFINED);
+                }
+            }
+        };
+        if self.0.marked() {
+            let entries = self.0.len().saturating_sub(SPARSE_ENTRIES_START) / SPARSE_ENTRY_WORDS;
+            for entry in 0..entries {
+                let position = SPARSE_ENTRIES_START + entry * SPARSE_ENTRY_WORDS;
+                if let Some(index) = self.0[position].0.as_environment_index() {
+                    clear(&mut self.0[position + 1], index as usize);
+                }
+            }
+        } else {
+            for (index, slot) in self.0.iter_mut().enumerate() {
+                clear(slot, index);
+            }
+        }
     }
 
     /// The indexes a sparse storage lists, ascending.

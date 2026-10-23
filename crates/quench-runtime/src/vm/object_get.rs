@@ -1308,7 +1308,7 @@ impl<H: Host> Vm<H> {
                     .function_get(*function as usize)
                     .into_iter()
                     .flat_map(|metadata| metadata.local_atoms.iter().copied())
-                    .filter(|atom| self.atom_name(*atom).starts_with("\0quench:home:"))
+                    .filter(|atom| self.atom_name(*atom).starts_with(crate::bytecode::HOME_BINDING_PREFIX))
                     .collect::<Vec<_>>();
                 for atom in home_atoms.iter().chain(&visible_homes) {
                     if homes.iter().any(|(candidate, _)| candidate == atom) {

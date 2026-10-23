@@ -126,7 +126,7 @@ struct LoopTier {
 
 /// Backward jumps a loop takes in the interpreter before it compiles: enough that loops
 /// which run briefly never pay the compilation.
-const LOOP_TIER_THRESHOLD: u32 = 1000;
+pub(super) const LOOP_TIER_THRESHOLD: u32 = 1000;
 /// Native runs that may leave at a general-path instruction before the site stops entering
 /// native code: a loop whose values keep leaving the subset is the interpreter's.
 const LOOP_TIER_MAX_EXITS: u32 = 1000;
