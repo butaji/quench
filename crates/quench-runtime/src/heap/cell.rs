@@ -878,15 +878,13 @@ impl Native {
             )
     }
 
-    /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`),
-    /// as the general loop's native branch makes them once lane activations are frames:
-    /// every native but those whose call the general loop takes as its own step. The
-    /// call-forwarding natives push their target as a frame there (and run under a
-    /// forwarding boundary), direct `eval` reads the calling instruction, and `with` entry
-    /// and exit change the running frame's object environment.
     /// Whether the native observes the frame stack only by calling guest code, capturing an
     /// error's stack or making a collection due (`Host::host_function_runs_beside_activations`
-    /// for a host's), so a lane calls it with its activations frameless.
+    /// for a host's), so a lane calls it with its activations frameless. Each of these reads
+    /// its arguments and the heap, and reaches guest code only through getters, coercions,
+    /// proxy traps or species constructors, whose calls make the activations frames first
+    /// (`Vm::materialize_deferred_lane`): `assert.deepEqual` calls `Object.prototype.toString`
+    /// on every value it compares (10,210 materializations in the color-convert npm scenario).
     pub(crate) fn runs_beside_activations(self) -> bool {
         matches!(
             self,
@@ -894,15 +892,33 @@ impl Native {
                 | Self::ObjectKeys
                 | Self::ObjectDefineProperty
                 | Self::ObjectGetPrototypeOf
+                | Self::ObjectEntries
+                | Self::ObjectGetOwnPropertyNames
+                | Self::ObjectHasOwn
+                | Self::ObjectPrototypeHasOwnProperty
+                | Self::ObjectPrototypeToString
+                | Self::ReflectGetPrototypeOf
+                | Self::ForInKeys
+                | Self::ArrayJoin
+                | Self::ArraySplice
                 | Self::StringSplit
+                | Self::StringMatch
+                | Self::RegExpTest
                 | Self::JsonStringify
                 | Self::ParseInt
                 | Self::ArrayShift
                 | Self::WeakMapSet
                 | Self::FinalizationRegistryRegister
+                | Self::TypedArrayToStringTag
         )
     }
 
+    /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`),
+    /// as the general loop's native branch makes them once lane activations are frames:
+    /// every native but those whose call the general loop takes as its own step. The
+    /// call-forwarding natives push their target as a frame there (and run under a
+    /// forwarding boundary), direct `eval` reads the calling instruction, and `with` entry
+    /// and exit change the running frame's object environment.
     pub(crate) fn runs_from_lane(self) -> bool {
         !matches!(
             self,
