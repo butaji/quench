@@ -55,7 +55,13 @@ const FACTORY: &str = quench_js_check::checked_js!(
     // Any event but "error" with one function listener calls it here, as `emitListenersNative`
     // would, so the listener runs without a native boundary; a listener array, the "error"
     // event and every other case take the native store's dispatch.
-    emit: function emit(type, ...args) {
+    // The listener arguments come from `arguments`, which a body that only reads it keeps
+    // as the values passed, so the call runs without a frame where a rest parameter's would
+    // take one.
+    emit: function emit(type) {
+      const count = arguments.length;
+      const args = count === 2 ? [arguments[1]] : count === 3 ? [arguments[1], arguments[2]] : [];
+      if (count > 3) for (let index = 1; index < count; index++) args[index - 1] = arguments[index];
       if (type === "error") return emitNative(this, type, args);
       const events = this._events;
       if (events === undefined) return false;

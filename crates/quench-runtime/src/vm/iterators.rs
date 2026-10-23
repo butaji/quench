@@ -263,10 +263,11 @@ impl<H: Host> Vm<H> {
             "prototype",
             self.generator_proto,
         )?;
+        let native_generator_function = self.native_value(Native::GeneratorFunction);
         self.set_builtin_value_named(
             generator_function_proto,
             "constructor",
-            self.native_value(Native::GeneratorFunction),
+            native_generator_function,
         )?;
         let constructor_atom = self.runtime_atoms.constructor;
         self.set_named(
@@ -312,15 +313,17 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        let native_async_function = self.native_value(Native::AsyncFunction);
         self.set_builtin_value_named(
             async_function_proto,
             "constructor",
-            self.native_value(Native::AsyncFunction),
+            native_async_function,
         )?;
+        let native_async_generator_function = self.native_value(Native::AsyncGeneratorFunction);
         self.set_builtin_value_named(
             async_generator_function_proto,
             "constructor",
-            self.native_value(Native::AsyncGeneratorFunction),
+            native_async_generator_function,
         )?;
         self.set_property_attributes(
             async_generator_function_proto,
@@ -378,11 +381,12 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
+        let native_iterator_next = self.native_value(Native::IteratorNext);
         self.set_named(
             program,
             self.async_from_sync_iterator_proto,
             "next",
-            self.native_value(Native::IteratorNext),
+            native_iterator_next,
         )
     }
 
@@ -428,9 +432,10 @@ impl<H: Host> Vm<H> {
             self.object_proto,
             None,
         )?;
+        let native_async_generator_function = self.native_value(Native::AsyncGeneratorFunction);
         let async_generator_function_prototype = self
             .own_property(
-                self.native_value(Native::AsyncGeneratorFunction),
+                native_async_generator_function,
                 prototype_atom,
             )
             .unwrap_or(self.function_proto);
@@ -448,37 +453,42 @@ impl<H: Host> Vm<H> {
             "next",
             Native::ArrayIteratorNext,
         )?;
+        let native_array = self.native_value(Native::Array);
         self.set_builtin_value_named(
             self.array_iterator_proto,
             "constructor",
-            self.native_value(Native::Array),
+            native_array,
         )?;
         self.install_builtin_to_string_tag(self.array_iterator_proto, "Array Iterator")?;
         self.install_collection_iterators(p)?;
         let Some(iterator) = self.well_known_symbols.get(WellKnownSymbol::Iterator) else {
             return Ok(());
         };
+        let native_iterator_self = self.native_value(Native::IteratorSelf);
         self.set_index(
             p,
             self.iterator_proto,
             iterator,
-            self.native_value(Native::IteratorSelf),
+            native_iterator_self,
         )?;
+        let native_iterator_self = self.native_value(Native::IteratorSelf);
         self.set_index(
             p,
             self.string_iterator_proto,
             iterator,
-            self.native_value(Native::IteratorSelf),
+            native_iterator_self,
         )?;
+        let native_array_values = self.native_value(Native::ArrayValues);
         self.set_symbol_property(
             self.array_proto,
             iterator,
-            self.native_value(Native::ArrayValues),
+            native_array_values,
         )?;
+        let native_string_values = self.native_value(Native::StringValues);
         self.set_symbol_property(
             self.string_proto,
             iterator,
-            self.native_value(Native::StringValues),
+            native_string_values,
         )?;
         self.set_property_attributes(
             self.array_proto,
@@ -3264,7 +3274,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether `value` is the current realm's `native` function: one installed for this realm,
-    /// or one every realm shares (`shared_natives`).
+    /// or one every realm shares (`is_shared_native`).
     pub(super) fn is_current_realm_native(&self, value: Value, native: Native) -> bool {
         matches!(
             self.heap.function(value),
@@ -3273,7 +3283,7 @@ impl<H: Host> Vm<H> {
                 realm,
                 ..
             }) if *kind == native
-                && (*realm == self.realm.globals || self.shared_natives.contains(&value))
+                && (*realm == self.realm.globals || self.is_shared_native(value))
         )
     }
 

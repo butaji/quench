@@ -37,6 +37,20 @@ const CODE_MAPPING: &str = "r-xp";
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const LOAD_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// The first-call release interval under a policy that returns pages at collections
+/// (memory-first). Before a run's first collections its first calls run code it runs only
+/// once, and that code stayed resident until the first collection while the heap built up:
+/// the max RSS of V8-v7 DeltaBlue and RayTrace without JIT, and of RegExp in both modes, fell
+/// at 18-100 ms, during that warm-up. A release costs the refaults that follow, about 0.35 ms
+/// (npm scenarios with 300-1800 first calls, x86_64 VM, 2026-10-22), so a release at every
+/// first call slowed TypeScript's transpile 313 -> 829 ms. At 5 ms (plain x86_64 build,
+/// MemoryFirst, 10 runs; `evidence/tod137-first-call-release-linux-2026-10-23`): V8-v7 max
+/// RSS without JIT -124 to -516 KiB on six fixtures, with JIT -144 to +48 KiB, scores within
+/// noise; npm scenarios run 7-21% longer for -3.4 to +0.1 MB. Memory-first is the opt-in
+/// policy that trades speed for memory; the throughput default keeps `LOAD_RELEASE_INTERVAL`.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const MEMORY_FIRST_FIRST_CALL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
+
 /// When the read-only pages were last released.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 static LAST_RELEASE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
@@ -70,7 +84,10 @@ pub fn release_read_only_pages() {
         }
     }
     // Held while releasing, so no tracked mapping is unmapped meanwhile.
-    if let Ok(mappings) = TRACKED_MAPPINGS.lock() {
+    if let Ok(mut mappings) = TRACKED_MAPPINGS.lock() {
+        // Every tracked mapping is released below, deferred ranges with it.
+        mappings.pending.clear();
+        mappings.pending_bytes = 0;
         let spans = mappings.arena.as_ref().map(Arena::used).into_iter();
         for (start, length) in spans.chain(mappings.outside.iter().copied()) {
             // SAFETY: a tracked mapping is a live, read-only private file mapping, and the
@@ -89,7 +106,13 @@ pub fn release_read_only_pages() {
 /// calls in a 78 ms run).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 static TRACKED_MAPPINGS: std::sync::Mutex<TrackedMappings> =
-    std::sync::Mutex::new(TrackedMappings { arena: None, inside: Vec::new(), outside: Vec::new() });
+    std::sync::Mutex::new(TrackedMappings {
+        arena: None,
+        inside: Vec::new(),
+        outside: Vec::new(),
+        pending: Vec::new(),
+        pending_bytes: 0,
+    });
 
 /// The tracked mappings, as start and length: those in the arena and those mapped elsewhere
 /// once it was full or could not be reserved.
@@ -98,12 +121,38 @@ struct TrackedMappings {
     arena: Option<Arena>,
     inside: Vec<(usize, usize)>,
     outside: Vec<(usize, usize)>,
+    /// Page ranges of tracked mappings read and not yet released (`release_tracked_bytes`),
+    /// as start and end, and their bytes.
+    pending: Vec<(usize, usize)>,
+    pending_bytes: usize,
 }
+
+/// The ranges, and their bytes, `release_tracked_bytes` defers before releasing them all: a
+/// release per decoded record was a call per function an npm package's run decodes (about
+/// 6,000 for @babel/helper-module-transforms, x86_64 VM, 2026-10-22), while the deferred
+/// pages stay resident no longer than this many more.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const PENDING_RELEASE_RANGES: usize = 32;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const PENDING_RELEASE_BYTES: usize = 256 << 10;
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 impl TrackedMappings {
     fn contains(&self, start: usize, end: usize) -> bool {
         self.inside.iter().chain(&self.outside).any(|&(mapping, length)| mapping <= start && end <= mapping + length)
+    }
+
+    /// Releases the deferred ranges (`release_tracked_bytes`).
+    fn release_pending(&mut self) {
+        for &(start, end) in &self.pending {
+            // SAFETY: each range lies in a live, read-only private file mapping (unmapping a
+            // mapping drops its ranges), whose discarded pages fault back in from the file.
+            unsafe {
+                libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
+            }
+        }
+        self.pending.clear();
+        self.pending_bytes = 0;
     }
 }
 
@@ -203,15 +252,21 @@ pub fn release_tracked_bytes(bytes: &[u8]) {
         return;
     }
     // Held while releasing, so the mapping is not unmapped meanwhile.
-    let Ok(mappings) = TRACKED_MAPPINGS.lock() else {
+    let Ok(mut mappings) = TRACKED_MAPPINGS.lock() else {
         return;
     };
-    if mappings.contains(start, end) {
-        // SAFETY: the range lies in a live, read-only private file mapping, whose discarded
-        // pages fault back in from the file.
-        unsafe {
-            libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
-        }
+    if !mappings.contains(start, end) {
+        return;
+    }
+    // A read that continues the last deferred range, as a restore's sequential reads do,
+    // extends it.
+    match mappings.pending.last_mut() {
+        Some(last) if last.0 <= end && start <= last.1 => *last = (last.0.min(start), last.1.max(end)),
+        _ => mappings.pending.push((start, end)),
+    }
+    mappings.pending_bytes += end - start;
+    if mappings.pending.len() >= PENDING_RELEASE_RANGES || mappings.pending_bytes >= PENDING_RELEASE_BYTES {
+        mappings.release_pending();
     }
 }
 
@@ -221,6 +276,8 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
     let mut mappings = TRACKED_MAPPINGS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     mappings.inside.retain(|&mapping| mapping != (start, length));
     mappings.outside.retain(|&mapping| mapping != (start, length));
+    // A deferred range of the mapping must not be released once its addresses are reused.
+    mappings.pending.retain(|&(pending, _)| !(start..start + length).contains(&pending));
     let in_arena = mappings.arena.as_ref().is_some_and(|arena| arena.holds(start));
     // SAFETY: the caller owns the mapping, and the held lock keeps releases off it. An arena
     // mapping's pages are reserved again, so the arena's used span stays wholly mapped.
@@ -290,10 +347,27 @@ enum CompileRelease {
     FirstCall,
 }
 
+impl CompileRelease {
+    const COUNT: usize = 2;
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+impl CompileRelease {
+    /// How far apart this release's runs are kept.
+    fn interval(self) -> std::time::Duration {
+        let returns_pages = crate::shared_run::process_memory_policy()
+            .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
+        match self {
+            Self::FirstCall if returns_pages => MEMORY_FIRST_FIRST_CALL_INTERVAL,
+            Self::FirstCall | Self::CodeGeneration => LOAD_RELEASE_INTERVAL,
+        }
+    }
+}
+
 /// When each compile-phase release last ran, indexed by `CompileRelease`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-static LAST_COMPILE_RELEASES: std::sync::Mutex<[Option<std::time::Instant>; 2]> =
-    std::sync::Mutex::new([None; 2]);
+static LAST_COMPILE_RELEASES: std::sync::Mutex<[Option<std::time::Instant>; CompileRelease::COUNT]> =
+    std::sync::Mutex::new([None; CompileRelease::COUNT]);
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn release_once_per_interval(release: CompileRelease, action: fn()) {
@@ -301,7 +375,7 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
         return;
     };
     let last = &mut releases[release as usize];
-    if last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL) {
+    if last.is_some_and(|last| last.elapsed() < release.interval()) {
         return;
     }
     *last = Some(std::time::Instant::now());

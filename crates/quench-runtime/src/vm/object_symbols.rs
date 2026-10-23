@@ -4,9 +4,22 @@ use super::*;
 
 const INTERNAL_PROPERTY_PREFIX: &str = "\0quench:";
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum PropertyCopyKind {
     Set,
     CreateDataProperty,
+}
+
+/// Properties a plain copy (`Vm::copy_plain_properties`) gathers before it writes any, without
+/// allocating their list.
+const PLAIN_COPY_INLINE_PROPERTIES: usize = 16;
+
+/// Where a plain copy writes one property of its target: a new property, or the slot of the
+/// target's own property of that key.
+#[derive(Clone, Copy)]
+enum PlainCopyWrite {
+    Add,
+    Slot(usize),
 }
 
 impl<H: Host> Vm<H> {
@@ -256,6 +269,18 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    /// `copy_data_properties` when a plain copy (`copy_plain_properties`) answers it, or the
+    /// source is null or undefined; `false`, before any effect, for any other copy.
+    pub(super) fn copy_plain_data_properties(&mut self, target: Value, source: Value, exclusions: Value) -> bool {
+        if source.is_null() || source.is_undefined() {
+            return true;
+        }
+        let excluded = self.heap.array_elements(exclusions).map_or_else(smallvec::SmallVec::new, |elements| {
+            elements.iter().copied().collect::<smallvec::SmallVec<[Value; PLAIN_COPY_INLINE_PROPERTIES]>>()
+        });
+        self.copy_plain_properties(target, source, &excluded, PropertyCopyKind::CreateDataProperty)
+    }
+
     pub(super) fn copy_enumerable_properties(
         &mut self,
         p: &ResidualProgram,
@@ -268,6 +293,9 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         let source = self.box_object(source)?;
+        if self.copy_plain_properties(target, source, excluded, kind) {
+            return Ok(());
+        }
         let target = self.heap.root(target);
         let source = self.heap.root(source);
         let excluded = excluded
@@ -321,6 +349,163 @@ impl<H: Host> Vm<H> {
             self.heap.release_root(root);
         }
         outcome
+    }
+
+    /// `copy_enumerable_properties` where every step is a slot read or a plain write: a source
+    /// whose own enumerable properties are string-keyed data properties its shape lists
+    /// (`shape_enumerable_slots`, and no symbol key), copied into an extensible ordinary
+    /// target where each key is absent, or an own data property the copy may overwrite, and,
+    /// for `Set`, no accessor or read-only property up the target's chain intercepts it. The
+    /// copy then runs no guest code and cannot throw, so it gathers every value first and
+    /// writes them in order. `false`, before any effect, leaves the copy to the general path.
+    fn copy_plain_properties(
+        &mut self,
+        target: Value,
+        source: Value,
+        excluded: &[Value],
+        kind: PropertyCopyKind,
+    ) -> bool {
+        let Some(slots) = self.shape_enumerable_slots(source) else {
+            return false;
+        };
+        let Some(data) = self.object_data(source) else {
+            return false;
+        };
+        let Some(target_data) = self.heap.object_record(target) else {
+            return false;
+        };
+        if !target_data.is_extensible()
+            || target_data.is_arguments_object()
+            || target_data.is_module_namespace()
+            || target_data.has_side_descriptors()
+            || self.shape_is_dictionary(target_data.shape())
+        {
+            return false;
+        }
+        let (target_shape, target_proto, source_shape) = (target_data.shape(), target_data.proto(), data.shape());
+        // An empty target reaching the shape its first copy of such a source reached takes
+        // its storage at once (`plain_copy_shapes`): that copy proved the source shape's
+        // enumerable properties data properties, none symbol-keyed, and a spread needs no
+        // more of an empty target.
+        let memoizes = excluded.is_empty()
+            && self.shapes[target_shape as usize].storage_len() == 0
+            && !target_data.was_used_as_prototype();
+        if memoizes
+            && kind == PropertyCopyKind::CreateDataProperty
+            && let Some(shape) = self.plain_copy_shapes.get(target_shape, source_shape)
+        {
+            let Some(values) = slots
+                .iter()
+                .map(|(_, slot)| self.heap.property_get(data, *slot as usize))
+                .collect::<Option<smallvec::SmallVec<[Value; PLAIN_COPY_INLINE_PROPERTIES]>>>()
+            else {
+                return false;
+            };
+            self.initialize_plain_copy(target, shape, &values, slots.iter().map(|(atom, _)| *atom));
+            return true;
+        }
+        if self.shape_entries(source_shape).iter().any(|(key, _)| matches!(key, PropertyKey::Symbol(_))) {
+            return false;
+        }
+        // A rest pattern's excluded keys are strings or symbols; the source has no symbol key,
+        // and a string no atom names is no key of it.
+        let excluded = excluded
+            .iter()
+            .map(|key| self.heap.string(*key).and_then(|text| self.lookup_atom(&text.host_string())))
+            .collect::<smallvec::SmallVec<[Option<Atom>; PLAIN_COPY_INLINE_PROPERTIES]>>();
+        let mut copies =
+            smallvec::SmallVec::<[(Atom, Value, PlainCopyWrite); PLAIN_COPY_INLINE_PROPERTIES]>::new();
+        for (atom, slot) in slots.iter() {
+            if excluded.contains(&Some(*atom)) {
+                continue;
+            }
+            let slot = *slot as usize;
+            if self.slot_attributes(data, slot).is_none_or(|attributes| attributes.accessor) {
+                return false;
+            }
+            let Some(value) = self.heap.property_get(data, slot) else {
+                return false;
+            };
+            let key = PropertyKey::string(*atom);
+            let write = match self.property_shape_slot(target_shape, key) {
+                Some(slot) => {
+                    let Some(attributes) = self.object_data(target).and_then(|object| self.slot_attributes(object, slot))
+                    else {
+                        return false;
+                    };
+                    // CreateDataProperty keeps a default data property's attributes; `Set` writes
+                    // any own writable data property.
+                    let writable = !attributes.accessor && attributes.writable;
+                    let keeps = kind == PropertyCopyKind::Set
+                        || (attributes.enumerable && attributes.configurable);
+                    if !writable || !keeps || self.method_caches_may_name(*atom) {
+                        return false;
+                    }
+                    PlainCopyWrite::Slot(slot)
+                }
+                None => {
+                    if kind == PropertyCopyKind::Set && self.chain_intercepts_set(target_proto, key) {
+                        return false;
+                    }
+                    PlainCopyWrite::Add
+                }
+            };
+            copies.push((*atom, value, write));
+        }
+        if memoizes && let Some(shape) = self.plain_copy_shapes.get(target_shape, source_shape) {
+            let values = copies
+                .iter()
+                .map(|(_, value, _)| *value)
+                .collect::<smallvec::SmallVec<[Value; PLAIN_COPY_INLINE_PROPERTIES]>>();
+            self.initialize_plain_copy(target, shape, &values, copies.iter().map(|(atom, _, _)| *atom));
+            return true;
+        }
+        for (atom, value, write) in copies {
+            match write {
+                PlainCopyWrite::Slot(slot) => self.heap.property_set(target, slot, value),
+                PlainCopyWrite::Add => {
+                    if self
+                        .create_shape_data_property(target, PropertyKey::string(atom), value, DEFAULT_DATA_ATTRIBUTES)
+                        .is_err()
+                    {
+                        unreachable!("an extensible ordinary target accepts a new data property");
+                    }
+                }
+            }
+        }
+        if memoizes && let Some(shape) = self.object_data(target).map(Object::shape) {
+            self.plain_copy_shapes.record(target_shape, source_shape, shape);
+        }
+        true
+    }
+
+    /// Gives an empty `target` the properties `values` of `atoms` under `shape`, the shape their
+    /// adds in order reach (`plain_copy_shapes`).
+    fn initialize_plain_copy(&mut self, target: Value, shape: u32, values: &[Value], atoms: impl Iterator<Item = Atom>) {
+        self.heap.initialize_object_properties(target, shape, values);
+        for atom in atoms {
+            if self.method_caches_may_name(atom) {
+                self.invalidate_method_caches_for_prototype_add(target, atom);
+            }
+        }
+    }
+
+    /// Whether `[[Set]]` of `key` on an object without it that inherits from `prototype` would
+    /// meet an accessor or a read-only property, or a prototype whose lookup is not its shape's.
+    fn chain_intercepts_set(&self, mut prototype: Value, key: PropertyKey) -> bool {
+        while !prototype.is_null() {
+            let Some(data) = self.heap.object_record(prototype) else {
+                return true;
+            };
+            if data.has_side_descriptors() {
+                return true;
+            }
+            if let Some(slot) = self.property_shape_slot(data.shape(), key) {
+                return self.slot_attributes(data, slot).is_none_or(|attributes| attributes.accessor || !attributes.writable);
+            }
+            prototype = data.proto();
+        }
+        false
     }
 
     pub(super) fn symbol_property(&self, object: Value, key: Value) -> Option<Value> {

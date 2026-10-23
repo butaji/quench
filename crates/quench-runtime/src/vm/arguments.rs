@@ -150,6 +150,6 @@ pub(super) fn mapped_arguments_slot(
     parameter: usize,
 ) -> Option<usize> {
     let slot = function.arguments_slot?;
-    (function.arguments_are_mapped() && parameter < usize::from(function.params))
+    (function.arguments_alias_parameters() && parameter < usize::from(function.params))
         .then_some(usize::from(slot))
 }

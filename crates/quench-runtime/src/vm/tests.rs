@@ -854,6 +854,20 @@ fn property_sites_past_the_site_space_share_a_site_per_name() {
 }
 
 #[test]
+fn super_inside_with_reads_the_home_object() {
+    // A `with` object cannot shadow the compiler's binding of a method's home object.
+    let source = "var o = { m() { with ({ x: 9 }) { return super.x + x + (() => super.x)(); } } };\n\
+                  Object.setPrototypeOf(o, { x: 3 });\n\
+                  var result = o.m();";
+    let program = Engine::specialize(source, "super-inside-with.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("result");
+    let result = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(result.as_number(), Some(15.0));
+}
+
+#[test]
 fn name_shared_sites_keep_loads_apart_from_stores() {
     // Past the unique sites, a load of `a` from a read-only field and an inherited getter
     // records entries a store of `a` must not take: the store fails or runs the setter.
@@ -3436,13 +3450,14 @@ fn dynamic_constructor_roots_release_after_prototype_completion() {
                 } else {
                     vm.own_property(vm.realm.globals, prototype_atom).unwrap()
                 };
+                let constructor = vm.native_value(native);
                 let argument = vm.heap.alloc_string("return 42".into());
                 let weak_argument = vm.heap.weak_handle(argument).unwrap();
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
                 let result = vm.construct_value_with_new_target(
                     &program,
-                    vm.native_value(native),
+                    constructor,
                     target,
                     &[argument],
                 );
@@ -11163,6 +11178,24 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
         assert!(!programs.note_js_function_entry(id, function, false, false));
     }
     assert_eq!(programs.js_jit_tracked_function_count(), 256);
+}
+
+#[test]
+fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "function add(a, b) { return a + b; } add(1, 2);",
+        "js-jit-rejected-lane.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    let id = vm.programs.insert(program.clone()).unwrap();
+
+    assert!(vm.js_tier_may_claim(&program, id, 1));
+    vm.programs
+        .reject_js_function(id, 1, "unsupported-shape");
+    assert!(vm.programs.js_tier_declined(id, 1));
+    assert!(!vm.js_tier_may_claim(&program, id, 1));
 }
 
 #[test]

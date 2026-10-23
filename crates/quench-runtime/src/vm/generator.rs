@@ -103,7 +103,7 @@ impl<H: Host> Vm<H> {
             });
             frame.locals[usize::from(slot)] = arguments;
             self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
-            if mapped {
+            if function.arguments_alias_parameters() {
                 if let Some(object) = self.object_data_mut(arguments) {
                     object.set_arguments_map((0..function.params.min(args.len() as u16)).collect());
                 }
@@ -1095,7 +1095,8 @@ impl<H: Host> Vm<H> {
         };
         continuation.pc += 1;
         continuation.resume_register = None;
-        let roots = continuation.roots().chain([generator, reason]).collect::<Vec<_>>();
+        let mut roots = continuation.roots();
+        roots.extend([generator, reason]);
         let (rejected, promise) = self.with_call_roots(roots, |vm| {
             let rejected = vm.promise_object()?;
             vm.with_call_roots([rejected], |vm| {

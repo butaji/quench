@@ -94,6 +94,60 @@ enum JsonKey {
     Name(Atom),
 }
 
+/// The nesting the plain writer (`Vm::json_write_plain`) recurses through without counting
+/// stack; deeper data takes the general steps, which do. Request and response bodies nest a
+/// few levels.
+const JSON_PLAIN_DEPTH: usize = 64;
+
+/// The containers being written, inline up to this nesting.
+const JSON_PLAIN_INLINE_ANCESTORS: usize = 16;
+
+/// The state of one plain stringification: no guest code runs during it, so the shape and
+/// prototype last found to lack `toJSON` (for an ordinary object, and for an array) holds
+/// for its whole run.
+struct JsonPlainWrite {
+    to_json: Atom,
+    ancestors: smallvec::SmallVec<[Value; JSON_PLAIN_INLINE_ANCESTORS]>,
+    object_lacks_to_json: Option<(u32, Value)>,
+    array_lacks_to_json: Option<(u32, Value)>,
+    output: JsonText,
+}
+
+impl JsonPlainWrite {
+    fn new(to_json: Atom) -> Self {
+        Self {
+            to_json,
+            ancestors: Default::default(),
+            object_lacks_to_json: None,
+            array_lacks_to_json: None,
+            output: JsonText::new(),
+        }
+    }
+}
+
+/// An integer's decimal digits, as Number::toString writes them.
+fn write_json_integer(value: i32, output: &mut JsonText) {
+    let mut digits = [0u8; I32_DECIMAL_WIDTH];
+    let mut start = digits.len();
+    let mut magnitude = value.unsigned_abs();
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (magnitude % DECIMAL_RADIX) as u8;
+        magnitude /= DECIMAL_RADIX;
+        if magnitude == 0 {
+            break;
+        }
+    }
+    if value < 0 {
+        output.push(b'-');
+    }
+    output.extend_from_slice(&digits[start..]);
+}
+
+const DECIMAL_RADIX: u32 = 10;
+/// The decimal digits of the largest `i32` magnitude, 2^31.
+const I32_DECIMAL_WIDTH: usize = 10;
+
 /// The JSON text a stringification writes: UTF-8 bytes, decoded once when it completes.
 type JsonText = Vec<u8>;
 
@@ -1055,6 +1109,16 @@ impl<H: Host> Vm<H> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let replacer = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let space = args.get(2).copied().unwrap_or(Value::UNDEFINED);
+        if replacer.is_undefined() && space.is_undefined() {
+            let mut plain = JsonPlainWrite::new(self.intern_atom("toJSON"));
+            if let Some(written) = self.json_write_plain(value, &mut plain) {
+                if !written {
+                    return Ok(Value::UNDEFINED);
+                }
+                let text = String::from_utf8(plain.output).expect("JSON text is written as UTF-8");
+                return Ok(self.heap.alloc_string(text.into()));
+            }
+        }
         let (replacer, property_list) = self.json_replacer(p, replacer)?;
         let space_root = self.heap.root(space);
         let gap = self.json_gap(p, space);
@@ -1083,6 +1147,134 @@ impl<H: Host> Vm<H> {
         }
         let text = String::from_utf8(state.output).expect("JSON text is written as UTF-8");
         Ok(self.heap.alloc_string(text.into()))
+    }
+
+    /// SerializeJSONProperty of `value` with no replacer and no gap, for plain data whose
+    /// serialization runs no guest code: primitives, dense hole-free arrays and ordinary
+    /// objects of non-dictionary shapes with only data members, none of which a `toJSON`
+    /// reaches. `Some(false)` is an omitted value. `None` leaves the whole stringification to
+    /// the general steps, having observed nothing: a cycle, getter, `toJSON`, function,
+    /// BigInt, boxed primitive, index key, exotic object or nesting beyond
+    /// `JSON_PLAIN_DEPTH`.
+    fn json_write_plain(&self, value: Value, plain: &mut JsonPlainWrite) -> Option<bool> {
+        if value.is_undefined() {
+            return Some(false);
+        }
+        if value.is_null() {
+            plain.output.extend_from_slice(b"null");
+            return Some(true);
+        }
+        if let Some(value) = value.as_bool() {
+            plain.output.extend_from_slice(if value { b"true" } else { b"false" });
+            return Some(true);
+        }
+        if let Some(integer) = value.as_int() {
+            write_json_integer(integer, &mut plain.output);
+            return Some(true);
+        }
+        if let Some(number) = value.as_number() {
+            if number.is_finite() {
+                plain.output.extend_from_slice(crate::number_to_string::format(number).as_bytes());
+            } else {
+                plain.output.extend_from_slice(b"null");
+            }
+            return Some(true);
+        }
+        if let Some(text) = self.heap.string(value) {
+            write_json_string(text, &mut plain.output);
+            return Some(true);
+        }
+        if matches!(self.heap.get(value), Some(Cell::Symbol(_))) {
+            return Some(false);
+        }
+        if plain.ancestors.len() == JSON_PLAIN_DEPTH || plain.ancestors.contains(&value) {
+            return None;
+        }
+        plain.ancestors.push(value);
+        let written = if let Some(array) = self.heap.array(value) {
+            self.json_write_plain_array(value, array, plain)
+        } else {
+            self.json_write_plain_object(value, plain)
+        };
+        plain.ancestors.pop();
+        written.then_some(true)
+    }
+
+    fn json_write_plain_array(&self, value: Value, array: &crate::heap::ArrayObject, plain: &mut JsonPlainWrite) -> bool {
+        if array.has_side_descriptors() {
+            return false;
+        }
+        let key = (array.shape(), array.proto());
+        if plain.array_lacks_to_json != Some(key) {
+            if !self.json_lacks_to_json(value, plain.to_json) {
+                return false;
+            }
+            plain.array_lacks_to_json = Some(key);
+        }
+        let Some(elements) = self.present_dense_elements(value, 0..array.elements().len()) else {
+            return false;
+        };
+        plain.output.push(b'[');
+        for (index, element) in elements.iter().enumerate() {
+            if index != 0 {
+                plain.output.push(b',');
+            }
+            match self.json_write_plain(*element, plain) {
+                Some(true) => {}
+                Some(false) => plain.output.extend_from_slice(b"null"),
+                None => return false,
+            }
+        }
+        plain.output.push(b']');
+        true
+    }
+
+    fn json_write_plain_object(&self, value: Value, plain: &mut JsonPlainWrite) -> bool {
+        let Some(data) = self.heap.object_record(value) else {
+            return false;
+        };
+        // Shape facts decide the memo; these per-object facts do not.
+        if data.is_raw_json() || data.has_side_descriptors() || self.boxed_primitive_data(value).is_some() {
+            return false;
+        }
+        let key = (data.shape(), data.proto());
+        if plain.object_lacks_to_json != Some(key) {
+            if !self.json_lacks_to_json(value, plain.to_json) {
+                return false;
+            }
+            plain.object_lacks_to_json = Some(key);
+        }
+        let Some(slots) = self.shape_enumerable_slots(value) else {
+            return false;
+        };
+        let accessors = self.shape_may_have_accessors(data.shape());
+        plain.output.push(b'{');
+        let mut written = 0;
+        for &(atom, slot) in slots.iter() {
+            let slot = slot as usize;
+            if !self.plain_named_key(atom)
+                || (accessors && self.slot_attributes(data, slot).is_none_or(|attributes| attributes.accessor))
+            {
+                return false;
+            }
+            let Some(member) = self.heap.property_get(data, slot) else {
+                return false;
+            };
+            // The member is written before its value is known; an omitted value takes it back.
+            let start = plain.output.len();
+            if written != 0 {
+                plain.output.push(b',');
+            }
+            self.write_json_key(atom, &mut plain.output);
+            plain.output.push(b':');
+            match self.json_write_plain(member, plain) {
+                Some(true) => written += 1,
+                Some(false) => plain.output.truncate(start),
+                None => return false,
+            }
+        }
+        plain.output.push(b'}');
+        true
     }
 
     fn json_replacer(
