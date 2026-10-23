@@ -815,9 +815,10 @@ call-capable execution remains necessary.
 `ws-echo.cjs` uses pinned `ws@8.18.3` for a local WebSocket client/server
 upgrade and sequential binary echo workload. It validates every echoed frame
 and reports bytes and checksum. A Node smoke run completed with matching
-output. Quench currently cannot run this workload: the HTTP request created by
-the `ws` client attempts to connect to port 80 although the URL and listening
-server use the same dynamically assigned port. The Quench screen therefore
-fails compatibility before timing; it must not be counted as a performance
-comparison. HTTP upgrade handling and request port propagation are
-prerequisites for valid `ws` results.
+output. Quench currently cannot run this workload: its HTTP server responds
+with status 426 instead of delivering the WebSocket `upgrade` event and raw
+socket to `ws`. The client also exposed that Quench's HTTP request option
+parser must accept the string port returned by `URL.port`; that compatibility
+gap is fixed. The remaining upgrade failure happens before timing, so `ws`
+must not be counted as a performance comparison until the HTTP server exposes
+the upgrade socket and the client can consume a 101 response.

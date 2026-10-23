@@ -174,7 +174,7 @@ pub(crate) fn create(
     let host = text_property(context, options, "hostname")?
         .or(text_property(context, options, "host")?)
         .unwrap_or_else(|| "localhost".to_owned());
-    let port = numeric_property(context, options, "port")?
+    let port = port_property(context, options)?
         .filter(|port| port.is_finite() && (0.0..=u16::MAX as f64).contains(port))
         .unwrap_or(80.0) as u16;
     let method = text_property(context, options, "method")?.unwrap_or_else(|| "GET".to_owned());
@@ -514,14 +514,19 @@ fn argument_id(context: &mut Context<'_>, root: Option<RootId>) -> Result<u64, R
         .ok_or_else(|| RootedError::host("invalid shared HTTP request identifier"))
 }
 
-fn numeric_property(
-    context: &mut Context<'_>,
-    object: RootId,
-    name: &str,
-) -> Result<Option<f64>, RootedError> {
-    let key = context.string_rooted(name);
-    let value = context.get_property_rooted(object, key)?;
-    Ok(context.rooted_value(value).and_then(Value::as_number))
+fn port_property(context: &mut Context<'_>, object: RootId) -> Result<Option<f64>, RootedError> {
+    let key = context.string_rooted("port");
+    let value_root = context.get_property_rooted(object, key)?;
+    match context.rooted_value(value_root) {
+        Some(value) => match value.as_number() {
+            Some(number) => Ok(Some(number)),
+            None => Ok(context
+                .string_text(value_root)?
+                .and_then(|port| port.parse::<u16>().ok())
+                .map(f64::from)),
+        },
+        None => Ok(None),
+    }
 }
 
 fn text_property(
