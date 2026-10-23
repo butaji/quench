@@ -3145,21 +3145,41 @@ impl<'a> Compiler<'a> {
     /// The local slots a function body keeps in registers, and the promoted slots a nested
     /// function may write (clobbered). `eligible` states the activation's own conditions;
     /// the body's fixed-register facts and the register budget decide the rest. Ordinary
-    /// functions and arrows share this plan.
+    /// functions and arrows share this plan. `own_arguments` is a function's strictness and
+    /// parameters, whose own `arguments` binding a body may read; an arrow has none, so any
+    /// `arguments` it names keeps its locals in frame slots.
     #[allow(clippy::too_many_arguments)]
     fn promoted_local_plan(
         &mut self,
         eligible: bool,
+        own_arguments: Option<(bool, &[Atom])>,
         body: &[Statement<'_>],
         expression_body: Option<&Expression<'_>>,
         locals: &[Atom],
         function_scope: &FxHashSet<Atom>,
         lexical_atoms: &[Atom],
         self_binding_slot: Option<u16>,
-    ) -> (Vec<u16>, Vec<u16>) {
+    ) -> PromotedLocalPlan {
         let register_local_facts = early::fixed_register_local_facts(body, expression_body);
-        if !eligible || !register_local_facts.safe {
-            return (Vec::new(), Vec::new());
+        let rebinds_parameter = |parameters: &[Atom]| {
+            parameters
+                .iter()
+                .any(|atom| register_local_facts.bound_names.contains(&self.atoms[*atom as usize]))
+        };
+        // A strict `arguments` object is a copy of the values passed, which no parameter
+        // write reaches; a sloppy one aliases the parameters (`Function::arguments_alias_parameters`)
+        // unless the body only reads it and rebinds no parameter.
+        let unaliased_arguments = eligible
+            && register_local_facts.safe
+            && register_local_facts.arguments == early::ArgumentsUse::Reads
+            && own_arguments.is_some_and(|(strict, parameters)| !strict && !rebinds_parameter(parameters));
+        let arguments_allow_promotion = match (register_local_facts.arguments, own_arguments) {
+            (early::ArgumentsUse::None, _) => true,
+            (_, None) => false,
+            (_, Some((strict, _))) => strict || unaliased_arguments,
+        };
+        if !eligible || !register_local_facts.safe || !arguments_allow_promotion {
+            return PromotedLocalPlan { unaliased_arguments, ..Default::default() };
         }
         let arguments_atom = self.atom("arguments");
         let mut latest_local_slot = FxHashMap::default();
@@ -3194,7 +3214,7 @@ impl<'a> Compiler<'a> {
                     .contains(&self.atoms[locals[usize::from(slot)] as usize])
             })
             .collect::<Vec<_>>();
-        (promoted_local_slots, clobbered_local_slots)
+        PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments }
     }
 
     fn compile_function(
@@ -3316,8 +3336,9 @@ impl<'a> Compiler<'a> {
             // A nested function's own parameters and locals are its own in eval code and host
             // scripts too: names it does not declare resolve as they would without promotion.
             && !dynamic_eval;
-        let (promoted_local_slots, clobbered_local_slots) = self.promoted_local_plan(
+        let PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments } = self.promoted_local_plan(
             promote_plain_locals,
+            Some((root_strict, &params)),
             body,
             expression_body,
             &locals,
@@ -3482,6 +3503,7 @@ impl<'a> Compiler<'a> {
                 && !options.generator,
             class_initializer: options.class_initializer,
             parameter_eval_arguments_error: function.parameter_eval_arguments_error,
+            unaliased_arguments,
             arguments_slot,
             simple_parameters,
             strict: root_strict,
@@ -3716,3 +3738,13 @@ impl<'a> Compiler<'a> {
 }
 #[cfg(test)]
 mod tests;
+
+/// `Compiler::promoted_local_plan`: the local slots a body keeps in registers, those a nested
+/// function may write, and whether its mapped `arguments` is unaliased
+/// (`Function::unaliased_arguments`).
+#[derive(Default)]
+struct PromotedLocalPlan {
+    promoted_local_slots: Vec<u16>,
+    clobbered_local_slots: Vec<u16>,
+    unaliased_arguments: bool,
+}

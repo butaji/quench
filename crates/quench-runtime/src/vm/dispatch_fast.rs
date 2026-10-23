@@ -739,6 +739,13 @@ enum CallEntry {
 }
 
 impl CallEntry {
+    /// An entry another program's call activates frameless (`Vm::cross_call_entry`): a plain
+    /// or keeping activation, which `lane_activate_keeping` enters across programs.
+    #[inline(always)]
+    fn activates_across(self) -> bool {
+        matches!(self, Self::Activates | Self::Keeps)
+    }
+
     /// A body a call answers by reading alone (`lane_call_leaf_read`).
     #[inline(always)]
     fn reads(self) -> bool {
@@ -4133,6 +4140,12 @@ fn lane_cached_field<H: Host>(
 ) -> Option<Value> {
     let probe = {
         let vm = unsafe { vm(cx) };
+        // A typed array's geometry, which no field cache records (`AtomClass::VIRTUAL_FIELD`).
+        if vm.atom_class(atom).contains(super::object::AtomClass::VIRTUAL_FIELD)
+            && let Some(value) = vm.typed_array_geometry_read(object, atom)
+        {
+            return Some(value);
+        }
         vm.prepare_named_function_info_lookup(object, atom);
         vm.cached_field_hit(code, object, site)
     };
@@ -7958,10 +7971,10 @@ impl<H: Host> Vm<H> {
             && self
                 .lane_view_any(program, function)
                 .is_some_and(|view| unsafe { &*view }.environment_window.is_some());
-        // Across programs only a plain activation runs frameless: an environment or keeping
+        // Across programs only a plain or keeping activation runs frameless: an environment
         // activation, or a construction, leaves its calls a frame.
         let view = if !(plan.registers_only || environment)
-            || cross && (environment || plan.forwards_arguments)
+            || cross && environment
             || numeric
                 && body
                     .code
@@ -8419,7 +8432,7 @@ script_handler! {
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
         // A callee that needs a frame takes it as `lane_frame_call` pushes one.
-        if target.entry != CallEntry::Activates {
+        if !target.entry.activates_across() {
             sibling!(lane_frame_call::<H>, r, ip, Carried::script(cx))
         }
         #[cfg(feature = "profile-lane-exits")]
@@ -8428,7 +8441,12 @@ script_handler! {
             return exit(ip);
         };
         let arguments = ImmediateLayout::call_window_base(i.imm());
-        match lane_activate(cx, r, ip, target, arguments, this, false) {
+        let activated = if target.forwards() {
+            lane_activate_keeping::<H, true>(cx, r, ip, *target, ActivationArguments::Window(arguments), this, false, None)
+        } else {
+            lane_activate(cx, r, ip, target, arguments, this, false)
+        };
+        match activated {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
             Err(next) => next,
         }
@@ -8727,7 +8745,7 @@ fn lane_function_call_activation<H: Host>(
         }
         let target = vm.cross_call_entry(callee)?;
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
-        Some(unsafe { *target }).filter(|target| target.entry == CallEntry::Activates)
+        Some(unsafe { *target }).filter(|target| target.entry.activates_across())
     });
     let Some(target) = target else {
         return Err(lane_forwarded_frame_call(cx, r, ip, i, callee, receiver, args));
@@ -8876,7 +8894,7 @@ fn lane_apply_activation<H: Host>(
             return None;
         }
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
-        Some(unsafe { *vm.cross_call_entry(callee)? }).filter(|target| target.entry == CallEntry::Activates)
+        Some(unsafe { *vm.cross_call_entry(callee)? }).filter(|target| target.entry.activates_across())
     });
     let Some(target) = target else {
         // A user function that needs a frame takes it in place (`lane_passed_frame_call`), with

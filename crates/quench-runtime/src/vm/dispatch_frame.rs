@@ -852,7 +852,7 @@ impl<H: Host> Vm<H> {
             ),
         });
         self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
-        if mapped {
+        if function.arguments_alias_parameters() {
             let mapping = (0..function.params.min(args.len() as u16)).collect();
             if let Some(object) = self.object_data_mut(arguments) {
                 object.set_arguments_map(mapping);
@@ -1436,7 +1436,7 @@ impl<H: Host> Vm<H> {
                         let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
                         super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
                     }
-                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName | Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField | Op::LoadNameCall | Op::PrivateIn) {
+                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName | Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField | Op::LoadNameCall | Op::PrivateIn | Op::Binary | Op::JumpBinaryFalse) {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
