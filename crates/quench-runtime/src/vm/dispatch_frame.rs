@@ -1311,8 +1311,17 @@ impl<H: Host> Vm<H> {
         let previous_global = self.realm.globals;
         // A nested loop leaves the caller's register file active again.
         let caller_registers = self.active_registers;
-        let outcome =
-            self.run_general_loop::<STOPS>(p, frame, stop_pc, initial_error, allow_inline_calls);
+        let mut pending_calls = self.pending_call_stacks.pop().unwrap_or_default();
+        let outcome = self.run_general_loop::<STOPS>(
+            p,
+            frame,
+            stop_pc,
+            initial_error,
+            allow_inline_calls,
+            &mut pending_calls,
+        );
+        pending_calls.clear();
+        self.pending_call_stacks.push(pending_calls);
         self.active_registers = caller_registers;
         self.set_active_program(previous_program);
         self.switch_realm_global(previous_global);
@@ -1329,6 +1338,7 @@ impl<H: Host> Vm<H> {
         stop_pc: Option<usize>,
         initial_error: Option<JsError>,
         allow_inline_calls: bool,
+        pending_calls: &mut Vec<PendingGeneralCall>,
     ) -> Result<FrameOutcome, JsError> {
         let p = entry_program;
         let mut current_program: Option<Rc<ResidualProgram>> = None;
@@ -1336,7 +1346,6 @@ impl<H: Host> Vm<H> {
         // retains after a cross-program tail call. Updated only where that switch happens.
         let mut executing_residual: *const ResidualProgram = entry_program;
         let mut frame = frame;
-        let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
         // The initial Wasm activation is allocated before the dispatch loop and has no
         // caller guard. Account it here so root and reentrant Wasm entries obey the same
         // frame-payload limit as Wasm calls pushed by the loop.
@@ -1402,7 +1411,7 @@ impl<H: Host> Vm<H> {
                     pc,
                     $throwing_pc,
                     $error,
-                    &mut pending_calls,
+                    pending_calls,
                     &mut cursor,
                     &mut executing,
                     fast_lane,
@@ -1421,7 +1430,7 @@ impl<H: Host> Vm<H> {
             let p = unsafe { &*executing_residual };
             if let Err(error)=self.check_execution_interrupt() {
                 let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
-                return self.unwind_general_loop(entry_program,frame,pc,pc as u32,error,&mut pending_calls,&mut cursor,&mut executing,fast_lane)
+                return self.unwind_general_loop(entry_program,frame,pc,pc as u32,error,pending_calls,&mut cursor,&mut executing,fast_lane)
                     .map(|_|unreachable!("host termination cannot select a guest handler"));
             }
             // A supported native function still returns through the ordinary
@@ -1441,7 +1450,7 @@ impl<H: Host> Vm<H> {
                     cursor.lane,
                     &mut frame,
                     pc,
-                    &mut pending_calls,
+                    pending_calls,
                     &mut executing,
                     allow_inline_calls,
                 );
@@ -1634,7 +1643,7 @@ impl<H: Host> Vm<H> {
                         pc + 1,
                         pc as u32,
                         error,
-                        &mut pending_calls,
+                        pending_calls,
                         &mut cursor,
                         &mut executing,
                         fast_lane,
