@@ -55,10 +55,28 @@ pub fn release_read_only_pages_after_load() {
     }
 }
 
+/// Whether the process's memory policy returns resident pages at the release points
+/// (`MemoryPolicy::returns_resident_pages`), set once it is selected (`apply_policy`). Until
+/// then, and under the default throughput policy, the read-only releases do nothing.
+static RETURNS_RESIDENT_PAGES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Takes the process's memory policy for the releases below.
+pub fn apply_policy(policy: quench_runtime::MemoryPolicy) {
+    RETURNS_RESIDENT_PAGES.store(policy.returns_resident_pages(), std::sync::atomic::Ordering::Relaxed);
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn returns_resident_pages() -> bool {
+    RETURNS_RESIDENT_PAGES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Unmaps the read-only pages above from the resident set; the next touch of each refaults it
 /// from its file.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages() {
+    if !returns_resident_pages() {
+        return;
+    }
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
@@ -293,6 +311,9 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
 /// it can drop or swap.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_code_and_data() {
+    if !returns_resident_pages() {
+        return;
+    }
     release_read_only_pages();
     for (start, end) in loaded_segments(ReleasedSegment::LibraryData) {
         // SAFETY: paging out never changes a mapping's contents.
