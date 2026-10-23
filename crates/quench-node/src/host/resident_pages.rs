@@ -513,6 +513,61 @@ pub fn release_free_heap_pages() {
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
 pub fn release_free_heap_pages() {}
 
+/// Pages kept below the current frame when the stack is released: the release's own calls
+/// (and the 128-byte red zone below them) run there and must not refault what they just freed.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+const STACK_RELEASE_MARGIN_PAGES: usize = 1;
+
+/// Returns the calling thread's stack pages below the current frame to the system: they hold
+/// only dead frames of deeper earlier calls (the compiler, a recursion's deepest point), and an
+/// anonymous private page released this way refaults as a zero page when the stack grows again.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+pub fn release_unused_stack() {
+    thread_local! {
+        static STACK_LOW: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    }
+    let low = STACK_LOW.with(|cell| {
+        cell.get().or_else(|| {
+            let low = current_stack_low()?;
+            cell.set(Some(low));
+            Some(low)
+        })
+    });
+    let Some(low) = low else { return };
+    let page = page_size();
+    let frame = 0u8;
+    let current = std::ptr::addr_of!(frame) as usize;
+    let high = (current & !(page - 1)).saturating_sub(STACK_RELEASE_MARGIN_PAGES * page);
+    if high > low {
+        // SAFETY: `[low, high)` lies in this thread's stack below the live frames and margin,
+        // so no live value is stored there.
+        unsafe {
+            libc::madvise(low as *mut libc::c_void, high - low, libc::MADV_DONTNEED);
+        }
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")))]
+pub fn release_unused_stack() {}
+
+/// The lowest usable address of the calling thread's stack.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+fn current_stack_low() -> Option<usize> {
+    // SAFETY: the attribute object is initialised by `pthread_getattr_np` before it is read
+    // and destroyed once; the out-pointers point at locals.
+    unsafe {
+        let mut attr = std::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
+        if libc::pthread_getattr_np(libc::pthread_self(), attr.as_mut_ptr()) != 0 {
+            return None;
+        }
+        let mut address = std::ptr::null_mut();
+        let mut size = 0;
+        let found = libc::pthread_attr_getstack(attr.as_ptr(), &mut address, &mut size) == 0;
+        libc::pthread_attr_destroy(attr.as_mut_ptr());
+        found.then_some(address as usize)
+    }
+}
+
 /// The address ranges of the process's file mappings (not the kernel's bracketed ones) whose
 /// permissions are one of `permissions`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
