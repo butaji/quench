@@ -596,13 +596,18 @@ struct CallContext {
 
 impl CallContext {
     /// A nested native entry shares the caller's instance and callout state,
-    /// but needs its own stack budget, guard-resume stack pointer and raised
-    /// completion, as a nested `run_compiled` invocation would.
+    /// but needs its own guard-resume stack pointer and raised completion, as a
+    /// nested `run_compiled` invocation would. Its stack limit is never below
+    /// the caller's: recursion through the callout (a runaway `call_indirect`)
+    /// spends the outermost entry's budget and traps as exhausted, rather than
+    /// taking a fresh budget at each level until the native stack overflows.
     fn nested_entry(&self) -> Self {
         let marker = 0u8;
         let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
         Self {
-            stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
+            stack_limit: self
+                .stack_limit
+                .max(stack_pointer.saturating_sub(COMPILED_STACK_BUDGET)),
             interrupt: self.interrupt,
             table: self.table,
             vm: self.vm,
@@ -6792,19 +6797,14 @@ impl<H: Host> Vm<H> {
         let program_id = self.frames[frame].program;
         let function_id = self.frames[frame].function;
         let function = program.function_get(function_id as usize)?;
-        let numeric_find_candidate = if jit_numeric_find_enabled() {
-            self.programs
-                .js_jit_numeric_find_candidate(program_id, function_id, function)
-        } else {
-            None
-        };
+        let facts = self.programs.js_entry_facts(program_id, function_id)?;
+        let numeric_find_candidate = facts.numeric_find.filter(|_| jit_numeric_find_enabled());
         if let Some(candidate) = numeric_find_candidate
             && let Some(result) = self.js_jit_numeric_find_at_entry(program, frame, candidate)
         {
             return Some(result);
         }
-        let field_increment_candidate =
-            super::js_compiled::cached_this_field_increment_candidate(program, function);
+        let field_increment_candidate = facts.field_increment;
         let mut field_increment_diagnostic_entry_recorded = false;
         if let Some(candidate) = field_increment_candidate {
             let fixed_this = self.frames[frame].fixed_this;
@@ -6844,7 +6844,7 @@ impl<H: Host> Vm<H> {
             }
         }
         let field_return_candidate =
-            super::js_compiled::cached_this_field_return_candidate(function);
+            facts.field_return;
         let mut field_return_diagnostic_entry_recorded = field_increment_diagnostic_entry_recorded;
         if let Some(candidate) = field_return_candidate {
             let fixed_this = self.frames[frame].fixed_this;
@@ -6904,21 +6904,21 @@ impl<H: Host> Vm<H> {
             _ => None,
         };
         let numeric_loop_candidate =
-            compiled_tier.is_none() && super::js_compiled::has_numeric_loop_candidate(function);
+            compiled_tier.is_none() && facts.numeric_loop;
         let int32_bitwise_candidate =
-            super::js_compiled::has_int32_bitwise_candidate(program, function);
+            facts.int32_bitwise;
         let int32_identity_candidate =
-            super::js_compiled::int32_identity_return_candidate(program, function).is_some();
+            facts.int32_identity;
         let capture_argument = match compiled_tier {
             Some(compiled) => compiled.capture_argument(),
-            None => super::js_compiled::number_capture_candidate(function),
+            None => facts.number_capture,
         };
         let mut capture_arguments: smallvec::SmallVec<
             [super::js_compiled::JsJitCaptureArgument; 4],
         > = smallvec::SmallVec::new();
         if let Some(compiled) = compiled_tier {
             capture_arguments.extend_from_slice(compiled.capture_arguments());
-        } else if let Some(candidate) = super::js_compiled::numeric_capture_candidate(function) {
+        } else if let Some(candidate) = facts.numeric_capture.clone() {
             capture_arguments.extend(candidate);
         }
         let capture_number = capture_argument.and_then(|capture| {
@@ -6934,10 +6934,8 @@ impl<H: Host> Vm<H> {
         > = smallvec::SmallVec::new();
         if let Some(compiled) = compiled_tier {
             numeric_field_inputs.extend_from_slice(compiled.numeric_field_inputs());
-        } else if let Some(inputs) =
-            super::js_compiled::cached_numeric_field_inputs_candidate(function)
-        {
-            numeric_field_inputs = inputs;
+        } else if let Some(inputs) = &facts.numeric_field_inputs {
+            numeric_field_inputs.extend_from_slice(inputs);
         }
         let is_field_receiver_parameter = |parameter: usize| {
             numeric_field_inputs.iter().any(|input| {
@@ -6948,19 +6946,17 @@ impl<H: Host> Vm<H> {
         let numeric_field_argument = match compiled_tier {
             Some(compiled) if compiled.uses_numeric_field_argument() => compiled.field_argument(),
             Some(_) => None,
-            None => super::js_compiled::cached_numeric_field_argument_candidate(function),
+            None => facts.numeric_field_argument,
         };
         let field_argument_uses_numeric_abi = numeric_field_argument.is_some();
         let field_argument = numeric_field_argument.or_else(|| match compiled_tier {
             Some(compiled) => compiled.field_argument(),
-            None if numeric_field_inputs.is_empty() => {
-                super::js_compiled::cached_field_argument_candidate(function)
-            }
+            None if numeric_field_inputs.is_empty() => facts.field_argument,
             None => None,
         });
         let field_reject_candidate = match compiled_tier {
             Some(compiled) => compiled.is_field_reject(),
-            None => super::js_compiled::is_field_reject_candidate(function),
+            None => facts.field_reject,
         };
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
@@ -7085,7 +7081,7 @@ impl<H: Host> Vm<H> {
         }
         let string_hash_candidate = match compiled_tier {
             Some(compiled) => compiled.is_string_hash_loop(),
-            None => super::js_compiled::has_string_hash_loop_candidate(program, function),
+            None => facts.string_hash_loop,
         } && params == 1
             && self.js_jit_string_hash_guard()
             && first_argument.is_some_and(|value| self.heap.is_string(value));
@@ -7100,7 +7096,7 @@ impl<H: Host> Vm<H> {
         };
         let string_transform_kind = match compiled_tier {
             Some(compiled) => compiled.string_transform_kind(),
-            None => super::js_compiled::string_transform_candidate(program, function),
+            None => facts.string_transform,
         };
         let string_transform = string_transform_kind
             .filter(|kind| self.js_jit_string_transform_guard(*kind))
@@ -7207,7 +7203,9 @@ impl<H: Host> Vm<H> {
                     .programs
                     .js_jit_diagnostics_enabled()
                     .then(std::time::Instant::now);
+                self.host.before_native_compilation();
                 let artifact = super::js_compiled::compile(&residual, function_id);
+                self.host.after_native_compilation();
                 let artifact_failed = artifact.is_none();
                 let compile_rejection = artifact_failed.then(|| {
                     super::js_compiled::candidate_rejection_reason(&residual, function_id)
@@ -8086,7 +8084,7 @@ impl<H: Host> Vm<H> {
                     .residual(program)
                     .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
                 {
-                    self.host.before_wasm_native_compilation();
+                    self.host.before_native_compilation();
                 }
                 if wasm_root_only || wasm_root_first {
                     // This explicit diagnostic mode compiles only the

@@ -51,6 +51,7 @@ pub(super) enum JsJitFieldReceiver {
 
 /// A field getter that can return a cached data-property value without
 /// interpreting its `GetField` and `Return` instructions.
+#[derive(Clone, Copy)]
 pub(super) struct JsJitFieldReturn {
     pub(super) cache_site: u16,
     pub(super) return_pc: usize,
@@ -1078,42 +1079,37 @@ pub(super) fn string_transform_candidate(
     let name = function.name.or(function.inferred_name)?;
     match &program.atoms[name as usize] {
         "escapeLeadingUnderscores"
-            if function.code.len() == 19
+            if function.code.len() == 14
                 && function.code.iter().map(|i| i.as_wide().op()).eq([
                     Op::GetField,
-                    Op::Binary,
-                    Op::Move,
-                    Op::JumpFalse,
+                    Op::JumpBinaryFalse,
                     Op::GetField,
                     Op::LoadConst,
                     Op::Call,
-                    Op::Binary,
-                    Op::Move,
-                    Op::JumpFalse,
+                    Op::JumpBinaryFalse,
                     Op::GetField,
                     Op::LoadConst,
                     Op::Call,
-                    Op::Binary,
-                    Op::JumpFalse,
+                    Op::JumpBinaryFalse,
                     Op::Binary,
                     Op::Return,
                     Op::LoadConst,
                     Op::Return,
                 ])
                 && field_name(program, function, 0) == Some("length")
-                && field_name(program, function, 4) == Some("charCodeAt")
-                && field_name(program, function, 10) == Some("charCodeAt")
-                && function.code[15].as_wide().binary_operator()
+                && field_name(program, function, 2) == Some("charCodeAt")
+                && field_name(program, function, 6) == Some("charCodeAt")
+                && function.code[10].as_wide().binary_operator()
                     == oxc_ast::ast::BinaryOperator::Addition as u32 =>
         {
             Some(JsJitStringTransform::PrefixUnderscore)
         }
         "unescapeLeadingUnderscores" if unescape_leading_underscores_shape(function)
                 && field_name(program, function, 1) == Some("length")
-                && field_name(program, function, 6) == Some("charCodeAt")
-                && field_name(program, function, 13) == Some("charCodeAt")
-                && field_name(program, function, 20) == Some("charCodeAt")
-                && field_name(program, function, 26) == Some("substr") =>
+                && field_name(program, function, 4) == Some("charCodeAt")
+                && field_name(program, function, 9) == Some("charCodeAt")
+                && field_name(program, function, 14) == Some("charCodeAt")
+                && field_name(program, function, 19) == Some("substr") =>
         {
             Some(JsJitStringTransform::RemoveLeadingUnderscore)
         }
@@ -1125,12 +1121,13 @@ pub(super) fn string_transform_candidate(
 /// through a frame slot or through the register frame-register promotion gave it (`Move`s),
 /// and its final `return id` either reloading the parameter or naming its register.
 fn unescape_leading_underscores_shape(function: &Function) -> bool {
-    use Op::{Binary, Call, GetField, JumpFalse, LoadConst, Move, Return};
-    const BODY: [Op; 29] = [
-        Move, GetField, Binary, Move, JumpFalse,
-        Move, GetField, LoadConst, Call, Binary, Move, JumpFalse,
-        Move, GetField, LoadConst, Call, Binary, Move, JumpFalse,
-        Move, GetField, LoadConst, Call, Binary, JumpFalse,
+    use Op::{Call, GetField, JumpBinaryFalse, LoadConst, Move, Return};
+    // Each `&&` operand of the test is its own compare-and-branch (`FunctionCompiler::condition`).
+    const BODY: [Op; 22] = [
+        Move, GetField, JumpBinaryFalse,
+        Move, GetField, LoadConst, Call, JumpBinaryFalse,
+        Move, GetField, LoadConst, Call, JumpBinaryFalse,
+        Move, GetField, LoadConst, Call, JumpBinaryFalse,
         Move, GetField, LoadConst, Call,
     ];
     let ops = function.code.iter().map(|instruction| match instruction.as_wide().op() {
@@ -3971,7 +3968,15 @@ fn numeric_operand(
 /// Cheap activation-level filter used before retaining hotness state. The
 /// bytecode scan remains deferred until the function actually crosses the
 /// statistical promotion gate.
+/// Whether the tier may compile `function` of `program`, its own: decided once per function,
+/// since its code and its program never change. Every frame entry and lane call of a function
+/// the tier has not tracked asks, and a fresh scan of its instructions each time had cost the
+/// semver npm scenario 4.6% more instructions in JIT mode than without it.
 pub(super) fn function_candidate(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
+    *function.js_tier_candidate.get_or_init(|| scanned_function_candidate(function, program))
+}
+
+fn scanned_function_candidate(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
     !function.code.is_empty()
         && function.code.len() <= MAX_INSTRUCTIONS
         && (function.wide.is_empty()
@@ -4299,5 +4304,49 @@ fn operand_value(
             Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
         }
         OperandKind::Field | OperandKind::Local => None,
+    }
+}
+
+/// What the tier finds in a function at its entries, before it has a compiled form: the shapes
+/// its candidate filters recognize. Each depends only on the function and its own program,
+/// which never change, so it is derived once per function (`ProgramStore::js_entry_facts`);
+/// re-deriving them at every entry of a function the tier watches had made JIT runs execute
+/// more instructions than interpreted ones (semver npm scenario +4.6%).
+pub(super) struct JsEntryFacts {
+    pub(super) numeric_find: Option<JsJitNumericFind>,
+    pub(super) field_increment: Option<JsJitThisFieldIncrement>,
+    pub(super) field_return: Option<JsJitFieldReturn>,
+    pub(super) numeric_loop: bool,
+    pub(super) int32_bitwise: bool,
+    pub(super) int32_identity: bool,
+    pub(super) number_capture: Option<JsJitCaptureArgument>,
+    pub(super) numeric_capture: Option<smallvec::SmallVec<[JsJitCaptureArgument; MAX_CAPTURE_ARGUMENTS]>>,
+    pub(super) field_argument: Option<JsJitFieldArgument>,
+    pub(super) numeric_field_argument: Option<JsJitFieldArgument>,
+    pub(super) numeric_field_inputs:
+        Option<smallvec::SmallVec<[JsJitNumericFieldInput; MAX_NUMERIC_FIELD_INPUTS]>>,
+    pub(super) field_reject: bool,
+    pub(super) string_hash_loop: bool,
+    pub(super) string_transform: Option<JsJitStringTransform>,
+}
+
+impl JsEntryFacts {
+    pub(super) fn of(program: &ResidualProgram, function: &Function) -> Self {
+        Self {
+            numeric_find: numeric_find_candidate(function),
+            field_increment: cached_this_field_increment_candidate(program, function),
+            field_return: cached_this_field_return_candidate(function),
+            numeric_loop: has_numeric_loop_candidate(function),
+            int32_bitwise: has_int32_bitwise_candidate(program, function),
+            int32_identity: int32_identity_return_candidate(program, function).is_some(),
+            number_capture: number_capture_candidate(function),
+            numeric_capture: numeric_capture_candidate(function),
+            field_argument: cached_field_argument_candidate(function),
+            numeric_field_argument: cached_numeric_field_argument_candidate(function),
+            numeric_field_inputs: cached_numeric_field_inputs_candidate(function),
+            field_reject: is_field_reject_candidate(function),
+            string_hash_loop: has_string_hash_loop_candidate(program, function),
+            string_transform: string_transform_candidate(program, function),
+        }
     }
 }

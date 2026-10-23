@@ -9,7 +9,6 @@
 //! empty, as after the collection that invalidates them.
 
 use super::*;
-use crate::heap::CellDecoder;
 use crate::snapshot::{read_list, Reader, Snap, SnapshotError, SnapshotResult, Writer};
 
 /// Every VM field that holds the active realm's or the VM's prototype of a builtin family.
@@ -319,8 +318,10 @@ impl<H: Host> Vm<H> {
             shape_accessors,
             transitions,
             shape_slot_memo: _,
+            plain_copy_shapes: _,
             symbol_write_proofs: _,
             symbol_load_proofs: _,
+            private_site_homes: _,
             array_iteration_proof: _,
             function_name_shapes: _,
             typeof_names: _,
@@ -334,7 +335,6 @@ impl<H: Host> Vm<H> {
             array_index_atoms: _,
             atom_sequence,
             regexp_subjects: _,
-            regexp_short_subject: _,
             regexp_matchers: _,
             atom_classes: _,
             dynamic_strings: _,
@@ -393,6 +393,8 @@ impl<H: Host> Vm<H> {
             random_state: _,
             // Each process keeps its own budget.
             dynamic_functions_to_keep: _,
+            lane_deferred: _,
+            host_beside_activations: _,
         } = self;
         let Realm {
             globals,
@@ -501,20 +503,7 @@ impl<H: Host> Vm<H> {
         let mut reader = Reader::new((*bytes).as_ref(), Some(H::snapshot_bytes_read))?;
         self.specialized = reader.bool()?;
         self.read_atoms(&mut reader)?;
-        let mut matchers: FxHashMap<(JsString, String), Rc<quench_regexp::Regex>> = FxHashMap::default();
-        let mut regexp = |source: &JsString, flags: &str| -> SnapshotResult<Rc<quench_regexp::Regex>> {
-            let key = (source.clone(), flags.to_owned());
-            if let Some(matcher) = matchers.get(&key) {
-                return Ok(matcher.clone());
-            }
-            let matcher = Rc::new(
-                Self::compile_regexp(source, flags, super::regexp::PatternValidity::EarlyChecked)
-                    .map_err(|error| SnapshotError(format!("snapshot regexp: {error:?}")))?,
-            );
-            matchers.insert(key, matcher.clone());
-            Ok(matcher)
-        };
-        self.heap = Heap::read_snapshot(&mut reader, &mut CellDecoder { regexp: &mut regexp }, self.heap.memory_policy())?;
+        self.heap = Heap::read_snapshot(&mut reader, self.heap.memory_policy())?;
         self.realm.globals = reader.value()?;
         self.realm.global_lexical_declarations = Snap::unsnap(&mut reader)?;
         self.realm.global_lexical_bindings = Snap::unsnap(&mut reader)?;
@@ -589,6 +578,7 @@ impl<H: Host> Vm<H> {
         self.atoms = hashbrown::HashTable::with_capacity(base + appended);
         self.array_index_atoms.clear();
         self.name_atom_memo.clear();
+        self.private_site_homes.clear();
         self.atom_classes.clear();
         self.atom_classes.reserve(base + appended);
         self.atom_classes.resize_with(base, Default::default);
@@ -645,15 +635,31 @@ impl<H: Host> Vm<H> {
     }
 
     /// `entry`, compiled apart, with its atoms numbered as this VM's.
+    /// An entry decoded from its cached form (`Runtime::compile_entry`) reads that form again,
+    /// with this VM's atoms; any other is encoded compactly for the same. Encoding the entry
+    /// was about 1.5% of an npm scenario's instructions (chalk, 2026-10-22).
     fn rebased_entry(&mut self, entry: &ResidualProgram) -> SnapshotResult<ResidualProgram> {
-        let (bytes, _) = entry.encode_compact();
-        let text = entry
-            .source
+        // A table in the program's own ids marks the form `decode_trusted` reads.
+        let cached = entry
+            .encoded_records
             .as_ref()
-            .map_or_else(|| crate::bytecode::SourceText::Static(""), |source| source.text.clone());
-        let bytes: crate::KeptBytes = Rc::new(bytes);
-        let mut main = ResidualProgram::decode_compact(bytes, &mut |name| self.intern_atom(name), text)
-            .map_err(|error| SnapshotError(format!("snapshot entry: {error}")))?;
+            .filter(|records| records.atoms.is_none())
+            .and_then(|records| {
+                ResidualProgram::decode_trusted_interned(records.bytes.clone(), &mut |name| self.intern_atom(name)).ok()
+            });
+        let mut main = match cached {
+            Some(main) => main,
+            None => {
+                let (bytes, _) = entry.encode_compact();
+                let text = entry
+                    .source
+                    .as_ref()
+                    .map_or_else(|| crate::bytecode::SourceText::Static(""), |source| source.text.clone());
+                let bytes: crate::KeptBytes = Rc::new(bytes);
+                ResidualProgram::decode_compact(bytes, &mut |name| self.intern_atom(name), text)
+                    .map_err(|error| SnapshotError(format!("snapshot entry: {error}")))?
+            }
+        };
         main.atoms = AtomTable::shared(self.atom_sequence.clone(), self.atom_sequence.len());
         if entry.validated.holds() {
             main.validated.establish();

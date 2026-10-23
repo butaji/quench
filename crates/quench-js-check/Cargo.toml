@@ -6,6 +6,8 @@ description = "Compile-time syntax validation for embedded JavaScript strings"
 license = "MIT"
 
 [lib]
+# No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
+doctest = false
 proc-macro = true
 
 [dependencies]

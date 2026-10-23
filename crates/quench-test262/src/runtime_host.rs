@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use quench_runtime::{
-    CapabilityId, Engine, ExecutionRequest, Host, HostGlobal, ModuleSource, Runtime, SourceKind,
-    SystemHost,
+    CapabilityId, Engine, ExecutionMode, ExecutionRequest, Host, HostGlobal, ModuleSource, Runtime,
+    SourceKind, SystemHost,
 };
 
 use crate::Test262Host;
@@ -36,6 +36,8 @@ pub struct Test262RuntimeHost {
     async_test: bool,
     can_block: bool,
     done: Option<String>,
+    /// The execution every case's runtime uses: the interpreter, or compiled (JIT) execution.
+    execution_mode: ExecutionMode,
 }
 
 impl Host for Test262RuntimeHost {
@@ -98,6 +100,13 @@ impl Host for Test262RuntimeHost {
 }
 
 impl Test262RuntimeHost {
+    pub fn new(execution_mode: ExecutionMode) -> Self {
+        Self {
+            execution_mode,
+            ..Self::default()
+        }
+    }
+
     fn execute(&mut self, source: &str, name: &str) -> Result<(), String> {
         self.execute_kind(source, name, SourceKind::Script)
     }
@@ -117,7 +126,9 @@ impl Test262RuntimeHost {
     ) -> Result<(), String> {
         self.done = None;
         let async_test = self.async_test;
+        let execution_mode = self.execution_mode;
         let mut runtime = Runtime::new(std::mem::take(self));
+        runtime.set_execution_mode(execution_mode);
         let result = (|| {
             let program = match kind {
                 SourceKind::Script => Engine::specialize_unspecialized(source, name),

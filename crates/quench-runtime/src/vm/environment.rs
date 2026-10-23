@@ -1789,10 +1789,12 @@ impl<H: Host> Vm<H> {
         )
     }
 
-    /// `load_projected_environment_binding` of a global var where reading it runs no guest
-    /// code: a data property the global object or its prototypes hold
-    /// (`Vm::plain_named_get`). `None` for any other projection or read.
-    pub(super) fn plain_projected_global_var(&self, env: Value, slot: u16) -> Option<Value> {
+    /// `load_projected_environment_binding` where reading runs no guest code and throws
+    /// nothing: a global var held as a data property of the global object or its prototypes
+    /// (`Vm::plain_named_get`), or, in an eval script's context, an initialized global
+    /// lexical binding (`root_global_lexical_value`). `None` for any other projection or
+    /// read.
+    pub(super) fn plain_projected_root_binding(&self, env: Value, slot: u16) -> Option<Value> {
         let Cell::Environment { function, scope, .. } = self.heap.get(env)? else {
             return None;
         };
@@ -1800,8 +1802,11 @@ impl<H: Host> Vm<H> {
             .program()
             .map_or(self.active_program, super::ProgramId::from_raw);
         let owner = self.programs.residual(owner_id)?;
-        let atom = self.root_global_var_atom(owner, owner_id, *function, usize::from(slot))?;
-        self.plain_named_get(self.realm.globals, atom)
+        if let Some(atom) = self.root_global_var_atom(owner, owner_id, *function, usize::from(slot)) {
+            return self.plain_named_get(self.realm.globals, atom);
+        }
+        self.root_global_lexical_value(owner, *function, usize::from(slot))
+            .filter(|value| !value.is_deleted())
     }
 
     /// Reads a root-function projection (global var, global lexical or module import) or
@@ -2094,6 +2099,15 @@ impl<H: Host> Vm<H> {
             .map(|(value, _)| value)
     }
 
+    /// The value an intrinsic name (`bytecode::intrinsic_name_native`, or the RegExp
+    /// intrinsic) stands for, which no binding can shadow.
+    pub(super) fn intrinsic_name_value(&self, name: &str) -> Option<Value> {
+        if name == crate::bytecode::INTRINSIC_REGEXP_BINDING {
+            return Some(self.regexp_intrinsic_constructor());
+        }
+        crate::bytecode::intrinsic_name_native(name).map(|native| self.native_value(native))
+    }
+
     fn load_name_without_with(
         &mut self,
         p: &ResidualProgram,
@@ -2104,11 +2118,8 @@ impl<H: Host> Vm<H> {
         let internal = self.atom_class(atom).contains(AtomClass::INTERNAL);
         if internal {
             let name = self.atom_name(atom);
-            if name == crate::bytecode::INTRINSIC_REGEXP_BINDING {
-                return Ok(self.regexp_intrinsic_constructor());
-            }
-            if let Some(native) = internal_name_native(name) {
-                return Ok(self.native_value(native));
+            if let Some(value) = self.intrinsic_name_value(name) {
+                return Ok(value);
             }
         }
         if !internal && self.names_resolve_to_global_object(p, atom) {
@@ -2522,21 +2533,6 @@ impl<H: Host> Vm<H> {
             }
         }
     }
-}
-
-/// The built-in each engine-internal binding name the compiler emits resolves to.
-fn internal_name_native(name: &str) -> Option<Native> {
-    Some(match name {
-        "\0quench:dynamic-import" => Native::DynamicImport,
-        "\0quench:intrinsic-promise" => Native::Promise,
-        "\0quench:super-get" => Native::ReflectGet,
-        "\0quench:super-set" => Native::SuperSet,
-        "\0quench:super-base" => Native::ReflectGetPrototypeOf,
-        "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
-        "\0quench:object-define-property" => Native::ObjectDefineProperty,
-        "\0quench:object-freeze" => Native::ObjectFreeze,
-        _ => return None,
-    })
 }
 
 /// The facts one by-name lookup of `atom` from `frame` consults under more than one rule:

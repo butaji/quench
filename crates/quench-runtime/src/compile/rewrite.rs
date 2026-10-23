@@ -59,6 +59,21 @@ fusion_recipes! {
             first.set_optional_register_b(Some(second.result_register()));
             Some(first)
         };
+    LocalField: [LoadLocal, GetField; LoadLocalPlain, GetField] =>
+        |first: Instr, mut second: Instr, _: &mut SiteTable<'_, FieldSite>| {
+            if first.numeric_local_store_target().is_some() || second.writes_current_this() {
+                return None;
+            }
+            let crate::bytecode::FieldLookup::Atom { base, .. } = second.field_lookup()? else {
+                return None;
+            };
+            if base.register_index() != Some(first.result_register()) {
+                return None;
+            }
+            let local = u16::try_from(first.local_slot()).ok()?;
+            second.set_b(crate::bytecode::FieldBase::local(local)?.0);
+            Some(second)
+        };
     ProducerMove: [
         LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
         LoadName, Move; Binary, Move; Unary, Move; GetField, Move; IncDec, Move;
@@ -165,11 +180,62 @@ pub(super) fn coalesce_promoted_moves(
             changed = true;
         }
         changed |= forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness);
+        changed |= remove_dead_moves(function, methods, field_sites, superinstructions, &mut liveness);
         if !changed {
             return;
         }
         remove_nops(function, &mut liveness);
     }
+}
+
+/// Removes each `Move` whose destination no path reads before writing it again: the copy into
+/// a temporary or a promoted local that coalescing left behind once its readers moved to the
+/// source. A parameter's register is kept, as legacy `f.arguments` reflection reads it.
+fn remove_dead_moves(
+    function: &mut BcFunction,
+    methods: &(impl liveness::MethodArguments + ?Sized),
+    field_sites: &[FieldSite],
+    superinstructions: &[Superinstruction],
+    current: &mut Option<CodeLiveness>,
+) -> bool {
+    if !function.code.iter().any(|instruction| instruction.op() == Op::Move) {
+        return false;
+    }
+    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
+    else {
+        return false;
+    };
+    let protected = protected_positions(
+        &function.code,
+        &function.wide,
+        &function.handlers,
+        function.parameter_end_pc,
+        &function.binding_sites,
+    );
+    let parameter_storage = function
+        .local_registers
+        .iter()
+        .filter(|entry| entry.local < function.params)
+        .fold(0_u64, |mask, entry| mask | register_bit(entry.register));
+    let mut changed = false;
+    for pc in 0..function.code.len() {
+        let mov = function.code[pc];
+        if mov.op() != Op::Move || mov.is_wide() || protected[pc] {
+            continue;
+        }
+        let destination = register_bit(mov.result_register());
+        if destination & parameter_storage != 0
+            || liveness::live_out(function, &analysis.live, pc, mov.as_wide()) & destination != 0
+        {
+            continue;
+        }
+        function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
+        changed = true;
+    }
+    if !changed {
+        *current = Some(analysis);
+    }
+    changed
 }
 
 /// Drops every `Nop`, relocating jumps, handlers and source positions onto the instruction
@@ -335,8 +401,13 @@ fn coalesce_distant_producer_moves(
         }
         let (source, destination) = (mov.register_b(), mov.result_register());
         let pair = register_bit(source) | register_bit(destination);
-        if source == destination
-            || pair.count_ones() != 2
+        // A move of a register onto itself changes nothing anything could observe.
+        if source == destination {
+            function.code[target] = Instr::new(Op::Nop, 0, 0, 0, 0);
+            changed = true;
+            continue;
+        }
+        if pair.count_ones() != 2
             || pair & storage != 0
             || liveness::live_out(function, &live, target, mov.as_wide()) & register_bit(source)
                 != 0
@@ -1300,7 +1371,7 @@ mod tests {
 
     #[test]
     fn recipe_schema_generates_ordered_pattern_rows() {
-        assert_eq!(RULES.len(), 33);
+        assert_eq!(RULES.len(), 35);
         assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
         assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
         assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));
