@@ -60,7 +60,21 @@ impl WideInstruction {
         immediate
             .into_iter()
             .chain(self.numeric_local_target())
+            .chain(self.local_field_base())
             .chain(operands)
+    }
+
+    /// The local slot a field lookup reads its base from (`FieldBase::local`). Only
+    /// field-lookup instructions carry a `FieldBase` in `b`; elsewhere `b` may be an
+    /// operand whose tag bits overlap the local flag.
+    pub(crate) fn local_field_base(self) -> Option<u16> {
+        if self.op().immediate_role() != ImmediateRole::FieldLookup {
+            return None;
+        }
+        match self.field_lookup()? {
+            super::FieldLookup::Atom { base, .. } => base.local_index(),
+            super::FieldLookup::Site(_) => None,
+        }
     }
 
     pub(crate) const fn new(op: Op, a: u16, b: u16, c: u16, imm: u32) -> Self {

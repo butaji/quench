@@ -116,11 +116,13 @@ impl<H: Host> Vm<H> {
             );
         }
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::AsyncDispose) {
+            let native_disposable_stack_dispose_async =
+                self.native_value(Native::DisposableStackDisposeAsync);
             self.set_index(
                 p,
                 prototype,
                 symbol,
-                self.native_value(Native::DisposableStackDisposeAsync),
+                native_disposable_stack_dispose_async,
             )?;
             self.set_property_attributes(
                 prototype,
@@ -135,15 +137,19 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
+        let native_disposable_stack_dispose_with_completion =
+            self.native_value(Native::DisposableStackDisposeWithCompletion);
         self.set_builtin_value_named(
             prototype,
             "\0quench:disposeWithCompletion",
-            self.native_value(Native::DisposableStackDisposeWithCompletion),
+            native_disposable_stack_dispose_with_completion,
         )?;
+        let native_disposable_stack_dispose_async_with_completion =
+            self.native_value(Native::DisposableStackDisposeAsyncWithCompletion);
         self.set_builtin_value_named(
             prototype,
             "\0quench:disposeAsyncWithCompletion",
-            self.native_value(Native::DisposableStackDisposeAsyncWithCompletion),
+            native_disposable_stack_dispose_async_with_completion,
         )?;
         self.install_builtin_to_string_tag(prototype, "DisposableStack")?;
         let disposed = self.native_value(Native::DisposableStackDisposed);
@@ -287,7 +293,7 @@ impl<H: Host> Vm<H> {
         let stack = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let root = self.heap.root(stack);
         let entries = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), Rc::new(vec![])),
+            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), vec![]),
         });
         let entries_atom = self.intern_atom(ENTRIES);
         let disposed_atom = self.intern_atom(DISPOSED);
@@ -453,10 +459,12 @@ impl<H: Host> Vm<H> {
                 return Ok(promise);
             }
         };
+        let native_async_iterator_dispose_fulfilled =
+            self.native_value(Native::AsyncIteratorDisposeFulfilled);
         self.promise_then(
             p,
             awaited,
-            self.native_value(Native::AsyncIteratorDisposeFulfilled),
+            native_async_iterator_dispose_fulfilled,
             Value::UNDEFINED,
         )
     }
@@ -535,7 +543,7 @@ impl<H: Host> Vm<H> {
         let Some(elements) = self.heap.array_elements_mut(entries) else {
             return Err(JsError("DisposableStack entries are invalid".into()));
         };
-        let moved = std::mem::replace(elements, Rc::new(vec![]));
+        let moved = std::mem::take(elements);
         let disposed_atom = self.intern_atom(DISPOSED);
         self.set_property(stack, disposed_atom, Value::TRUE)?;
         let constructor = self.native_value(if async_stack {
@@ -681,19 +689,19 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let entries = self.stack_entries(stack)?;
         let entry = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), Rc::new(vec![
+            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), vec![
                 callback,
                 value,
                 Value::integer(mode),
                 if await_result { Value::TRUE } else { Value::FALSE },
-            ])),
+            ]),
         });
         let Some(elements) = self.heap.array_elements_mut(entries) else {
             return Err(JsError("DisposableStack entries are invalid".into()));
         };
-        let mut values = (**elements).clone();
+        let mut values = elements.to_vec();
         values.push(entry);
-        *elements = Rc::new(values);
+        *elements = values.into();
         Ok(())
     }
 
@@ -730,7 +738,7 @@ impl<H: Host> Vm<H> {
         let Some(elements) = self.heap.array_elements_mut(entries) else {
             return Err(JsError("DisposableStack entries are invalid".into()));
         };
-        let values = std::mem::replace(elements, Rc::new(vec![]));
+        let values = std::mem::take(elements);
         for entry in values.iter().rev().copied() {
             let Some(elements) = self.heap.array_elements(entry) else {
                 continue;
@@ -819,19 +827,19 @@ impl<H: Host> Vm<H> {
         let Some(elements) = self.heap.array_elements_mut(entries) else {
             return Err(JsError("DisposableStack entries are invalid".into()));
         };
-        let values = std::mem::replace(elements, Rc::new(vec![]));
+        let values = std::mem::take(elements);
         let resource_count = values.len();
         let resources = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), values),
         });
         let result = self.with_call_roots([resources], |vm| vm.promise_object())?;
         let state = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), Rc::new(vec![
+            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), vec![
                 resources,
                 Value::number(resource_count as f64),
                 completion,
                 result,
-            ])),
+            ]),
         });
         self.continue_async_disposal(p, state)?;
         Ok(result)
@@ -846,9 +854,9 @@ impl<H: Host> Vm<H> {
 
     fn set_async_disposal_state_value(&mut self, state: Value, slot: usize, value: Value) {
         if let Some(elements) = self.heap.array_elements_mut(state) {
-            let mut updated = (**elements).clone();
+            let mut updated = elements.to_vec();
             updated[slot] = value;
-            *elements = Rc::new(updated);
+            *elements = updated.into();
         }
     }
 

@@ -1,7 +1,7 @@
 //! Shared-VM entry execution used by the development CLI and inventory worker.
 
 use crate::host::NodeHost;
-use quench_runtime::{ExecutionRequest, Runtime, SourceKind};
+use quench_runtime::{ExecutionRequest, MemoryPolicy, Runtime, SourceKind};
 use std::{path::PathBuf, process::ExitCode};
 
 /// Initialize signal policy only at an executable's process boundary. Embedders
@@ -16,6 +16,81 @@ const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
 pub const CHILD_RUNNER_ENV: &str = "QUENCH_CHILD_RUNNER";
 /// Optional installation root containing Node's lib/ and deps/ source assets.
 pub const NODE_LIBRARY_ROOT_ENV: &str = "QUENCH_NODE_LIBRARY_ROOT";
+/// Names the process's memory policy (`MemoryPolicy::name`); unset, it is the default
+/// (throughput). Child processes inherit it with the environment.
+pub const MEMORY_POLICY_ENV: &str = "QUENCH_MEMORY_POLICY";
+/// The CLI's form of `MEMORY_POLICY_ENV`, which takes precedence over it.
+const MEMORY_POLICY_FLAG: &str = "--memory-policy";
+
+/// Under the throughput policy (`MemoryPolicy::Throughput`), glibc's trim threshold is raised
+/// from its 128 KiB default, which pinning the mmap threshold (quench-node's `main`) also pins:
+/// once that much is free at the top of an arena it is returned (`MADV_DONTNEED` in a thread's
+/// arena) and faulted back in by the next allocations. A server freeing and reallocating
+/// stream chunks then spent its time in page faults (video route, 10 connections, 2026-10-22:
+/// ~600K minor faults per 6 s; express 38 -> 58 and fastify 36 -> 67 requests/s with this
+/// threshold, peak VmHWM within 1-4 MB). Freed memory below it stays in the arena for reuse.
+/// The memory-first policy keeps the default, which returns it.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+const TRIM_THRESHOLD_BYTES: libc::c_int = 16 * 1024 * 1024;
+/// The glibc variable that sets the trim threshold instead.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+const TRIM_THRESHOLD_VARIABLE: &str = "MALLOC_TRIM_THRESHOLD_";
+
+/// The allocator setting the process's `policy` takes, applied once when it is selected
+/// (`select_memory_policy`); an explicit `TRIM_THRESHOLD_VARIABLE` wins.
+fn apply_allocator_policy(policy: MemoryPolicy) {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    if policy == MemoryPolicy::Throughput && std::env::var_os(TRIM_THRESHOLD_VARIABLE).is_none() {
+        // SAFETY: mallopt only adjusts allocator parameters.
+        unsafe {
+            libc::mallopt(libc::M_TRIM_THRESHOLD, TRIM_THRESHOLD_BYTES);
+        }
+    }
+    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+    let _ = policy;
+}
+
+/// The process's memory policy. Every runtime the process starts (its entry's, a restore's
+/// replacement, its Workers') uses it: the pages a policy returns at collections
+/// (`resident_pages`) are the process's, not one runtime's. The first selection holds.
+static PROCESS_MEMORY_POLICY: std::sync::OnceLock<MemoryPolicy> = std::sync::OnceLock::new();
+
+/// The policy this process selected, once `select_memory_policy` has run.
+pub(crate) fn process_memory_policy() -> Option<MemoryPolicy> {
+    PROCESS_MEMORY_POLICY.get().copied()
+}
+
+/// Selects the process's memory policy once: the CLI's `chosen` name, else
+/// `MEMORY_POLICY_ENV`, else the default. An unknown name is an error.
+fn select_memory_policy(chosen: Option<&str>) -> Result<MemoryPolicy, String> {
+    if let Some(policy) = PROCESS_MEMORY_POLICY.get() {
+        return Ok(*policy);
+    }
+    let environment = std::env::var_os(MEMORY_POLICY_ENV);
+    let (source, name) = match (chosen, &environment) {
+        (Some(name), _) => (MEMORY_POLICY_FLAG, name),
+        (None, Some(name)) => (
+            MEMORY_POLICY_ENV,
+            name.to_str().ok_or_else(|| format!("{MEMORY_POLICY_ENV} is not valid Unicode"))?,
+        ),
+        (None, None) => return Ok(*PROCESS_MEMORY_POLICY.get_or_init(|| {
+            let policy = MemoryPolicy::default();
+            apply_allocator_policy(policy);
+            policy
+        })),
+    };
+    let policy = MemoryPolicy::from_name(name).ok_or_else(|| {
+        format!("{source}: unknown memory policy '{name}' (expected {})", memory_policy_names())
+    })?;
+    Ok(*PROCESS_MEMORY_POLICY.get_or_init(|| {
+        apply_allocator_policy(policy);
+        policy
+    }))
+}
+
+fn memory_policy_names() -> String {
+    MemoryPolicy::ALL.map(MemoryPolicy::name).join("|")
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryGoal {
@@ -230,6 +305,7 @@ fn execute_shared_on_worker(
         }
     };
 
+    let memory_policy = select_memory_policy(None)?;
     let new_host = |worker: Option<crate::modules::worker_shared_vm::WorkerContext>| -> Result<NodeHost, String> {
         let mut host = NodeHost::new(argv.clone()).with_exec_argv(exec_argv.clone())?;
         host.inline_source = inline_source;
@@ -258,6 +334,7 @@ fn execute_shared_on_worker(
         teardown,
     };
     runtime.set_execution_mode(mode);
+    runtime.set_memory_policy(memory_policy);
     let mut program = runtime.compile_entry(request).map_err(|error| format!("{error:?}"))?;
     let mut restored = false;
     if let Some(snapshot) = snapshot {
@@ -272,6 +349,7 @@ fn execute_shared_on_worker(
                 // The restore may have left the runtime half replaced: boot a fresh one.
                 *runtime = Runtime::new(new_host(None)?);
                 runtime.set_execution_mode(mode);
+                runtime.set_memory_policy(memory_policy);
                 program = runtime.compile_entry(request).map_err(|error| format!("{error:?}"))?;
             }
         }
@@ -387,7 +465,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let args = arguments.into_iter().collect::<Vec<_>>();
     match args.first().map(String::as_str) {
         Some("--help") | Some("-h") => {
-            println!("quench-node [--jit] [-e CODE|SCRIPT]");
+            println!("quench-node [--jit] [{MEMORY_POLICY_FLAG}={}] [-e CODE|SCRIPT]", memory_policy_names());
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
@@ -398,11 +476,15 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut eval_source = None;
     let mut print = false;
     let mut jit = false;
+    let mut memory_policy = None;
     let mut guest_arguments = Vec::new();
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
             "--jit" => jit = true,
+            option if option.split_once('=').is_some_and(|(name, _)| name == MEMORY_POLICY_FLAG) => {
+                memory_policy = option.split_once('=').map(|(_, value)| value.to_owned());
+            }
             "--version" | "-v" => {
                 println!("v{}", crate::modules::process_state::NODE_VERSION);
                 return Ok(ExitCode::SUCCESS);
@@ -534,6 +616,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         }
         index += 1;
     }
+    select_memory_policy(memory_policy.as_deref())?;
     if let Some(source) = eval_source {
         input = Some(SharedInput::Eval {
             source,

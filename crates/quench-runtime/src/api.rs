@@ -9,7 +9,7 @@ mod native;
 pub(crate) use native::CompiledScriptState;
 pub use native::{
     BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, PreparedScript, NativeArithmetic,
-    CompiledScript, NativeContext, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
+    CompiledScript, NativeContext, RootScopeMark, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
     DeserializerDelegate, SerializerDelegate,
 };
 
@@ -85,6 +85,16 @@ impl<H: Host> Runtime<H> {
     /// Choose how JavaScript and Wasm functions execute; see [`ExecutionMode`].
     pub fn set_execution_mode(&mut self, mode: crate::ExecutionMode) {
         self.vm.set_execution_mode(mode);
+    }
+
+    /// Choose how this runtime trades memory for speed; see [`crate::MemoryPolicy`]. Set it
+    /// at startup, before the program runs; a runtime that sets none uses the default.
+    pub fn set_memory_policy(&mut self, policy: crate::MemoryPolicy) {
+        self.vm.set_memory_policy(policy);
+    }
+
+    pub fn memory_policy(&self) -> crate::MemoryPolicy {
+        self.vm.memory_policy()
     }
 
     /// Construct the Vm on this thread with an owned cancellation authority.
@@ -535,6 +545,15 @@ impl<H: Host> Runtime<H> {
         Ok(())
     }
 
+    /// The VM's GC safepoint between calls: a collection runs when the VM's own pacing
+    /// makes one due, as at a back edge. A host's event-loop turn, which may run no guest
+    /// loop, names it so a due collection does not wait for one.
+    pub fn collect_if_due(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        program.validate_unless_proven().map_err(JsError::validation)?;
+        self.vm.maybe_collect(program);
+        Ok(())
+    }
+
     pub fn compile_and_execute(
         &mut self,
         request: ExecutionRequest<'_>,
@@ -563,34 +582,16 @@ pub enum RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{cell::RefCell, rc::Rc};
+    use crate::test_host::TestHost;
 
-    #[derive(Clone, Default)]
-    struct Capture(Rc<RefCell<Vec<String>>>);
 
-    impl Host for Capture {
-        fn write_line(&mut self, text: &str) {
-            self.0.borrow_mut().push(text.into());
-        }
-
-        fn globals(&self) -> &'static [crate::HostGlobal] {
-            &[crate::HostGlobal {
-                name: "$262",
-                capability: crate::CapabilityId::CreateRealm,
-            }]
-        }
-
-        fn clock_millis(&mut self) -> f64 {
-            0.0
-        }
-    }
 
     fn assert_output_in_execution_modes(source: &str, expected: &[&str]) {
         for (mode, compile) in [
             ("specialized", Engine::specialize as fn(&str, &str) -> _),
             ("unspecialized", Engine::specialize_unspecialized),
         ] {
-            let host = Capture::default();
+            let host = TestHost::default().with_test262();
             let view = host.clone();
             let mut runtime = Runtime::new(host);
             let program = compile(source, "regression.js").unwrap();
@@ -598,10 +599,10 @@ mod tests {
                 panic!(
                     "{mode}: {} (output: {:?})",
                     runtime.format_error(&program, &error),
-                    view.0.borrow().as_slice(),
+                    view.lines().as_slice(),
                 );
             }
-            assert_eq!(view.0.borrow().as_slice(), expected, "{mode}");
+            assert_eq!(view.lines().as_slice(), expected, "{mode}");
         }
     }
 
@@ -776,10 +777,10 @@ mod tests {
         program.write_binary(&path).unwrap();
         let decoded = ResidualProgram::read_binary(&path).unwrap();
         std::fs::remove_file(path).unwrap();
-        let host = Capture::default();
+        let host = TestHost::default().with_test262();
         let view = host.clone();
         Runtime::new(host).execute(&decoded).unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["0,0", "1,1", "true"]);
+        assert_eq!(view.lines().as_slice(), ["0,0", "1,1", "true"]);
     }
 
     #[test]
@@ -1088,11 +1089,11 @@ mod tests {
         program.write_binary(&path).unwrap();
         let decoded = ResidualProgram::read_binary(&path).unwrap();
         std::fs::remove_file(path).unwrap();
-        let host = Capture::default();
+        let host = TestHost::default().with_test262();
         let view = host.clone();
         let mut runtime = Runtime::new(host);
         runtime.execute(&decoded).unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["5", "9"]);
+        assert_eq!(view.lines().as_slice(), ["5", "9"]);
     }
 
     #[test]
@@ -2032,10 +2033,10 @@ print(RegExp.prototype[Symbol.replace].call(custom,'abc','$<z>$<z>')==='a\ud800\
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 Runtime::new(host).execute(&program).unwrap();
-                assert_eq!(output.0.borrow().as_slice(), &["true"; 15]);
+                assert_eq!(output.lines().as_slice(), &["true"; 15]);
             }
         }
     }
@@ -2058,10 +2059,10 @@ var reason={};try{Date.parse({toString(){throw reason;}});print(false);}catch(e)
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 Runtime::new(host).execute(&program).unwrap();
-                assert_eq!(output.0.borrow().as_slice(), &["true"; 109]);
+                assert_eq!(output.lines().as_slice(), &["true"; 109]);
             }
         }
     }
@@ -2116,29 +2117,16 @@ checkSources().then(()=>print('done'),e=>{print('unexpected');print(e);});
                 "import source x from './leaf.mjs';export {x};\n",
             ),
         ];
-        struct ModuleCapture(Capture);
-        impl Host for ModuleCapture {
-            fn write_line(&mut self, text: &str) {
-                self.0.write_line(text);
-            }
-            fn clock_millis(&mut self) -> f64 {
-                0.0
-            }
-            fn globals(&self) -> &'static [crate::HostGlobal] {
-                self.0.globals()
-            }
-            fn resolve_dynamic_import(
-                &mut self,
-                _: &str,
-                specifier: &str,
-            ) -> Result<Option<crate::host::ModuleSource>, crate::ModuleLoadError> {
+        let modules = |host: TestHost| {
+            host
+                .with_modules(|specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
                 let file = specifier.rsplit('/').next().unwrap();
                 Ok(MODULES
                     .iter()
                     .find(|(name, _)| *name == file)
                     .map(|(_, source)| crate::host::ModuleSource::text(format!("task20-module-source-fixtures/{file}"), *source)))
-            }
-        }
+            })
+        };
         for compile in [
             Engine::specialize as fn(&str, &str) -> _,
             Engine::specialize_unspecialized,
@@ -2150,13 +2138,13 @@ checkSources().then(()=>print('done'),e=>{print('unexpected');print(e);});
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
-                let mut runtime = Runtime::new(ModuleCapture(host));
+                let mut runtime = Runtime::new(modules(host));
                 runtime.execute(&program).unwrap();
                 let mut expected = vec!["true"; 32];
                 expected.push("done");
-                assert_eq!(output.0.borrow().as_slice(), expected.as_slice());
+                assert_eq!(output.lines().as_slice(), expected.as_slice());
             }
         }
         for compile in [
@@ -2173,16 +2161,16 @@ checkSources().then(()=>print('done'),e=>{print('unexpected');print(e);});
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
-                let mut runtime = Runtime::new(ModuleCapture(host));
+                let mut runtime = Runtime::new(modules(host));
                 let error = runtime.execute(&program).unwrap_err();
                 assert!(
                     runtime
                         .format_error(&program, &error)
                         .starts_with("SyntaxError:")
                 );
-                assert!(output.0.borrow().is_empty());
+                assert!(output.lines().is_empty());
             }
         }
     }
@@ -2225,11 +2213,11 @@ print(Function('var let=2; let.foo=3; let( );') instanceof Function);
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 let mut runtime = Runtime::new(host);
                 runtime.execute(&program).unwrap();
-                assert_eq!(output.0.borrow().as_slice(), &["true"; 44]);
+                assert_eq!(output.lines().as_slice(), &["true"; 44]);
             }
         }
     }
@@ -2281,13 +2269,13 @@ checkDisposal().then(()=>print('done'), e=>{print('unexpected');print(e);});
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 let mut runtime = Runtime::new(host);
                 runtime.execute(&program).unwrap();
                 let mut expected = vec!["true"; 35];
                 expected.push("done");
-                assert_eq!(output.0.borrow().as_slice(), expected.as_slice());
+                assert_eq!(output.lines().as_slice(), expected.as_slice());
             }
         }
     }
@@ -2314,11 +2302,11 @@ for(var source of ['"\\u{}"','"\\u{110000}"','"\\xG0"']){try{eval(source);print(
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 let mut runtime = Runtime::new(host);
                 runtime.execute(&program).unwrap();
-                assert_eq!(output.0.borrow().as_slice(), &["true"; 49]);
+                assert_eq!(output.lines().as_slice(), &["true"; 49]);
             }
         }
     }
@@ -2345,11 +2333,11 @@ var d=Object.getOwnPropertyDescriptor(Math,'atanh');print(Math.atanh.length===1 
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 let mut runtime = Runtime::new(host);
                 runtime.execute(&program).unwrap();
-                assert_eq!(output.0.borrow().as_slice(), &["true"; 35]);
+                assert_eq!(output.lines().as_slice(), &["true"; 35]);
             }
         }
     }
@@ -2387,11 +2375,11 @@ Object.setPrototypeOf(globalThis,old);try{qq_plain;print(false);}catch(e){print(
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 let mut runtime = Runtime::new(host);
                 runtime.execute(&program).unwrap();
-                assert_eq!(output.0.borrow().as_slice(), &["true"; 34]);
+                assert_eq!(output.lines().as_slice(), &["true"; 34]);
             }
         }
     }
@@ -2432,11 +2420,11 @@ print(Symbol.prototype!==foreign.Symbol.prototype && Symbol!==foreign.Symbol);
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 let mut runtime = Runtime::new(host);
                 runtime.execute(&program).unwrap();
-                assert_eq!(output.0.borrow().as_slice(), &["true"; 47]);
+                assert_eq!(output.lines().as_slice(), &["true"; 47]);
             }
         }
     }
@@ -2470,11 +2458,11 @@ try{Function('return {__proto__:null,"__proto__":null}');print(false);}catch(e){
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 let mut runtime = Runtime::new(host);
                 runtime.execute(&program).unwrap();
-                assert_eq!(output.0.borrow().as_slice(), &["true"; 39]);
+                assert_eq!(output.lines().as_slice(), &["true"; 39]);
             }
         }
     }
@@ -2514,11 +2502,11 @@ try{0+date;print(false);}catch(e){print(e===reason && log.join('|')==='hook');}
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 let mut runtime = Runtime::new(host);
                 runtime.execute(&program).unwrap();
-                assert_eq!(output.0.borrow().as_slice(), &["true"; 32]);
+                assert_eq!(output.lines().as_slice(), &["true"; 32]);
             }
         }
     }
@@ -2564,12 +2552,12 @@ var cause={}, E=Error;Error=function(){throw 'replaced';};try{null.x;}catch(e){p
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 let mut runtime = Runtime::new(host);
                 runtime.execute(&program).unwrap();
                 assert_eq!(
-                    output.0.borrow().as_slice(),
+                    output.lines().as_slice(),
                     &[
                         "true", "true", "true", "true", "true", "true", "true", "true", "true",
                         "true", "true", "true", "true", "true", "true", "true", "true", "true",
@@ -2617,11 +2605,11 @@ const generator=suspended(kept);print(generator.next().value);print(generator.ne
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 Runtime::new(host).execute(&program).unwrap();
                 assert_eq!(
-                    output.0.borrow().as_slice(),
+                    output.lines().as_slice(),
                     &[
                         "true", "true", "true", "true", "true", "true", "true", "true"
                     ]
@@ -2662,12 +2650,12 @@ var [a,b]=iterable; print(a===1 && b===2 && log.join('|')==='next|return');
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 let mut runtime = Runtime::new(host);
                 runtime.execute(&program).unwrap();
                 assert_eq!(
-                    output.0.borrow().as_slice(),
+                    output.lines().as_slice(),
                     &[
                         "array-spread:true",
                         "call-spread:true",
@@ -2787,12 +2775,12 @@ check();
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 let mut runtime = Runtime::new(host);
                 runtime.execute(&program).unwrap();
                 assert_eq!(
-                    output.0.borrow().as_slice(),
+                    output.lines().as_slice(),
                     &[
                         "true", "true", "true", "true", "true", "true", "true", "true", "true",
                         "true", "true", "true", "true", "true", "true", "true", "true", "true",
@@ -2844,12 +2832,12 @@ print(outer()===null);
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 let mut runtime = Runtime::new(host);
                 runtime.execute(&program).unwrap();
                 assert_eq!(
-                    output.0.borrow().as_slice(),
+                    output.lines().as_slice(),
                     &[
                         "first|last",
                         "true",
@@ -2921,12 +2909,12 @@ print(Names.plain.name==='plain'); print(Names[symbol].name==='[slot]'); print(N
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 let mut runtime = Runtime::new(host);
                 runtime.execute(&program).unwrap();
                 assert_eq!(
-                    output.0.borrow().as_slice(),
+                    output.lines().as_slice(),
                     &[
                         "key|before|x|computed|41|after",
                         "true",
@@ -3004,12 +2992,12 @@ shadow(47);
             let decoded = ResidualProgram::read_binary(&path).unwrap();
             std::fs::remove_file(path).unwrap();
             for program in [program, decoded] {
-                let host = Capture::default();
+                let host = TestHost::default().with_test262();
                 let output = host.clone();
                 let mut runtime = Runtime::new(host);
                 runtime.execute(&program).unwrap();
                 assert_eq!(
-                    output.0.borrow().as_slice(),
+                    output.lines().as_slice(),
                     &[
                         "true", "true", "true", "true", "true", "true", "true", "true", "true",
                         "true", "true", "true", "true", "true", "true", "true", "true", "true",
@@ -4035,12 +4023,12 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             let decoded = ResidualProgram::read_binary(&path);
             std::fs::remove_file(path).unwrap();
             let decoded = decoded.unwrap();
-            let host = Capture::default();
+            let host = TestHost::default().with_test262();
             let output = host.clone();
             let mut runtime = Runtime::new(host);
             runtime.execute(&decoded).unwrap();
             assert_eq!(
-                output.0.borrow().as_slice(),
+                output.lines().as_slice(),
                 &[
                     "0", "42", "43", "44", "true", "false", "true", "function", "function",
                     "false", "function", "function", "true"
@@ -4933,21 +4921,19 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             ("evaluation-failure.mjs", "globalThis.evaluationEffects = (globalThis.evaluationEffects || 0) + 1; throw new Error('evaluation');"),
             ("effect.mjs", "globalThis.failureEffects = (globalThis.failureEffects || 0) + 1; export const value = 43;"),
         ];
-        struct ModuleCapture(Capture);
-        impl Host for ModuleCapture {
-            fn write_line(&mut self, text: &str) { self.0.write_line(text); }
-            fn clock_millis(&mut self) -> f64 { 0.0 }
-            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
+        let modules = |host: TestHost| {
+            host.without_globals()
+                .with_modules(|specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
                 let name = specifier.rsplit('/').next().unwrap();
                 Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource::text(format!("cyclic-module-graph/{name}"), *source)))
-            }
-        }
+            })
+        };
         for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
-            let view = Capture::default();
-            let mut runtime = Runtime::new(ModuleCapture(view.clone()));
+            let view = TestHost::default().with_test262();
+            let mut runtime = Runtime::new(modules(view.clone()));
             let program = compile(SOURCE, "cyclic-module-graph/entry.mjs").unwrap();
             runtime.execute(&program).unwrap();
-            assert_eq!(view.0.borrow().as_slice(), &["true", "[\"b\",\"a\"]", "1", "true", "true", "true", "2:2:2", "2", "true", "true", "true", "true", "true"]);
+            assert_eq!(view.lines().as_slice(), &["true", "[\"b\",\"a\"]", "1", "true", "true", "true", "2:2:2", "2", "true", "true", "true", "true", "true"]);
         }
     }
 
@@ -4976,28 +4962,25 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             ("source-reexport.mjs", "export * from './source-1.mjs'; export * from './source-2.mjs';"),
             ("harness-reader.mjs", "export const harness = typeof harnessGlobal;"),
         ];
-        struct ModuleCapture(Capture);
-        impl Host for ModuleCapture {
-            fn write_line(&mut self, text: &str) { self.0.write_line(text); }
-            fn globals(&self) -> &'static [crate::HostGlobal] { self.0.globals() }
-            fn clock_millis(&mut self) -> f64 { 0.0 }
-            fn has_module_source(&self, module: &crate::ModuleSource) -> bool { module.name == "<source>" }
-            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
+        let modules = |host: TestHost| {
+            host
+                .with_modules(|specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
                 if specifier == "<source>" {
                     return Ok(Some(crate::ModuleSource::text(specifier, "")));
                 }
                 let name = specifier.rsplit('/').next().unwrap();
                 Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource::text(format!("deferred-module-graph/{name}"), *source)))
-            }
-        }
+            })
+                .with_module_sources(|module: &crate::ModuleSource| { module.name == "<source>" })
+        };
         for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
-            let view = Capture::default();
-            let mut runtime = Runtime::new(ModuleCapture(view.clone()));
+            let view = TestHost::default().with_test262();
+            let mut runtime = Runtime::new(modules(view.clone()));
             let program = compile(SOURCE, "deferred-module-graph/entry.mjs").unwrap();
             runtime
                 .execute_after_scripts(&[("function harnessGlobal() {}", "harness.js")], &program)
                 .unwrap();
-            assert_eq!(view.0.borrow().as_slice(), &["3", "async start,async end,entry,deferred", "true", "true", "function"]);
+            assert_eq!(view.lines().as_slice(), &["3", "async start,async end,entry,deferred", "true", "true", "function"]);
         }
     }
 
@@ -5031,33 +5014,23 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             print(Object.getOwnPropertyDescriptor(ns, 'answer').writable);
             print(Object.getOwnPropertyDescriptor(ns, Symbol.toStringTag).writable);
         "#;
-        struct ModuleCapture(Capture);
-        impl Host for ModuleCapture {
-            fn write_line(&mut self, text: &str) {
-                self.0.write_line(text);
-            }
-            fn clock_millis(&mut self) -> f64 {
-                0.0
-            }
-            fn resolve_dynamic_import(
-                &mut self,
-                _: &str,
-                specifier: &str,
-            ) -> Result<Option<crate::host::ModuleSource>, crate::ModuleLoadError> {
+        let modules = |host: TestHost| {
+            host.without_globals()
+                .with_modules(|specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
                 assert_eq!(specifier, "./integrity-dependency.mjs");
                 Ok(Some(crate::host::ModuleSource::text("integrity-dependency.mjs", DEPENDENCY)))
-            }
-        }
+            })
+        };
         for compile in [
             Engine::specialize_module as fn(&str, &str) -> _,
             Engine::specialize_module_unspecialized,
         ] {
-            let view = Capture::default();
-            let mut runtime = Runtime::new(ModuleCapture(view.clone()));
+            let view = TestHost::default().with_test262();
+            let mut runtime = Runtime::new(modules(view.clone()));
             let program = compile(SOURCE, "integrity-namespace.mjs").unwrap();
             runtime.execute(&program).unwrap();
             assert_eq!(
-                view.0.borrow().as_slice(),
+                view.lines().as_slice(),
                 &[
                     "true", "true", "false", "true", "42", "43", "43", "43", "44", "44", "true",
                     "false", "43", "true", "false"
@@ -5123,33 +5096,23 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             var names=[];for(var name in ns) names.push(name);print(JSON.stringify(names));
             print(JSON.stringify(Object.keys({'2':1,z:1,'10':1,a:1})));
         "#;
-        struct Modules(Capture);
-        impl Host for Modules {
-            fn write_line(&mut self, text: &str) {
-                self.0.write_line(text);
-            }
-            fn clock_millis(&mut self) -> f64 {
-                0.0
-            }
-            fn resolve_dynamic_import(
-                &mut self,
-                _: &str,
-                specifier: &str,
-            ) -> Result<Option<crate::host::ModuleSource>, crate::ModuleLoadError> {
+        let modules = |host: TestHost| {
+            host.without_globals()
+                .with_modules(|specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
                 assert_eq!(specifier, "./ordered-namespace.mjs");
                 Ok(Some(crate::host::ModuleSource::text("ordered-namespace.mjs", DEPENDENCY)))
-            }
-        }
+            })
+        };
         for compile in [
             Engine::specialize_module as fn(&str, &str) -> _,
             Engine::specialize_module_unspecialized,
         ] {
-            let view = Capture::default();
-            let mut runtime = Runtime::new(Modules(view.clone()));
+            let view = TestHost::default().with_test262();
+            let mut runtime = Runtime::new(modules(view.clone()));
             let program = compile(SOURCE, "namespace-order.mjs").unwrap();
             runtime.execute(&program).unwrap();
             assert_eq!(
-                view.0.borrow().as_slice(),
+                view.lines().as_slice(),
                 &[
                     "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
                     "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
@@ -8508,8 +8471,8 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
     fn regression_runtime_owners_share_recursion_budget() {
         let program = Engine::specialize("print(42);", "reentry.js").unwrap();
         let mut runtimes = [
-            Runtime::new(Capture::default()),
-            Runtime::new(Capture::default()),
+            Runtime::new(TestHost::default().with_test262()),
+            Runtime::new(TestHost::default().with_test262()),
         ];
         let mut guards = Vec::new();
         while let Ok(guard) = quench_stack::StackGuard::enter() {
@@ -9673,18 +9636,18 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
 
     #[test]
     fn script_requests_use_the_validated_runtime_boundary() {
-        let host = Capture::default();
+        let host = TestHost::default().with_test262();
         let view = host.clone();
         let mut runtime = Runtime::new(host);
         runtime
             .compile_and_execute(ExecutionRequest::script("print(40 + 2);", "boundary.js"))
             .unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["42"]);
+        assert_eq!(view.lines().as_slice(), ["42"]);
     }
 
     #[test]
     fn module_evaluation_query_follows_execution_gc_and_reinitialization() {
-        let mut runtime = Runtime::new(Capture::default());
+        let mut runtime = Runtime::new(TestHost::default().with_test262());
         let pending =
             Engine::specialize_module("await new Promise(() => {});", "pending.mjs").unwrap();
         assert!(runtime.module_evaluation_pending(&pending).is_err());
@@ -9708,7 +9671,7 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
     #[test]
     fn generic_reference_matches_specialized_output() {
         let source = "var proto = { answer: 41 }; var other = Object.create({ answer: 1 }); var object = Object.create(proto); object.add = function(value) { return value + 1; }; function read(value) { return value.answer; } print(read(object) + read(other) + object.add(1));";
-        let optimized_host = Capture::default();
+        let optimized_host = TestHost::default().with_test262();
         let optimized_view = optimized_host.clone();
         let mut optimized = Runtime::new(optimized_host);
         let optimized_program = Engine::specialize(source, "optimized.js").unwrap();
@@ -9722,7 +9685,7 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
         }));
         optimized.execute(&optimized_program).unwrap();
 
-        let generic_host = Capture::default();
+        let generic_host = TestHost::default().with_test262();
         let generic_view = generic_host.clone();
         let mut generic = Runtime::new(generic_host);
         let generic_program = Engine::specialize_unspecialized(source, "generic.js").unwrap();
@@ -9730,15 +9693,15 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
         generic.execute(&generic_program).unwrap();
 
         assert_eq!(
-            optimized_view.0.borrow().as_slice(),
-            generic_view.0.borrow().as_slice()
+            optimized_view.lines().as_slice(),
+            generic_view.lines().as_slice()
         );
     }
 
     #[test]
     fn wide_instruction_side_table_executes_through_the_general_core() {
         let source = format!("print([{}].length);", "0,".repeat(4097));
-        let host = Capture::default();
+        let host = TestHost::default().with_test262();
         let view = host.clone();
         let mut runtime = Runtime::new(host);
         let program = Engine::specialize(&source, "wide.js").unwrap();
@@ -9759,12 +9722,12 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
                 .any(|function| !function.wide.is_empty())
         );
         runtime.execute(&decoded).unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["4097"]);
+        assert_eq!(view.lines().as_slice(), ["4097"]);
     }
 
     #[test]
     fn oxc_lone_surrogate_escapes_retain_utf16_units() {
-        let host = Capture::default();
+        let host = TestHost::default().with_test262();
         let view = host.clone();
         let mut runtime = Runtime::new(host);
         let program = Engine::compile(ExecutionRequest::script(
@@ -9777,12 +9740,12 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
         let decoded = ResidualProgram::read_binary(&path).unwrap();
         std::fs::remove_file(path).unwrap();
         runtime.execute(&decoded).unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["1", "55296"]);
+        assert_eq!(view.lines().as_slice(), ["1", "55296"]);
     }
 
     #[test]
     fn finalization_registry_drains_collected_targets_after_their_root_is_cleared() {
-        let host = Capture::default();
+        let host = TestHost::default().with_test262();
         let view = host.clone();
         let mut runtime = Runtime::new(host);
         runtime
@@ -9791,12 +9754,12 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
                 "finalization-drain.js",
             ))
             .unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["done", "7"]);
+        assert_eq!(view.lines().as_slice(), ["done", "7"]);
     }
 
     #[test]
     fn stale_root_cannot_enqueue_a_job() {
-        let mut runtime = Runtime::new(Capture::default());
+        let mut runtime = Runtime::new(TestHost::default().with_test262());
         let root = runtime.root(Value::UNDEFINED);
         assert!(runtime.release_root(root));
         assert!(!runtime.enqueue_rooted_job(root, &[]));
@@ -9804,8 +9767,8 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
 
     #[test]
     fn root_handles_cannot_cross_runtime_boundaries() {
-        let mut owner = Runtime::new(Capture::default());
-        let mut other = Runtime::new(Capture::default());
+        let mut owner = Runtime::new(TestHost::default().with_test262());
+        let mut other = Runtime::new(TestHost::default().with_test262());
         let owned_root = owner.root(Value::number(1.0));
         let other_root = other.root(Value::number(2.0));
 
@@ -9818,7 +9781,7 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
 
     #[test]
     fn explicit_collection_preserves_runtime_roots() {
-        let mut runtime = Runtime::new(Capture::default());
+        let mut runtime = Runtime::new(TestHost::default().with_test262());
         let program = Engine::specialize("print(0);", "collect.js").unwrap();
         runtime.execute(&program).unwrap();
         let root = runtime.root(Value::number(42.0));
@@ -9829,7 +9792,7 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
 
     #[test]
     fn rooted_execution_completion_survives_collection() {
-        let mut runtime = Runtime::new(Capture::default());
+        let mut runtime = Runtime::new(TestHost::default().with_test262());
         let program = Engine::specialize("print('ran');", "rooted-result.js").unwrap();
         let completion = runtime.execute_rooted(&program).unwrap();
 

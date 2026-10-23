@@ -210,6 +210,22 @@ pub(crate) struct IntegerEncoding(u64);
 /// The tag bits an encoded i32 carries; compiled code encodes in place.
 pub(crate) const INTEGER_TAG_BITS: u64 = TAG_INT;
 
+/// The encoding facts compiled code tests and builds values with (`Value::number`,
+/// `Value::is_tagged`).
+pub(crate) struct ValueLayout;
+
+impl ValueLayout {
+    pub(crate) const TAG_MASK: u64 = TAG_MASK;
+    pub(crate) const INT_TAG: u64 = TAG_INT;
+    pub(crate) const DELETED_TAG: u64 = TAG_DELETED;
+    pub(crate) const CANONICAL_NAN: u64 = CANONICAL_NAN;
+    /// A tag field is the bits at and above this shift.
+    pub(crate) const TAG_SHIFT: u32 = TAG_SHIFT;
+    /// The first tag's field; a value is tagged when its field less this is at most the span.
+    pub(crate) const FIRST_TAG_FIELD: u64 = FIRST_TAG >> TAG_SHIFT;
+    pub(crate) const TAG_FIELD_SPAN: u64 = (LAST_TAG - FIRST_TAG) >> TAG_SHIFT;
+}
+
 impl IntegerEncoding {
     pub(crate) const TAG: Self = Self(TAG_INT);
 
@@ -224,6 +240,12 @@ impl Value {
     pub const NULL: Self = Self(TAG_NULL);
     pub const FALSE: Self = Self(TAG_BOOL);
     pub const TRUE: Self = Self(TAG_BOOL | 1);
+
+    /// The Boolean `value`.
+    #[inline(always)]
+    pub const fn boolean(value: bool) -> Self {
+        if value { Self::TRUE } else { Self::FALSE }
+    }
     pub(crate) const DELETED: Self = Self(TAG_DELETED);
     /// The canonical NaN `number` stores every NaN as.
     pub(crate) const NAN: Self = Self(CANONICAL_NAN);
@@ -503,6 +525,18 @@ impl Value {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_FUNCTION_HANDLE_BITS).then_some(self.0 as u32)
     }
 
+    /// Whether the value names a direct record of an object family: an ordinary object,
+    /// array, function, promise or iterator. Every such value is an object; strings and
+    /// await states, the other direct families, are not.
+    #[inline(always)]
+    pub(crate) fn is_direct_object_family(self) -> bool {
+        self.direct_object_index().is_some()
+            || self.direct_array_index().is_some()
+            || self.direct_function_index().is_some()
+            || self.direct_promise_index().is_some()
+            || self.direct_iterator_index().is_some()
+    }
+
     pub fn is_undefined(self) -> bool {
         self.0 == TAG_UNDEFINED
     }
@@ -522,11 +556,32 @@ impl Value {
             )
     }
 
+    /// ToNumber where the value alone decides it: a Number, a Boolean, `null` or `undefined`
+    /// (the deleted marker reads as `undefined`). `None` for a heap value, whose conversion
+    /// reads its cell and may run guest code.
+    #[inline(always)]
+    pub(crate) fn immediate_number(self) -> Option<f64> {
+        if let Some(number) = self.as_number() {
+            return Some(number);
+        }
+        if let Some(value) = self.as_bool() {
+            return Some(if value { 1.0 } else { 0.0 });
+        }
+        if self.is_null() {
+            return Some(0.0);
+        }
+        (self.is_undefined() || self.is_deleted()).then_some(f64::NAN)
+    }
+
     /// ToBoolean where the value alone decides it: Numbers, the primitive tags, and object
     /// and array records, which hold only ordinary objects and arrays and so never "", 0n or
     /// the IsHTMLDDA function. `None` leaves another heap value to its cell.
     #[inline(always)]
     pub(crate) fn truthiness(self) -> Option<bool> {
+        // A boolean first, in one test: conditions mostly test comparison results.
+        if self.0 & !(Self::TRUE.0 ^ Self::FALSE.0) == Self::FALSE.0 {
+            return Some(self == Self::TRUE);
+        }
         if let Some(number) = self.as_number() {
             return Some(!(number == 0.0 || number.is_nan()));
         }

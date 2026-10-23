@@ -2,8 +2,17 @@ const HEX_ESCAPE_DIGITS: usize = 2;
 const UNICODE_ESCAPE_DIGITS: usize = 4;
 const MAX_UNICODE_CODEPOINT: u32 = char::MAX as u32;
 
+/// A pattern's early errors: those its parse finds (`quench_regexp::validate_property_escapes`)
+/// and those of its text (`validate_pattern_text`).
 pub(crate) fn validate_pattern(pattern: &str, flags: &str) -> Result<(), String> {
     quench_regexp::validate_property_escapes(pattern, flags)?;
+    validate_pattern_text(pattern, flags)
+}
+
+/// The early errors `validate_pattern` finds in a pattern's text beyond its parse, for a
+/// pattern whose matcher compilation parses it with the same checks
+/// (`quench_regexp::Regex::with_flags`).
+pub(crate) fn validate_pattern_text(pattern: &str, flags: &str) -> Result<(), String> {
     validate_initial_quantifier(pattern)?;
     validate_braced_quantifier(pattern)?;
     validate_quantified_assertions(pattern, flags.contains('u') || flags.contains('v'))?;

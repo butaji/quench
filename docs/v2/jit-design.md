@@ -2,9 +2,21 @@
 
 ## Goal
 
-Make JIT mode in `quench-node` beat JIT-enabled Node and Bun on JetStream 3.0 Score while using less maximum RSS, first on the server-side JavaScript fixtures. Keep the interpreted mode as the default and preserve its results. Use one OXC frontend, one residual bytecode representation and the same `Vm`, heap and host APIs in both modes. TypeScript is erased by the existing frontend; Wasm keeps its current decoder and enters that same VM.
+Make `quench-node` score at least 20% above every measured peer on JetStream 3.0 in both no-JIT and JIT modes, while using less maximum RSS in JIT mode. These are separate performance goals: JIT tier work cannot improve no-JIT execution because no-JIT never enters compiled tiers. Keep the interpreted mode as the default and preserve its results. Use one OXC frontend, one residual bytecode representation and the same `Vm`, heap and host APIs in both modes. TypeScript is erased by the existing frontend; Wasm keeps its current decoder and enters that same VM.
 
-The pass condition is workload-specific and measured: stock JetStream validation, 11 or more matched rounds, and a paired 95% bootstrap interval showing Quench's score ratio above 1 and its maximum-RSS ratio below 1 against each available JIT-enabled bar. Qualify on Linux x86_64 and M4 separately. A single run is a screen, not a win. JetStream 3 contains both compute-heavy JavaScript and Wasm, so continue to its Wasm fixtures after the JavaScript tier has a useful measured path.
+The pass condition is measured on stock JetStream with 11 or more matched rounds: in each execution mode, the lower bound of the paired 95% bootstrap interval for Quench's suite score ratio must be at least 1.20 against every available peer. In JIT mode, the paired maximum-RSS ratio must also remain below 1 against each peer. Qualify on Linux x86_64 and M4 separately. A single run is a screen, not a win. JetStream 3 contains both compute-heavy JavaScript and Wasm, so continue to its Wasm fixtures after the JavaScript tier has a useful measured path.
+
+Track no-JIT independently through interpreter, allocation, garbage collection and host-call paths; compiled-tier coverage only contributes to the JIT objective. Existing historical screens are far from the new threshold (about 0.49× Bun's suite score in no-JIT and 0.058–0.085× the JIT peers in JIT), so architecture consolidation is enabling work rather than evidence of a near-term suite win. Rebaseline both modes on this branch before attributing any change, and rank follow-up work by hot execution coverage and paired score deltas.
+
+## Unified execution architecture (active contract)
+
+There is one JavaScript bytecode semantics authority. A Rust macro declaratively records each opcode's operands, effect class, lane behavior and compiled denotation; it generates the fast-lane handler wiring and the per-instruction lowering entry points in `vm/compiled.rs`. Both generated paths call the same semantic helpers for observable behavior. A new opcode implementation therefore has one semantic definition, and an optimization may specialize only behind explicit guards that retain the same helper or resume the lane on failure. This is the contract for replacing duplicated hand-maintained lane and compiler decision trees.
+
+`vm/compiled.rs` is the sole region compiler. A region mode distinguishes function entry from loop OSR; both use the same bytecode decoder, instruction denotations, abstract state, guard representation, code-memory publisher and resume-map format. The OSR entry supplies the current loop-header PC and live register state. Any failed speculative guard returns to the fast lane at that exact failing instruction with the interpreter-visible frame, registers, handlers and pending completion intact. Effects remain ordered through shared semantic helpers. No failure path restarts a region after effects or skips an instruction.
+
+One tier manager owns hotness counters, promotion decisions, compiled artifacts, cache lookup, byte accounting and exhaustion behavior for JS and Wasm on the existing `Vm`. Frontends continue to lower into the same residual bytecode and do not create frontend-specific VMs. Tier admission depends on measured execution feedback and named resource budgets, never benchmark identity, source markers, score, checksum or suite selection. The cache key names the bytecode artifact and region mode; cache eviction or exhaustion returns execution to the existing lane/interpreter.
+
+Migration order is: land and review this contract; merge the v2-cloud-c loop tier into `compiled.rs` as OSR mode while coordinating the competing loop-codegen work; add general guarded field, dense-element, inline-cache call and int32/f64 denotations before deleting their equivalent `js_compiled.rs` recognizers; then route JS through the shared tier manager and cache. Each step is a separate change with runtime library tests and the 116 Node-oracle scripts run in both interpreter and `--jit` modes. At measured milestones, `QUENCH_JS_JIT_STATS` must show native entries on hot V8-v7 code covering Richards, DeltaBlue, NavierStokes and Crypto; JetStream Score/RSS comparisons are reported against JIT-enabled Node and Bun without treating a diagnostic run as a win.
 
 ## What the repository already has
 
@@ -955,3 +967,357 @@ An interleaved same-binary three-pair screen compared the path enabled and
 disabled. Disabled was faster in every pair (105.48 vs 126.62 s, 110.01 vs
 117.55 s, and 114.85 vs 127.91 s) with effectively unchanged RSS. The
 high-coverage loop therefore stays opt-in rather than shipping as the default.
+
+## Promise async-hooks context retention
+
+An allocation trace found a ~544 MiB async-hooks trigger map on Doxbee
+Promise workloads. Promise trigger contexts were retained after their Promise
+objects became unreachable. Trunk already gives a promise no context while
+nothing tracks promises (`create_promise_context`). For a tracked promise, the
+sweep that frees it now hands its context to `Host::release_promise_contexts`,
+apart from the reaction-job tokens it hands to `Host::release_job_context` (the
+host numbers the two independently), and the Node host drops its trigger entry;
+no collection walks the live promises. The measurement below was of the earlier
+v2-jit form of this fix, which collected the live promise contexts after each
+full collection.
+
+An uninstrumented three-round JetStream 3 run validated output and reduced
+median Quench peak RSS from 1,012 MB to 170 MB on `doxbee-promise`, and from
+1,053 MB to 258 MB on `doxbee-async`. Scores were 4.35 and 5.83. The older
+scores were 3.69 and 4.69, but sequential peer drift means the score changes
+are inconclusive; Quench remains much slower than Node and Bun. Raw data and
+method are in
+`evidence/jit-jetstream3-2026-10-21/async-hooks-promise-context-cleanup/`.
+
+A one-round Doxbee Promise JIT census found zero native entries across 10.8
+million function entries. The hottest `doxbee` and anonymous closure bodies
+were rejected as unsupported activation/function kinds; `runIteration` made
+one compile attempt but its loop includes calls, array mutation, and Promise
+aggregation. The measured branch/type-check sites do not establish redundant
+guards, so Boolean simplification is not the next target. Census data is in
+`evidence/jit-jetstream3-2026-10-21/doxbee-native-entry-census/`.
+
+A fast return for empty AsyncLocalStorage maps was screened in sequential
+three-round builds. Promise score moved upward while Async moved downward, with
+flat RSS and large peer timing drift. The change was reverted because the
+screen did not establish a matched win. Results are in
+`evidence/jit-jetstream3-2026-10-21/doxbee-empty-als-snapshot/`.
+
+The one-round `typescript-lib` diagnostic reinforces the same coverage issue:
+Quench scored 0.05 versus Node 1.45 and Bun 1.12, with 567 MiB versus about
+359 MiB peak RSS for both peers. Of 2,348 function rows, 2,178 were unsupported;
+the largest buckets were unsupported activation/function kinds (1,228 rows),
+unsupported opcodes/control flow (713), and the 256-instruction limit (117).
+The hottest rows include `forEach`, `checkSourceElement`, `findSourceFile`, and
+`bind`; these are interpreter-heavy loops and closure/call paths. The profile
+counted 28.9M entries but only 3.93M native entries, with 43 successful
+compilations. These are diagnostic results from one round. The raw profile is
+`evidence/jit-jetstream3-2026-10-21/full-suite-screen/typescript-lib-diagnostic-1round.json`.
+
+Increasing the instruction cap from 256 to 512 compiled two additional
+TypeScript helpers and raised native-entry counts by about 10%, but left the
+one-round score at 0.05. In three rounds the 512-cap screen scored 0.07 /
+565 MiB versus 0.08 / 564 MiB for the 256-cap binary. The cap increase was
+reverted: this additional native coverage did not improve score or RSS.
+Reports are in
+`evidence/jit-jetstream3-2026-10-21/typescript-jit-instruction-cap/`.
+
+A faster Fx hasher for internal Promise async-ID and job-token maps was also
+screened. Promise score rose from 3.07 to 3.60 while Async fell from 5.19 to
+3.22; only Async RSS improved (2.3%), and peer timings varied substantially.
+The hasher change was reverted because these sequential screens did not show a
+consistent score and memory win. Reports are in
+`evidence/jit-jetstream3-2026-10-21/doxbee-fxhash-context-map/`.
+
+## Guarded numeric hash-map lookup
+
+`_findKeyEntry` has an exact bytecode matcher for its 23-instruction linked
+entry loop. The fast helper is guarded at function entry, uses the existing
+field caches for the list and entry fields, and calls the already-compiled
+numeric `equals` target. On a guard miss, it leaves the frame untouched for
+ordinary interpretation. A 3-pair same-binary JetStream `hash-map` screen
+showed enabled median Score 2.93 versus 2.63 disabled, with sampled peak RSS
+74.17 MiB versus 74.06 MiB and median wall time 163.9 s versus 174.6 s. All
+three adjacent score pairs favored enabled. The helper is now enabled by
+default for eligible inputs; `QUENCH_JS_JIT_NUMERIC_FIND=0` retains the
+interpreter for A/B screens. The result is a fixture-specific screen, not
+qualification against Node/Bun or a suite-wide win. Raw reports and method
+are in `evidence/jit-jetstream3-2026-10-21/hash-map-numeric-find-screen/`.
+
+A separate matched three-round peer screen on this fixture measured Quench at
+2.83 Score / 73.99 MiB, Bun 1.4.3 at 165.97 / 83.56 MiB, and Node 24.19.0 at
+124.87 / 222.77 MiB. The numeric lookup change preserves the RSS advantage
+but does not close the score gap (Quench reaches 1.7% of Bun and 2.3% of
+Node). The next target is the interpreted `run` body: 58 instructions, 120
+entries and 111.7 seconds inclusive in the opt-in diagnostic, containing
+allocation, throwing, call and loop behavior. Boolean guard rewriting is not
+justified by its census. The report is in
+`evidence/jit-jetstream3-2026-10-21/hash-map-numeric-find-screen/peers-3round.json`.
+
+A second, twelve-round A/B tried caching and directly invoking the compiled
+Boolean `equals` entry inside `_findKeyEntry`, while retaining the code mapping
+owner. The raw entry lost overall: median Score 2.385 vs 2.515 through the
+existing `js_jit_compiled_call`, median wall time 174.9 vs 169.0 s, and RSS
+74.23 vs 74.19 MiB; only 3/6 adjacent score pairs favored it. The code path
+was reverted. This points away from per-equality dispatch lookup as the main
+score limit; next focus remains the interpreted `run` loop and its calls,
+allocations and collection behavior. The six-pair raw data are stored in
+`evidence/jit-jetstream3-2026-10-21/hash-map-numeric-find-screen/`.
+
+### Hash-map diagnostic attribution
+
+Reviewing the existing opt-in diagnostic report clarified the timing scope:
+`runIteration` has 32 entries and 175.968 seconds of inclusive interpreter
+time, while its child `run` has 120 entries and 111.730 seconds. These times
+overlap and must not be added. `computeHashCode` enters native code for all
+64.8 million recorded entries, and `equals` for 53,999,969 of 54 million.
+The numeric lookup helper takes its guarded fast path 53,999,968 times. Its
+3 ms `interpreter_inclusive_ns` value covers only ordinary interpreter
+completion and excludes that helper's native execution, so it is not a cost
+estimate for the lookup path. The evidence points to the effectful outer
+`run`/`runIteration` dispatch as the remaining measured opportunity; it does
+not justify a Boolean guard rewrite or another equality-call shortcut. Raw
+diagnostic source: `enabled-diagnostic-1round.json` in the same report
+directory. This is attribution from instrumented inclusive counters, not an
+exclusive CPU profile or an optimization result.
+
+The census initially missed functions that ran as lane activations because it
+counted only ordinary JIT frame entries. Opt-in diagnostics now report
+`lane_entries` separately and include them in `all_entry_native_coverage_ppm`.
+This exposes `get`, `_getEntry` and `put` as lane-only entries in the hash-map
+fixture, while preserving frame-entry coverage for native JIT functions. A
+follow-up tried invoking compiled numeric callees directly at lane call sites.
+The same-machine three-round A/B was a loss: control median 3.22 Score / 74.01
+MiB versus candidate 2.87 / 78.28 MiB, with all rounds output-equivalent. The
+fast path was removed. The census showed those callers already pass through
+native `computeHashCode` and `equals` entries, so this dispatcher shortcut was
+redundant and increased peak RSS. Reports and full per-round data are in
+`evidence/jit-jetstream3-2026-10-21/hash-map-lane-census/`.
+
+A second narrow experiment matched the Number/Number branch of the benchmark's
+`equals` bytecode and replaced its call with direct `f64` equality after both
+Number guards. The diagnostic confirmed 53,999,999 fast comparisons, but a
+same-binary three-round screen scored 4.09 versus 4.57 through the compiled
+`equals` call; RSS improved by 0.46 MiB and only 1/3 adjacent score pairs
+favored the direct comparison. It was removed because the score regressed.
+The original call remains the fallback and active path. Raw diagnostic and
+paired data are in the same evidence directory.
+
+### Async-fs Float64 DataView calls
+
+The JetStream `async-fs` fixture spends substantial time in `File.swapByteOrder`
+calling `DataView.getFloat64` and `setFloat64`. The lane fast path handles only
+primitive numeric offsets and values on fixed, ordinary, non-shared DataViews
+in compiled (`--jit`) mode; interpreted mode stays on its existing path. All
+coercion, bounds-error, detached, resizable, shared and unsupported buffer cases
+remain on the generic native implementation. The opt-in diagnostic counted
+8,204,080 fast gets and 8,204,080 fast sets in the fixture.
+
+The three-round same-binary screen scored 2.97 with the path disabled and 3.32
+enabled (11.8% higher median), with peak RSS effectively unchanged at 87.93
+and 87.92 MiB. Five interleaved one-round pairs favored the path in four of
+five pairs; the median paired Quench/Node score ratio improved 9.5%, which
+controls for substantial host variation visible in the Node and Bun scores.
+The feature remains far behind the JIT peers on this fixture: the same
+three-round screen measured Bun at 110.07 Score / 66.63 MiB and Node at 50.42 /
+206.71 MiB. The change is retained as a local win, not a JetStream victory.
+Reports and pair-level detail are in
+`evidence/jit-jetstream3-2026-10-21/async-fs-dataview-fast-lane/`.
+
+The follow-up fastens the common Boolean endianness argument check in this
+lane: Boolean arguments use `Value::as_bool`, while all other values retain
+general `ToBoolean` handling. Three-round control/candidate medians were 3.80
+and 3.94 Score, with 87.75 and 88.04 MiB peak RSS. In seven interleaved
+one-round Quench pairs, the candidate won six; the paired median and geometric
+mean Score ratios were 1.083 and 1.106, and median RSS ratio was 1.0014.
+Candidate-first pairs were added to check run-order bias. Peer scores varied
+sharply, so this supports a local async-fs improvement only; it is not a
+JetStream peer win or qualification. Reports and methodology are in
+`evidence/jit-jetstream3-2026-10-22/async-fs-dataview-boolean-fast-path/`.
+
+A follow-up removed the unused body-pointer word from each Wasm
+indirect-call-site certificate in default mode, moving it to a separate array
+only for the opt-in body-cache experiment. The SQLite Wasm three-round screen
+validated both executables but did not show an RSS reduction (170,295,296 B
+control; 170,586,112 B candidate). The candidate patch was dropped because the
+8-byte-per-site saving was below useful peak-RSS resolution. Full reports are
+in `evidence/jit-jetstream3-2026-10-22/sqlite-reference-cache-compact/`.
+
+The async-fs native call dispatcher also previously read the same callee cell
+to check for `Function.prototype.call` and again to classify the native. A
+candidate now classifies the native once and reuses that value for all fast
+handlers, retaining generic fallback for other callees. Six interleaved
+one-round pairs all validated output. Median paired Quench Score ratio was
+1.073 (geometric mean 1.117), while Quench peak-RSS deltas had a median of
+zero. The same-run Bun/Node normalization had a 0.974 geometric mean due to
+large peer variation, so the sample does not establish a causal score or RSS
+win. Keep interpreting it as a low-risk local candidate while broader JIT
+coverage remains the larger opportunity. Reports are in
+`evidence/jit-jetstream3-2026-10-22/async-fs-native-dispatch-dedup/`.
+
+## V8-v7 native coverage census — 2026-10-22
+
+Current `QUENCH_JS_JIT_STATS=1` runs show native function entries on Crypto
+(3,195) and DeltaBlue (35,055 across three tiny functions); OSR executes
+4,730,536 regions on Crypto and 48,954 on NavierStokes. Richards has zero
+native entries and zero admitted OSR sites: its hot `runRichards` and
+`Scheduler` functions reject on unsupported shapes. Its scheduling workload
+uses mutable object fields and indirect calls, so the next broad compiler
+coverage work should prioritize guarded field access and cached calls with
+exact instruction-level interpreter fallback. This is coverage evidence, not
+a performance claim; the diagnostic runs overlapped release-feature builds,
+so their Score and wall-time outputs are excluded. Raw inputs/counters and
+method are in `evidence/jit-jetstream3-2026-10-22/v8-v7-native-coverage/`.
+
+### Recheck after the merged OSR tier — 2026-10-22
+
+I rebuilt the production binary from the post-merge source and reran the same
+four stock V8-v7 scripts with `QUENCH_JS_JIT_STATS=1`. The runs completed their
+benchmark assertions; their printed Scores are not comparable performance
+measurements. Richards still has zero native function entries and zero admitted
+OSR sites. DeltaBlue has 17,539 native function entries and no admitted OSR
+sites. Crypto has 2,456 native function entries, 12 admitted OSR sites, 8 OSR
+compilation successes and 6,120,293 region runs. NavierStokes has no native
+function entries, 22 admitted OSR sites, 26 reported OSR compilation successes
+and 17,435 region runs. The merged OSR mode therefore adds loop execution for
+numeric regions, but does not yet cover Richards' field-, call-, construction-
+and write-heavy hot loops. This is diagnostic coverage evidence only; it does
+not establish a score or memory win. Full logs and binary provenance are in
+`evidence/jit-jetstream3-2026-10-22/v8-v7-coverage-after-osr-merge/`.
+
+## Bounded `new Array(number)` fast path screen — 2026-10-22
+
+A lane fast path plus direct dense-hole initialization looked promising in an
+initial Richards pair, but that control binary predated the source merge and
+was not comparable. Rebuilding the baseline at the candidate's exact base
+revision reversed the result: across 11 valid fixed-work rounds, outputs were
+identical, but candidate marginal work time was 5.9% slower by paired geometric
+mean (1.059 candidate/baseline), faster in only 2/11 rounds, and median RSS was
+effectively unchanged (12,066,816 vs 12,034,048 bytes). The experiment was
+removed. The runner could not collect IPC/cycle counters, so this remains a
+diagnostic screen; it does not measure JIT mode or qualify JetStream. Raw report
+and provenance are in
+`evidence/jit-jetstream3-2026-10-22/array-length-construction-ab/`.
+
+The next performance work should target suite-scale bottlenecks. Current JIT
+coverage is absent on Richards and sparse on TypeScript, so extend the shared
+compiler with general guarded field and inline-cache call denotations, then
+measure OSR coverage, compilation cost, code size and paired fixture scores.
+For no-JIT, old per-op instruction screens show large dispatch and allocation
+costs in object/closure creation, field/array operations and string/RegExp
+builtins; these need current profiles and fixture-level validation before
+choosing a hot path. No 20% runtime-level gain has been demonstrated yet.
+
+## Guarded multi-field numeric inputs — 2026-10-22
+
+The numeric denotation now accepts up to four cached reads from `this` or
+parameter zero in pure numeric regions. Each field cache is checked at entry;
+only numeric values enter native code, and any miss resumes the untouched frame
+in the lane. This is general bytecode metadata, not a function/source matcher.
+All 799 runtime library tests pass. The functional unit test enters native code
+for a two-field `this` method and confirms accessor and non-number fallback.
+
+The V8-v7 Richards diagnostic still reports zero native entries for
+`isHeldOrSuspended` (32 entries); the remaining unsupported combination is two
+field reads, numeric captures and a branch. One-round JetStream 3
+`typescript-lib` and `async-fs` diagnostic runs timed out at the 600-second
+per-engine limit before valid samples, so no score or RSS gain is established.
+The step is recorded as compiler coverage groundwork, not a performance win.
+Evidence and raw reports are in
+`evidence/jit-this-field-inputs-2026-10-22/`.
+
+## Research convergence and next gates — 2026-10-22
+
+The Linear sweep and VM research review agree on the next JIT gate: measure
+compiled coverage and rejection causes by time-weighted hot region, then extend
+general bytecode denotations for the operations those regions actually use.
+The current V8-v7 census has no native entries on Richards; the hash-map hot
+wrapper rejects `LoadNameCall` and `Call`, even though helper functions already
+receive many native entries. General effect-aware call and field/write paths
+with exact instruction-PC fallback are more promising than adding source or
+function recognizers. Retain native code only when matched suite measurements
+show a gain within code-size and RSS budgets.
+
+Research patterns that fit the shared-semantics architecture:
+
+- SpiderMonkey's [CacheIR](https://firefox-source-docs.mozilla.org/js/cacheir.html)
+  describes guarded operations once and lets execution tiers consume the same
+  recipes. For Quench, Rust macros should generate the lane and compiler views
+  from one semantic authority; effectful recipes must preserve observable order
+  and the exact fallback frame.
+- V8's [Maglev](https://v8.dev/blog/maglev) tracks type facts during graph
+  construction and records interpreter state at deoptimization points. This is
+  a useful model for eliminating checks only when prior guards prove the facts.
+- [Basic-block versioning](https://doi.org/10.4230/LIPIcs.ECOOP.2015.101) can
+  reuse type/shape facts across predecessor edges. It is a follow-up only if a
+  guard census shows repeated checks; cap per-block versions and generated
+  bytes, and invalidate facts across effectful calls and writes.
+- The 2025 [inline-cache evaluation](https://doi.org/10.22152/programming-journal.org/2025/10/6)
+  reports that fewer memory accesses did not imply faster execution in its
+  tested JavaScript AOT setting. It reinforces measuring target code and suite
+  score, rather than treating guard or lookup counts as a speed proxy.
+
+For no-JIT, TOD-121's measured plan remains around 0.656x Bun geomean and its
+grounded queued work reaches only about 0.74x. The `typescript-lib` census
+reports 10.5M+ property lookups per iteration at the shared uncached site after
+u16 site exhaustion. Widening or segmenting site IDs is a bounded experiment,
+but likely affects only a narrow workload slice. First run the existing
+`profile-lane-exits` census across parser, async and object-heavy workloads;
+then prioritize costs by total dispatched time. Large string/allocation
+representation changes remain research hypotheses until those profiles size
+their opportunity and the semantic costs.
+
+TOD-164's newer comments narrow another no-JIT lead. Survivor-only record
+sweeps and young-word-only minor sweeps are already merged; the latter measured
++2.7% on a five-pair GC-heavy JetStream screen, about -0.3% on V8-v7, and
+roughly neutral RSS. Stable-root/frame-watermark skipping was within noise and
+is deprioritized. `doxbee-promise` still merits attribution: about 20% of its
+measured callgrind instructions were in GC over four sampled iterations, but
+its 10,000 live promise chains may require most of that marking work. Before
+proposing another collector optimization, split minor/full collection counts,
+newly allocated and live young records, owner scans, and mark work per pending
+job. These measurements identify where to look; they do not establish another
+broad speedup.
+
+JetStream 3's [published methodology](https://webkit.org/blog/17899/introducing-the-jetstream-3-benchmark-suite/)
+uses repeated per-subtest measurements and suite aggregation. Papers and
+diagnostic counters above are leads only: neither the 1.20x score goal nor a
+20% broad no-JIT/JIT win is established by this research.
+
+## Effectful JS call-region ABI boundary
+
+The current JS native entry is deliberately primitive-valued; it cannot carry
+arbitrary tagged JS values or keep guest heap references live across collection.
+The first compiled call region therefore needs a VM-owned continuation context,
+not a wider raw-pointer callback. Before entering the shared dispatcher, write
+all live native values back as tagged values in GC-rooted frame registers and
+publish the exact instruction PC, resume state, and binding-site PC. The
+callback must reacquire VM/frame data by a stable frame identity after dispatch;
+it must not retain Rust references or slices into VM storage across a callout.
+
+The callback uses the existing instruction dispatcher as the semantic
+authority. It encodes the full `StepResult` and error outcome. Native execution
+may resume only when dispatch completed normally with `Continue`, the same
+program/function/frame remains active, and the continuation state matches the
+compiled map. `Return`, `Throw`, `PushFrame`, `TailCall`, yield, panic, and any
+other non-Continue result leave native code for the existing VM. A consumed call
+must never be retried at the old PC. Catch Rust panics inside any C ABI callback;
+no unwind may cross generated-code boundaries. Drop heap-derived type/shape
+facts across effectful calls and writes.
+
+Start with ordinary nonterminal `Call` over already-resolved callees, excluding
+direct or parameter eval, spread, tail calls, and terminal-return cases. Keep
+`LoadNameCall`, `with`, getters/proxies, constructors, and other effectful name
+resolution on the current fallback until their exact receiver, lookup, and
+error behavior is represented. This restriction is a pilot boundary, not a
+source/function recognizer: admission is derived from bytecode effects and
+explicit flags. Required tests cover receiver and argument order, non-callable
+and throwing callees, reentrant calls that collect while values are live,
+callee replacement, and exactly-once effects with fallback at the failing PC.
+
+This protocol is correctness and coverage groundwork. `runIteration` can check
+the ABI and output parity, but its observed call count does not make it a score
+target. Before choosing a hot site, record time-weighted compile rejection
+reasons, call-target/cache state, receiver-shape diversity, entries and
+callouts. A cache/guard hit is useful only if it reduces measured VM work; keep
+it only on matched production JetStream score and RSS data.

@@ -9,8 +9,12 @@ fn register_in_bounds(register: u16, limit: u16, flags: u16) -> bool {
     register & !(REGISTER_MASK | flags) == 0 && register & REGISTER_MASK < limit
 }
 
-fn field_base_in_bounds(base: u16, limit: u16) -> bool {
-    base == FieldBase::THIS.0 || base == FieldBase::NESTED || base < REGISTER_MASK && base < limit
+fn field_base_in_bounds(base: u16, limit: u16, locals: u16) -> bool {
+    let base = FieldBase(base);
+    base == FieldBase::THIS
+        || base.0 == FieldBase::NESTED
+        || base.local_index().is_some_and(|local| local < locals)
+        || base.register_index().is_some_and(|register| register < limit)
 }
 
 fn operand_in_bounds(
@@ -163,10 +167,12 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
         && !function.is_async
         && !function.is_generator
         && !function.derived_constructor
-        && !function.class_initializer
+        // An arrow inside an initializer owns its locals (`compile/arrow.rs`).
+        && !(function.class_initializer && !function.is_arrow)
         && function.simple_parameters
         && !function.rest
-        && function.arguments_slot.is_none()
+        // Promoted parameters leave their slots, which only an aliasing `arguments` reads.
+        && (function.arguments_slot.is_none() || !function.arguments_alias_parameters())
         && !function.inherited_with_scope
         && function.binding_sites.is_empty()
         && !has_dynamic_local_resolution
@@ -285,7 +291,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
                     base,
                     cache_site,
                 }) => {
-                    field_base_in_bounds(base.0, bounds.registers)
+                    field_base_in_bounds(base.0, bounds.registers, bounds.locals)
                         && atom_in_bounds(atom, bounds.atoms)
                         && cache_in_bounds(cache_site, bounds.cache_sites)
                 }
@@ -873,7 +879,7 @@ function.plain_local_slots(&self.superinstructions)
         }
         for site in &self.field_sites {
             if site.sources.iter().flatten().any(|(line, column)| *line == 0 || *column == 0)
-                || !field_base_in_bounds(site.base.0, REGISTER_MASK)
+                || !field_base_in_bounds(site.base.0, REGISTER_MASK, 0)
                 || !atom_in_bounds(site.first.0, self.atoms.len())
                 || !cache_in_bounds(site.first.1, self.cache_sites)
                 || site.second.is_some_and(|(atom, cache)| {
@@ -1069,7 +1075,7 @@ fn selective_capture_layout_is_eligible(
             })
         });
     let mapped_parameter_is_captured =
-        function.arguments_are_mapped() && captured.iter().any(|slot| *slot < function.params);
+        function.arguments_alias_parameters() && captured.iter().any(|slot| *slot < function.params);
     // A mapped `arguments` object shares the captured parameters, so it lives in the
     // environment with them; a body that keeps no `arguments` binding maps nothing.
     let mapped_arguments_are_captured = !mapped_parameter_is_captured
@@ -1229,6 +1235,7 @@ mod tests {
             constructible: true,
             class_initializer: false,
             parameter_eval_arguments_error: false,
+            unaliased_arguments: false,
             arguments_slot: None,
             simple_parameters: true,
             strict: false,
@@ -1254,6 +1261,7 @@ mod tests {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: vec![].into(),
             register_roots: crate::bytecode::RegisterRoots::new(root != u32::MAX),

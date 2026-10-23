@@ -7,6 +7,8 @@ license = "MIT"
 description = "JavaScript and WebAssembly execution runtime for Quench"
 
 [lib]
+# No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
+doctest = false
 name = "quench_runtime"
 
 [[bin]]
@@ -18,6 +20,7 @@ default = []
 profile-aggregate = []
 profile-trace = ["profile-aggregate"]
 profile-memory = []
+profile-allocator = []
 profile-gc-time = []
 # Counts, by opcode, the instructions the lane leaves to the general loop; reported at exit.
 profile-lane-exits = []
@@ -42,7 +45,8 @@ oxc_syntax = { workspace = true }
 oxc_diagnostics = { workspace = true }
 rustc-hash = "2.1"
 # The shape transition index keeps only child ids (`vm::shape_transitions`).
-hashbrown = { version = "0.16", default-features = false }
+# Default features and `raw-entry` match what quench-node enables (feature pins below).
+hashbrown = { version = "0.16", features = ["raw-entry"] }
 rayon = "1.12.0"
 smallvec = "1.15.2"
 num-bigint = "0.4"
@@ -61,6 +65,24 @@ libc = "0.2"
 libm = "=0.2.16"
 unicode-normalization = "0.1"
 unicode-segmentation = "1.13"
+# Feature pins, not used here. quench-node's dependencies (oxc_resolver, openssl, tracing)
+# enable more features on crates this one shares. Cargo resolves features per selected
+# package, so without these `-p quench-runtime` and `-p quench-node` built oxc, cranelift and
+# this crate twice under different hashes. `cargo tree -e features` on both selections must
+# list the same features for this crate's dependencies.
+serde = { version = "1", features = ["derive"] }
+indexmap = "2"
+bitflags = { version = "2", features = ["std"] }
+foldhash = "0.2"
+utf8_iter = "1"
+
+[build-dependencies]
+# Feature pin, not used by build.rs: quench-node's proc-macros enable syn "visit-mut", and
+# syn is shared with oxc's proc-macros (see the feature pins above).
+syn = { version = "2", features = ["full", "visit-mut"] }
+# Feature pin, not used by build.rs: quench-node's syntax-check proc-macro builds oxc for the
+# host with phf "macros", which oxc's own proc-macros share.
+phf = { version = "0.14", features = ["macros"] }
 
 [dev-dependencies]
 

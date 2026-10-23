@@ -16,6 +16,34 @@ pub(crate) const INTERNAL_GLOBAL_BINDINGS: [&str; 5] = [
     WITH_ENTER_BINDING,
     WITH_EXIT_BINDING,
 ];
+
+/// The native an engine-internal intrinsic name stands for: a by-name read of it resolves to
+/// that native before consulting any binding (`Vm::intrinsic_name_value`), and no source
+/// identifier can spell it, so the read observes no scope.
+pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
+    use crate::heap::Native;
+    Some(match name {
+        "\0quench:dynamic-import" => Native::DynamicImport,
+        "\0quench:intrinsic-promise" => Native::Promise,
+        "\0quench:super-get" => Native::ReflectGet,
+        "\0quench:super-set" => Native::SuperSet,
+        "\0quench:super-base" => Native::ReflectGetPrototypeOf,
+        "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
+        "\0quench:object-define-property" => Native::ObjectDefineProperty,
+        "\0quench:object-freeze" => Native::ObjectFreeze,
+        // The iteration helpers each realm also installs on its global object.
+        ITERATOR_CLOSE_BINDING => Native::IteratorClose,
+        FOR_IN_KEYS_BINDING => Native::ForInKeys,
+        FOR_IN_KEY_IS_ENUMERABLE_BINDING => Native::ForInKeyIsEnumerable,
+        _ => return None,
+    })
+}
+
+/// Whether a by-name read of `name` is an intrinsic's (`intrinsic_name_native` or the RegExp
+/// intrinsic), which reads no binding.
+pub(crate) fn is_intrinsic_name(name: &str) -> bool {
+    name == INTRINSIC_REGEXP_BINDING || intrinsic_name_native(name).is_some()
+}
 /// The engine-internal global a `with` statement calls to enter its object scope.
 pub(crate) const WITH_ENTER_BINDING: &str = "\0quench:with-enter";
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
@@ -576,7 +604,7 @@ impl ImmediateLayout {
 }
 
 macro_rules! opcodes {
-    ($($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
+    ($($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
         pub enum Op { $($name),+ }
@@ -602,6 +630,9 @@ macro_rules! opcodes {
             const IMMEDIATE_ROLES: [ImmediateRole; Self::COUNT] = [$(
                 opcodes!(@immediate $($immediate_role)?; $layout)),+
             ];
+            const JS_DENOTATIONS: [JsDenotation; Self::COUNT] = [$(
+                opcodes!(@js $($js_denotation)?)),+
+            ];
 
             pub(crate) const fn effect(self) -> Effect {
                 Self::EFFECTS[self as usize]
@@ -625,6 +656,10 @@ macro_rules! opcodes {
 
             pub(crate) const fn immediate_role(self) -> ImmediateRole {
                 Self::IMMEDIATE_ROLES[self as usize]
+            }
+
+            pub(crate) const fn js_denotation(self) -> JsDenotation {
+                Self::JS_DENOTATIONS[self as usize]
             }
 
             pub(crate) const fn is_wide_marker(self) -> bool {
@@ -652,6 +687,21 @@ macro_rules! opcodes {
     (@immediate $role:ident;) => { ImmediateRole::$role };
     (@immediate; $layout:ident) => { ImmediateRole::LayoutEncoded };
     (@immediate;) => { compile_error!("opcode must declare an immediate role or layout") };
+    (@js $denotation:ident) => { JsDenotation::$denotation };
+    (@js) => { JsDenotation::Unsupported };
+}
+
+/// The guarded JavaScript denotation available to the shared compiled region
+/// analyzer. This describes an instruction operation, never a source pattern.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum JsDenotation {
+    Unsupported,
+    LoadConst,
+    Move,
+    GetField,
+    NumericBinary,
+    CapturedValue,
+    Return,
 }
 const READ_THROW: Effect = Effect::READS_HEAP.union(Effect::THROWS);
 const WRITE_THROW: Effect = Effect::WRITES_HEAP.union(Effect::THROWS);
@@ -661,13 +711,13 @@ opcodes!(
     Nop => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
     CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning EnvironmentCloneIndex, @ Register, @ fields(Unused, Unused, Unused),
     Wide => Effect::PURE; layout Scalar; meaning WideInstructionIndex, @ Register, @ fields(WideIndexChunk, WideIndexChunk, WideIndexChunk),
-    LoadConst => Effect::PURE; layout Scalar; meaning ConstantIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadConst => Effect::PURE; layout Scalar; meaning ConstantIndex; js LoadConst, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadLocal => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
     StoreLocal => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
     StoreVarBinding => CALL_EFFECT; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, Unused, Unused),
     LoadEnvLocal => Effect::READS_HEAP; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreEnvLocal => Effect::WRITES_HEAP; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
-    LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot; js CapturedValue, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreCapture => Effect::WRITES_HEAP; layout CaptureDepthAndSlot, @ Register, @ fields(Register, Unused, Unused),
     LoadName => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
     LoadNameCall => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, WriteRegister, CacheSiteIndex),
@@ -705,7 +755,7 @@ opcodes!(
     Await => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     Yield => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair, @ RegisterReadWrite, @ fields(ResultRegister, Register, ReadWriteRegister),
-    GetField => READ_THROW; layout Scalar; meaning FieldLookup, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
+    GetField => READ_THROW; layout Scalar; meaning FieldLookup; js GetField, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
     GetIndex => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, NumericIndexOperand, NumericIndexOperand),
     ToPropertyKey => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     ToNumeric => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
@@ -717,13 +767,13 @@ opcodes!(
     SetThisField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     SetIndex => WRITE_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(Register, Register, Register),
     DefineArrayElement => WRITE_THROW; layout Scalar; meaning ArrayIndex, @ Register, @ fields(Register, Register, Unused),
-    Binary => READ_THROW; layout Scalar; meaning BinaryOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    Binary => READ_THROW; layout Scalar; meaning BinaryOperator; js NumericBinary, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
     IncDec => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Unused),
     Unary => READ_THROW; layout Scalar; meaning UnaryOperator, @ Returnable, @ fields(ResultRegister, Register, Unused),
     Delete => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Register),
     CheckPrivate => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
     PrivateIn => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Register, Unused),
-    Move => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    Move => Effect::PURE; layout Scalar; meaning Unused; js Move, @ Register, @ fields(ResultRegister, Register, Unused),
     Call => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
     CallArray => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
     CallKnown => CALL_EFFECT; layout CallWindow; flow Call, @ Returnable, @ fields(ResultRegister, FunctionIndex, Unused),
@@ -733,10 +783,10 @@ opcodes!(
     Jump => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow Jump, @ Register, @ fields(Unused, Unused, Unused),
     JumpFalse => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
     JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(BinaryOperator, Operand, Operand),
-    Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Register, Unused, Unused),
+    Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal; js Return, @ Register, @ fields(Register, Unused, Unused),
     Throw => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Register, Unused, Unused),
-    NumericAdd => READ_THROW; layout Scalar; meaning AdditionOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
-    NumericMultiply => READ_THROW; layout Scalar; meaning MultiplicationOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    NumericAdd => READ_THROW; layout Scalar; meaning AdditionOperator; js NumericBinary, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    NumericMultiply => READ_THROW; layout Scalar; meaning MultiplicationOperator; js NumericBinary, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
     InitializeThis => CALL_EFFECT.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
     CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadCachedTemplateObject => Effect::READS_HEAP; layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -1175,6 +1225,12 @@ pub struct Function {
     pub constructible: bool,
     pub class_initializer: bool,
     pub parameter_eval_arguments_error: bool,
+    /// A mapped `arguments` binding whose mapping nothing can observe: the body only reads
+    /// `arguments.length` and `arguments[key]`, and nothing in it rebinds a parameter
+    /// (`compile::early::ArgumentsUse`). Neither side of the mapping is ever written, so
+    /// the object keeps the mapped layout without parameter links
+    /// (`arguments_alias_parameters`).
+    pub unaliased_arguments: bool,
     pub arguments_slot: Option<u16>,
     pub simple_parameters: bool,
     pub strict: bool,
@@ -1218,6 +1274,9 @@ pub struct Function {
     pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
     /// Lazily derived `names_resolve_statically`; never serialized.
     pub(crate) static_name_scope: std::cell::OnceCell<bool>,
+    /// Whether the JavaScript tier's candidate filter admits the function
+    /// (`js_compiled::function_candidate`), derived on its first entry; never serialized.
+    pub(crate) js_tier_candidate: std::cell::OnceCell<bool>,
     /// Lazily derived `call_plan`; never serialized.
     pub(crate) call_plan: std::cell::OnceCell<CallPlan>,
     pub(crate) handlers: crate::heap::ThinBoxSlice<Handler>,
@@ -1701,6 +1760,12 @@ impl Function {
         !self.is_arrow && !self.strict && self.simple_parameters
     }
 
+    /// Whether the `arguments` object's indices alias the parameters: a mapped object
+    /// whose mapping some write could observe (`unaliased_arguments`).
+    pub(crate) fn arguments_alias_parameters(&self) -> bool {
+        self.arguments_are_mapped() && !self.unaliased_arguments
+    }
+
     /// Parameters an activation binds into frame locals.
     pub(crate) const fn local_parameter_count(&self) -> u16 {
         if self.parameter_registers.is_some() {
@@ -1862,7 +1927,9 @@ impl Function {
             || self.is_generator
             || self.is_class_constructor
             || self.derived_constructor
-            || self.class_initializer
+            // A field initializer or static block keeps its instance's implicit bindings; an
+            // arrow inside one (also `class_initializer`) binds none of its own.
+            || (self.class_initializer && !self.is_arrow)
             || self.instance_initializer.is_some()
             || self.inherited_with_scope
             || !self.binding_sites.is_empty()
@@ -1870,8 +1937,10 @@ impl Function {
                 matches!(
                     instruction.op(),
                     Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
-                ) && usize::try_from(instruction.atom_index())
-                    .is_ok_and(|atom| atom >= atoms.len() || atoms[atom].starts_with('\0'))
+                ) && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
+                    atom >= atoms.len()
+                        || atoms[atom].starts_with('\0') && !is_intrinsic_name(&atoms[atom])
+                })
                     || matches!(
                         instruction.op(),
                         Op::ResolveName
@@ -1969,9 +2038,9 @@ impl Function {
                 .count();
             // Plain but for an `arguments` binding.
             // An arrow's `this` is its environment's, which its activation binds
-            // (`Vm::lexical_activation_this`); one reaching `super` keeps its frame.
+            // (`Vm::lexical_activation_this`). One that reaches `super` reads a hidden name
+            // (`activation_binding_reads`) or its home as a capture, as any closure reads one.
             let ordinary = self.parent.is_some()
-                && !(self.is_arrow && self.super_home_atom.is_some())
                 && !self.derived_constructor
                 && !self.rest
                 && self.self_binding_slot.is_none()
@@ -2162,15 +2231,21 @@ impl Function {
         let Some(slot) = self.arguments_slot else {
             return false;
         };
+        let instructions = self.instructions().collect::<Vec<_>>();
+        // A mapped object's elements alias the parameters; its `length` does not, so a body
+        // that reads only `arguments.length` cannot observe the mapping.
+        let reads_only_length = instructions.iter().all(|instruction| {
+            instruction.op() == Op::ArgumentsLength
+                || !instruction.addressed_local_slots().any(|addressed| addressed == slot)
+        });
         if self.is_generator
             || self.is_async
-            || (self.arguments_are_mapped() && self.params != 0)
+            || (self.arguments_alias_parameters() && self.params != 0 && !reads_only_length)
             || self.local_registers.iter().any(|entry| entry.local == slot)
             || self.has_dynamic_scope_access()
         {
             return false;
         }
-        let instructions = self.instructions().collect::<Vec<_>>();
         let mut forwarded = false;
         for (pc, instruction) in instructions.iter().enumerate() {
             if matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv) {
@@ -2280,7 +2355,7 @@ impl Function {
         }
         if slot < usize::from(self.params)
             && self.arguments_slot.is_some()
-            && self.arguments_are_mapped()
+            && self.arguments_alias_parameters()
         {
             return Some(PlainLocalSlotIneligibility::MappedArgument);
         }
@@ -2484,14 +2559,25 @@ pub(crate) struct FieldBase(pub(crate) u16);
 impl FieldBase {
     pub(crate) const THIS: Self = Self(u16::MAX);
     pub(crate) const NESTED: u16 = u16::MAX - 1;
+    const LOCAL_FLAG: u16 = 0x4000;
 
     pub(crate) fn register(value: Register) -> Self {
-        debug_assert!(value < Self::NESTED);
+        debug_assert!(value <= REGISTER_MASK);
         Self(value)
     }
 
     pub(crate) fn register_index(self) -> Option<Register> {
-        (self != Self::THIS).then_some(self.0)
+        (self.0 <= REGISTER_MASK).then_some(self.0)
+    }
+
+    pub(crate) fn local(value: u16) -> Option<Self> {
+        (value <= REGISTER_MASK).then_some(Self(Self::LOCAL_FLAG | value))
+    }
+
+    pub(crate) fn local_index(self) -> Option<u16> {
+        (self.0 & Self::LOCAL_FLAG != 0
+            && self.0 & !(Self::LOCAL_FLAG | REGISTER_MASK) == 0)
+            .then_some(self.0 & REGISTER_MASK)
     }
 }
 
@@ -3149,7 +3235,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 102;
+    pub const FORMAT_VERSION: u8 = 103;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
@@ -3212,6 +3298,11 @@ impl ResidualProgram {
 
     /// Decodes `encode_trusted`'s bytes into a program proven valid: this build's compiler
     /// output, which the host keys by build and whose checksum held.
+    /// `decode_trusted`, with the program's atoms named by `intern`'s ids.
+    pub(crate) fn decode_trusted_interned(bytes: KeptBytes, intern: &mut dyn FnMut(&str) -> u32) -> Result<Self, String> {
+        binary::decode_trusted_program_interned(bytes, intern)
+    }
+
     pub(crate) fn decode_trusted(bytes: KeptBytes) -> Result<Self, String> {
         let program = binary::decode_trusted_program(bytes)?;
         program.validated.establish();

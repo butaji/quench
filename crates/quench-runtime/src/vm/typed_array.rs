@@ -2,7 +2,98 @@ use super::typed_array_install::TYPED_ARRAY_INSTALLS;
 use super::typed_array_install::{TYPED_ARRAY_BASE_METHODS, TYPED_ARRAY_CALLBACK_METHODS};
 use super::typed_array_install::{UINT8_ARRAY_PROTOTYPE_METHODS, UINT8_ARRAY_STATIC_METHODS};
 use super::*;
+
+/// Direct-mapped entries of `TypedArrayGeometryProofs`, by name: the four geometry names
+/// (`length`, `byteLength`, `byteOffset`, `buffer`) a typed array reads through its
+/// prototypes' accessors, each under the one prototype chain (a Buffer's or a plain view's)
+/// a program mostly reads it from.
+const TYPED_ARRAY_GEOMETRY_ENTRIES: usize = 8;
+
+/// That reading `atom` from a typed array whose own shape lacks it, with prototype
+/// `prototype`, calls `getter`: every prototype before the holder lacks the name, which the
+/// holder keeps as that accessor. Proved under one `prototype_layout_epoch`, which any
+/// prototype change or collection advances.
+#[derive(Clone, Copy)]
+struct TypedArrayGeometryProof {
+    prototype: Value,
+    atom: Atom,
+    epoch: u64,
+    getter: Value,
+}
+
+#[derive(Default)]
+pub(super) struct TypedArrayGeometryProofs([std::cell::Cell<Option<TypedArrayGeometryProof>>; TYPED_ARRAY_GEOMETRY_ENTRIES]);
+
 impl<H: Host> Vm<H> {
+    /// A read of a geometry name (`AtomClass::VIRTUAL_FIELD`) from typed array `object`
+    /// that runs no guest code: the intrinsic accessor its chain resolves the name to, as
+    /// a pure native read (`pure_native_getter_value`). `None` leaves the read to the
+    /// general path: an own property of the name, an exotic or dictionary link, a data
+    /// property or a script getter on the way.
+    pub(super) fn typed_array_geometry_read(&mut self, object: Value, atom: Atom) -> Option<Value> {
+        let Some(Cell::TypedArray { object: view, .. }) = self.heap.get(object) else {
+            return None;
+        };
+        let data = &view.object;
+        if data.has_side_descriptors()
+            || self.shape_is_dictionary(data.shape())
+            || self.shape_slot(data.shape(), atom).is_some()
+        {
+            return None;
+        }
+        let prototype = data.proto();
+        let epoch = crate::heap::prototype_layout_epoch();
+        let index = atom as usize % TYPED_ARRAY_GEOMETRY_ENTRIES;
+        let getter = match self.typed_array_geometry.0[index].get() {
+            Some(proof) if proof.prototype == prototype && proof.atom == atom && proof.epoch == epoch => proof.getter,
+            _ => {
+                let (getter, depth) = self.typed_array_geometry_getter(prototype, atom)?;
+                // Every link up to the holder becomes a prototype first, so a later change to
+                // one advances the epoch and retires the proof.
+                let mut link = prototype;
+                for _ in 0..depth {
+                    self.heap.mark_prototype(link);
+                    link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
+                }
+                if crate::heap::prototype_layout_epoch() == epoch {
+                    self.typed_array_geometry.0[index].set(Some(TypedArrayGeometryProof { prototype, atom, epoch, getter }));
+                }
+                getter
+            }
+        };
+        self.pure_native_getter_value(getter, object)
+    }
+
+    /// The getter of the accessor `atom` names first along the ordinary prototypes from
+    /// `prototype`, where no earlier link has the name, and the number of links to it.
+    fn typed_array_geometry_getter(&self, prototype: Value, atom: Atom) -> Option<(Value, usize)> {
+        let key = PropertyKey::string(atom);
+        let mut link = prototype;
+        for depth in 1.. {
+            let data = self.heap.ordinary_object(link)?;
+            if data.has_side_descriptors() && self.descriptors.contains_key(&(link, key)) {
+                return None;
+            }
+            // A dictionary link proves the name absent as any shape does: adding it moves
+            // the link to a new shape. Its attributes live outside its transitions, so it
+            // holds no accessor this proof keeps.
+            if let Some(slot) = self.shape_slot(data.shape(), atom) {
+                if self.shape_is_dictionary(data.shape()) {
+                    return None;
+                }
+                let attributes = self.slot_attributes(data, slot)?;
+                return attributes.accessor.then_some(attributes.getter).flatten().map(|getter| (getter, depth));
+            }
+            link = data.proto();
+        }
+        unreachable!("an unbounded walk returns from its loop")
+    }
+
+    /// `ArrayBuffer.isView(value)`: whether `value` is a typed array or a DataView.
+    pub(super) fn is_array_buffer_view(&self, value: Value) -> bool {
+        matches!(self.heap.get(value), Some(Cell::TypedArray { .. } | Cell::DataView { .. }))
+    }
+
     pub(super) fn maybe_call_typed_array_native(
         &mut self,
         p: &ResidualProgram,
@@ -229,16 +320,8 @@ impl<H: Host> Vm<H> {
             return self.typed_array_callback_native(p, array_native, this, args);
         }
         if native == Native::ArrayBufferIsView {
-            return Ok(
-                if matches!(
-                    args.first().and_then(|value| self.heap.get(*value)),
-                    Some(Cell::TypedArray { .. }) | Some(Cell::DataView { .. })
-                ) {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                },
-            );
+            let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+            return Ok(Value::boolean(self.is_array_buffer_view(value)));
         }
         let buffer = self.validate_typed_array_method(p, native, this)?;
         let length = self.typed_array_length(this).unwrap_or_default();

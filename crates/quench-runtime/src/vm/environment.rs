@@ -2099,6 +2099,17 @@ impl<H: Host> Vm<H> {
             .map(|(value, _)| value)
     }
 
+    /// The value an intrinsic name (`bytecode::intrinsic_name_native`, or the RegExp
+    /// intrinsic) stands for, which no binding can shadow.
+    pub(super) fn intrinsic_name_value(&mut self, atom: Atom) -> Option<Value> {
+        let name = self.atom_name(atom);
+        if name == crate::bytecode::INTRINSIC_REGEXP_BINDING {
+            return Some(self.regexp_intrinsic_constructor());
+        }
+        let native = crate::bytecode::intrinsic_name_native(name)?;
+        Some(self.native_value(native))
+    }
+
     fn load_name_without_with(
         &mut self,
         p: &ResidualProgram,
@@ -2108,12 +2119,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let internal = self.atom_class(atom).contains(AtomClass::INTERNAL);
         if internal {
-            let name = self.atom_name(atom);
-            if name == crate::bytecode::INTRINSIC_REGEXP_BINDING {
-                return Ok(self.regexp_intrinsic_constructor());
-            }
-            if let Some(native) = internal_name_native(name) {
-                return Ok(self.native_value(native));
+            if let Some(value) = self.intrinsic_name_value(atom) {
+                return Ok(value);
             }
         }
         if !internal && self.names_resolve_to_global_object(p, atom) {
@@ -2527,21 +2534,6 @@ impl<H: Host> Vm<H> {
             }
         }
     }
-}
-
-/// The built-in each engine-internal binding name the compiler emits resolves to.
-pub(super) fn internal_name_native(name: &str) -> Option<Native> {
-    Some(match name {
-        "\0quench:dynamic-import" => Native::DynamicImport,
-        "\0quench:intrinsic-promise" => Native::Promise,
-        "\0quench:super-get" => Native::ReflectGet,
-        "\0quench:super-set" => Native::SuperSet,
-        "\0quench:super-base" => Native::ReflectGetPrototypeOf,
-        "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
-        "\0quench:object-define-property" => Native::ObjectDefineProperty,
-        "\0quench:object-freeze" => Native::ObjectFreeze,
-        _ => return None,
-    })
 }
 
 /// The facts one by-name lookup of `atom` from `frame` consults under more than one rule:
