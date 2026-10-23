@@ -4816,6 +4816,35 @@ script_handler! {
 }
 
 script_handler! {
+    /// A plain local load followed by a register/register comparison branch. The load still
+    /// writes its destination before the branch reads either operand, preserving aliases and
+    /// values live beyond the branch while skipping one threaded dispatch.
+    fn lane_load_local_jump_binary_false_registers<BACKWARD: bool>(cx, r, ip, i, view) {
+        // SAFETY: the view installs this handler only for an adjacent supported branch record.
+        let branch_ip = unsafe { ip.add(1) };
+        let branch = unsafe { &*branch_ip };
+        // SAFETY: the function's validated bytecode bounds the local slot, and the lane keeps
+        // its frame installed for the whole run.
+        let value = unsafe { vm(cx).read_validated_local((*cx).frame, i.imm() as usize) };
+        r.set(i.a, value);
+        let (left, right) = (r.get(branch.b), r.get(branch.c));
+        let Some(holds) = super::operations::integer_relation(u32::from(branch.a), left, right)
+        else {
+            sibling!(
+                lane_jump_binary_false_registers_other::<H, BACKWARD>,
+                r,
+                branch_ip,
+                Carried::script(cx)
+            )
+        };
+        if !holds {
+            return lane_jump(cx, r, branch_ip, BACKWARD, Carried::script(cx), None);
+        }
+        next!(cx, r, following(branch_ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// `lane_jump_binary_false_registers` of operands other than two integers: the relations
     /// the lane decides without guest code (`lane_relation`); any other takes the general
     /// path. Out of line, so the integer case keeps few values live.
@@ -13474,6 +13503,10 @@ fn derive_lane_view<H: Host>(
     } else {
         Box::default()
     };
+    // The fused record is a script handler; Wasm bodies run none.
+    if !wasm {
+        specialize_local_branch_pairs::<H>(&mut records);
+    }
     let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
     } else {
@@ -13758,6 +13791,32 @@ fn specialize_register_operands<H: Host>(
         record.handler = handler as *const ();
         record.b = left.payload();
         record.c = right.payload();
+    }
+}
+
+/// Coalesce a plain local load with the following register/register comparison branch. The
+/// second record remains independently callable for branch-table and jump-target entry.
+fn specialize_local_branch_pairs<H: Host>(records: &mut [LaneInstruction]) {
+    let load = lane_load_local_plain::<H> as Handler as *const ();
+    for pc in 0..records.len().saturating_sub(1) {
+        if records[pc].handler != load {
+            continue;
+        }
+        // A register jump test runs its operator's instantiation (`relation_jump_handler`),
+        // and the fused record reads the operator from the branch record again.
+        let branch = &records[pc + 1];
+        let operator = u32::from(branch.a);
+        let jumps = |backward| {
+            branch.handler == relation_jump_handler::<H, false>(operator, backward) as *const ()
+        };
+        let fused: Handler = if jumps(false) {
+            lane_load_local_jump_binary_false_registers::<H, false>
+        } else if jumps(true) {
+            lane_load_local_jump_binary_false_registers::<H, true>
+        } else {
+            continue;
+        };
+        records[pc].handler = fused as *const ();
     }
 }
 
