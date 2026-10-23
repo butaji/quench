@@ -3701,6 +3701,21 @@ script_handler! {
 }
 
 script_handler! {
+    /// `lane_get_field_string` of a register base whose `String.prototype` entry answers
+    /// (`Vm::string_prototype_field_hit`): one tag test and the entry's shape before the
+    /// slot. Any other read takes `lane_get_field_string` out of line.
+    fn lane_get_field_string_register<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let base = r.get(i.b);
+        let Some(value) = vm.heap.is_string(base).then(|| vm.string_prototype_field_hit(i.c)).flatten() else {
+            sibling!(lane_get_field_string::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// `lane_get_field_holder` for a receiver in a heap cell rather than the object records
     /// (`Vm::cell_holder_field_hit`): a method read from a function, as `f.apply`. A miss
     /// moves the record on as `lane_get_field_miss` decides.
@@ -3822,13 +3837,11 @@ script_handler! {
 
 script_handler! {
     /// `lane_get_length` at a site that read a string's length (`lane_get_length_other`):
-    /// a string's length first, then an array's; any other receiver takes
-    /// `lane_get_length_arguments`.
+    /// a string's length here; any other receiver, an array's included, takes
+    /// `lane_get_length` out of line, which keeps this one's registers to the string.
     fn lane_get_length_string<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let receiver = r.get(i.b);
-        let Some(length) = vm.string_length(receiver).or_else(|| vm.own_array_length(receiver)) else {
-            sibling!(lane_get_length_arguments::<H>, r, ip, Carried::script(cx))
+        let Some(length) = (unsafe { vm(cx) }).string_length(r.get(i.b)) else {
+            sibling!(lane_get_length::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, Value::length(length));
         next!(cx, r, following(ip), Carried::script(cx))
@@ -3870,7 +3883,12 @@ script_handler! {
             // A string primitive reads `String.prototype`, whatever tier its entries name,
             // where the site admits that read; any other read of one is the general read's.
             _ if string_base && (unsafe { vm(cx) }).string_field_site_cacheable(code, i.imm()) => {
-                Some(lane_get_field_string::<H>)
+                Some(single_base_handler(
+                    i.b,
+                    lane_get_field_string::<H>,
+                    lane_get_field_string_register::<H>,
+                    lane_get_field_string::<H>,
+                ))
             }
             _ if string_base => Some(lane_get_field::<H>),
             FieldSiteTier::Nested => Some(lane_get_field_nested::<H>),
