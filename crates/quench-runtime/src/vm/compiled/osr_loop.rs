@@ -21,8 +21,11 @@
 //! Nothing in a region allocates, collects, or runs guest code, so the arrays, their
 //! element storage and the captures the entry read stay as they are while native code runs.
 
-use crate::bytecode::{FieldBase, FieldLookup, Function, Op, Operand, OperandKind, Register, WideInstruction};
+use crate::bytecode::{
+    FieldBase, FieldLookup, Function, Op, Operand, OperandKind, Register, WideInstruction,
+};
 use crate::value::{Value, ValueLayout};
+use super::super::operations::NumberArithmetic;
 use cranelift_codegen::ir::{
     self, InstBuilder, UserFuncName,
     condcodes::{FloatCC, IntCC},
@@ -262,16 +265,8 @@ enum Source {
 /// The arithmetic and comparison a region lowers, by the operator's tag.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Arithmetic {
-    Float(FloatOperator),
+    Float(NumberArithmetic),
     Int32(Int32Operator),
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum FloatOperator {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -285,16 +280,8 @@ enum Int32Operator {
 }
 
 fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
-    if let Some(operation) = super::super::operations::NumberArithmetic::from_js_instruction(
-        instruction,
-        operator,
-    ) {
-        return Some(Arithmetic::Float(match operation {
-            super::super::operations::NumberArithmetic::Add => FloatOperator::Add,
-            super::super::operations::NumberArithmetic::Subtract => FloatOperator::Subtract,
-            super::super::operations::NumberArithmetic::Multiply => FloatOperator::Multiply,
-            super::super::operations::NumberArithmetic::Divide => FloatOperator::Divide,
-        }));
+    if let Some(operation) = NumberArithmetic::from_js_instruction(instruction, operator) {
+        return Some(Arithmetic::Float(operation));
     }
     let operation = super::super::operations::NumberBitwise::from_js_instruction(
         instruction,
@@ -857,7 +844,7 @@ fn definition(
         }
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
             match arithmetic(instruction.op(), instruction.binary_operator())? {
-                Arithmetic::Float(FloatOperator::Divide) => Representation::Float64,
+                Arithmetic::Float(NumberArithmetic::Divide) => Representation::Float64,
                 Arithmetic::Float(_) => {
                     both(source(instruction.operand_b()), source(instruction.operand_c()))
                 }
@@ -1143,7 +1130,7 @@ fn counted_loop(
                 };
                 let operator = arithmetic(instruction.op(), instruction.binary_operator())?;
                 let sum = match (operator, left.1, right.1) {
-                    (Arithmetic::Float(FloatOperator::Add), Some(left), Some(right)) => match (left, right) {
+                    (Arithmetic::Float(NumberArithmetic::Add), Some(left), Some(right)) => match (left, right) {
                         (_, Affine { base: Base::Constant, addend: None, offset }) => left.plus(offset),
                         (Affine { base: Base::Constant, addend: None, offset }, _) => right.plus(offset),
                         // An invariant value folds into the other's addend.
@@ -1155,12 +1142,12 @@ fn counted_loop(
                         }
                         _ => None,
                     },
-                    (Arithmetic::Float(FloatOperator::Subtract), Some(left), Some(right))
+                    (Arithmetic::Float(NumberArithmetic::Subtract), Some(left), Some(right))
                         if right.base == Base::Constant && right.addend.is_none() =>
                     {
                         left.plus(-right.offset)
                     }
-                    (Arithmetic::Float(FloatOperator::Multiply), Some(left), Some(right))
+                    (Arithmetic::Float(NumberArithmetic::Multiply), Some(left), Some(right))
                         if held && factor(&left) && factor(&right) =>
                     {
                         terms.push(Term { multiply: true, left, right });
@@ -1170,7 +1157,7 @@ fn counted_loop(
                     }
                     _ => None,
                 };
-                if operator != Arithmetic::Float(FloatOperator::Multiply)
+                if operator != Arithmetic::Float(NumberArithmetic::Multiply)
                     && let Some(value) = sum.filter(|_| held)
                 {
                     candidates.push(Fact { pc, value, bound: Bound::Int32 });
@@ -1358,7 +1345,10 @@ struct Lowering<'a, 'b> {
     /// The exact `i32` results computed so far, by operator and operands, with the chain
     /// computing them: the same arithmetic later in that chain is that result, its guards
     /// having passed.
-    exact: std::collections::BTreeMap<(FloatOperator, ir::Value, ir::Value), (ir::Value, ir::Block)>,
+    exact: std::collections::BTreeMap<
+        (NumberArithmetic, ir::Value, ir::Value),
+        (ir::Value, ir::Block),
+    >,
     /// The Number each canonical encoding read from memory unboxes to, mapped to the bits as
     /// read: boxing the Number gives those bits back, so a store of it stores them.
     encodings: std::collections::HashMap<ir::Value, ir::Value>,
@@ -2176,7 +2166,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn int32_arithmetic(
         &mut self,
         pc: u32,
-        operator: FloatOperator,
+        operator: NumberArithmetic,
         register: Register,
         left: ir::Value,
         right: ir::Value,
@@ -2201,19 +2191,19 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn int32_offset(
         &mut self,
         pc: u32,
-        operator: FloatOperator,
+        operator: NumberArithmetic,
         register: Register,
         left: ir::Value,
         right: ir::Value,
     ) -> Option<ir::Value> {
         let (value, offset) = match operator {
-            FloatOperator::Add => match (self.int32_constant(left), self.int32_constant(right)) {
+            NumberArithmetic::Add => match (self.int32_constant(left), self.int32_constant(right)) {
                 (_, Some(offset)) => (left, offset),
                 (Some(offset), None) => (right, offset),
                 (None, None) => return None,
             },
-            FloatOperator::Subtract => (left, -self.int32_constant(right)?),
-            FloatOperator::Multiply | FloatOperator::Divide => return None,
+            NumberArithmetic::Subtract => (left, -self.int32_constant(right)?),
+            NumberArithmetic::Multiply | NumberArithmetic::Divide => return None,
         };
         if !self.proved(pc) && offset != 0 {
             let (condition, bound) = if offset > 0 {
@@ -2242,7 +2232,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn int32_arithmetic_guarded(
         &mut self,
         pc: u32,
-        operator: FloatOperator,
+        operator: NumberArithmetic,
         register: Register,
         left: ir::Value,
         right: ir::Value,
@@ -2252,15 +2242,21 @@ impl<'a, 'b> Lowering<'a, 'b> {
         }
         // A proof covers a sum's exactness, so it needs no overflow flag.
         match operator {
-            FloatOperator::Add if self.proved(pc) => return self.body.builder.ins().iadd(left, right),
-            FloatOperator::Subtract if self.proved(pc) => return self.body.builder.ins().isub(left, right),
+            NumberArithmetic::Add if self.proved(pc) => {
+                return self.body.builder.ins().iadd(left, right);
+            }
+            NumberArithmetic::Subtract if self.proved(pc) => {
+                return self.body.builder.ins().isub(left, right);
+            }
             _ => {}
         }
         let (result, overflow) = match operator {
-            FloatOperator::Add => self.body.builder.ins().sadd_overflow(left, right),
-            FloatOperator::Subtract => self.body.builder.ins().ssub_overflow(left, right),
-            FloatOperator::Multiply if self.proved(pc) => return self.body.builder.ins().imul(left, right),
-            FloatOperator::Multiply => {
+            NumberArithmetic::Add => self.body.builder.ins().sadd_overflow(left, right),
+            NumberArithmetic::Subtract => self.body.builder.ins().ssub_overflow(left, right),
+            NumberArithmetic::Multiply if self.proved(pc) => {
+                return self.body.builder.ins().imul(left, right);
+            }
+            NumberArithmetic::Multiply => {
                 let (product, overflow) = self.body.builder.ins().smul_overflow(left, right);
                 self.guard_int32(pc, overflow, Widening::Register(register));
                 // A zero product is -0 when a factor is negative; the signs are tested only
@@ -2284,7 +2280,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.seal_block(done);
                 return product;
             }
-            FloatOperator::Divide => unreachable!("division has a Float64 result"),
+            NumberArithmetic::Divide => unreachable!("division has a Float64 result"),
         };
         if !self.proved(pc) {
             self.guard_int32(pc, overflow, Widening::Register(register));
@@ -2311,13 +2307,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             Arithmetic::Float(operator) => {
                 let (left, right) = (self.float(left), self.float(right));
-                let ins = self.body.builder.ins();
-                let value = match operator {
-                    FloatOperator::Add => ins.fadd(left, right),
-                    FloatOperator::Subtract => ins.fsub(left, right),
-                    FloatOperator::Multiply => ins.fmul(left, right),
-                    FloatOperator::Divide => ins.fdiv(left, right),
-                };
+                let value = super::emit_number_arithmetic_operation(
+                    &mut self.body.builder,
+                    operator,
+                    left,
+                    right,
+                );
                 Typed { value, representation: Representation::Float64 }
             }
             Arithmetic::Int32(operator) => {
@@ -2372,9 +2367,21 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let unit = |operand: Operand| operand.register_index().is_some_and(|register| self.units.contains(&register));
                 let value = match operator {
                     // `x * 1`, `1 * x` and `x / 1` are `x` (`Lowering::units`).
-                    Arithmetic::Float(FloatOperator::Multiply) if unit(instruction.operand_c()) => left,
-                    Arithmetic::Float(FloatOperator::Multiply) if unit(instruction.operand_b()) => right,
-                    Arithmetic::Float(FloatOperator::Divide) if unit(instruction.operand_c()) => left,
+                    Arithmetic::Float(NumberArithmetic::Multiply)
+                        if unit(instruction.operand_c()) =>
+                    {
+                        left
+                    }
+                    Arithmetic::Float(NumberArithmetic::Multiply)
+                        if unit(instruction.operand_b()) =>
+                    {
+                        right
+                    }
+                    Arithmetic::Float(NumberArithmetic::Divide)
+                        if unit(instruction.operand_c()) =>
+                    {
+                        left
+                    }
                     _ => self.arithmetic(pc, operator, result, left, right),
                 };
                 self.define(result, value);
@@ -2397,7 +2404,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     let value = self.body.builder.ins().iadd_imm_s(operand.value, step);
                     Typed { value, representation: Representation::Int32 }
                 } else {
-                    let operator = if decrement { FloatOperator::Subtract } else { FloatOperator::Add };
+                    let operator = if decrement {
+                        NumberArithmetic::Subtract
+                    } else {
+                        NumberArithmetic::Add
+                    };
                     let one = self.read(Source::Number(1.0));
                     self.arithmetic(pc, Arithmetic::Float(operator), result, operand, one)
                 };
