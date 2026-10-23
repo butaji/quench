@@ -860,7 +860,7 @@ fn super_inside_with_reads_the_home_object() {
                   Object.setPrototypeOf(o, { x: 3 });\n\
                   var result = o.m();";
     let program = Engine::specialize(source, "super-inside-with.js").unwrap();
-    let mut vm = Vm::new(SilentHost);
+    let mut vm = Vm::new(TestHost::default());
     vm.execute(&program).unwrap();
     let name = vm.intern_atom("result");
     let result = vm.own_property(vm.realm.globals, name).unwrap();
