@@ -314,6 +314,7 @@ measured on the same binary and lost.
 | live × overhead | Record families with narrow inline slots, COW array elements, narrow arena vectors (TOD-147/148/162/166/168/170) | earlier evidence on those issues |
 | start-up state (VM) | Direct-mapped memos (shape, atom, symbol proof, private home, function name, enumerable keys) allocate on first record, out of line: V8-v7 max RSS −48 to −254 KiB, Score within the A/A floor | `tod137-lazy-memo-tables-…` |
 | start-up state (host) | Host operations found by a sorted name index | `tod21-operation-index-…` |
+| allocator | The global allocator follows the policy: quench-alloc's size classes under Throughput, glibc under MemoryFirst; one reservation makes ownership an address compare, so frees route to the allocator that made the block | `tod167-policy-allocator-…` |
 | transients (warm-up) | Under MemoryFirst, first-call compile-phase releases may run 5 ms apart (not 100): V8-v7 no-JIT max RSS −124 to −516 KiB on six fixtures; npm under MemoryFirst +7 to +21% time | `tod137-first-call-release-…` |
 | start-up state (snapshot) | Startup intrinsic roots read from the sealed holders, not a copied list; `process.config` frozen natively | `tod21-startup-intrinsic-roots-…`, `tod21-native-config-freeze-…` |
 

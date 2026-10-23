@@ -88,6 +88,7 @@ impl<H: Host> Vm<H> {
             active_registers: std::ptr::null_mut(),
             lane_raised: None,
             lane_deferred: None,
+            resolved_module_requests: Default::default(),
             host_beside_activations: std::cell::OnceCell::new(),
             lane_returned: None,
             active_layout: Default::default(),

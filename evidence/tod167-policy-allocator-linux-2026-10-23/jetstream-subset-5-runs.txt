@@ -1,0 +1,8 @@
+bigint-noble-ed25519     throughput   score A    5.52 B   11.05 x2.002  rss A 35468 B 32740
+bigint-paillier          throughput   score A    2.40 B    3.17 x1.321  rss A 33912 B 35336
+json-parse-inspector     throughput   score A   72.97 B   84.07 x1.152  rss A 89512 B 89520
+stanford-crypto-aes      throughput   score A   26.22 B   27.14 x1.035  rss A 35672 B 39284
+bigint-noble-ed25519     memory-first score A    5.04 B    5.03 x0.998  rss A 29448 B 29444
+bigint-paillier          memory-first score A    1.78 B    1.80 x1.011  rss A 16496 B 16532
+json-parse-inspector     memory-first score A   71.12 B   69.28 x0.974  rss A 88976 B 89000
+stanford-crypto-aes      memory-first score A   24.41 B   24.20 x0.991  rss A 24444 B 24352

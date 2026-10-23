@@ -166,6 +166,7 @@ pub(super) struct LaneView {
     /// records that point into them, which are their only readers.
     loops: Box<[LoopSite]>,
     plain_backward_jump_sites: usize,
+    osr_rejections: Option<Box<[(super::compiled::RegionRejection, usize)]>>,
 }
 
 #[derive(Default)]
@@ -180,6 +181,7 @@ pub(super) struct OsrDiagnostics {
     pub(super) entry_guard_misses: u64,
     pub(super) exits: u64,
     pub(super) widenings: u64,
+    pub(super) analysis_rejections: Vec<(super::compiled::RegionRejection, usize)>,
 }
 
 impl LaneView {
@@ -212,6 +214,11 @@ impl LaneView {
                 .sum(),
             exits: self.loops.iter().map(|site| site.native_exits.get()).sum(),
             widenings: self.loops.iter().map(|site| site.widenings.get()).sum(),
+            analysis_rejections: self
+                .osr_rejections
+                .as_deref()
+                .unwrap_or_default()
+                .to_vec(),
         }
     }
 }
@@ -3644,15 +3651,20 @@ script_handler! {
 
 script_handler! {
     /// `GetField` of a string primitive, which `String.prototype` answers through the
-    /// site's cache or its chain's data walk (`Vm::cached_string_field_hit`): a method read,
-    /// as `s.substring`, or an absent name, at a site `Vm::string_field_site_cacheable` admits. A miss moves the record on as
-    /// `lane_get_field_miss` decides.
+    /// site's cache (`Vm::string_prototype_field_hit`), a method read as `s.substring`, or
+    /// its chain's data walk for an absent name, at a site `Vm::string_field_site_cacheable`
+    /// admits. A miss moves the record on as `lane_get_field_miss` decides.
     fn lane_get_field_string<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
+        // The site checks (`Vm::string_field_site_cacheable`) ran when the handler was
+        // installed, so a hit reads the site's `String.prototype` entry directly; any other
+        // read is `Vm::cached_string_field_hit`'s, whose miss records the site's entry.
         let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
-            .and_then(|object| vm.cached_string_field_hit(code, object, i.imm(), i.c))
+            .filter(|object| vm.heap.is_string(*object))
+            .and_then(|object| {
+                vm.string_prototype_field_hit(i.c)
+                    .or_else(|| vm.cached_string_field_hit(unsafe { &*(*cx).code }, object, i.imm(), i.c))
+            })
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script(cx))
         };
@@ -5178,6 +5190,7 @@ script_handler! {
             LoopContinuation::Jump => next!(cx, r, header, Carried::script(cx)),
             LoopContinuation::Resume(pc) => next!(cx, r, at(pc), Carried::script(cx)),
             LoopContinuation::Exit(pc) => exit(at(pc)),
+            LoopContinuation::Safepoint => lane_safepoint::<H>(ip, header),
         }
     }
 }
@@ -5189,6 +5202,8 @@ enum LoopContinuation {
     Resume(u32),
     /// The general path executes the instruction at this PC.
     Exit(u32),
+    /// The backward jump's safepoint ends the execution termination stopped.
+    Safepoint,
 }
 
 /// Compiles `site`'s region if it has no current code, then runs it on `r` with `entry`. A
@@ -5227,7 +5242,8 @@ fn lane_loop_run<H: Host>(
             captures: &captures,
             widened: &tier.widened,
         };
-        tier.code = super::compiled::compile_osr_region(&site.region, &observation);
+        tier.code =
+            super::compiled::compile_osr_region(&site.region, &observation, &unsafe { vm(cx) }.execution_interrupt);
         // SAFETY: as above; the observation's borrow of the heap has ended.
         unsafe { vm(cx) }.host.after_native_compilation();
         if site.diagnostics && tier.code.is_some() {
@@ -5242,7 +5258,7 @@ fn lane_loop_run<H: Host>(
     let code = tier.code.as_ref().expect("compiled above");
     // SAFETY: `r` is the running activation's register file; the entry was read from it
     // and the context just now, and native code runs no guest code.
-    let outcome = unsafe { code.run(r.0, entry) };
+    let outcome = unsafe { code.run(r.0, entry, &vm(cx).execution_interrupt) };
     if site.diagnostics {
         site.native_entry_attempts
             .set(site.native_entry_attempts.get().saturating_add(1));
@@ -5265,6 +5281,7 @@ fn lane_loop_run<H: Host>(
                     .set(site.native_region_runs.get().saturating_add(1));
                 site.widenings.set(site.widenings.get().saturating_add(1));
             }
+            LoopOutcome::Terminated => {}
         }
     }
     match outcome {
@@ -5287,6 +5304,7 @@ fn lane_loop_run<H: Host>(
             tier.code = None;
             LoopContinuation::Exit(pc)
         }
+        LoopOutcome::Terminated => LoopContinuation::Safepoint,
     }
 }
 
@@ -5303,7 +5321,7 @@ fn lane_loop_entry<H: Host>(
 ) -> Option<super::compiled::LoopEntry> {
     let vm = unsafe { vm(cx) };
     let region = &site.region;
-    let mut entry = super::compiled::LoopEntry::new(vm.execution_interrupt.atomic_flag());
+    let mut entry = super::compiled::LoopEntry::new();
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
         if slots.is_null() {
@@ -5332,6 +5350,26 @@ fn lane_loop_entry<H: Host>(
             let elements = vm.heap.record_array(value)?.elements().as_slice();
             entry.push_array(elements.as_ptr().cast_mut(), elements.len())?;
         }
+    }
+    // These regions cannot run calls or field writes; indexed writes are rejected when a
+    // cached field is present. Thus a hit on an ordinary data field stays valid for the
+    // whole native run. Any miss, accessor, private name, or non-Number exits before native
+    // code can alter a register.
+    let code = unsafe { &*(*cx).code };
+    for field in &region.fields {
+        if vm.is_private_name(field.atom) {
+            return None;
+        }
+        let receiver = match field.receiver {
+            super::compiled::FieldReceiver::This => unsafe { lane_held_this(cx) },
+            super::compiled::FieldReceiver::Register(register) => r.get(register),
+        };
+        let super::object::FieldCacheProbe::Hit(value) =
+            vm.cached_field_hit(code, receiver, field.cache_site)
+        else {
+            return None;
+        };
+        entry.push_field(value.as_number()?);
     }
     Some(entry)
 }
@@ -5495,6 +5533,28 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// A Wasm effective address: the index operand in the memory's index type plus the
+    /// record's constant offset, as an i64. An overflow, which traps, or an operand of another
+    /// representation takes the general path.
+    fn lane_wasm_memory_address<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let (Ok(address), Some(offset)) = (
+            vm.wasm_memory_index(r.get(i.c), r.get(i.b)),
+            vm.decode_bits64(i.constant()),
+        ) else {
+            return exit(ip);
+        };
+        let Some(effective) = address.checked_add(offset) else {
+            return exit(ip);
+        };
+        let value = vm.encode_bits64(effective);
+        note_allocation(vm);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     /// A generic Wasm memory load (`crate::wasm::memory::MemoryLoad`), as vectors and the
     /// accesses no direct op names take: in place when it reads in bounds; a trap, or an
     /// operand of another representation, takes the general path, which raises it.
@@ -5539,6 +5599,17 @@ lane_handler! {
     }
 }
 
+/// A SIMD operand of static type `ty`: a vector or an i32 read from its slot directly, any
+/// other scalar as `Vm::decode_wasm_value` reads it. `None` for another representation.
+#[inline(always)]
+fn lane_simd_operand<H: Host>(vm: &Vm<H>, value: Value, ty: crate::WasmType) -> Option<crate::WasmValue> {
+    match ty {
+        crate::WasmType::V128 => Some(crate::WasmValue::V128(u128::from_le_bytes(vm.heap.v128(value)?))),
+        crate::WasmType::I32 => Some(crate::WasmValue::I32(value.as_int()?)),
+        _ => vm.decode_wasm_value(value, ty).ok(),
+    }
+}
+
 lane_handler! {
     /// A Wasm SIMD operator (`crate::wasm::simd::SimdOperator`), which neither traps nor runs
     /// guest code: its operands decoded by their static types and its result encoded, a
@@ -5549,13 +5620,15 @@ lane_handler! {
         let Some((operator, lane)) = crate::wasm::simd::SimdOperator::from_selector(i.imm()) else {
             return exit(ip);
         };
-        let Ok(left) = vm.decode_wasm_value(r.get(i.b), operator.left_type()) else {
+        let Some(left) = lane_simd_operand(vm, r.get(i.b), operator.left_type()) else {
             return exit(ip);
         };
-        let right = match operator.right_type().map(|ty| vm.decode_wasm_value(r.get(i.c), ty)) {
+        let right = match operator.right_type() {
             None => None,
-            Some(Ok(right)) => Some(right),
-            Some(Err(_)) => return exit(ip),
+            Some(ty) => match lane_simd_operand(vm, r.get(i.c), ty) {
+                Some(right) => Some(right),
+                None => return exit(ip),
+            },
         };
         let value = vm.encode_wasm_value(operator.apply(left, right, lane));
         note_allocation(vm);
@@ -5572,12 +5645,10 @@ lane_handler! {
         let Some(indices) = vm.heap.v128(i.constant()) else {
             return exit(ip);
         };
-        let (Ok(crate::WasmValue::V128(left)), Ok(crate::WasmValue::V128(right))) = (
-            vm.decode_wasm_value(r.get(i.b), crate::WasmType::V128),
-            vm.decode_wasm_value(r.get(i.c), crate::WasmType::V128),
-        ) else {
+        let (Some(left), Some(right)) = (vm.heap.v128(r.get(i.b)), vm.heap.v128(r.get(i.c))) else {
             return exit(ip);
         };
+        let (left, right) = (u128::from_le_bytes(left), u128::from_le_bytes(right));
         let value = vm.encode_wasm_value(crate::WasmValue::V128(crate::wasm::simd::shuffle(left, right, indices)));
         note_allocation(vm);
         r.set(i.a, value);
@@ -12407,6 +12478,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::WasmGlobalGet => Some(lane_global_get::<H>),
         Op::WasmSimd => Some(lane_wasm_simd::<H>),
         Op::WasmMemoryLoad => Some(lane_wasm_memory_load::<H>),
+        Op::WasmMemoryAddress => Some(lane_wasm_memory_address::<H>),
         Op::WasmMemoryStore => Some(lane_wasm_memory_store::<H>),
         Op::WasmSimdShuffle => Some(lane_wasm_simd_shuffle::<H>),
         Op::WasmGlobalSet => Some(lane_global_set::<H>),
@@ -13242,6 +13314,11 @@ fn derive_lane_view<H: Host>(
         let absorbed = decoded[target];
         let plain = |op: Op| absorbed.op() == op && serves(records[target].handler, op, ACC_NONE);
         let backward = target <= pc;
+        // In compiled mode an OSR site's backedge must remain a standalone jump record.
+        // The lane's `THROUGH` fusion would replace both its handler and jump distance.
+        if loop_tier && backward {
+            continue;
+        }
         let (handler, c) = if plain(Op::Move) {
             (JumpFusions::<H>::THROUGH[0][usize::from(backward)], 0)
         } else if plain(Op::WasmI32AddImmediate)
@@ -13274,7 +13351,8 @@ fn derive_lane_view<H: Host>(
             // A jump after the pair joins it.
             let jump = records
                 .get(pc + 2)
-                .and_then(|record| jump_direction(record.handler));
+                .and_then(|record| jump_direction(record.handler))
+                .filter(|backward| !loop_tier || !backward);
             records[pc].handler = match jump {
                 None => lane_move_pair::<H, false, false> as Handler,
                 Some(false) => lane_move_pair::<H, true, false>,
@@ -13297,6 +13375,10 @@ fn derive_lane_view<H: Host>(
             continue;
         };
         if let Some(backward) = jump_direction(records[pc + 1].handler) {
+            // Leave a hot OSR latch's jump record visible to `install_loop_sites`.
+            if loop_tier && backward {
+                continue;
+            }
             records[pc].handler =
                 JumpFusions::<H>::THEN[usize::from(add)][usize::from(backward)] as *const ();
         }
@@ -13706,10 +13788,10 @@ fn derive_lane_view<H: Host>(
     specialize_frame_locals::<H>(function, &mut records);
     specialize_outer_captures::<H>(&mut records);
     let environment_window = specialize_environment_window::<H>(function, &decoded, &mut records);
-    let loops = if loop_tier && kind != crate::bytecode::ProgramKind::Wasm {
+    let (loops, osr_rejections) = if loop_tier && kind != crate::bytecode::ProgramKind::Wasm {
         install_loop_sites::<H>(function, &decoded, constants, live, diagnostics, &mut records)
     } else {
-        Box::default()
+        (Box::default(), Vec::new())
     };
     // The fused record is a script handler; Wasm bodies run none.
     if !wasm {
@@ -13751,6 +13833,8 @@ fn derive_lane_view<H: Host>(
             .enumerate()
             .filter(|(pc, instruction)| instruction.op() == Op::Jump && instruction.jump_target() <= *pc as u32)
             .count(),
+        osr_rejections: (!osr_rejections.is_empty())
+            .then(|| osr_rejections.into_boxed_slice()),
     }
 }
 
@@ -13764,7 +13848,7 @@ fn install_loop_sites<H: Host>(
     live: Option<&[u64]>,
     diagnostics: bool,
     records: &mut [LaneInstruction],
-) -> Box<[LoopSite]> {
+) -> (Box<[LoopSite]>, Vec<(super::compiled::RegionRejection, usize)>) {
     let backward = lane_jump_always::<H, true> as Handler as *const ();
     // A fused record ahead of a jump runs that jump itself, reading its offset from the jump's
     // record (`JumpFusions::THEN`, a move pair with its jump): a site there would replace the
@@ -13782,18 +13866,33 @@ fn install_loop_sites<H: Host>(
                 .any(|&handler| records[pc - 2].handler == handler as *const ());
         then || pair
     };
+    let mut rejections = Vec::new();
     let sites: Vec<(usize, LoopSite)> = (0..records.len())
         .filter(|pc| records[*pc].handler == backward && decoded[*pc].op() == Op::Jump && !fused_into(*pc))
         .filter_map(|pc| {
             let header = decoded[pc].jump_target();
-            let region = super::compiled::analyze_osr_region(
+            let region = match super::compiled::analyze_osr_region(
                 function,
                 decoded,
                 constants,
                 live,
                 header,
                 pc as u32,
-            )?;
+            ) {
+                Ok(region) => region,
+                Err(reason) => {
+                    if diagnostics {
+                        if let Some((_, count)) =
+                            rejections.iter_mut().find(|(existing, _)| *existing == reason)
+                        {
+                            *count += 1;
+                        } else {
+                            rejections.push((reason, 1));
+                        }
+                    }
+                    return None;
+                }
+            };
             Some((
                 pc,
                 LoopSite {
@@ -13820,7 +13919,7 @@ fn install_loop_sites<H: Host>(
         records[pc].handler = lane_loop_jump::<H> as Handler as *const ();
         records[pc].operand = LaneOperand { site };
     }
-    sites
+    (sites, rejections)
 }
 
 /// Gives each lane record whose operands are registers the handler for that operand shape,

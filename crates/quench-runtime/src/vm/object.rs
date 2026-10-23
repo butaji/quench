@@ -1816,10 +1816,16 @@ impl<H: Host> Vm<H> {
         if !self.string_field_site_cacheable(p, atom) {
             return None;
         }
-        // A name the cache does not hold, as an absent `type`, is a data walk of the
-        // prototype chain, which the string's own index and `length` keys never shadow.
-        self.string_prototype_field_hit(site)
-            .or_else(|| self.plain_named_get(self.string_proto, atom))
+        // A name the chain lacks, as an absent `type`, is `undefined` by a data walk of the
+        // prototype chain, which the string's own index and `length` keys never shadow. A
+        // present one the site has not recorded is left to the general read, which records
+        // it (`get_string_field_miss`), so the site's later reads hit.
+        self.string_prototype_field_hit(site).or_else(|| {
+            match self.plain_property_lookup(self.string_proto, PropertyKey::string(atom)) {
+                Some(None) => Some(Value::UNDEFINED),
+                _ => None,
+            }
+        })
     }
 
     /// Whether a string primitive's read of `atom` in `p` can take the `String.prototype`
