@@ -752,6 +752,24 @@ JavaScript coercion, so it cannot be treated as a primitive operation without
 a guard and a pre-effect exit. This profile narrows the search, but it does not
 yet establish a performance win.
 
+The Undici workload uses pinned `undici@7.30.1` `Pool.request()` calls against
+a loopback HTTP server with four connections, fixed JSON responses, and body
+checks. It resolves the local npm package explicitly because Bun's built-in
+`undici` shim omits `Pool.close()`. Quench initially failed package startup
+because `node:http.maxHeaderSize` was missing; the API now exposes Node's
+default 16,384-byte value through a getter with Node's property descriptor,
+and the full workload completes.
+
+The 11-round JIT screen used 1,000 requests and 50 warmups per process. Quench
+measured 1,116 requests/s and 44.6 MB sampled RSS, Node 5,464 / 81.3 MB, and
+Bun 6,250 / 93.5 MB. Quench is about 80–82% slower, though its sampled RSS is
+45–52% lower. For JIT-off, Node `--jitless` removes the `WebAssembly` global
+that Undici's llhttp parser requires, so that comparison is unavailable.
+The 11-round Quench/Bun screen measured 1,171 / 45.8 MB for Quench and
+2,119 / 49.1 MB for Bun: Quench is 44.7% slower and uses only 6.7% less
+sampled RSS. Linux RSS is diagnostic, so neither mode qualifies for the 20%
+target. Reports are local at `target/perf-reports/undici-pool-{jit,nojit}-11.json`.
+
 The first Zod v4 workload uses flat and nested object schemas, a discriminated
 union, successful `parse`, and invalid `safeParse` with issue-path checks. The
 11-round clean-production screen used 1,000 rounds and 50 warmups per process;
