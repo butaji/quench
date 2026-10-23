@@ -653,11 +653,11 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
 /// where the lane resumes; as lowered (`Lowering::jump`, `Lowering::fall_through`).
 fn successors(region: &LoopRegion, pc: u32) -> Vec<u32> {
     let instruction = region.instructions[(pc - region.header) as usize];
-    match instruction.op() {
-        Op::Jump => vec![instruction.jump_target()],
-        Op::JumpBinaryFalse => vec![pc + 1, instruction.jump_target()],
-        _ => vec![pc + 1],
-    }
+    let mut successors = Vec::with_capacity(2);
+    crate::bytecode::for_each_instruction_successor(pc as usize, instruction, |successor| {
+        successors.push(successor as u32);
+    });
+    successors
 }
 
 fn webs(region: &LoopRegion) -> Webs {

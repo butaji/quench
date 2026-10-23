@@ -265,28 +265,20 @@ fn js_numeric_control_flow(function: &Function) -> Option<(Vec<bool>, Vec<Vec<us
             return None;
         }
         let instruction = packed.as_wide();
-        let successors: Vec<usize> = match instruction.op().control_flow_layout() {
-            ControlFlowLayout::Jump if instruction.op() == crate::bytecode::Op::Jump => {
-                vec![usize::try_from(instruction.jump_target()).ok()?]
-            }
+        match instruction.op().control_flow_layout() {
+            ControlFlowLayout::Jump if instruction.op() == crate::bytecode::Op::Jump => {}
             ControlFlowLayout::ConditionalJump
-                if instruction.op() == crate::bytecode::Op::JumpBinaryFalse =>
-            {
-                vec![
-                    usize::try_from(instruction.jump_target()).ok()?,
-                    pc.checked_add(1)?,
-                ]
-            }
-            ControlFlowLayout::Terminal => Vec::new(),
-            ControlFlowLayout::Fallthrough if !instruction.returns_from_frame() => {
-                vec![pc.checked_add(1)?]
-            }
-            ControlFlowLayout::Fallthrough => Vec::new(),
+                if instruction.op() == crate::bytecode::Op::JumpBinaryFalse => {}
+            ControlFlowLayout::Terminal | ControlFlowLayout::Fallthrough => {}
             ControlFlowLayout::Jump
             | ControlFlowLayout::ConditionalJump
             | ControlFlowLayout::BranchTable
             | ControlFlowLayout::Call => return None,
-        };
+        }
+        let mut successors = Vec::with_capacity(2);
+        crate::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
+            successors.push(successor);
+        });
         for successor in successors {
             if successor <= pc || successor >= length {
                 return None;
@@ -4127,21 +4119,13 @@ fn direct_access(op: Op) -> bool {
 }
 
 fn successors(function: &Function, pc: usize, instruction: WideInstruction) -> Vec<usize> {
-    match instruction.op().control_flow_layout() {
-        ControlFlowLayout::Jump => vec![instruction.jump_target() as usize],
-        ControlFlowLayout::ConditionalJump => vec![instruction.jump_target() as usize, pc + 1],
-        ControlFlowLayout::BranchTable => crate::bytecode::branch_table_entries(pc, instruction)
-            .filter(|entry| *entry < function.code.len())
-            .collect(),
-        ControlFlowLayout::Terminal => vec![],
-        ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => {
-            if instruction.returns_from_frame() {
-                vec![]
-            } else {
-                vec![pc + 1]
-            }
+    let mut successors = Vec::with_capacity(2);
+    crate::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
+        if successor < function.code.len() {
+            successors.push(successor);
         }
-    }
+    });
+    successors
 }
 
 /// The analysis context shared by every function of a program.
