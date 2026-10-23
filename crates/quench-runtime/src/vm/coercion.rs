@@ -215,8 +215,13 @@ impl<H: Host> Vm<H> {
             }
         }
         Ok(match op {
-            UNARY_PLUS => Value::number(self.to_number(p, value)?),
-            UNARY_NEGATION => Value::number(-self.to_number(p, value)?),
+            op if super::operations::NumberUnary::from_operator(op).is_some() => {
+                let number = self.to_number(p, value)?;
+                Value::number(
+                    super::operations::number_unary_result(op, number)
+                        .expect("selected Number unary operation"),
+                )
+            }
             LOGICAL_NOT => self.logical_not(value),
             BITWISE_NOT => {
                 Value::number((!(number_to_u32(self.to_number(p, value)?) as i32)) as f64)
