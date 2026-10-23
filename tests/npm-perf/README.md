@@ -725,3 +725,16 @@ out this candidate for the dual-mode target, so the runtime rewrite and its
 test were reverted. Reports:
 `target/perf-reports/react-move-getfield-pgo-screen-no-jit.json` and
 `target/perf-reports/react-move-getfield-pgo-screen-jit.json`.
+
+A guarded `completeShell` entry prefix read the cached `trackedPostpones`
+property, tested it against null, staged the capture/literal/argument registers,
+and resumed immediately before the dynamic call. The call and all misses stayed
+on the interpreter path. Its 11-round, 1,000-render JIT screen measured 481.7
+renders/s / 29.41 MB sampled maximum RSS versus the control at 502.3 / 29.76
+MB (-4.1% throughput, -1.2% RSS); output matched at 4,996,000 bytes/checksum
+83793. Linux RSS is diagnostic, and the candidate/control PGO profiles were
+not identical, so this was a screen rather than qualification. The short prefix
+does not amortize its entry guard cost and was reverted. The next JIT direction
+is a multi-operation, generic-Value tracelet that can cover repeated
+field/load/branch regions in the hot React functions, with interpreter side
+exits for dynamic operations.
