@@ -1203,6 +1203,11 @@ impl ShapeTransition {
         }
     }
 }
+/// Constructor layouts `instanceof` remembers (`Vm::instanceof_constructor_layouts`): a
+/// power of two that holds the few constructors a request's `instanceof` sites test
+/// (`Uint8Array`, `ReadableStream`, `Headers`, `Error`) without evicting one another.
+pub(crate) const INSTANCEOF_CONSTRUCTOR_LAYOUTS: usize = 4;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DictionaryTrigger {
     PropertyCount,
@@ -1741,10 +1746,10 @@ pub(crate) struct Vm<H> {
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,
-    /// A non-dictionary constructor shape verified to have no own `@@hasInstance` and a
-    /// data `prototype` at the paired slot; derived from shapes, so field-cache invalidation
-    /// clears it.
-    instanceof_constructor_layout: Option<(u32, usize)>,
+    /// Non-dictionary constructor shapes verified to have no own `@@hasInstance` and a
+    /// data `prototype` at the paired slot, direct-mapped by shape; derived from shapes, so
+    /// field-cache invalidation clears them.
+    instanceof_constructor_layouts: [Option<(u32, usize)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
     /// The shapes an ordinary closure's own properties step through, without and with a
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
@@ -2711,7 +2716,7 @@ impl<H: Host> Vm<H> {
         self.wasm_exported_functions.clear();
         self.private_homes.clear();
         self.programs.reset(program.clone());
-        self.instanceof_constructor_layout = None;
+        self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.closure_shapes = [None; 2];
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
