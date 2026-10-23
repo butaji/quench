@@ -71,8 +71,8 @@ impl<H: Host> Vm<H> {
                     frame: Some(mut frame),
                 } => {
                     vm.release_dead_registers(&mut frame);
-                    let continuation = Continuation::from_frame(
-                        &mut frame,
+                    let continuation = Continuation::suspend(
+                        frame,
                         Completion::Await(value),
                         Some(destination),
                         promise,
@@ -302,10 +302,10 @@ impl<H: Host> Vm<H> {
             }
             return Err(JsError("stale async continuation".into()));
         };
-        let Some(program) = self.programs.get(continuation.program) else {
+        let Some(program) = self.programs.get(continuation.frame.program) else {
             return Err(JsError("async continuation program is unavailable".into()));
         };
-        let active_program = self.replace_active_program(continuation.program);
+        let active_program = self.replace_active_program(continuation.frame.program);
         let result =
             self.resume_async_continuation_in_program(&program, resume, continuation, value);
         self.set_active_program(active_program);
@@ -337,7 +337,7 @@ impl<H: Host> Vm<H> {
             record.running = true;
         }
         let resume_register = continuation.resume_register;
-        let mut frame = continuation.into_frame(self.with_stack.len());
+        let mut frame = continuation.resume(self.with_stack.len());
         if !resume.rejected
             && let Some(register) = resume_register
         {
@@ -347,7 +347,6 @@ impl<H: Host> Vm<H> {
             frame.registers[register as usize] = value;
         }
         self.activate_frame(&mut frame);
-        let frame = self.adopt_frame(frame);
         self.frames.push(frame);
         let initial_error = resume
             .rejected
@@ -386,8 +385,8 @@ impl<H: Host> Vm<H> {
                 frame: None,
             } => {
                 self.release_dead_registers(&mut frame);
-                let continuation = Continuation::from_frame(
-                    &mut frame,
+                let continuation = Continuation::suspend(
+                    frame,
                     Completion::Await(value),
                     Some(destination),
                     resume.promise,
@@ -448,7 +447,7 @@ impl<H: Host> Vm<H> {
                         p,
                         generator,
                         resume.promise,
-                        *frame,
+                        frame,
                         value,
                         destination,
                         delegated_result.is_some(),
