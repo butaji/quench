@@ -89,3 +89,28 @@ Additional follow-up reports:
 - `sharp-metadata-eventfd-no-jit-5.json`, `sharp-metadata-eventfd-jit-5.json`
 - `sharp-concurrent-eventfd-no-jit-5.json`, `sharp-concurrent-eventfd-jit-5.json`
 - `sharp-effort0-no-jit-5.json`, `sharp-effort0-jit-5.json`
+
+## Next response and routing follow-up
+
+The original `next-route-response.cjs` parses its generated body with
+`response.json()`. `next-route-generate.cjs` measures route matching plus
+`NextResponse.json()` and handing the body stream off, with no readback in the
+handler. `next-route-match.cjs` isolates dynamic route regex matching and
+parameter extraction.
+
+| Workload / phase | Quench ops/s / MiB | Node ops/s / MiB | Bun ops/s / MiB |
+| --- | ---: | ---: | ---: |
+| Generate response, no-JIT | 5,112 / 67.81 | 26,596 / 70.00 | 113,636 / 37.26 |
+| Generate response, JIT | 4,965 / 47.72 | 58,140 / 84.10 | 208,333 / 6.15 |
+| Match route, no-JIT | 56,818 / 25.64 | 322,581 / 24.83 | 212,766 / 33.25 |
+| Match route, JIT | 64,516 / 17.73 | 555,556 / 33.65 | 625,000 / 1.90 |
+
+The profile's most frequent locations were Undici WebIDL dictionary conversion,
+`Response` state accessors, and body-stream setup. Route matching alone is
+roughly an order of magnitude faster than response generation in Quench; the
+response construction/stream path is the larger target. The Bun samples run
+under 50 ms, so sampled RSS is not meaningful for those rows. Linux reports
+remain diagnostic and no Next case meets the throughput gate.
+
+Additional reports: `next-generate-no-jit-5.json`, `next-generate-jit-5.json`,
+`next-match-no-jit-5.json`, and `next-match-jit-5.json`.
