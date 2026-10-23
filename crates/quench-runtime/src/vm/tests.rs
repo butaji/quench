@@ -1435,8 +1435,9 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
       Object.setPrototypeOf(inherited, prototype);
       print(inherited.answer);
       print(inherited.getAnswer());
-      var deleted = { answer: 5 };
+      var deleted = { answer: 5, other: 6 };
       delete deleted.answer;
+      delete deleted.other;
       deleted.answer = 7;
       print(deleted.answer);
     "#;
@@ -1640,6 +1641,36 @@ fn a_deletion_keeps_a_shared_shape_until_vacated_slots_outnumber_properties() {
         Some(super::DictionaryTrigger::DeletionPattern)
     );
     assert_eq!(output.borrow().as_slice(), ["14 false a,c"]);
+}
+
+#[test]
+fn deleting_the_last_added_property_returns_to_the_earlier_shape() {
+    let source = r#"
+      var base = { a: 1 };
+      var stack = { a: 1 };
+      for (var id = 1; id <= 64; id++) { stack[id] = id; stack["k" + id] = id; delete stack["k" + id]; delete stack[id]; }
+      print([Object.keys(stack), stack.a, "k1" in stack].join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "deletion-rollback.js").unwrap();
+    let shapes_before = vm.shapes.len();
+    vm.execute(&program).unwrap();
+    let global = vm.realm.globals;
+    let shape_of = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        let object = vm.own_property(global, atom).expect("global binding exists");
+        vm.object_data(object).expect("object value").shape()
+    };
+    // Each key is deleted while it is the last one added: the object is back on the shape
+    // it started with, and no deletion forked a shape of its own.
+    assert_eq!(shape_of(&mut vm, "stack"), shape_of(&mut vm, "base"));
+    let deletions = vm.shapes[shapes_before..]
+        .iter()
+        .filter(|shape| matches!(shape.transition, super::ShapeTransition::Delete { .. }))
+        .count();
+    assert_eq!(deletions, 0);
+    assert_eq!(output.borrow().as_slice(), ["a 1 false"]);
 }
 
 #[test]
@@ -6483,9 +6514,11 @@ fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
                         assert!(
                             matches!(vm.heap.get(proxy),Some(super::Cell::Proxy {target,handler,..}) if target.is_null()&&handler.is_null())
                         );
-                        keys.into_iter()
-                            .map(|value| vm.heap.weak_handle(value).unwrap())
-                            .collect::<Vec<_>>()
+                        // A key a program spells is its shared atom string (`Vm::atom_string`),
+                        // kept with the program; the symbol key is the proxy target's own.
+                        let first = vm.intern_atom("first");
+                        assert_eq!(keys[0], vm.atom_string(first));
+                        vec![vm.heap.weak_handle(keys[1]).unwrap()]
                     }
                     Err(error) => {
                         let atom = vm.intern_atom("kind");
@@ -10475,6 +10508,64 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_compiles_number_unary_plus_and_negation_with_exact_fallback() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function plus(value) { return +value; }
+          function negate(value) { return -value; }
+          const values = [0, -0, Infinity, -Infinity, NaN];
+          for (let index = 0; index < 40; index++) {
+            const value = values[index % values.length];
+            if (!Object.is(plus(value), value)) throw Error('unary plus');
+            if (!Object.is(negate(value), -value)) throw Error('unary negation');
+          }
+          if (plus('7') !== 7) throw Error('unary plus coercion fallback');
+          let plusThrew = false;
+          try { plus(7n); } catch (error) { plusThrew = error instanceof TypeError; }
+          if (!plusThrew) throw Error('unary plus BigInt fallback');
+          if (negate(7n) !== -7n) throw Error('unary negation BigInt fallback');
+          let coercions = 0;
+          const boxed = { valueOf() { coercions++; return 5; } };
+          if (negate(boxed) !== -5 || coercions !== 1) throw Error('unary effectful fallback');
+        "#,
+        "js-jit-number-unary.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    for name in ["plus", "negate"] {
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(compiled)) =
+            vm.programs
+                .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should compile its Number unary denotation");
+        };
+        assert!(
+            compiled.uses_shared_entry(),
+            "{name} should use the common VM native-entry ABI"
+        );
+        assert!(
+            compiled.native_entries() > 0,
+            "{name} should have entered native code before the fallback checks"
+        );
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_straight_line_plain_local_temporaries() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -12802,6 +12893,61 @@ fn array_fill_stores_plainly_only_where_no_prototype_claims_the_index() {
       check(Array.prototype.fill.call({ length: 2 }, 1)[1], 1, 'array-like');
     "#;
     for program in [Engine::compile(crate::ExecutionRequest { source, name: "array-fill.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "array-fill.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn define_property_keeps_its_values_through_collections_its_conversions_run() {
+    let source = r#"
+      const churn = () => { let keep = []; for (let i = 0; i < 8000; i++) keep.push({ i, s: 'x' + i }); return keep.length; };
+      const results = [];
+      for (let round = 0; round < 6; round++) {
+        const key = { toString() { churn(); return 'k' + round; } };
+        const descriptor = {
+          get enumerable() { churn(); return true; },
+          get get() { churn(); const marker = { round }; return () => marker.round; },
+        };
+        const target = Object.defineProperty({}, key, descriptor);
+        results.push(target['k' + round]);
+        if (!Object.getOwnPropertyDescriptor(target, 'k' + round).enumerable) throw Error('enumerable lost');
+        const reflected = {};
+        if (!Reflect.defineProperty(reflected, key, { get value() { churn(); return [round]; }, writable: true })) throw Error('reflect');
+        if (reflected['k' + round][0] !== round) throw Error('value lost');
+      }
+      if (results.join() !== Array.from({ length: 6 }, (_, i) => i).join()) throw Error('getter results ' + results);
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "define-roots.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "define-roots.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn object_assign_sees_prototype_setters_added_after_a_memoized_copy() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      const proto = {};
+      const src = { a: 1, b: 2 };
+      for (let i = 0; i < 4; i++) check(Object.assign(Object.create(proto), src).a, 1, 'primed');
+      let hits = 0;
+      Object.defineProperty(proto, 'a', { set(value) { hits += value; }, configurable: true });
+      const target = Object.assign(Object.create(proto), src);
+      check(hits, 1, 'setter called');
+      check(Object.prototype.hasOwnProperty.call(target, 'a'), false, 'setter kept the key off the target');
+      check(target.b, 2, 'other key copied');
+      delete proto.a;
+      Object.defineProperty(proto, 'b', { value: 0, writable: false, configurable: true });
+      let threw = false;
+      try { Object.assign(Object.create(proto), src); } catch (error) { threw = error instanceof TypeError; }
+      check(threw, true, 'read-only inherited key throws');
+      delete proto.b;
+      check(Object.assign(Object.create(proto), src).b, 2, 'plain again');
+      Object.defineProperty(Object.prototype, 'a', { set(value) { hits += 10 * value; }, configurable: true });
+      Object.assign({}, src);
+      check(hits, 11, 'Object.prototype setter');
+      delete Object.prototype.a;
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "assign-memo.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "assign-memo.js").unwrap()] {
         Vm::new(TestHost::default()).execute(&program).unwrap();
     }
 }
