@@ -560,6 +560,43 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
+    /// `target.[[GetOwnProperty]](key)` as a complete descriptor record, as a Proxy trap's
+    /// invariant checks read it: a Proxy target answers through its own trap, any other
+    /// target through `ordinary_get_own_property`, which makes no descriptor object. `key` is
+    /// a property key; the caller keeps both rooted.
+    pub(super) fn own_property_descriptor_record(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        key: Value,
+    ) -> Result<Option<PropertyDescriptorRecord>, JsError> {
+        if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
+            let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
+            return Ok((!descriptor.is_undefined()).then(|| self.own_descriptor_record(descriptor)));
+        }
+        Ok(self.ordinary_get_own_property(p, target, key)?.map(|(value, attributes)| {
+            if attributes.accessor {
+                PropertyDescriptorRecord {
+                    value: None,
+                    writable: None,
+                    enumerable: Some(attributes.enumerable),
+                    configurable: Some(attributes.configurable),
+                    getter: Some(attributes.getter.unwrap_or(Value::UNDEFINED)),
+                    setter: Some(attributes.setter.unwrap_or(Value::UNDEFINED)),
+                }
+            } else {
+                PropertyDescriptorRecord {
+                    value: Some(value),
+                    writable: Some(attributes.writable),
+                    enumerable: Some(attributes.enumerable),
+                    configurable: Some(attributes.configurable),
+                    getter: None,
+                    setter: None,
+                }
+            }
+        }))
+    }
+
     /// [[GetOwnProperty]] of a non-Proxy object for a property key, as its value and
     /// attributes. A lazy data property reports its data descriptor, so it materializes first;
     /// its attributes alone (as enumeration reads them, `ordinary_own_property`) need no value.
