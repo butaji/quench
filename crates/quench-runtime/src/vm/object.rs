@@ -1861,10 +1861,13 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn string_prototype_field_hit(&self, site: u16) -> Option<Value> {
         let prototype = self.heap.object_record(self.string_proto)?;
-        if self.shape_is_dictionary(prototype.shape()) {
-            return None;
-        }
-        Some(self.cached_field_value(self.field_cache_index(site), prototype)?.value)
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        let cache = unsafe { *self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        // An entry records only a non-dictionary shape, which the exact shape matches only
+        // outside dictionary storage; a polymorphic site's other entries take the walk.
+        (cache.holder == NO_FIELD_HOLDER && cache.receiver == prototype.exact_shape())
+            // SAFETY: the shape and its own data slot were recorded together on the miss path.
+            .then(|| unsafe { self.heap.property_get_flat(prototype, cache.slot as usize) })
     }
 
     /// The field cache's answer for an object cell other than a string or a
