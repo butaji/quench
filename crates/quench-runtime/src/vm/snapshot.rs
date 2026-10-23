@@ -355,7 +355,7 @@ impl<H: Host> Vm<H> {
             megamorphic_fields: _,
             length_atom,
             prototype_atom,
-            instanceof_constructor_layout: _,
+            instanceof_constructor_layouts: _,
             closure_shapes: _,
             iterator_result_shape: _,
             reused_iterator_result: _,
