@@ -51,6 +51,10 @@ pub(super) struct JsJitNumericFieldInput {
 pub(super) enum JsJitFieldReceiver {
     This,
     Parameter(u16),
+    Capture {
+        register: u16,
+        capture: JsJitCaptureArgument,
+    },
 }
 
 /// A field getter that can return a cached data-property value without
@@ -90,7 +94,7 @@ pub(super) struct JsJitNumericFind {
     pub(super) return_register: crate::bytecode::Register,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct JsJitCaptureArgument {
     pub(super) depth: u16,
     pub(super) slot: u16,
@@ -820,9 +824,9 @@ pub(super) fn cached_numeric_field_argument_candidate(
     candidate
 }
 
-/// Collect cached reads from `this` and parameters in pure regions. Field values
-/// are guarded and supplied as separate ABI inputs, so native code never holds
-/// a guest heap reference.
+/// Collect cached reads from `this`, parameters, and captured objects in pure
+/// regions. Field values are guarded and supplied as separate ABI inputs, so
+/// native code never holds a guest heap reference.
 pub(super) fn cached_numeric_field_inputs_candidate(
     function: &Function,
 ) -> Option<smallvec::SmallVec<[JsJitNumericFieldInput; MAX_NUMERIC_FIELD_INPUTS]>> {
@@ -839,8 +843,8 @@ pub(super) fn cached_numeric_field_inputs_candidate(
         // checks; the new multi-field path targets zero-argument `this` helpers.
         return None;
     }
-    let mut inputs: smallvec::SmallVec<[_; MAX_NUMERIC_FIELD_INPUTS]> =
-        smallvec::SmallVec::new();
+    let mut inputs: smallvec::SmallVec<[_; MAX_NUMERIC_FIELD_INPUTS]> = smallvec::SmallVec::new();
+    let mut captured_registers = [None; MAX_REGISTERS];
     let mut branch_seen = false;
     for (pc, packed) in function.code.iter().copied().enumerate() {
         if packed.is_wide() {
@@ -867,6 +871,15 @@ pub(super) fn cached_numeric_field_inputs_candidate(
                 .filter(|parameter| *parameter < function.params)
             {
                 JsJitFieldReceiver::Parameter(parameter)
+            } else if let Some(register) = base.register_index() {
+                let capture = captured_registers
+                    .get(usize::from(register))
+                    .copied()
+                    .flatten()?;
+                if function.params != 0 {
+                    return None;
+                }
+                JsJitFieldReceiver::Capture { register, capture }
             } else {
                 return None;
             };
@@ -885,11 +898,19 @@ pub(super) fn cached_numeric_field_inputs_candidate(
             if inputs.len() > MAX_NUMERIC_FIELD_INPUTS {
                 return None;
             }
+        } else if instruction.op() == Op::LoadCapture {
+            if instruction.returns_from_frame() || instruction.result_flags() != 0 {
+                return None;
+            }
+            *captured_registers.get_mut(usize::from(instruction.result_register()))? =
+                Some(JsJitCaptureArgument {
+                    depth: instruction.capture_depth(),
+                    slot: instruction.capture_slot(),
+                });
         } else if !matches!(
             instruction.op(),
             Op::LoadConst
                 | Op::Move
-                | Op::LoadCapture
                 | Op::Binary
                 | Op::NumericAdd
                 | Op::NumericMultiply
@@ -912,6 +933,35 @@ pub(super) fn cached_numeric_field_inputs_candidate(
             }
             branch_seen = true;
         }
+        if !matches!(instruction.op(), Op::LoadCapture) {
+            let result_register = match instruction.op() {
+                Op::LoadConst
+                | Op::Move
+                | Op::GetField
+                | Op::Binary
+                | Op::NumericAdd
+                | Op::NumericMultiply
+                | Op::Unary => Some(instruction.result_register()),
+                _ => None,
+            };
+            if let Some(register) = result_register {
+                *captured_registers.get_mut(usize::from(register))? = None;
+            }
+        }
+    }
+    let has_branches = function.code.iter().any(|packed| {
+        !packed.is_wide()
+            && matches!(
+                packed.as_wide().op(),
+                Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
+            )
+    });
+    if has_branches
+        && inputs
+            .iter()
+            .any(|input| matches!(input.receiver, JsJitFieldReceiver::Capture { .. }))
+    {
+        return None;
     }
     (!inputs.is_empty()).then_some(inputs)
 }
@@ -1874,15 +1924,34 @@ fn compile_number_domain_boolean_tree(
                 successors.push(pc + 1);
             }
             Op::LoadCapture => {
-                if !capture_arguments.iter().any(|capture| {
-                    capture.depth == instruction.capture_depth()
-                        && capture.slot == instruction.capture_slot()
-                }) {
-                    return None;
+                let captured_object_receiver =
+                    numeric_field_inputs.as_ref().is_some_and(|inputs| {
+                        inputs.iter().any(|input| {
+                            matches!(input.receiver,
+                                JsJitFieldReceiver::Capture {
+                                    register,
+                                    capture,
+                                } if register == instruction.result_register()
+                                    && capture.depth == instruction.capture_depth()
+                                    && capture.slot == instruction.capture_slot())
+                        })
+                    });
+                if captured_object_receiver {
+                    *state
+                        .registers
+                        .get_mut(usize::from(instruction.result_register()))? =
+                        BranchValue::Unknown;
+                } else {
+                    if !capture_arguments.iter().any(|capture| {
+                        capture.depth == instruction.capture_depth()
+                            && capture.slot == instruction.capture_slot()
+                    }) {
+                        return None;
+                    }
+                    *state
+                        .registers
+                        .get_mut(usize::from(instruction.result_register()))? = BranchValue::Number;
                 }
-                *state
-                    .registers
-                    .get_mut(usize::from(instruction.result_register()))? = BranchValue::Number;
                 successors.push(pc + 1);
             }
             Op::GetField => {
@@ -1896,6 +1965,7 @@ fn compile_number_domain_boolean_tree(
                     let expected_base = match input.receiver {
                         JsJitFieldReceiver::This => FieldBase::THIS,
                         JsJitFieldReceiver::Parameter(parameter) => FieldBase(parameter),
+                        JsJitFieldReceiver::Capture { register, .. } => FieldBase(register),
                     };
                     if !matches!(
                         instruction.field_lookup(),
@@ -4236,7 +4306,12 @@ fn eligible(function: &Function, program: &crate::bytecode::ResidualProgram) -> 
         || !function.handlers.is_empty()
         || (!function.plain_activation(program)
             && !activation_is_irrelevant(function)
-            && numeric_capture_candidate(function).is_none())
+            && numeric_capture_candidate(function).is_none()
+            && !cached_numeric_field_inputs_candidate(function).is_some_and(|inputs| {
+                inputs.iter().any(|input| {
+                    matches!(input.receiver, JsJitFieldReceiver::Capture { .. })
+                })
+            }))
     {
         return false;
     }

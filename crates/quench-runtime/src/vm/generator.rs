@@ -1235,23 +1235,23 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         initial_error: Option<JsError>,
     ) -> Result<Value, JsError> {
-        let (continuation, realm, done, running) = {
+        let (continuation, realm, done) = {
             let Some(record) = self.generator_record_mut(generator) else {
                 return Err(JsError("generator receiver is invalid".into()));
             };
             if record.running {
                 return Err(JsError("generator is already running".into()));
             }
-            (
-                record.continuation.take(),
-                record.realm,
-                record.done,
-                record.running,
-            )
+            let continuation = record.continuation.take();
+            // A suspended generator that resumes runs from here; one that has not started and
+            // receives an abrupt completion closes without running.
+            record.running = !record.done
+                && continuation.as_ref().is_some_and(|continuation| {
+                    initial_error.is_none()
+                        || !matches!(continuation.completion, Completion::GeneratorStart)
+                });
+            (continuation, record.realm, record.done)
         };
-        if running {
-            return Err(JsError("generator is already running".into()));
-        }
         if done {
             if let Some(error) = initial_error {
                 return Err(error);
@@ -1266,13 +1266,12 @@ impl<H: Host> Vm<H> {
             self.close_generator(generator)?;
             return Err(error);
         }
-        let execution_program = self
-            .programs
-            .get(continuation.frame.program)
-            .ok_or_else(|| JsError("generator continuation program is unavailable".into()))?;
-        if let Some(record) = self.generator_record_mut(generator) {
-            record.running = true;
-        }
+        let Some(execution_program) = self.programs.get(continuation.frame.program) else {
+            if let Some(record) = self.generator_record_mut(generator) {
+                record.running = false;
+            }
+            return Err(JsError("generator continuation program is unavailable".into()));
+        };
         let resume_register = continuation.resume_register;
         let mut frame = continuation.resume(self.with_stack.len());
         if initial_error.is_none()

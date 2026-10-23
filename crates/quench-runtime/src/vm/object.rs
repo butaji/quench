@@ -619,13 +619,48 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether storing each index of `indices`, none of them own, on `array` is a plain
-    /// data definition (`inherited_index_unclaimed`).
+    /// data definition (`inherited_index_unclaimed`). A single index (a push) is checked
+    /// alone, which costs less than the chain-wide proof; a wider range proves the chain once.
     pub(super) fn array_indices_store_plainly(
         &self,
         array: Value,
         mut indices: std::ops::Range<usize>,
     ) -> bool {
+        if indices.len() > 1 && self.prototypes_hold_no_index(array) {
+            return true;
+        }
         indices.all(|index| self.inherited_index_unclaimed(array, index))
+    }
+
+    /// Whether no prototype of `object` holds any array index or could answer one outside its
+    /// storage: OrdinarySet of an index `object` lacks then defines it on `object`
+    /// (`inherited_index_unclaimed`), and HasProperty of it finds nothing inherited
+    /// (`inherited_index_absent`), whichever the index.
+    pub(super) fn prototypes_hold_no_index(&self, object: Value) -> bool {
+        let mut current = self.object_data(object).map(|data| data.proto());
+        while let Some(holder) = current.filter(|value| !value.is_null()) {
+            if matches!(self.heap.get(holder), Some(Cell::Proxy { .. } | Cell::TypedArray { .. })) {
+                return false;
+            }
+            let Some(data) = self.object_data(holder) else {
+                return false;
+            };
+            if data.is_module_namespace()
+                || data.is_arguments_object()
+                || data.boxed_primitive().is_some()
+                || data.has_indexed_descriptors()
+                || self.shape_has_index_key(data.shape())
+                || self.heap.sparse_length(holder).is_some()
+                || self
+                    .heap
+                    .array(holder)
+                    .is_some_and(|array| array.elements().iter().any(|value| !value.is_deleted()))
+            {
+                return false;
+            }
+            current = Some(data.proto());
+        }
+        true
     }
 
     pub(super) fn set_property_attributes(
