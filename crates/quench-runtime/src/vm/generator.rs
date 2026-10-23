@@ -103,7 +103,7 @@ impl<H: Host> Vm<H> {
             });
             frame.locals[usize::from(slot)] = arguments;
             self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
-            if mapped {
+            if function.arguments_alias_parameters() {
                 if let Some(object) = self.object_data_mut(arguments) {
                     object.set_arguments_map((0..function.params.min(args.len() as u16)).collect());
                 }

@@ -1397,9 +1397,9 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Option<Value> {
         debug_assert!(self.lane_admits(p));
-        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let (receiver, function_receiver) = self.inherited_receiver(object)?;
         let (hit, proof) =
-            self.cached_inherited_field_value(self.field_cache_index(site), receiver)?;
+            self.cached_inherited_field_value(self.field_cache_index(site), receiver, function_receiver)?;
         if let Some(proof) = proof {
             self.prove_inherited_chain(proof);
         }
@@ -1420,7 +1420,7 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Option<Value> {
         debug_assert!(self.lane_admits(p));
-        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let (receiver, function_receiver) = self.inherited_receiver(object)?;
         // SAFETY: as for `cached_inherited_field_value`.
         let index = unsafe { *self.inherited_field_indices.get_unchecked(self.field_cache_index(site)) };
         if index == NO_INHERITED_FIELD {
@@ -1428,6 +1428,7 @@ impl<H: Host> Vm<H> {
         }
         let cache = unsafe { self.inherited_field_caches.get_unchecked(index as usize) };
         if cache.receiver != receiver.shape()
+            || function_receiver && !cache.function_links
             || cache.proved_epoch != crate::heap::prototype_layout_epoch()
             || cache.proved_prototype != receiver.proto_link()
         {
@@ -1444,6 +1445,17 @@ impl<H: Host> Vm<H> {
         let depth = u16::from(cache.depth);
         self.profile.field_cache_hit(0, depth);
         Some(value)
+    }
+
+    /// The object an inherited entry's receiver test reads, and whether it is a function's:
+    /// an object record, or a function, which an entry answers only where its shape holds
+    /// the name (`InheritedFieldCache::function_links`).
+    #[inline(always)]
+    fn inherited_receiver(&self, value: Value) -> Option<(&Object, bool)> {
+        match value.direct_object_index() {
+            Some(record_id) => Some((self.heap.object_record_by_id(record_id), false)),
+            None => self.heap.function(value).map(|function| (&function.object, true)),
+        }
     }
 
     /// Whether the site has an inherited entry (`inherited_field_hit`).
@@ -1725,6 +1737,14 @@ impl<H: Host> Vm<H> {
             )
             | None => None,
         };
+        if matches!(legacy_cell, Some(Cell::TypedArray { .. }))
+            && self.atom_class(atom).contains(AtomClass::VIRTUAL_FIELD)
+        {
+            if let Some(value) = self.typed_array_geometry_read(object, atom) {
+                return Ok(value);
+            }
+            return self.finish_field_cache_read(p, object, atom, FieldCacheRead::Generic);
+        }
         let lookup = match legacy_cell {
             Some(Cell::Proxy { .. }) => FieldCacheRead::Proxy,
             Some(cell) if self.specialized && p.specialized => {
@@ -2156,7 +2176,8 @@ impl<H: Host> Vm<H> {
 
     /// What native accessor `getter` returns for `this` where its call is a read of the
     /// receiver's internal slots that cannot throw for it, running no guest code and
-    /// allocating nothing: a typed array's, DataView's, Map's or Set's size accessors. `None`
+    /// allocating nothing: a typed array's geometry and buffer, or a DataView's, Map's or
+    /// Set's size accessors. `None`
     /// for any other getter or receiver, whose call the general path makes.
     pub(super) fn pure_native_getter_value(&self, getter: Value, this: Value) -> Option<Value> {
         let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = self.heap.function(getter) else {
@@ -2165,7 +2186,8 @@ impl<H: Host> Vm<H> {
         match *native {
             Native::TypedArrayLengthGetter
             | Native::TypedArrayByteLengthGetter
-            | Native::TypedArrayByteOffsetGetter => self.typed_array_getter_value(*native, this),
+            | Native::TypedArrayByteOffsetGetter
+            | Native::TypedArrayBufferGetter => self.typed_array_getter_value(*native, this),
             Native::DataViewByteLengthGetter | Native::DataViewByteOffsetGetter => {
                 let (buffer, offset, length) = self.data_view_view(this)?;
                 if self.array_buffer_out_of_bounds(buffer, offset, length) {
@@ -2196,7 +2218,8 @@ impl<H: Host> Vm<H> {
         site: usize,
     ) -> Option<Value> {
         let receiver = self.shape_property_lookup(object, atom)?;
-        if let Some((hit, proof)) = self.cached_inherited_field_value(site, receiver) {
+        let function_receiver = object.direct_object_index().is_none() && self.heap.function(object).is_some();
+        if let Some((hit, proof)) = self.cached_inherited_field_value(site, receiver, function_receiver) {
             if let Some(proof) = proof {
                 self.prove_inherited_chain(proof);
             }
@@ -2238,9 +2261,13 @@ impl<H: Host> Vm<H> {
             );
             return Some(value);
         }
-        let cache_absence = self.heap.ordinary_object(object).is_some()
-            || self.heap.array(object).is_some();
-        let (cache, value) = self.inherited_field(receiver, cache_absence, atom)?;
+        // A shape holds every own name of an ordinary object, every named own property of a
+        // direct array (whose elements and virtual length the caller's shape lookup excludes),
+        // and every own name `function_links_answer` admits of a function.
+        let shape_holds_own = self.heap.ordinary_object(object).is_some()
+            || self.heap.array(object).is_some()
+            || self.heap.function(object).is_some() && self.function_links_answer(atom);
+        let (cache, value) = self.inherited_field(receiver, shape_holds_own, atom)?;
         if self.field_cache_records(site) {
             self.note_field_cache_write(site);
             self.record_inherited_field(site, cache);
@@ -2291,6 +2318,7 @@ impl<H: Host> Vm<H> {
         &self,
         site: usize,
         receiver: &Object,
+        function_receiver: bool,
     ) -> Option<(FieldCacheHit, Option<InheritedChainProof>)> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors; every other
         // index was installed together with its entry.
@@ -2305,6 +2333,9 @@ impl<H: Host> Vm<H> {
             }
             index = cache.next;
         };
+        if function_receiver && !cache.function_links {
+            return None;
+        }
         let hit = |value| FieldCacheHit {
             value,
             tier: 0,
@@ -2411,7 +2442,7 @@ impl<H: Host> Vm<H> {
     fn inherited_field(
         &self,
         object: &Object,
-        cache_absence: bool,
+        shape_holds_own: bool,
         atom: Atom,
     ) -> Option<(InheritedFieldCache, Value)> {
         if self.shape_slot(object.shape(), atom).is_some() {
@@ -2430,10 +2461,10 @@ impl<H: Host> Vm<H> {
             proved_holder: Value::UNDEFINED,
             next: NO_INHERITED_FIELD,
         };
-        // Shapes prove non-index, non-virtual names absent for ordinary receivers and direct
-        // arrays, whose indexed elements and virtual length are excluded by the caller's shape
-        // lookup. An arguments object's indices and other index names stay uncached.
-        let absence_cacheable = cache_absence
+        // Shapes alone prove a name absent only for a receiver whose shape holds every own
+        // property of that name (`shape_holds_own`); an arguments object's indices and other
+        // index names, and any exotic receiver's own answers, stay uncached.
+        let absence_cacheable = shape_holds_own
             && !object.is_arguments_object()
             && !self.atom_class(atom).contains(AtomClass::ARRAY_INDEX);
         let mut prototype = object.proto();
@@ -3644,7 +3675,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn transition_property_shape(&mut self, shape: u32, key: PropertyKey) -> u32 {
         self.transition_data_property_shape(shape, key, DEFAULT_DATA_ATTRIBUTES)
     }
-    fn transition_data_property_shape(
+    pub(super) fn transition_data_property_shape(
         &mut self,
         shape: u32,
         key: PropertyKey,
