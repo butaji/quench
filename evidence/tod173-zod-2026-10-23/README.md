@@ -352,3 +352,43 @@ observed spread, and JIT regressed; the code change was reverted.
 Candidate binary SHA-256: `8ef161d4b06ca3f93f64401419cc8159d85968ee0c667dc6ffae971c4f1f1662`;
 control binary SHA-256: `fdaa50d80f42bda6424eb4ca42dedb29db9f1daed084a06e0c7472b4c9ee6a86`.
 Reports: `zod-cache-probe-no-jit-11.json` and `zod-cache-probe-jit-11.json`.
+
+## Reuse call-plan classification across closures (rejected)
+
+The call-target profile includes sites that see multiple closures of the same
+function. I tried reusing the colliding call-target entry's immutable
+`Body`/`Settles` classification when the new closure had the same program and
+function, while refreshing its callee identity and lexical environment. The
+full `quench-runtime` suite passed (900 tests), and both benchmark modes
+produced checksum `120000`.
+
+In paired production screens of 11 interleaved rounds, 5,000 workload rounds
+and 250 warmups, the candidate regressed median paired throughput by 7.5%
+no-JIT (3/11 rounds faster) and 5.4% JIT (2/11 faster). Paired RSS ratios were
+1.001 no-JIT and 0.998 JIT, effectively unchanged. The general-dispatch
+resolution path was too cold for the extra same-function check to pay off, so
+the code change was reverted.
+
+Candidate binary SHA-256: `fe0e0e3ce59ce9c9bb76e2e1c629256fc4e9153dde5f06e8ad29291e640321c3`;
+control binary SHA-256: `fdaa50d80f42bda6424eb4ca42dedb29db9f1daed084a06e0c7472b4c9ee6a86`.
+Reports: `zod-call-plan-reuse-no-jit-11.json` and
+`zod-call-plan-reuse-jit-11.json`.
+
+## Fuse captured-local load into field read (rejected)
+
+The aggregate Zod profile counted roughly 400,000 `LoadEnvLocal → GetField`
+adjacent pairs. I added a `LoadEnvLocal, GetField` compiler rewrite using the
+existing local field-base path. Its focused compiler assertion passed, and the
+full runtime suite passed (901 tests). Both production workload modes produced
+checksum `120000`.
+
+The 11-round paired production screens regressed median throughput by 6.3%
+no-JIT (1/11 rounds faster) and 9.0% JIT (1/11 rounds faster). Paired RSS was
+effectively unchanged: ratios were 1.003 no-JIT and 1.001 JIT. The fused local
+base lost the faster register-based field-cache path, so I reverted the
+rewrite and its test.
+
+Candidate binary SHA-256: `9eef4ec9e77aa004cb3571f058fc779afc28207d291746acde5d3653095ef2a4`;
+control binary SHA-256: `fdaa50d80f42bda6424eb4ca42dedb29db9f1daed084a06e0c7472b4c9ee6a86`.
+Reports: `zod-capture-field-fusion-no-jit-11.json` and
+`zod-capture-field-fusion-jit-11.json`.
