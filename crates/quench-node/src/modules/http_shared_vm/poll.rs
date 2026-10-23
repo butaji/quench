@@ -157,6 +157,7 @@ pub(crate) fn poll(
                             server: server_id,
                             received: Vec::new(),
                             request_dispatched: false,
+                            upgraded: false,
                         },
                     );
                     if let Some(server) = host.http.servers.get_mut(&server_id) {
@@ -340,6 +341,17 @@ pub(crate) fn poll(
                         }
                     };
                     if let Some(message) = dispatch {
+                        if message.upgrade {
+                            dispatch_server_upgrade(
+                                runtime,
+                                program,
+                                shared_state,
+                                socket,
+                                message,
+                            )?;
+                            progressed = true;
+                            continue;
+                        }
                         if matches!(
                             message.body,
                             Err(super::protocol::RequestFramingError::InvalidTransferCodingOrder)
@@ -553,6 +565,25 @@ pub(crate) fn poll(
                             client.response_root,
                         )
                     };
+                    if progress
+                        .head
+                        .as_ref()
+                        .is_some_and(|head| head.status == 101)
+                    {
+                        let head = progress.head.expect("101 response head was checked");
+                        dispatch_client_upgrade(
+                            runtime,
+                            program,
+                            shared_state,
+                            socket,
+                            request_id,
+                            request_root,
+                            head,
+                            progress.upgrade_head.unwrap_or_default(),
+                        )?;
+                        progressed = true;
+                        continue;
+                    }
                     let progressed_response =
                         progress.head.is_some() || !progress.body_chunks.is_empty();
                     let response_root = match (response_root, progress.head) {
@@ -721,6 +752,27 @@ pub(crate) fn poll(
                     )
                 };
                 let raw_callback = shared_state.borrow_mut().net_handle_close_callbacks.remove(&socket);
+                let (server_id, contexts) = {
+                    let mut host = shared_state.borrow_mut();
+                    let server_id = host
+                        .http
+                        .connections
+                        .remove(&socket)
+                        .map(|connection| connection.server);
+                    let contexts = host.http.take_socket_responses(socket);
+                    if let Some(server_id) = server_id {
+                        if let Some(server) = host.http.servers.get_mut(&server_id) {
+                            server.connections.remove(&socket);
+                        }
+                    }
+                    (server_id, contexts)
+                };
+                for response in contexts {
+                    retire_response(runtime, shared_state, response);
+                }
+                if server_id.is_some() {
+                    progressed = true;
+                }
                 if let Some(handle) = raw_callback {
                     let callback = runtime.host_function(crate::host::shared_vm::operation("netHandleCloseComplete"))
                         .map_err(|error| error.to_string())?;
@@ -892,6 +944,238 @@ fn deliver_client_response_head(
         return Err(error);
     }
     Ok(readable)
+}
+
+fn dispatch_server_upgrade(
+    runtime: &mut Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+    socket_id: u64,
+    message: super::protocol::RequestMessage,
+) -> Result<(), String> {
+    let (server_id, incoming_factory) = {
+        let mut host = shared_state.borrow_mut();
+        let server_id = host
+            .http
+            .connections
+            .get(&socket_id)
+            .map(|connection| connection.server)
+            .ok_or_else(|| "HTTP upgrade connection disappeared".to_owned())?;
+        if !host.http.servers.contains_key(&server_id) {
+            return Err("HTTP upgrade server was released early".to_owned());
+        }
+        let incoming_factory = host
+            .http
+            .incoming_factory
+            .ok_or_else(|| "HTTP incoming-message factory is unavailable".to_owned())?;
+        let connection = host.http.connections.get_mut(&socket_id).unwrap();
+        connection.request_dispatched = true;
+        connection.upgraded = true;
+        connection.received.clear();
+        (server_id, incoming_factory)
+    };
+    let create_socket = runtime
+        .host_function(crate::host::shared_vm::operation("httpUpgradeSocket"))
+        .map_err(|error| error.to_string())?;
+    let undefined = runtime.root(Value::UNDEFINED);
+    let id = runtime.root(Value::number(socket_id as f64));
+    let socket = match runtime.call_rooted(create_socket, undefined, &[id]) {
+        Ok(socket) => socket,
+        Err(error) => {
+            runtime.release_root(create_socket);
+            runtime.release_root(undefined);
+            runtime.release_root(id);
+            let message = runtime.format_error(program, &error.error);
+            if let Some(exception) = error.exception {
+                runtime.release_root(exception);
+            }
+            return Err(message);
+        }
+    };
+    runtime.release_root(create_socket);
+    runtime.release_root(id);
+    // The socket adoption host call can run constructors and user hooks. Fetch
+    // the server's retained root after that call, then make an operation-local
+    // root for the remaining dispatch.
+    let server_root = shared_state
+        .borrow()
+        .http
+        .servers
+        .get(&server_id)
+        .map(|server| server.root)
+        .ok_or("HTTP upgrade server was released during socket adoption")?;
+    let server_value = runtime
+        .rooted_value(server_root)
+        .ok_or("HTTP upgrade server retained root is no longer live")?;
+    let server = runtime.root(server_value);
+    let socket_server = runtime.root(server_value);
+    set_named(runtime, socket, "server", server)?;
+    set_named(runtime, socket, "_server", socket_server)?;
+    let head = match request_head(
+        runtime,
+        message.method,
+        message.target,
+        message.version,
+        message.headers,
+        message.raw_headers,
+        socket,
+    ) {
+        Ok(head) => head,
+        Err(error) => {
+            runtime.release_root(socket);
+            runtime.release_root(server);
+            runtime.release_root(undefined);
+            return Err(error);
+        }
+    };
+    let body = runtime.string_rooted("");
+    let open = runtime.root(Value::TRUE);
+    let transport = runtime.root(Value::number(socket_id as f64));
+    let server_side = runtime.root(Value::TRUE);
+    let readable = match runtime.call_rooted(
+        incoming_factory,
+        undefined,
+        &[head.as_slice(), &[body, open, transport, server_side]].concat(),
+    ) {
+        Ok(readable) => readable,
+        Err(error) => {
+            let message = runtime.format_error(program, &error.error);
+            if let Some(exception) = error.exception {
+                runtime.release_root(exception);
+            }
+            release_roots(runtime, &head);
+            runtime.release_root(body);
+            runtime.release_root(open);
+            runtime.release_root(transport);
+            runtime.release_root(server_side);
+            runtime.release_root(socket);
+            runtime.release_root(server);
+            runtime.release_root(undefined);
+            return Err(message);
+        }
+    };
+    release_roots(runtime, &head);
+    runtime.release_root(body);
+    runtime.release_root(open);
+    runtime.release_root(transport);
+    runtime.release_root(server_side);
+    let upgrade_head = buffer_from_bytes(runtime, &message.upgrade_head)?;
+    let request_async_id = crate::modules::async_hooks_shared_vm::create_context(shared_state);
+    let emitted = {
+        let _scope =
+            crate::modules::async_hooks_shared_vm::enter_context(shared_state, request_async_id);
+        emit_event(
+            runtime,
+            program,
+            server_root,
+            "upgrade",
+            &[readable, socket, upgrade_head],
+        )
+    };
+    runtime.release_root(upgrade_head);
+    runtime.release_root(readable);
+    runtime.release_root(socket);
+    runtime.release_root(server);
+    runtime.release_root(undefined);
+    emitted
+}
+
+fn dispatch_client_upgrade(
+    runtime: &mut Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+    socket_id: u64,
+    request_id: u64,
+    request_root: RootId,
+    message: super::protocol::ResponseMessage,
+    upgrade_head: Vec<u8>,
+) -> Result<(), String> {
+    let incoming_factory = shared_state
+        .borrow()
+        .http
+        .incoming_factory
+        .ok_or_else(|| "HTTP incoming-message factory is unavailable".to_owned())?;
+    let create_socket = runtime
+        .host_function(crate::host::shared_vm::operation("httpUpgradeSocket"))
+        .map_err(|error| error.to_string())?;
+    let undefined = runtime.root(Value::UNDEFINED);
+    let id = runtime.root(Value::number(socket_id as f64));
+    let socket = match runtime.call_rooted(create_socket, undefined, &[id]) {
+        Ok(socket) => socket,
+        Err(error) => {
+            runtime.release_root(create_socket);
+            runtime.release_root(undefined);
+            runtime.release_root(id);
+            let message = runtime.format_error(program, &error.error);
+            if let Some(exception) = error.exception {
+                runtime.release_root(exception);
+            }
+            return Err(message);
+        }
+    };
+    runtime.release_root(create_socket);
+    runtime.release_root(id);
+    let head = super::incoming::MessageHead {
+        request: None,
+        status: Some((message.status, message.message)),
+        version: CLIENT_RESPONSE_VERSION.to_owned(),
+        raw_headers: message.raw_headers,
+        socket: Some(socket),
+        complete: true,
+    }
+    .arguments(runtime)?;
+    let body = runtime.string_rooted("");
+    let closed = runtime.root(Value::FALSE);
+    let exchange_id = runtime.root(Value::number(request_id as f64));
+    let readable = match runtime.call_rooted(
+        incoming_factory,
+        undefined,
+        &[head.as_slice(), &[body, closed, exchange_id]].concat(),
+    ) {
+        Ok(readable) => readable,
+        Err(error) => {
+            let message = runtime.format_error(program, &error.error);
+            if let Some(exception) = error.exception {
+                runtime.release_root(exception);
+            }
+            release_roots(runtime, &head);
+            runtime.release_root(body);
+            runtime.release_root(closed);
+            runtime.release_root(exchange_id);
+            runtime.release_root(socket);
+            runtime.release_root(undefined);
+            return Err(message);
+        }
+    };
+    release_roots(runtime, &head);
+    runtime.release_root(body);
+    runtime.release_root(closed);
+    runtime.release_root(exchange_id);
+    let raw_head = buffer_from_bytes(runtime, &upgrade_head)?;
+    let upgraded = {
+        let mut host = shared_state.borrow_mut();
+        let client = host.http.clients.remove(&socket_id);
+        for sockets in host.http.agents.values_mut() {
+            sockets.remove(&socket_id);
+        }
+        client
+    };
+    if let Some(response) = upgraded.and_then(|client| client.response_root) {
+        runtime.release_root(response);
+    }
+    let emitted = emit_event(
+        runtime,
+        program,
+        request_root,
+        "upgrade",
+        &[readable, socket, raw_head],
+    );
+    runtime.release_root(raw_head);
+    runtime.release_root(readable);
+    runtime.release_root(socket);
+    runtime.release_root(undefined);
+    runtime.release_root(request_root);
+    emitted
 }
 
 fn deliver_client_body(
