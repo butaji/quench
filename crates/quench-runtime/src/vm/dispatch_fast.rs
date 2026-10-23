@@ -5430,6 +5430,52 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// A Wasm SIMD operator (`crate::wasm::simd::SimdOperator`), which neither traps nor runs
+    /// guest code: its operands decoded by their static types and its result encoded, a
+    /// vector in a fresh cell (`Vm::encode_wasm_value`). An operand of another
+    /// representation takes the general path, which raises its validation error.
+    fn lane_wasm_simd<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some((operator, lane)) = crate::wasm::simd::SimdOperator::from_selector(i.imm()) else {
+            return exit(ip);
+        };
+        let Ok(left) = vm.decode_wasm_value(r.get(i.b), operator.left_type()) else {
+            return exit(ip);
+        };
+        let right = match operator.right_type().map(|ty| vm.decode_wasm_value(r.get(i.c), ty)) {
+            None => None,
+            Some(Ok(right)) => Some(right),
+            Some(Err(_)) => return exit(ip),
+        };
+        let value = vm.encode_wasm_value(operator.apply(left, right, lane));
+        note_allocation(vm);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `i8x16.shuffle` of two vectors by the record's constant lane indices, as
+    /// `lane_wasm_simd` runs an operator.
+    fn lane_wasm_simd_shuffle<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(&Cell::WasmV128(indices)) = vm.heap.get(i.constant()) else {
+            return exit(ip);
+        };
+        let (Ok(crate::WasmValue::V128(left)), Ok(crate::WasmValue::V128(right))) = (
+            vm.decode_wasm_value(r.get(i.b), crate::WasmType::V128),
+            vm.decode_wasm_value(r.get(i.c), crate::WasmType::V128),
+        ) else {
+            return exit(ip);
+        };
+        let value = vm.encode_wasm_value(crate::WasmValue::V128(crate::wasm::simd::shuffle(left, right, indices)));
+        note_allocation(vm);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     fn lane_global_get<>(cx, r, ip, i, view) {
         let Some(Cell::WasmGlobal { value, .. }) = unsafe { vm(cx) }.heap.get(r.get(i.b)) else {
             return exit(ip);
@@ -12179,6 +12225,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
         Op::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
         Op::WasmGlobalGet => Some(lane_global_get::<H>),
+        Op::WasmSimd => Some(lane_wasm_simd::<H>),
+        Op::WasmSimdShuffle => Some(lane_wasm_simd_shuffle::<H>),
         Op::WasmGlobalSet => Some(lane_global_set::<H>),
         Op::WasmFillRegisters => Some(lane_fill_registers::<H>),
         Op::CallKnown => Some(lane_call_known::<H>),
