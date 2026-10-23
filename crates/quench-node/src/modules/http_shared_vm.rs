@@ -25,6 +25,7 @@ pub(crate) use operations::{
     response_send,
     response_set_header, response_write, response_write_head, server_address, server_close,
     server_listen, validate_header_name, validate_header_value,
+    upgrade_socket,
 };
 pub(crate) use state::State;
 
