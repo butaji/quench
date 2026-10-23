@@ -121,7 +121,6 @@ pub(crate) enum Native {
     LazyDataProperty, TemporalInitialize,
     JsonParse,
     JsonStringify,
-    JsonStringifyUtf8,
     JsonRawJson,
     JsonIsRawJson,
     Array, TypedArray, TypedArrayFrom, TypedArrayOf, TypedArrayAt, TypedArrayLastIndexOf, TypedArraySort, TypedArrayToReversed, TypedArrayToSorted, TypedArrayWith, TypedArrayToLocaleString, TypedArrayBufferGetter, TypedArrayByteLengthGetter, TypedArrayByteOffsetGetter, TypedArrayLengthGetter, TypedArrayToStringTag, ArrayToLocaleString, ArraySpecies, ArrayFromAsync,
