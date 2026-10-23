@@ -69,7 +69,10 @@ or `maybe_collect` threshold check dominates interpreter time.
 The active tail-call arm rebuilds `GeneralCodeCursor` and checks the collection
 threshold on every `StepResult::TailCall`. Keep collection checks in place
 unless a safe safepoint proof supports changing them. A same-program,
-same-function cursor reuse experiment can isolate the cursor setup cost; retain
-it only if repeated matched timings show a gain and the runtime library tests
-remain green. The higher-impact compiler work is terminal `CallKnown` support
-with exact guard/deopt behavior, which needs a separate correctness design.
+same-function cursor reuse experiment retained all collection checks and passed
+both WAST directives in both modes, but did not improve the timings: one
+post-change sample was 4.45 s tail / 2.53 s loop without JIT and 4.74 s tail /
+2.63 s loop with `--jit`. Given the run-to-run variance and lack of gain, the
+experiment was discarded. The higher-impact compiler work is terminal
+`CallKnown` support with exact guard/deopt behavior, which needs a separate
+correctness design.
