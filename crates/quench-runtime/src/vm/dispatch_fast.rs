@@ -533,6 +533,8 @@ struct Activation {
     caller_registers: Registers,
     /// The lane-stack index of this activation's first register.
     window: usize,
+    /// Requested Wasm register payload held by this activation, or zero for scripts.
+    frame_storage_bytes: usize,
     /// The program its caller runs, which its return makes the lane's again
     /// (`lane_enter_program`); its own is the next activation's caller program, or the
     /// lane's for the innermost.
@@ -1081,6 +1083,8 @@ const _: () = assert!(SCRIPT_CALL_TARGETS.is_power_of_two());
 pub(super) struct LaneStack {
     values: Vec<Value>,
     activations: Vec<Activation>,
+    /// Wasm activation payload represented by `values` before lane materialization.
+    wasm_storage_bytes: usize,
     /// Resolved targets of lane `Call` records (`Vm::script_call_target`) of callees of the
     /// running program.
     script_targets: ScriptTargets,
@@ -1127,6 +1131,7 @@ impl Default for LaneStack {
         Self {
             values: Vec::new(),
             activations: Vec::new(),
+            wasm_storage_bytes: 0,
             script_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
             cross_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
             function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
@@ -1207,6 +1212,7 @@ impl LaneStack {
     #[inline(always)]
     unsafe fn push_activation(&mut self, activation: Activation) {
         let len = self.activations.len();
+        let frame_storage_bytes = activation.frame_storage_bytes;
         debug_assert!(len < self.activations.capacity(), "lane activations stay within capacity");
         // SAFETY: the slot at `len` lies within capacity and is uninitialized; the length
         // covers it only once written.
@@ -1214,6 +1220,13 @@ impl LaneStack {
             self.activations.as_mut_ptr().add(len).write(activation);
             self.activations.set_len(len + 1);
         }
+        self.wasm_storage_bytes += frame_storage_bytes;
+    }
+
+    fn pop_activation(&mut self) -> Option<Activation> {
+        let activation = self.activations.pop()?;
+        self.wasm_storage_bytes -= activation.frame_storage_bytes;
+        Some(activation)
     }
 
     /// The generation of a lane run under `key`: the current one while the key holds, else
@@ -7606,6 +7619,14 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-lane-exits")]
         super::lane_exits::record_detail(format!("materialize depth {}", self.lane_stack.activations.len()));
         let mut activations = std::mem::take(&mut self.lane_stack.activations);
+        let lane_wasm_storage_bytes = std::mem::take(&mut self.lane_stack.wasm_storage_bytes);
+        debug_assert_eq!(
+            lane_wasm_storage_bytes,
+            activations
+                .iter()
+                .map(|activation| activation.frame_storage_bytes)
+                .sum::<usize>()
+        );
         let pending = unsafe { &mut *(*cx).pending };
         let mut caller = unsafe { (*cx).frame };
         let mut registers = std::mem::take(&mut self.lane_stack.values);
@@ -7737,10 +7758,14 @@ impl<H: Host> Vm<H> {
                     crate::stack::GuestCallGuard::enter().ok()
                 }
                 ActivationKind::Wasm(_) => {
-                    self.push_wasm_frame_with_registers(code, caller, activation.function, window);
-                    // The lane admitted the activation under WASM_ACTIVATION_LIMIT; as a
-                    // frame it also counts against the guest-call budget while that lasts.
-                    crate::stack::GuestCallGuard::enter().ok()
+                    // The lane reserved this payload while it was frameless; its materialized
+                    // frame holds the same weighted guard until the call returns.
+                    Some(self.push_wasm_frame_with_registers(
+                        code,
+                        caller,
+                        activation.function,
+                        window,
+                    ))
                 }
             };
             pending.push(PendingGeneralCall {
@@ -10123,6 +10148,7 @@ fn lane_push_activation<H: Host, const MAY_CROSS: bool>(
         caller_base: unsafe { (*cx).base },
         caller_registers: r,
         window,
+        frame_storage_bytes: 0,
         caller_program: unsafe { (*cx).program },
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
@@ -10232,6 +10258,7 @@ fn lane_activate_environment<H: Host>(
         caller_base: unsafe { (*cx).base },
         caller_registers: r,
         window,
+        frame_storage_bytes: 0,
         caller_program: unsafe { (*cx).program },
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
@@ -10550,6 +10577,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         caller_base: unsafe { (*cx).base },
         caller_registers: r,
         window,
+        frame_storage_bytes: 0,
         caller_program: unsafe { (*cx).program },
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
@@ -10690,6 +10718,10 @@ lane_handler! {
         let stack = &mut vm.lane_stack;
         if let Some(lane_view) = views.get(usize::from(i.b)).and_then(std::cell::OnceCell::get)
             && let Some(shape) = lane_view.activation
+            && usize::from(shape.registers)
+                .saturating_mul(std::mem::size_of::<Value>())
+                <= crate::stack::GuestCallGuard::remaining_storage_bytes()
+                    .saturating_sub(stack.wasm_storage_bytes)
             && stack.activations.len() < stack.activations.capacity()
             && vm.frames.len() + stack.activations.len()
                 < super::dispatch_frame::WASM_ACTIVATION_LIMIT
@@ -10698,6 +10730,7 @@ lane_handler! {
         {
             let window = stack.values.len();
             let count = usize::from(shape.registers);
+            let frame_storage_bytes = count.saturating_mul(std::mem::size_of::<Value>());
             let arguments = ImmediateLayout::call_window_base(i.imm());
             let passed = ImmediateLayout::argument_count(i.imm()).min(shape.params);
             // SAFETY: capacity holds the window; each slot is written before
@@ -10724,10 +10757,12 @@ lane_handler! {
                     caller_base: (*cx).base,
                     caller_registers: r,
                     window,
+                    frame_storage_bytes,
                     caller_program: (*cx).program,
                     kind: ActivationKind::Wasm(view.memory),
                 });
                 stack.activations.set_len(length + 1);
+                stack.wasm_storage_bytes += frame_storage_bytes;
             }
             // A fresh activation's memory register holds no memory until
             // the function's instance binding loads it.
@@ -10849,7 +10884,7 @@ fn lane_frame_return<H: Host>(vm: &mut Vm<H>, call: Ip, value: Value) -> Ip {
 #[inline(always)]
 fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let mut activation = vm.lane_stack.activations.pop()?;
+    let mut activation = vm.lane_stack.pop_activation()?;
     loop {
         // SAFETY: an activation's window starts within the values, which hold no drop glue.
         unsafe { vm.lane_stack.values.set_len(activation.window) };
@@ -10897,7 +10932,7 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Value) 
         }
         // The call returns its callee's completion: its caller completes in turn, an
         // activation here or the frame in the general loop, which the exit hands it to.
-        let Some(caller) = vm.lane_stack.activations.pop() else {
+        let Some(caller) = vm.lane_stack.pop_activation() else {
             return Some(Resumed::Exit(lane_frame_return(vm, activation.call, value)));
         };
         activation = caller;

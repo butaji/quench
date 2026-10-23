@@ -15,18 +15,22 @@ const MAX_RECURSIVE_TRANSITIONS: usize = STACK_BUDGET_BYTES / STACK_TRANSITION_R
 
 /// Maximum live guest function activations, including suspended callers.
 pub const MAX_GUEST_CALL_DEPTH: usize = 8_192;
+/// Maximum requested locals and registers for live Wasm frames on one thread.
+/// This bounds retained guest frame payload independently of activation count.
+pub const MAX_GUEST_FRAME_STORAGE_BYTES: usize = 32 * 1024 * 1024;
 pub const STACK_EXHAUSTED_MESSAGE: &str = "Maximum call stack size exceeded";
 
 thread_local! {
     static ACTIVE_TRANSITIONS: Cell<usize> = const { Cell::new(0) };
     static STACK_ORIGIN: Cell<usize> = const { Cell::new(0) };
     static ACTIVE_GUEST_CALLS: Cell<usize> = const { Cell::new(0) };
+    static ACTIVE_GUEST_FRAME_STORAGE_BYTES: Cell<usize> = const { Cell::new(0) };
 }
 
 /// A transition is released on every return path, including Rust unwinding.
 /// Thread affinity keeps the measurement correct across reentrant runtime owners.
 pub struct StackGuard(PhantomData<Rc<()>>);
-pub struct GuestCallGuard(PhantomData<Rc<()>>);
+pub struct GuestCallGuard(PhantomData<Rc<()>>, usize);
 
 impl StackGuard {
     #[inline]
@@ -66,14 +70,32 @@ impl GuestCallGuard {
         MAX_GUEST_CALL_DEPTH - ACTIVE_GUEST_CALLS.with(Cell::get)
     }
 
+    /// How many more requested Wasm frame bytes the thread admits.
+    pub fn remaining_storage_bytes() -> usize {
+        MAX_GUEST_FRAME_STORAGE_BYTES - ACTIVE_GUEST_FRAME_STORAGE_BYTES.with(Cell::get)
+    }
+
     pub fn enter() -> Result<Self, ()> {
+        Self::enter_with_storage(0)
+    }
+
+    /// Enter a guest activation and account its requested Wasm locals/registers.
+    /// JavaScript activations use `enter`, which consumes depth but no Wasm storage.
+    pub fn enter_with_storage(storage_bytes: usize) -> Result<Self, ()> {
         ACTIVE_GUEST_CALLS.with(|depth| {
             let current = depth.get();
-            if current == MAX_GUEST_CALL_DEPTH {
+            let used_storage = ACTIVE_GUEST_FRAME_STORAGE_BYTES.with(Cell::get);
+            if current == MAX_GUEST_CALL_DEPTH
+                || storage_bytes > MAX_GUEST_FRAME_STORAGE_BYTES
+                || storage_bytes > MAX_GUEST_FRAME_STORAGE_BYTES - used_storage
+            {
                 return Err(());
             }
             depth.set(current + 1);
-            Ok(Self(PhantomData))
+            ACTIVE_GUEST_FRAME_STORAGE_BYTES.with(|storage| {
+                storage.set(used_storage + storage_bytes);
+            });
+            Ok(Self(PhantomData, storage_bytes))
         })
     }
 }
@@ -81,6 +103,8 @@ impl GuestCallGuard {
 impl Drop for GuestCallGuard {
     fn drop(&mut self) {
         ACTIVE_GUEST_CALLS.with(|depth| depth.set(depth.get() - 1));
+        ACTIVE_GUEST_FRAME_STORAGE_BYTES
+            .with(|storage| storage.set(storage.get() - self.1));
     }
 }
 
@@ -131,6 +155,22 @@ mod tests {
         let guard = GuestCallGuard::enter().unwrap();
         drop(guard);
         assert_eq!(ACTIVE_GUEST_CALLS.with(Cell::get), 0);
+    }
+
+    #[test]
+    fn guest_frame_storage_is_bounded_and_released() {
+        let full = GuestCallGuard::enter_with_storage(MAX_GUEST_FRAME_STORAGE_BYTES).unwrap();
+        assert_eq!(GuestCallGuard::remaining_storage_bytes(), 0);
+        assert!(GuestCallGuard::enter_with_storage(1).is_err());
+        assert!(GuestCallGuard::enter_with_storage(MAX_GUEST_FRAME_STORAGE_BYTES + 1).is_err());
+        drop(full);
+        assert_eq!(
+            GuestCallGuard::remaining_storage_bytes(),
+            MAX_GUEST_FRAME_STORAGE_BYTES
+        );
+        let guard = GuestCallGuard::enter_with_storage(1).unwrap();
+        drop(guard);
+        assert_eq!(ACTIVE_GUEST_FRAME_STORAGE_BYTES.with(Cell::get), 0);
     }
 
     #[test]

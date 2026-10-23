@@ -242,9 +242,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<crate::stack::GuestCallGuard, JsError> {
         // An in-loop activation grows the frame stack, not the native stack, so it counts
         // against the live guest-call budget.
-        let call_guard = crate::stack::GuestCallGuard::enter()
-            .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?;
         let function = &p.function(id as usize);
+        let frame_storage_bytes = (usize::from(function.locals)
+            + usize::from(function.registers))
+        .saturating_mul(std::mem::size_of::<Value>());
+        let call_guard = crate::stack::GuestCallGuard::enter_with_storage(frame_storage_bytes)
+            .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?;
         let program = self.active_program;
         let with_base = self.with_stack.len();
         let mut frame = self
@@ -291,8 +294,15 @@ impl<H: Host> Vm<H> {
         caller: usize,
         id: u32,
         registers: &[Value],
-    ) {
-        debug_assert_eq!(p.function(id as usize).locals, 0);
+    ) -> crate::stack::GuestCallGuard {
+        let function = p.function(id as usize);
+        debug_assert_eq!(function.locals, 0);
+        let frame_storage_bytes = usize::from(function.registers)
+            .saturating_mul(std::mem::size_of::<Value>());
+        // Lane admission reserves these bytes before it stores the activation. Materializing
+        // the lane transfers that reservation to the frame's weighted guest-call guard.
+        let call_guard = crate::stack::GuestCallGuard::enter_with_storage(frame_storage_bytes)
+            .expect("lane Wasm activation storage was admitted before materialization");
         let program = self.active_program;
         let with_base = self.with_stack.len();
         let mut frame = self
@@ -315,6 +325,7 @@ impl<H: Host> Vm<H> {
         frame.with_base = with_base;
         frame.fixed_this = false;
         self.frames.push(frame);
+        call_guard
     }
 
     fn empty_frame(&self) -> Box<Frame> {
@@ -1296,6 +1307,21 @@ impl<H: Host> Vm<H> {
         let mut executing_residual: *const ResidualProgram = entry_program;
         let mut frame = frame;
         let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
+        // The initial Wasm activation is allocated before the dispatch loop and has no
+        // caller guard. Account it here so root and reentrant Wasm entries obey the same
+        // frame-payload limit as Wasm calls pushed by the loop.
+        let _guest_frame = if p.kind == crate::bytecode::ProgramKind::Wasm {
+            let function = p.function(self.frames[frame].function as usize);
+            let frame_storage_bytes = (usize::from(function.locals)
+                + usize::from(function.registers))
+            .saturating_mul(std::mem::size_of::<Value>());
+            Some(
+                crate::stack::GuestCallGuard::enter_with_storage(frame_storage_bytes)
+                    .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?,
+            )
+        } else {
+            None
+        };
         let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
             crate::stack::StackGuard::enter()
                 .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
