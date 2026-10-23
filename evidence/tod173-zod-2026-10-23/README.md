@@ -332,3 +332,23 @@ and no-JIT regresses, so I reverted the source change. Absolute RSS was
 baseline. Reports: `zod-holder-first-nojit-11.json` and
 `zod-holder-first-jit-11.json`; instrumented field profile:
 `zod-lane-exits-500-stdout.json` and `zod-lane-exits-500-stderr.log`.
+
+## Skip the megamorphic own-field probe after a monomorphic prototype hit (rejected)
+
+I tried returning from the first-level cache probe when the receiver shape
+matched the site's cached prototype-data entry. The intended saving was to
+avoid probing the megamorphic own-property table for a shape already known to
+lack that site's own field. The focused 12 field-cache tests passed, including
+prototype, proxy/getter, invalidation and megamorphic-holder cases.
+
+The paired production screen used 11 interleaved rounds of 5,000 workload
+rounds and 250 warmups on the same Linux x86_64 host. All engines produced the
+expected checksum. In no-JIT mode, the paired median candidate/control
+throughput ratio was 1.010 (6/11 rounds faster), while the paired RSS ratio was
+0.990. In JIT mode, the paired throughput ratio was 0.966 (2/11 rounds faster)
+and the paired RSS ratio was 0.990. The small no-JIT movement is within the
+observed spread, and JIT regressed; the code change was reverted.
+
+Candidate binary SHA-256: `8ef161d4b06ca3f93f64401419cc8159d85968ee0c667dc6ffae971c4f1f1662`;
+control binary SHA-256: `fdaa50d80f42bda6424eb4ca42dedb29db9f1daed084a06e0c7472b4c9ee6a86`.
+Reports: `zod-cache-probe-no-jit-11.json` and `zod-cache-probe-jit-11.json`.
