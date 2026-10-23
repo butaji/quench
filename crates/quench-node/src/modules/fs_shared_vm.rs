@@ -2942,9 +2942,11 @@ pub(crate) fn read_file_sync(
     let defaulted = context
         .rooted_value(provided_options)
         .is_some_and(|value| value.is_undefined() || value.is_null());
+    // An encoding name alone (`utf8_encoding_option`) also leaves the default flag `r`.
+    let default_flag = defaulted || utf8_encoding_option(context, provided_options, defaults)?;
     let options = if defaulted {
         defaults
-    } else if utf8_encoding_option(context, provided_options, defaults)? {
+    } else if default_flag {
         let key = context.string_rooted("encoding");
         context.define_data_property_rooted(defaults, key, provided_options, true, true, true)?;
         defaults
@@ -2993,7 +2995,7 @@ pub(crate) fn read_file_sync(
     }
     let mut filename = None;
     let bytes = if let Some(fd) = fd {
-        if !defaulted {
+        if !default_flag {
             let flag = get(context, options, "flag")?;
             super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
         }
@@ -3019,7 +3021,8 @@ pub(crate) fn read_file_sync(
         if !fast_utf8 && !std::fs::metadata(&path).is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0) {
             return super::fs_read_file_shared_vm::read_general(context, original, options, false, false);
         }
-        let flags = if defaulted {
+        // Node's `stringToFlags('r')`.
+        let flags = if default_flag {
             libc::O_RDONLY
         } else {
             let flags = super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
@@ -3222,6 +3225,17 @@ pub(crate) fn initialize_read_stream(
 /// The members `fs` takes from Node's own `lib/fs.js` and `internal/fs/utils.js`, in the order
 /// the module defines them.
 const LIBRARY_POLICY_MEMBERS: [&str; 4] = ["Dirent", "glob", "globSync", "readdirSync"];
+
+/// Builds the members of `fs`'s lazy groups (`MODULE_MEMBERS`, then `LIBRARY_POLICY_MEMBERS`),
+/// as Node's `fs` defines them all as it loads: a startup snapshot that preloads `fs` builds
+/// them at the snapshot point (`startup_snapshot::preload`), where each process had built them
+/// at its first use of a member other than `readFileSync` (8.7M instructions for an
+/// `existsSync`, x86_64, 2026-10-23).
+pub(crate) fn materialize(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let module = crate::host::shared_vm::commonjs::fs_module(context)?;
+    let (first_member, _) = MODULE_MEMBERS[0];
+    context.materialize_lazy_data_property_rooted(module, first_member)
+}
 
 /// Install Node's own glob, directory reader and `Dirent` when a script first observes one of
 /// them: loading `lib/fs.js` builds Buffer, util and their dependencies, which reading a file
