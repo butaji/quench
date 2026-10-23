@@ -1010,3 +1010,17 @@ improvement still loses throughput to Node and Bun, and Quench's RSS remains
 higher than Bun's, so neither scenario meets the package win gate. Production
 paired reports use `*utf8-production-paired-*` in
 `evidence/tod173-next-response-2026-10-23/`.
+
+### Next route-group enumeration
+
+`Object.entries()` now has a guarded direct path for ordinary shaped objects
+whose enumerable fields are plain data slots. It reads cached shape slots and
+creates the required key strings and pair arrays directly, while accessors,
+side descriptors, proxies, and other unsupported shapes retain the generic
+spec path. Production paired runs against the immediately preceding binary
+improved Next route matching by 8.3% no-JIT and 8.0% JIT; sampled RSS fell 6.3%
+and 8.0%. Route generation improved 11.4% no-JIT and 2.2% JIT, with RSS down
+4.2% and 3.5%. The route matcher still trails Node and Bun substantially, and
+route generation remains slower than both, so these are component gains rather
+than a Next win. Reports use `*entries-production-paired-*` in
+`evidence/tod173-next-response-2026-10-23/`.

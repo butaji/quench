@@ -180,3 +180,15 @@ improved 5.6% and 1.0%, with RSS down 3.1% and 4.3%. Quench remains slower than
 Node and Bun, and its RSS remains higher than Bun's; these are component gains,
 not package wins. The `*utf8-production-paired-*` reports in
 `evidence/tod173-next-response-2026-10-23/` preserve all four paired runs.
+
+A guarded `Object.entries()` path next targeted Next's repeated route-group
+enumeration. It reads shape slots directly for ordinary objects with
+enumerable data fields, while accessors, side descriptors, proxies, and other
+unusual objects keep the generic path. Paired production route-generation
+runs measured 7,924 versus 7,112 ops/s no-JIT and 7,813 versus 7,645 JIT;
+sampled RSS fell from 63.38 to 60.73 MiB and 41.67 to 40.23 MiB. Eleven-run
+route-matcher comparisons measured 82,645 versus 76,336 ops/s no-JIT and
+75,758 versus 70,423 JIT; RSS fell from 27.39 to 25.66 MiB and 19.41 to
+17.86 MiB. Node and Bun remain faster in every case, so this is a component
+gain, not a Next win. Reports use `*entries-production-paired-*` in
+`evidence/tod173-next-response-2026-10-23/`; Linux RSS is sampled diagnostics.
