@@ -74,6 +74,7 @@ impl<H: Host> Vm<H> {
             gc_root_count: 0,
             gc_owned_root_count: 0,
             frame_pool: vec![],
+            pending_call_stacks: vec![],
             lane_stack: Default::default(),
             execution_mode: ExecutionMode::default(),
             execution_interrupt,
