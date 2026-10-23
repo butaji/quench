@@ -481,10 +481,27 @@ impl<H: Host> Vm<H> {
             .map(|value| self.array_relative_index(p, value, length))
             .transpose()?
             .unwrap_or(length);
+        if start < end && self.fill_plain_array(object, start..end, value) {
+            return Ok(object);
+        }
         for index in start..end {
             self.set_index_mode(p, object, Value::number(index as f64), value, true)?;
         }
         Ok(object)
+    }
+
+    /// `fill` of `range` on an extensible array that holds no index descriptors and whose
+    /// prototypes claim no index (`prototypes_claim_no_index`): each Set of the range
+    /// overwrites a writable element or defines a plain one in a hole, and observes nothing,
+    /// so the elements take `value` in one store (`Heap::fill_array_elements`).
+    fn fill_plain_array(&mut self, array: Value, range: std::ops::Range<usize>, value: Value) -> bool {
+        let plain = self.heap.array(array).is_some_and(|object| {
+            !object.has_indexed_descriptors()
+                && !object.is_arguments_object()
+                && object.is_extensible()
+                && !object.is_frozen()
+        });
+        plain && self.prototypes_claim_no_index(array) && self.heap.fill_array_elements(array, range, value)
     }
 
     pub(super) fn array_concat_native(

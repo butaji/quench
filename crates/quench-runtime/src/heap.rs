@@ -53,6 +53,12 @@ const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_
 // A sparse element is an index and a value in a hash table, at least this many dense slots;
 // a sparse array whose elements fill as many slots as its length turns dense.
 const SPARSE_ENTRY_SLOTS: usize = size_of::<(usize, Value)>() / size_of::<Value>();
+
+/// Whether `present` elements of an array of `length` fill as many dense slots as its
+/// length, so dense storage takes no more words than sparse entries would.
+fn dense_storage_fits(present: usize, length: usize) -> bool {
+    present.saturating_mul(SPARSE_ENTRY_SLOTS) >= length
+}
 pub use pacing::MemoryPolicy;
 #[inline(always)]
 fn payload_unit() -> usize {
@@ -2915,13 +2921,39 @@ impl Heap {
         // Dense storage of the whole length takes no more words than the elements hold. Holes
         // in the dense prefix are not elements; counting them would promote an array whose
         // writes only grow its length, doubling its storage at every far write.
-        let fills = |count: usize| count.saturating_add(sparse_count).saturating_mul(SPARSE_ENTRY_SLOTS) >= length;
+        let fills = |count: usize| dense_storage_fits(count.saturating_add(sparse_count), length);
         let dense = self.array_elements(array);
         let dense_enough = fills(dense.map_or(0, |dense| dense.len()))
             && fills(dense.map_or(0, |dense| dense.iter().filter(|value| !value.is_deleted()).count()));
         if length <= MAX_DENSE_ARRAY_HOLE_LENGTH || dense_enough {
             self.materialize_sparse_array(array, length);
         }
+    }
+    /// Stores `value` at each index of `range`, which lies within `array`'s length, in its
+    /// dense elements: one store per element, where `sparse_set` would hash each. Storage
+    /// that is sparse turns dense first when the filled range alone makes it dense enough
+    /// (`dense_storage_fits`); otherwise `false` leaves the array as it was.
+    pub(crate) fn fill_array_elements(
+        &mut self,
+        array: Value,
+        range: std::ops::Range<usize>,
+        value: Value,
+    ) -> bool {
+        if let Some(length) = self.sparse_length(array) {
+            if !dense_storage_fits(range.len(), length) {
+                return false;
+            }
+            self.materialize_sparse_array(array, length);
+        }
+        let Some(object) = self.array_store_mut(array, value) else {
+            return false;
+        };
+        let elements = object.elements_mut();
+        if range.end > elements.len() {
+            return false;
+        }
+        elements.make_mut()[range].fill(value);
+        true
     }
     pub(crate) fn sparse_set_length(&mut self, array: Value, length: usize) {
         let Some(elements) = self.array_elements(array) else {
