@@ -368,6 +368,13 @@ impl Write for RawStream {
             Self::Local(stream) => stream.write(bytes),
         }
     }
+    fn write_vectored(&mut self, parts: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        match self {
+            Self::Tcp(stream) => stream.write_vectored(parts),
+            #[cfg(unix)]
+            Self::Local(stream) => stream.write_vectored(parts),
+        }
+    }
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
             Self::Tcp(stream) => stream.flush(),
@@ -847,6 +854,35 @@ pub(crate) fn write_with(
         .get_mut(&socket)
         .ok_or_else(|| "shared TCP socket is not connected".to_owned())?;
     encode(&mut stream.pending_write);
+    Ok(())
+}
+
+/// Queue `parts` in order, first offering them to the kernel in one vectored write when
+/// the socket has nothing queued, as libuv's `uv_try_write` does before queueing a stream
+/// write: only the bytes the kernel declines are copied into the pending output. Failures
+/// and completion delivery stay with `poll`, which retries the queued bytes.
+pub(crate) fn write_parts<const N: usize>(
+    transport: &mut Transport,
+    socket: u64,
+    parts: [&[u8]; N],
+) -> Result<(), String> {
+    let stream = transport
+        .sockets
+        .get_mut(&socket)
+        .ok_or_else(|| "shared TCP socket is not connected".to_owned())?;
+    let mut written = 0;
+    let admitted = stream.write_offset == stream.pending_write.len()
+        && stream.completions.is_empty()
+        && stream.write_failure.is_none()
+        && matches!(stream.delivery, DeliveryPhase::Delivered);
+    if let (true, SocketStream::Plain(raw)) = (admitted, &mut stream.stream) {
+        written = raw.write_vectored(&parts.map(std::io::IoSlice::new)).unwrap_or(0);
+    }
+    for part in parts {
+        let skipped = written.min(part.len());
+        written -= skipped;
+        stream.pending_write.extend_from_slice(&part[skipped..]);
+    }
     Ok(())
 }
 
