@@ -1,0 +1,1360 @@
+in-loop call eligibility: [("positive_cache_hit", 21571), ("positive_resolution", 9439), ("native_or_wrong_realm_or_non_callable", 2970)]
+field cache probes (program,function,pc,field_site,cache_site,atom,part,outcome):
+          4941 (25, 78, 13, 4294967295, 2763, 1835, 3, 3)
+           578 (21, 5, 0, 4294967295, 705, 1318, 3, 5)
+           563 (21, 6, 20, 4294967295, 745, 1318, 3, 4)
+           563 (21, 5, 0, 4294967295, 705, 1318, 3, 4)
+           563 (21, 5, 0, 4294967295, 716, 1318, 3, 4)
+           562 (21, 5, 17, 4294967295, 719, 1318, 3, 4)
+           554 (21, 6, 20, 4294967295, 744, 1325, 3, 3)
+           550 (17, 2, 77, 4294967295, 34, 761, 3, 1)
+           550 (17, 2, 16, 4294967295, 211, 1180, 3, 4)
+           550 (25, 78, 122, 4294967295, 2763, 1835, 3, 3)
+           550 (17, 2, 79, 4294967295, 32, 30, 3, 1)
+           550 (17, 2, 38, 4294967295, 214, 761, 3, 6)
+           550 (17, 2, 52, 4294967295, 219, 1181, 3, 4)
+           550 (17, 2, 77, 4294967295, 233, 761, 3, 6)
+           550 (17, 2, 52, 4294967295, 220, 761, 3, 6)
+           550 (17, 2, 38, 4294967295, 15, 761, 3, 1)
+           550 (17, 2, 78, 4294967295, 232, 1181, 3, 4)
+           550 (17, 2, 43, 4294967295, 18, 761, 3, 1)
+           550 (17, 2, 43, 4294967295, 216, 1181, 3, 4)
+           550 (17, 2, 43, 4294967295, 217, 761, 3, 6)
+           550 (17, 2, 52, 4294967295, 21, 761, 3, 1)
+           550 (17, 2, 38, 4294967295, 213, 1181, 3, 4)
+           550 (17, 2, 78, 4294967295, 33, 1181, 3, 1)
+           454 (28, 7, 0, 4294967295, 28, 112, 3, 2)
+           454 (28, 8, 1, 4294967295, 30, 435, 3, 2)
+           454 (28, 6, 3, 4294967295, 25, 30, 3, 2)
+           454 (28, 6, 1, 4294967295, 26, 447, 3, 2)
+           454 (28, 6, 0, 4294967295, 24, 30, 3, 2)
+           309 (21, 5, 0, 4294967295, 719, 1318, 3, 4)
+            33 (21, 5, 54, 4294967295, 724, 1312, 3, 4)
+            28 (21, 5, 0, 4294967295, 715, 1313, 3, 4)
+            27 (22, 107, 0, 4294967295, 1318, 66, 3, 4)
+            23 (21, 5, 54, 4294967295, 725, 1318, 3, 4)
+            16 (26, 60, 6, 4294967295, 546, 30, 3, 1)
+            16 (102, 414, 15, 4294967295, 1829, 25, 3, 1)
+            16 (104, 10, 6, 4294967295, 96, 30, 3, 1)
+            16 (97, 144, 6, 4294967295, 651, 30, 3, 1)
+            16 (22, 126, 15, 4294967295, 657, 25, 3, 1)
+            16 (25, 321, 6, 4294967295, 2694, 30, 3, 1)
+            16 (102, 414, 6, 4294967295, 1826, 30, 3, 1)
+            16 (23, 42, 15, 4294967295, 219, 25, 3, 1)
+            16 (99, 93, 6, 4294967295, 881, 30, 3, 1)
+            16 (20, 12, 6, 4294967295, 73, 30, 3, 1)
+            16 (19, 41, 6, 4294967295, 247, 30, 3, 1)
+            16 (99, 93, 15, 4294967295, 884, 25, 3, 1)
+            16 (22, 126, 6, 4294967295, 654, 30, 3, 1)
+            16 (26, 60, 15, 4294967295, 549, 25, 3, 1)
+            16 (23, 42, 6, 4294967295, 216, 30, 3, 1)
+            16 (103, 32, 6, 4294967295, 185, 30, 3, 1)
+            16 (25, 321, 15, 4294967295, 2697, 25, 3, 1)
+            16 (27, 19, 6, 4294967295, 189, 30, 3, 1)
+            16 (97, 144, 15, 4294967295, 654, 25, 3, 1)
+            16 (27, 19, 15, 4294967295, 192, 25, 3, 1)
+            15 (97, 144, 15, 4294967295, 13430, 25, 3, 3)
+            15 (23, 42, 15, 4294967295, 1733, 25, 3, 3)
+            15 (99, 93, 15, 4294967295, 14930, 25, 3, 3)
+            15 (102, 414, 15, 4294967295, 16865, 25, 3, 3)
+            15 (21, 5, 0, 4294967295, 718, 1313, 3, 4)
+            15 (22, 126, 15, 4294967295, 1505, 25, 3, 3)
+            15 (26, 60, 15, 4294967295, 5232, 25, 3, 3)
+            15 (27, 19, 15, 4294967295, 5433, 25, 3, 3)
+            14 (20, 12, 15, 4294967295, 76, 25, 3, 1)
+            14 (25, 321, 15, 4294967295, 4674, 25, 3, 3)
+            14 (104, 10, 15, 4294967295, 99, 25, 3, 1)
+            13 (21, 6, 20, 4294967295, 744, 1325, 3, 5)
+            13 (21, 5, 0, 4294967295, 705, 1318, 3, 3)
+            13 (21, 5, 17, 4294967295, 718, 1313, 3, 4)
+            12 (25, 76, 71, 4294967295, 2748, 1325, 3, 5)
+            12 (20, 12, 15, 4294967295, 687, 25, 3, 3)
+            12 (104, 10, 15, 4294967295, 17170, 25, 3, 3)
+            11 (25, 76, 0, 4294967295, 2724, 1649, 3, 5)
+            10 (108, 16, 6, 4294967295, 72, 30, 3, 1)
+            10 (98, 32, 6, 4294967295, 595, 30, 3, 1)
+             9 (25, 76, 11, 4294967295, 2725, 1318, 3, 4)
+             9 (25, 76, 26, 4294967295, 2733, 1313, 3, 4)
+             9 (25, 76, 21, 4294967295, 2727, 1318, 3, 4)
+             9 (25, 76, 26, 4294967295, 2734, 1318, 3, 4)
+             9 (25, 76, 26, 4294967295, 2730, 1498, 3, 5)
+             9 (102, 114, 2, 4294967295, 535, 1264, 3, 1)
+             9 (21, 6, 20, 4294967295, 744, 1325, 3, 4)
+             9 (30, 5, 0, 4294967295, 5548, 1311, 3, 4)
+             9 (25, 76, 11, 4294967295, 2724, 1649, 3, 5)
+             9 (98, 32, 15, 4294967295, 598, 25, 3, 1)
+             9 (25, 76, 0, 4294967295, 2721, 1318, 3, 4)
+             9 (21, 12, 6, 4294967295, 140, 30, 3, 1)
+             9 (22, 119, 8, 4294967295, 596, 1580, 3, 0)
+             9 (102, 114, 2, 4294967295, 15571, 1264, 3, 6)
+             9 (25, 76, 11, 4294967295, 2723, 1318, 3, 4)
+             9 (25, 76, 26, 4294967295, 2731, 1311, 3, 4)
+             9 (25, 76, 26, 4294967295, 2732, 1318, 3, 4)
+             9 (24, 30, 6, 4294967295, 223, 30, 3, 1)
+             8 (106, 13, 6, 4294967295, 58, 30, 3, 1)
+             8 (21, 6, 36, 4294967295, 750, 1318, 3, 4)
+             8 (24, 30, 15, 4294967295, 226, 25, 3, 1)
+             8 (102, 113, 9, 4294967295, 15568, 978, 3, 4)
+             8 (102, 113, 9, 4294967295, 532, 978, 3, 1)
+             8 (25, 26, 26, 4294967295, 2140, 1313, 3, 4)
+             8 (96, 132, 6, 4294967295, 937, 30, 3, 1)
+             8 (21, 12, 15, 4294967295, 143, 25, 3, 1)
+             8 (98, 32, 15, 4294967295, 14037, 25, 3, 3)
+             7 (21, 6, 24, 4294967295, 2754, 1318, 3, 4)
+             7 (22, 63, 0, 4294967295, 1050, 1495, 3, 5)
+             7 (24, 30, 15, 4294967295, 1968, 25, 3, 3)
+             7 (25, 76, 71, 4294967295, 2749, 1318, 3, 4)
+             7 (30, 5, 0, 4294967295, 5550, 978, 3, 4)
+             7 (30, 5, 0, 4294967295, 5549, 1318, 3, 4)
+             7 (21, 6, 24, 4294967295, 2755, 313, 3, 4)
+             7 (25, 76, 146, 4294967295, 2752, 1318, 3, 4)
+             7 (112, 13, 6, 4294967295, 51, 30, 3, 1)
+             7 (25, 76, 146, 4294967295, 2751, 1325, 3, 4)
+             7 (21, 6, 24, 4294967295, 2756, 1318, 3, 4)
+             7 (95, 9, 6, 4294967295, 55, 30, 3, 1)
+             7 (96, 132, 15, 4294967295, 940, 25, 3, 1)
+             7 (21, 12, 15, 4294967295, 839, 25, 3, 3)
+             6 (102, 114, 0, 4294967295, 15570, 1311, 3, 4)
+             6 (25, 76, 71, 4294967295, 2740, 2044, 3, 4)
+             6 (25, 26, 26, 4294967295, 2139, 1318, 3, 4)
+             6 (25, 76, 71, 4294967295, 2741, 1318, 3, 4)
+             6 (96, 132, 15, 4294967295, 12767, 25, 3, 3)
+             6 (108, 16, 15, 4294967295, 75, 25, 3, 1)
+             6 (30, 29, 6, 4294967295, 212, 30, 3, 1)
+             6 (112, 13, 15, 4294967295, 54, 25, 3, 1)
+             6 (30, 7, 23, 4294967295, 5545, 1318, 3, 4)
+             6 (25, 170, 384, 4294967295, 3489, 1495, 3, 5)
+             6 (106, 13, 15, 4294967295, 61, 25, 3, 1)
+             6 (31, 66, 6, 4294967295, 386, 30, 3, 1)
+             6 (95, 9, 15, 4294967295, 58, 25, 3, 1)
+             6 (25, 170, 384, 4294967295, 3492, 1496, 3, 5)
+             5 (25, 168, 47, 4294967295, 3507, 19, 3, 6)
+             5 (25, 76, 87, 4294967295, 2803, 1318, 3, 4)
+             5 (102, 114, 28, 4294967295, 1007, 1318, 3, 4)
+             5 (22, 110, 0, 4294967295, 1326, 1318, 3, 4)
+             5 (26, 9, 8, 4294967295, 4752, 1318, 3, 4)
+             5 (30, 29, 15, 4294967295, 215, 25, 3, 1)
+             5 (95, 9, 15, 4294967295, 11818, 25, 3, 3)
+             5 (25, 168, 47, 4294967295, 1530, 19, 3, 1)
+             5 (112, 13, 15, 4294967295, 18419, 25, 3, 3)
+             5 (26, 9, 8, 4294967295, 4751, 2044, 3, 5)
+             5 (22, 110, 4, 4294967295, 1329, 1318, 3, 4)
+             4 (25, 170, 103, 4294967295, 3489, 1495, 3, 5)
+             4 (22, 107, 8, 4294967295, 1318, 66, 3, 4)
+             4 (25, 75, 2, 4294967295, 632, 1218, 3, 1)
+             4 (102, 111, 2, 4294967295, 15369, 1218, 3, 4)
+             4 (22, 63, 3, 4294967295, 1050, 1495, 3, 5)
+             4 (21, 5, 0, 4294967295, 4747, 1318, 3, 4)
+             4 (102, 111, 2, 4294967295, 333, 1218, 3, 1)
+             4 (21, 5, 0, 4294967295, 4749, 1318, 3, 4)
+             4 (30, 29, 15, 4294967295, 5740, 25, 3, 3)
+             4 (106, 13, 15, 4294967295, 17342, 25, 3, 3)
+             4 (97, 143, 2, 4294967295, 13286, 1218, 3, 4)
+             4 (25, 170, 103, 4294967295, 3492, 1496, 3, 5)
+             4 (20, 8, 0, 4294967295, 642, 1218, 3, 4)
+             4 (25, 164, 33, 4294967295, 1425, 91, 3, 1)
+             4 (30, 27, 17, 4294967295, 5690, 1650, 3, 4)
+             4 (105, 21, 6, 4294967295, 90, 30, 3, 1)
+             4 (31, 2, 1, 4294967295, 1, 1218, 3, 1)
+             4 (25, 78, 13, 4294967295, 2765, 1318, 3, 4)
+             4 (97, 143, 2, 4294967295, 510, 1218, 3, 1)
+             4 (22, 63, 3, 4294967295, 202, 1495, 3, 1)
+             4 (22, 107, 8, 4294967295, 470, 66, 3, 1)
+             4 (111, 18, 6, 4294967295, 74, 30, 3, 1)
+             4 (25, 78, 13, 4294967295, 2764, 1311, 3, 4)
+             4 (108, 16, 15, 4294967295, 18065, 25, 3, 3)
+             4 (25, 75, 2, 4294967295, 2609, 1218, 3, 4)
+             3 (107, 38, 6, 4294967295, 627, 30, 3, 1)
+             3 (25, 170, 384, 4294967295, 3488, 1318, 3, 4)
+             3 (25, 164, 30, 4294967295, 3401, 1318, 3, 4)
+             3 (31, 2, 1, 4294967295, 5750, 1218, 3, 3)
+             3 (25, 164, 30, 4294967295, 1424, 1318, 3, 1)
+             3 (105, 21, 15, 4294967295, 93, 25, 3, 1)
+             3 (107, 37, 2, 4294967295, 17957, 1218, 3, 4)
+             3 (25, 76, 26, 4294967295, 2730, 1498, 3, 3)
+             3 (23, 13, 2, 4294967295, 1555, 1218, 3, 4)
+             3 (25, 83, 0, 4294967295, 2814, 1318, 3, 4)
+             3 (30, 27, 10, 4294967295, 5688, 1318, 3, 4)
+             3 (102, 114, 28, 4294967295, 1006, 1312, 3, 4)
+             3 (10, 12, 38, 4294967295, 95, 933, 3, 4)
+             3 (25, 83, 0, 4294967295, 2815, 313, 3, 4)
+             3 (23, 15, 0, 4294967295, 1597, 1318, 3, 4)
+             3 (111, 18, 15, 4294967295, 77, 25, 3, 1)
+             3 (10, 6, 7, 4294967295, 2, 981, 3, 1)
+             3 (19, 7, 0, 4294967295, 372, 1218, 3, 4)
+             3 (22, 63, 2, 4294967295, 203, 1318, 3, 1)
+             3 (107, 37, 2, 4294967295, 606, 1218, 3, 1)
+             3 (22, 63, 0, 4294967295, 1051, 1318, 3, 4)
+             3 (25, 76, 0, 4294967295, 2730, 1498, 3, 3)
+             3 (30, 26, 0, 4294967295, 5684, 313, 3, 4)
+             3 (109, 11, 6, 4294967295, 47, 30, 3, 1)
+             3 (10, 12, 40, 4294967295, 21, 260, 3, 1)
+             3 (22, 49, 11, 4294967295, 1011, 1318, 3, 4)
+             3 (22, 63, 2, 4294967295, 1051, 1318, 3, 4)
+             3 (25, 196, 30, 4294967295, 3698, 19, 3, 6)
+             3 (30, 26, 11, 4294967295, 5730, 1650, 3, 4)
+             3 (100, 13, 6, 4294967295, 68, 30, 3, 1)
+             3 (29, 2, 6, 4294967295, 7, 30, 3, 1)
+             3 (19, 41, 15, 4294967295, 250, 25, 3, 1)
+             3 (110, 14, 6, 4294967295, 134, 30, 3, 1)
+             3 (25, 170, 384, 4294967295, 3491, 1318, 3, 4)
+             3 (25, 196, 30, 4294967295, 1721, 19, 3, 1)
+             3 (23, 13, 2, 4294967295, 41, 1218, 3, 1)
+lane exits: 20684
+         11000 Binary
+          2258 GetField
+          2231 Return
+          1484 SetFieldStrict
+          1204 Call
+          1105 MakeConstArray
+           557 Construct
+           553 DefinePropertyRecord
+           176 ValidateClassHeritage
+            49 CallArray
+            27 SetThisFieldStrict
+            16 CloneEnv
+             7 SetField
+             7 AppendArray
+             6 GetIterator
+             2 MakeLiteralTemplate
+             1 Jump
+             1 LoadName
+         10438 Binary op20 str obj
+          7160 capture walk in <Function>  span=Some(52) depth=0 frame_run=true (root, dense)=Some((false, true, 5))
+          6052 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(7484) depth=0 frame_run=true (root, dense)=Some((false, true, 21))
+          6050 frame call aborted @Some(21720) registers_only=false env_activation=false arrow=false rest=false closures=false arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/7 simple_params=false selective=false self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=["CloneEnv:arguments", "CloneEnv:arguments", "CloneEnv:arguments"] unpromoted=["~quench:param:0", "~quench:param:1", "x", "startIndex", "i", "arguments", "~quench:block-binding:i"]
+          5500 frame call  @Some(4874) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=true class_ctor=false async=false generator=false promoted=0/19 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=["CloneEnv:~quench:lexical-this", "LoadName:Promise", "LoadName:Promise", "LoadName:Promise", "LoadName:~quench:iterator-close"] unpromoted=["payload", "checks", "ctx", "isAborted", "asyncResult", "ch", "shouldRun", "currLen", "_", "nextLen", "~quench:block-binding:ch", "~quench:for-of:iterator", "~quench:for-of:next-method", "~quench:block-binding:currLen", "~quench:block-binding:_", "~quench:block-binding:shouldRun", "~quench:block-binding:nextLen", "~quench:for-of-body-error", "~quench:for-of-close-error"]
+          5500 frame call  @Some(7484) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/5 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=["LoadName:Promise", "LoadName:Promise"] unpromoted=["payload", "ctx", "canary", "result", "~quench:block-binding:canary"]
+          4388 getter decline uncached error recorded=true
+          3858 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(49658) depth=0 frame_run=true (root, dense)=Some((false, true, 13))
+          3263 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs init span=Some(2831) depth=0 frame_run=true (root, dense)=Some((false, true, 17))
+          2749 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs  span=Some(4461) depth=0 frame_run=true (root, dense)=Some((false, true, 6))
+          2571 materialize depth 1
+          2216 materialize depth 2
+          2203 Return nested run started by none
+          2200 GetField error on immediate
+          2200 frame call explicitlyAborted @Some(22165) registers_only=false env_activation=false arrow=false rest=false closures=false arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/7 simple_params=false selective=false self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=["CloneEnv:arguments", "CloneEnv:arguments", "CloneEnv:arguments"] unpromoted=["~quench:param:0", "~quench:param:1", "x", "startIndex", "i", "arguments", "~quench:block-binding:i"]
+          1655 capture walk in /workspace/quench/tests/npm-perf/workloads/zod-parse.cjs operations span=Some(1280) depth=0 frame_run=true (root, dense)=Some((false, true, 24))
+          1651 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(35360) depth=0 frame_run=true (root, dense)=Some((false, true, 3))
+          1650 frame call  @Some(2143) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/8 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=true addresses=true initial=Undefined name_ops=["LoadName:Promise"] unpromoted=["schema", "value", "_ctx", "_params", "ctx", "result", "e", "~quench:block-binding:e"]
+          1650 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs _parse span=Some(10174) depth=0 frame_run=true (root, dense)=Some((false, true, 125))
+          1650 Return in  Some(SourceSpan { start: 4461, end: 4888 }) pc=15 lane=false
+          1650 frame call _parse @Some(10174) registers_only=false env_activation=false arrow=false rest=false closures=false arguments=false handlers=false class_ctor=false async=false generator=false promoted=2/4 simple_params=true selective=false self=true plain=false in_loop=true legacy=false live=true addresses=true initial=Undefined name_ops=[] unpromoted=["_parse~quench:self-binding:144", "arguments"]
+          1644 getter decline uncached parse recorded=true
+          1351 frame call init @Some(2831) registers_only=false env_activation=false arrow=false rest=false closures=false arguments=false handlers=true class_ctor=false async=false generator=false promoted=2/21 simple_params=true selective=false self=false plain=true in_loop=true legacy=false live=true addresses=true initial=Undefined name_ops=["LoadName:Object", "LoadName:undefined", "LoadName:undefined", "LoadName:undefined", "LoadName:Object", "LoadName:Object", "LoadName:~quench:for-in-keys", "LoadName:~quench:for-in-key-is-enumerable", "LoadName:Object", "LoadName:~quench:iterator-close"] unpromoted=["own", "ctorProto", "up", "target", "proto", "k", "arguments", "~quench:finally-error", "~quench:finally-return", "~quench:block-binding:own", "~quench:block-binding:ctorProto", "~quench:block-binding:up", "~quench:block-binding:target", "~quench:block-binding:k", "~quench:for-in:source", "~quench:for-of:iterator", "~quench:for-of:next-method", "~quench:for-of-body-error", "~quench:for-of-close-error"]
+          1142 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs _ span=Some(4908) depth=0 frame_run=true (root, dense)=Some((false, true, 17))
+          1103 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/errors.cjs  span=Some(2510) depth=0 frame_run=true (root, dense)=Some((false, true, 15))
+          1101 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs finalizeIssue span=Some(23690) depth=0 frame_run=true (root, dense)=Some((false, true, 99))
+          1101 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs  span=Some(3107) depth=0 frame_run=true (root, dense)=Some((false, true, 5))
+          1100 Binary in  Some(SourceSpan { start: 52, end: 1972 }) pc=92 lane=true
+          1100 Binary in  Some(SourceSpan { start: 52, end: 3718 }) pc=92 lane=true
+          1100 Binary in  Some(SourceSpan { start: 52, end: 3718 }) pc=18 lane=true
+          1100 frame call  @Some(35360) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/11 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=["LoadName:Array", "LoadNameCall:Array", "LoadNameCall:Array", "LoadName:Promise", "CloneEnv:arguments", "LoadName:Promise"] unpromoted=["payload", "ctx", "input", "proms", "abortEarly", "i", "item", "result", "~quench:block-binding:i", "~quench:block-binding:item", "~quench:block-binding:result"]
+          1100 Binary in  Some(SourceSpan { start: 52, end: 3718 }) pc=240 lane=true
+          1100 frame call finalizeIssue @Some(23690) registers_only=false env_activation=false arrow=false rest=false closures=false arguments=false handlers=true class_ctor=false async=false generator=false promoted=4/15 simple_params=true selective=false self=false plain=true in_loop=true legacy=false live=true addresses=true initial=Undefined name_ops=["LoadName:undefined", "LoadName:Object", "LoadName:~quench:iterator-close"] unpromoted=["traits", "schemaError", "message", "full", "k", "arguments", "~quench:block-binding:k", "~quench:for-of:iterator", "~quench:for-of:next-method", "~quench:for-of-body-error", "~quench:for-of-close-error"]
+          1100 frame call  @Some(3107) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/18 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=true addresses=true initial=Undefined name_ops=["LoadName:Array"] unpromoted=["issue", "expected", "receivedType", "received", "adj", "sizing", "_issue", "opts", "~quench:switch-discriminant", "~quench:block-binding:expected", "~quench:block-binding:receivedType", "~quench:block-binding:received", "~quench:block-binding:adj", "~quench:block-binding:sizing", "~quench:block-binding:adj_", "~quench:block-binding:sizing_", "~quench:block-binding:_issue", "~quench:block-binding:opts"]
+          1099 Binary in  Some(SourceSpan { start: 52, end: 1972 }) pc=18 lane=true
+          1099 Binary in  Some(SourceSpan { start: 52, end: 3718 }) pc=166 lane=true
+          1098 materialize depth 4
+          1098 Call user finalizeIssue same_program=false pc=7 registers_only=false async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 0))
+           773 materializes for native ObjectGetOwnPropertyDescriptor
+           670 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(4874) depth=1 frame_run=true (root, dense)=None
+           570 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(35360) depth=1 frame_run=true (root, dense)=Some((false, true, 3))
+           564 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs  span=Some(3107) depth=1 frame_run=true (root, dense)=Some((false, true, 5))
+           560 Binary op20 undef obj
+           557 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs  span=Some(4544) depth=1 frame_run=true (root, dense)=None
+           555 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs  span=Some(4544) depth=2 frame_run=true (root, dense)=None
+           552 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/errors.cjs  span=Some(2633) depth=0 frame_run=true (root, dense)=Some((false, true, 23))
+           551 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(34042) depth=0 frame_run=true (root, dense)=Some((false, true, 6))
+           550 frame call newError @Some(1294) registers_only=false env_activation=false arrow=false rest=false closures=false arguments=false handlers=true class_ctor=false async=false generator=false promoted=1/7 simple_params=true selective=false self=false plain=true in_loop=true legacy=false live=true addresses=true initial=Undefined name_ops=[] unpromoted=["E", "saved", "arguments", "~quench:block-binding:saved", "~quench:finally-error", "~quench:finally-return"]
+           550 Binary in  Some(SourceSpan { start: 52, end: 2831 }) pc=92 lane=true
+           550 frame call  @Some(2510) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/4 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=true addresses=true initial=Undefined name_ops=["LoadName:Object", "LoadName:Object"] unpromoted=["inst", "issues", "proto", "~quench:object-home:3338"]
+           550 GetField in operations Some(SourceSpan { start: 1280, end: 2042 }) pc=38 lane=true
+           550 Binary in  Some(SourceSpan { start: 52, end: 2831 }) pc=18 lane=true
+           550 Binary in  Some(SourceSpan { start: 52, end: 1937 }) pc=92 lane=true
+           550 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs _ span=Some(4908) depth=1 frame_run=true (root, dense)=Some((false, true, 17))
+           550 GetField in operations Some(SourceSpan { start: 1280, end: 2042 }) pc=52 lane=true
+           550 frame call  @Some(34042) registers_only=false env_activation=false arrow=true rest=false closures=false arguments=false handlers=true class_ctor=false async=false generator=false promoted=2/18 simple_params=true selective=false self=false plain=true in_loop=true legacy=false live=true addresses=true initial=Undefined name_ops=["LoadName:~quench:iterator-close", "LoadName:~quench:iterator-close"] unpromoted=["n", "max", "ch", "start", "~quench:block-binding:max", "~quench:block-binding:ch", "~quench:for-of:iterator", "~quench:for-of:next-method", "~quench:binding-iterator", "~quench:binding-iterator-error", "~quench:iterator-next-error", "~quench:iterator-next-error_", "~quench:binding-iterator-close-error", "~quench:block-binding:start", "~quench:for-of-body-error", "~quench:for-of-close-error"]
+           550 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(58164) depth=0 frame_run=true (root, dense)=Some((false, true, 4))
+           550 frame call  @Some(2633) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/4 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=true addresses=true initial=Undefined name_ops=["LoadName:Object", "LoadName:undefined", "LoadName:Object", "LoadName:Object", "LoadName:Object"] unpromoted=["inst", "def", "proto", "~quench:object-home:3389"]
+           550 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(4874) depth=0 frame_run=true (root, dense)=Some((false, true, 21))
+           550 frame call  @Some(58164) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/5 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=true addresses=true initial=Undefined name_ops=["LoadName:undefined", "LoadName:Array"] unpromoted=["payload", "ctx", "input", "value", "opt"]
+           550 SetFieldStrict in  Some(SourceSpan { start: 2510, end: 3476 }) pc=8 lane=true site=53 field=name
+           550 GetField in operations Some(SourceSpan { start: 1280, end: 2042 }) pc=43 lane=true
+           550 Binary in  Some(SourceSpan { start: 52, end: 2796 }) pc=92 lane=true
+           550 SetFieldStrict in  Some(SourceSpan { start: 2633, end: 3836 }) pc=2 lane=true site=191 field=name
+           550 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs  span=Some(3542) depth=0 frame_run=true (root, dense)=Some((false, true, 1))
+           550 Binary in  Some(SourceSpan { start: 52, end: 2796 }) pc=166 lane=true
+           550 Binary in  Some(SourceSpan { start: 52, end: 2796 }) pc=18 lane=true
+           550 Return in  Some(SourceSpan { start: 4461, end: 4888 }) pc=15 lane=true
+           550 Binary in  Some(SourceSpan { start: 52, end: 2831 }) pc=166 lane=true
+           550 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs newError span=Some(1294) depth=0 frame_run=true (root, dense)=Some((false, true, 23))
+           550 GetField in operations Some(SourceSpan { start: 1280, end: 2042 }) pc=77 lane=false
+           549 Construct user  same_program=false pc=15 registers_only=false async=false gen=false class=true self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 2))
+           549 Binary in  Some(SourceSpan { start: 52, end: 1937 }) pc=18 lane=true
+           548 getter decline uncached safeParse recorded=true
+           300 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/index.cjs  span=Some(821) depth=0 frame_run=true (root, dense)=Some((false, true, 13))
+           253 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/index.cjs  span=Some(1153) depth=0 frame_run=true (root, dense)=Some((false, true, 11))
+           217 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/external.cjs  span=Some(1153) depth=0 frame_run=true (root, dense)=Some((false, true, 16))
+           173 frame call $constructor @Some(1811) registers_only=false env_activation=true arrow=false rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/17 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=["LoadName:WeakSet", "LoadName:Object", "LoadName:Object", "LoadName:Object", "LoadName:Object", "LoadName:Object", "LoadName:Object", "LoadName:Symbol", "LoadName:Object"] unpromoted=["name", "initializer", "proto", "params", "zodProto", "Internals", "protoMembers", "initialized", "init", "Parent", "Definition", "_", "arguments", "Definition~quench:class-binding:3", "~quench:class-super:4800", "~quench:home:implicit-constructor:4800", "~quench:home:class:4800"]
+            88 resolve  span=Some(12330) cross=true known=true
+            64 resolve  span=Some(10369) cross=true known=true
+            59 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/index.cjs  span=Some(11151) depth=0 frame_run=true (root, dense)=Some((false, true, 70))
+            58 resolve  span=Some(8579) cross=true known=true
+            54 frame entry  plain=false registers_only=false env_activation=false environment=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false derived=false async=false generator=false locals_promoted=0 simple_params=true selective=true cross=true numeric=false
+            48 frame call write @Some(601) registers_only=false env_activation=false arrow=false rest=false closures=true arguments=false handlers=true class_ctor=false async=false generator=false promoted=0/12 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=true addresses=true initial=Undefined name_ops=["LoadName:Math", "LoadName:~quench:iterator-close"] unpromoted=["arg", "content", "lines", "minIndent", "dedented", "line", "arguments", "~quench:block-binding:line", "~quench:for-of:iterator", "~quench:for-of:next-method", "~quench:for-of-body-error", "~quench:for-of-close-error"]
+            47 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs isRecursive span=Some(2347) depth=0 frame_run=true (root, dense)=Some((false, true, 33))
+            37 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(3976) depth=0 frame_run=true (root, dense)=Some((false, true, 70))
+            37 frame call  @Some(3976) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=true class_ctor=false async=false generator=false promoted=0/21 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=["LoadName:~quench:iterator-close", "LoadName:~quench:iterator-close"] unpromoted=["inst", "def", "_a", "defChecks", "checks", "ch", "fn", "runChecks", "handleCanaryResult", "~quench:block-binding:ch", "~quench:for-of:iterator", "~quench:for-of:next-method", "~quench:block-binding:fn", "~quench:for-of:iterator_", "~quench:for-of:next-method_", "~quench:for-of-body-error", "~quench:for-of-close-error", "~quench:for-of-body-error_", "~quench:for-of-close-error_", "~quench:block-binding:runChecks", "~quench:block-binding:handleCanaryResult"]
+            33 resolve init span=Some(2831) cross=true known=true
+            31 frame call normalizeParams @Some(14125) registers_only=false env_activation=true arrow=false rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/3 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=true addresses=true initial=Undefined name_ops=["LoadName:undefined", "LoadName:undefined", "LoadName:Error"] unpromoted=["_params", "params", "arguments"]
+            28 frame call own @Some(30473) registers_only=false env_activation=false arrow=false rest=false closures=false arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/9 simple_params=false selective=false self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=["LoadName:Object"] unpromoted=["~quench:param:0", "~quench:param:1", "~quench:param:2", "~quench:param:3", "inst", "key", "value", "enumerable", "arguments"]
+            28 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs  span=Some(31664) depth=0 frame_run=true (root, dense)=Some((false, true, 5))
+            28 resolve  span=Some(29191) cross=true known=true
+            28 resolve  span=Some(14464) cross=true known=true
+            28 Call user own same_program=true pc=11 registers_only=false async=false gen=false class=false self=false args=false caller(async,arrow,depth,pending)=Some((false, false, 0, 0))
+            26 SetThisFieldStrict in Internals Some(SourceSpan { start: 2460, end: 2573 }) pc=0 lane=true site=5 field=def
+            25 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs  span=Some(12484) depth=0 frame_run=true (root, dense)=Some((false, true, 125))
+            24 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(44885) depth=0 frame_run=true (root, dense)=Some((false, true, 70))
+            24 SetFieldStrict in  Some(SourceSpan { start: 6835, end: 6979 }) pc=8 lane=true site=531 field=def
+            24 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(41369) depth=0 frame_run=true (root, dense)=Some((false, true, 70))
+            23 frame call isRecursive @Some(2347) registers_only=false env_activation=false arrow=false rest=false closures=true arguments=false handlers=true class_ctor=false async=false generator=false promoted=0/43 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=["LoadName:undefined", "LoadName:~quench:iterator-close", "LoadName:~quench:iterator-close", "LoadName:undefined", "LoadName:~quench:for-in-keys", "LoadName:~quench:for-in-key-is-enumerable", "LoadName:Object", "LoadName:Array", "LoadName:~quench:iterator-close", "LoadName:~quench:iterator-close"] unpromoted=["inst", "stack", "resolve", "cached", "result", "check", "shape", "merge", "def", "kind", "raw", "el", "inner", "key", "desc", "value", "arguments", "~quench:switch-discriminant", "~quench:block-binding:raw", "~quench:block-binding:el", "~quench:for-of:iterator", "~quench:for-of:next-method", "~quench:for-of-body-error", "~quench:for-of-close-error", "~quench:block-binding:el_", "~quench:for-of:iterator_", "~quench:for-of:next-method_", "~quench:for-of-body-error_", "~quench:for-of-close-error_", "~quench:block-binding:inner", "~quench:block-binding:key", "~quench:for-in:source", "~quench:for-of:iterator__", "~quench:for-of:next-method__", "~quench:block-binding:desc", "~quench:block-binding:value", "~quench:block-binding:el__", "~quench:for-of:iterator___", "~quench:for-of:next-method___", "~quench:for-of-body-error__", "~quench:for-of-close-error__", "~quench:for-of-body-error___", "~quench:for-of-close-error___"]
+            23 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(10132) depth=0 frame_run=true (root, dense)=Some((false, true, 70))
+            22 resolve  span=Some(4766) cross=true known=true
+            22 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(27910) depth=0 frame_run=true (root, dense)=Some((false, true, 70))
+            22 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs  span=Some(25410) depth=0 frame_run=true (root, dense)=Some((false, true, 125))
+            21 resolve  span=Some(52) cross=true known=false
+            21 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs  span=Some(10151) depth=0 frame_run=true (root, dense)=Some((false, true, 7))
+            20 SetFieldStrict in  Some(SourceSpan { start: 3976, end: 8504 }) pc=26 lane=true site=752 field=version
+            20 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs init span=Some(2831) depth=1 frame_run=true (root, dense)=None
+            20 SetFieldStrict in  Some(SourceSpan { start: 3976, end: 8504 }) pc=21 lane=true site=749 field=bag
+            20 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs  span=Some(3542) depth=1 frame_run=true (root, dense)=None
+            19 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(58164) depth=1 frame_run=true (root, dense)=None
+            19 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs  span=Some(34578) depth=0 frame_run=true (root, dense)=Some((false, true, 125))
+            19 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/external.cjs  span=Some(7009) depth=0 frame_run=true (root, dense)=Some((false, true, 16))
+            18 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs members span=Some(29735) depth=0 frame_run=true (root, dense)=Some((false, true, 99))
+            18 resolve init span=Some(2831) cross=false known=true
+            17 resolve  span=Some(7484) cross=true known=false
+            17 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs  span=Some(31664) depth=1 frame_run=true (root, dense)=None
+            17 resolve _ span=Some(4908) cross=true known=true
+            17 resolve Internals span=Some(2460) cross=false known=true
+            16 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/checks.cjs  span=Some(4242) depth=0 frame_run=true (root, dense)=Some((false, true, 7))
+            16 frame call defineLazyInternal @Some(33114) registers_only=false env_activation=false arrow=false rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/6 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=["LoadName:Object", "LoadName:undefined", "LoadName:Object"] unpromoted=["inst", "key", "compute", "proto", "arguments", "~quench:object-home:33540"]
+            15 getter decline uncached clone recorded=true
+            15 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(45185) depth=0 frame_run=true (root, dense)=Some((false, true, 13))
+            14 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs  span=Some(2999) depth=0 frame_run=true (root, dense)=Some((false, true, 43))
+            14 resolve  span=Some(4874) cross=false known=true
+            14 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs  span=Some(10229) depth=0 frame_run=true (root, dense)=Some((false, true, 2))
+            13 Return nested run started by HostFunction require
+            12 frame call  @Some(12484) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/2 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=[] unpromoted=["inst", "def"]
+            12 frame call  @Some(10132) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/2 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=[] unpromoted=["inst", "def"]
+            11 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs  span=Some(14209) depth=0 frame_run=true (root, dense)=Some((false, true, 125))
+            11 SetFieldStrict in  Some(SourceSpan { start: 4766, end: 4828 }) pc=5 lane=true site=780 field=run
+            11 resolve  span=Some(150) cross=false known=false
+            11 SetFieldStrict in  Some(SourceSpan { start: 3976, end: 8504 }) pc=146 lane=true site=773 field=deferred
+            11 frame call  @Some(27910) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/2 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=[] unpromoted=["inst", "def"]
+            11 frame call  @Some(25410) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/2 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=[] unpromoted=["inst", "def"]
+            11 resolve  span=Some(5494) cross=true known=false
+            11 GetField value on immediate
+            10 resolve  span=Some(7484) cross=true known=true
+            10 getter decline uncached value recorded=true
+            10 Return in  Some(SourceSpan { start: 16040, end: 16143 }) pc=12 lane=false
+            10 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs  span=Some(16040) depth=0 frame_run=true (root, dense)=Some((false, true, 2))
+            10 resolve  span=Some(821) cross=false known=false
+            10 Return nested run started by ArrayFilter filter
+             9 frame call  @Some(10151) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/2 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=true addresses=true initial=Undefined name_ops=[] unpromoted=["base", "wrapped"]
+             9 SetFieldStrict in _ Some(SourceSpan { start: 4908, end: 5776 }) pc=52 lane=true site=56 field=deferred
+             9 frame call  @Some(6987) registers_only=false env_activation=true arrow=false rest=true closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/3 simple_params=false selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=[] unpromoted=["chks", "def", "arguments"]
+             9 GetField check on immediate
+             9 frame call  @Some(9587) registers_only=false env_activation=true arrow=false rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/7 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=[] unpromoted=["inst", "_a", "isRecursiveInst", "rechecked", "lastCtx", "lastBucket", "arguments"]
+             9 SetFieldStrict in  Some(SourceSpan { start: 3976, end: 8504 }) pc=11 lane=true site=745 field=def
+             9 GetField in  Some(SourceSpan { start: 6987, end: 7339 }) pc=2 lane=true
+             9 frame entry  plain=false registers_only=false env_activation=false environment=false arrow=true rest=false closures=true arguments=false handlers=true class_ctor=false derived=false async=false generator=false locals_promoted=0 simple_params=true selective=true cross=false numeric=false
+             9 GetField clone on immediate
+             9 resolve get value span=Some(3904) cross=true known=false
+             9 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs  span=Some(6987) depth=0 frame_run=true (root, dense)=Some((false, true, 125))
+             8 GetField _value on immediate
+             8 CloneEnv in derived Some(SourceSpan { start: 31009, end: 31548 }) pc=27 lane=true
+             8 CloneEnv in derived Some(SourceSpan { start: 31009, end: 31548 }) pc=25 lane=true
+             7 frame call  @Some(10229) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/11 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=true addresses=true initial=Undefined name_ops=["LoadName:undefined", "LoadName:Set", "LoadName:WeakMap", "LoadName:undefined", "LoadName:WeakSet", "LoadName:undefined", "LoadName:undefined", "LoadName:Promise"] unpromoted=["payload", "ctx", "walked", "input", "state", "bucket", "hit", "depth", "result", "entry", "~quench:block-binding:walked"]
+             7 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  span=Some(35214) depth=0 frame_run=true (root, dense)=Some((false, true, 70))
+             7 resolve  span=Some(8579) cross=true known=false
+             7 resolve  span=Some(49658) cross=true known=true
+             7 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs  span=Some(10229) depth=1 frame_run=true (root, dense)=None
+             7 resolve  span=Some(10151) cross=true known=true
+             7 resolve isObject span=Some(10560) cross=true known=false
+             7 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs  span=Some(10229) depth=2 frame_run=true (root, dense)=None
+             7 resolve  span=Some(10369) cross=false known=true
+             7 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs object span=Some(36446) depth=0 frame_run=true (root, dense)=Some((false, true, 125))
+             7 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs init span=Some(2831) depth=1 frame_run=true (root, dense)=Some((false, true, 17))
+             7 resolve  span=Some(49658) cross=true known=false
+             6 resolve _ span=Some(4908) cross=true known=false
+             6 resolve  span=Some(2570) cross=true known=false
+             6 resolve  span=Some(3671) cross=true known=false
+             6 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs installLazyProp span=Some(35139) depth=0 frame_run=true (root, dense)=Some((false, true, 99))
+             6 resolve aborted span=Some(21720) cross=true known=false
+             6 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs defineLazyInternal span=Some(33114) depth=0 frame_run=true (root, dense)=Some((false, true, 99))
+             6 frame call  @Some(34578) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/2 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=[] unpromoted=["inst", "def"]
+             6 resolve isRecursive span=Some(2347) cross=false known=false
+             6 resolve  span=Some(4874) cross=false known=false
+             6 resolve  span=Some(2143) cross=true known=false
+             6 GetField in get value Some(SourceSpan { start: 3904, end: 4108 }) pc=8 lane=false
+             6 resolve esc span=Some(10214) cross=true known=false
+             6 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs  span=Some(33657) depth=0 frame_run=true (root, dense)=Some((false, true, 125))
+             6 resolve write span=Some(601) cross=true known=false
+             6 frame call  @Some(44885) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/13 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=[] unpromoted=["inst", "def", "superParse", "_normalized", "memo", "generateFastpass", "fastpass", "isObject", "jit", "allowsEval", "fastEnabled", "catchall", "value"]
+             6 frame call  @Some(41369) registers_only=false env_activation=false arrow=true rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/11 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=["LoadName:Object", "LoadName:Object"] unpromoted=["inst", "def", "desc", "sh", "get", "_normalized", "isObject", "catchall", "value", "memo", "~quench:block-binding:get"]
+             6 getter decline uncached check recorded=false
+             6 capture walk in /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs  span=Some(5192) depth=0 frame_run=true (root, dense)=Some((false, true, 16))
+             6 resolve  span=Some(45770) cross=false known=false
+             6 frame call installLazyProp @Some(35139) registers_only=false env_activation=true arrow=false rest=false closures=true arguments=false handlers=false class_ctor=false async=false generator=false promoted=0/7 simple_params=true selective=true self=false plain=false in_loop=true legacy=false live=false addresses=true initial=Undefined name_ops=["LoadName:Object"] unpromoted=["inst", "key", "make", "enumerable", "proto", "arguments", "~quench:object-home:35301"]
+             6 resolve  span=Some(45496) cross=false known=false
+             5 resolve Internals span=Some(2460) cross=false known=false
+             5 resolve explicitlyAborted span=Some(22165) cross=true known=false
+             5 resolve optionalKeys span=Some(15972) cross=true known=false
+             5 frame entry aborted plain=false registers_only=false env_activation=false environment=false arrow=false rest=false closures=false arguments=false handlers=false class_ctor=false derived=false async=false generator=false locals_promoted=0 simple_params=false selective=false cross=true numeric=false
+             5 SetFieldStrict in  Some(SourceSpan { start: 2088, end: 2231 }) pc=8 lane=true site=67 field=def
+             5 frame call normalizeDef @Some(38253) registers_only=false env_activation=false arrow=false rest=false closures=false arguments=false handlers=true class_ctor=false async=false generator=false promoted=1/13 simple_params=true selective=false self=false plain=true in_loop=true legacy=false live=true addresses=true initial=Undefined name_ops=["LoadName:Object", "LoadName:Object", "LoadName:Error", "LoadNameCall:String", "LoadName:~quench:iterator-close", "LoadName:Set", "LoadName:Set"] unpromoted=["keys", "ownSymbols", "symbolKeys", "allKeys", "k", "okeys", "arguments", "~quench:block-binding:k", "~quench:for-of:iterator", "~quench:for-of:next-method", "~quench:for-of-body-error", "~quench:for-of-close-error"]
+             5 resolve  span=Some(10369) cross=false known=false
+             5 resolve  span=Some(45185) cross=false known=false
+             5 frame entry own plain=false registers_only=false env_activation=false environment=false arrow=false rest=false closures=false arguments=false handlers=false class_ctor=false derived=false async=false generator=false locals_promoted=0 simple_params=false selective=false cross=false numeric=false
+             5 resolve  span=Some(161) cross=true known=false
+lane call targets (1/64 sample):
+  program=25 caller=78 pc=57 samples=108 distinct_callees=9 distinct_functions=5 callees=[(heap(4204), 18), (heap(4737), 17), (heap(4722), 17)] functions=[(19, 47), (15, 29), (31, 22)]
+  program=25 caller=83 pc=47 samples=83 distinct_callees=6 distinct_functions=2 callees=[(heap(4743), 18), (heap(4083), 18), (heap(4339), 17)] functions=[(92, 43), (131, 40)]
+  program=25 caller=173 pc=47 samples=64 distinct_callees=5 distinct_functions=1 callees=[(heap(5458), 18), (heap(5308), 17), (heap(5384), 12)] functions=[(2, 64)]
+  program=25 caller=173 pc=11 samples=56 distinct_callees=1 distinct_functions=1 callees=[(heap(1033), 56)] functions=[(44, 56)]
+  program=25 caller=158 pc=86 samples=53 distinct_callees=1 distinct_functions=1 callees=[(heap(1184), 53)] functions=[(24, 53)]
+  program=26 caller=11 pc=4 samples=41 distinct_callees=1 distinct_functions=1 callees=[(heap(1014), 41)] functions=[(17, 41)]
+  program=25 caller=158 pc=69 samples=32 distinct_callees=2 distinct_functions=2 callees=[(heap(4753), 17), (heap(4857), 15)] functions=[(173, 17), (92, 15)]
+  program=25 caller=78 pc=44 samples=27 distinct_callees=1 distinct_functions=1 callees=[(heap(1249), 27)] functions=[(11, 27)]
+  program=22 caller=84 pc=173 samples=25 distinct_callees=1 distinct_functions=1 callees=[(heap(1055), 25)] functions=[(81, 25)]
+  program=23 caller=5 pc=5 samples=24 distinct_callees=1 distinct_functions=1 callees=[(heap(998), 24)] functions=[(9, 24)]
+  program=43 caller=12 pc=20 samples=24 distinct_callees=1 distinct_functions=1 callees=[(heap(1062), 24)] functions=[(88, 24)]
+  program=25 caller=158 pc=31 samples=24 distinct_callees=1 distinct_functions=1 callees=[(heap(1880), 24)] functions=[(21, 24)]
+  program=22 caller=84 pc=236 samples=24 distinct_callees=1 distinct_functions=1 callees=[(heap(1055), 24)] functions=[(81, 24)]
+  program=22 caller=84 pc=263 samples=24 distinct_callees=1 distinct_functions=1 callees=[(heap(1055), 24)] functions=[(81, 24)]
+  program=118 caller=2 pc=17 samples=17 distinct_callees=1 distinct_functions=1 callees=[(heap(4715), 17)] functions=[(92, 17)]
+  program=115 caller=2 pc=239 samples=17 distinct_callees=1 distinct_functions=1 callees=[(heap(4342), 17)] functions=[(134, 17)]
+  program=115 caller=2 pc=17 samples=17 distinct_callees=1 distinct_functions=1 callees=[(heap(3901), 17)] functions=[(92, 17)]
+  program=115 caller=2 pc=8 samples=17 distinct_callees=1 distinct_functions=1 callees=[(heap(1880), 17)] functions=[(21, 17)]
+  program=23 caller=15 pc=22 samples=17 distinct_callees=2 distinct_functions=1 callees=[(heap(4886), 12), (heap(4439), 5)] functions=[(173, 17)]
+  program=118 caller=2 pc=8 samples=17 distinct_callees=1 distinct_functions=1 callees=[(heap(1880), 17)] functions=[(21, 17)]
+  program=28 caller=4 pc=38 samples=13 distinct_callees=13 distinct_functions=1 callees=[(heap(5504), 1), (heap(5364), 1), (heap(5360), 1)] functions=[(6, 13)]
+  program=17 caller=1 pc=192 samples=13 distinct_callees=1 distinct_functions=1 callees=[(heap(963), 13)] functions=[(2, 13)]
+  program=119 caller=2 pc=91 samples=13 distinct_callees=1 distinct_functions=1 callees=[(heap(4982), 13)] functions=[(92, 13)]
+  program=116 caller=2 pc=17 samples=12 distinct_callees=1 distinct_functions=1 callees=[(heap(4710), 12)] functions=[(173, 12)]
+  program=23 caller=2 pc=38 samples=12 distinct_callees=12 distinct_functions=1 callees=[(heap(5340), 1), (heap(2934), 1), (heap(5745), 1)] functions=[(4, 12)]
+  program=25 caller=196 pc=4 samples=12 distinct_callees=1 distinct_functions=1 callees=[(heap(1033), 12)] functions=[(44, 12)]
+  program=23 caller=2 pc=52 samples=12 distinct_callees=12 distinct_functions=1 callees=[(heap(3835), 1), (heap(2396), 1), (heap(5838), 1)] functions=[(4, 12)]
+  program=23 caller=21 pc=18 samples=12 distinct_callees=1 distinct_functions=1 callees=[(heap(4439), 12)] functions=[(173, 12)]
+  program=119 caller=2 pc=8 samples=12 distinct_callees=1 distinct_functions=1 callees=[(heap(1880), 12)] functions=[(21, 12)]
+  program=22 caller=84 pc=147 samples=11 distinct_callees=1 distinct_functions=1 callees=[(heap(1055), 11)] functions=[(81, 11)]
+  program=43 caller=12 pc=24 samples=10 distinct_callees=1 distinct_functions=1 callees=[(heap(3903), 10)] functions=[(11, 10)]
+  program=23 caller=4 pc=8 samples=10 distinct_callees=10 distinct_functions=1 callees=[(heap(5679), 1), (heap(5583), 1), (heap(5628), 1)] functions=[(5, 10)]
+  program=43 caller=12 pc=16 samples=10 distinct_callees=1 distinct_functions=1 callees=[(heap(3903), 10)] functions=[(11, 10)]
+  program=28 caller=4 pc=51 samples=10 distinct_callees=10 distinct_functions=1 callees=[(heap(5270), 1), (heap(5498), 1), (heap(5403), 1)] functions=[(8, 10)]
+  program=22 caller=84 pc=209 samples=10 distinct_callees=1 distinct_functions=1 callees=[(heap(1055), 10)] functions=[(81, 10)]
+  program=22 caller=100 pc=51 samples=9 distinct_callees=1 distinct_functions=1 callees=[(heap(1075), 9)] functions=[(106, 9)]
+  program=116 caller=2 pc=8 samples=5 distinct_callees=1 distinct_functions=1 callees=[(heap(1880), 5)] functions=[(21, 5)]
+  program=119 caller=2 pc=17 samples=5 distinct_callees=1 distinct_functions=1 callees=[(heap(4894), 5)] functions=[(229, 5)]
+  program=25 caller=23 pc=4 samples=5 distinct_callees=1 distinct_functions=1 callees=[(heap(1661), 5)] functions=[(154, 5)]
+  program=25 caller=78 pc=112 samples=5 distinct_callees=1 distinct_functions=1 callees=[(heap(1057), 5)] functions=[(83, 5)]
+  program=23 caller=2 pc=77 samples=5 distinct_callees=5 distinct_functions=1 callees=[(heap(5776), 1), (heap(5872), 1), (heap(5584), 1)] functions=[(4, 5)]
+  program=102 caller=146 pc=5 samples=5 distinct_callees=1 distinct_functions=1 callees=[(heap(3104), 5)] functions=[(21, 5)]
+  program=117 caller=2 pc=8 samples=5 distinct_callees=1 distinct_functions=1 callees=[(heap(1880), 5)] functions=[(21, 5)]
+  program=20 caller=7 pc=34 samples=5 distinct_callees=1 distinct_functions=1 callees=[(heap(987), 5)] functions=[(2, 5)]
+  program=25 caller=196 pc=46 samples=5 distinct_callees=1 distinct_functions=1 callees=[(heap(5010), 5)] functions=[(173, 5)]
+  program=23 caller=2 pc=43 samples=5 distinct_callees=5 distinct_functions=1 callees=[(heap(5575), 1), (heap(5671), 1), (heap(5767), 1)] functions=[(4, 5)]
+  program=23 caller=21 pc=34 samples=5 distinct_callees=1 distinct_functions=1 callees=[(heap(1097), 5)] functions=[(3, 5)]
+  program=18 caller=8 pc=34 samples=4 distinct_callees=1 distinct_functions=1 callees=[(heap(969), 4)] functions=[(2, 4)]
+  program=19 caller=8 pc=34 samples=4 distinct_callees=1 distinct_functions=1 callees=[(heap(978), 4)] functions=[(2, 4)]
+  program=28 caller=4 pc=30 samples=3 distinct_callees=3 distinct_functions=1 callees=[(heap(5437), 1), (heap(5283), 1), (heap(5408), 1)] functions=[(5, 3)]
+  program=28 caller=4 pc=47 samples=3 distinct_callees=3 distinct_functions=1 callees=[(heap(5273), 1), (heap(5277), 1), (heap(5439), 1)] functions=[(7, 3)]
+  program=25 caller=170 pc=230 samples=2 distinct_callees=2 distinct_functions=1 callees=[(heap(5341), 1), (heap(5473), 1)] functions=[(171, 2)]
+  program=102 caller=299 pc=1 samples=1 distinct_callees=1 distinct_functions=1 callees=[(heap(2937), 1)] functions=[(3, 1)]
+  program=64 caller=1 pc=663 samples=1 distinct_callees=1 distinct_functions=1 callees=[(heap(2246), 1)] functions=[(0, 1)]
+  program=20 caller=1 pc=178 samples=1 distinct_callees=1 distinct_functions=1 callees=[(heap(989), 1)] functions=[(7, 1)]
+  program=28 caller=1 pc=37 samples=1 distinct_callees=1 distinct_functions=1 callees=[(heap(1392), 1)] functions=[(10, 1)]
+  program=25 caller=170 pc=150 samples=1 distinct_callees=1 distinct_functions=1 callees=[(heap(1031), 1)] functions=[(42, 1)]
+  program=85 caller=1 pc=999 samples=1 distinct_callees=1 distinct_functions=1 callees=[(heap(2481), 1)] functions=[(1, 1)]
+  program=21 caller=5 pc=47 samples=1 distinct_callees=1 distinct_functions=1 callees=[(heap(3121), 1)] functions=[(113, 1)]
+  program=42 caller=1 pc=67 samples=1 distinct_callees=1 distinct_functions=1 callees=[(heap(2010), 1)] functions=[(8, 1)]
+  program=19 caller=1 pc=603 samples=1 distinct_callees=1 distinct_functions=1 callees=[(heap(980), 1)] functions=[(7, 1)]
+  program=31 caller=32 pc=2 samples=1 distinct_callees=1 distinct_functions=1 callees=[(heap(1890), 1)] functions=[(2, 1)]
+  program=10 caller=6 pc=26 samples=1 distinct_callees=1 distinct_functions=1 callees=[(heap(835), 1)] functions=[(12, 1)]
+  program=21 caller=6 pc=35 samples=1 distinct_callees=1 distinct_functions=1 callees=[(heap(4890), 1)] functions=[(77, 1)]
+  program=22 caller=1 pc=53 samples=1 distinct_callees=1 distinct_functions=1 callees=[(heap(3998), 1)] functions=[(107, 1)]
+  program=103 caller=32 pc=22 samples=1 distinct_callees=1 distinct_functions=1 callees=[(heap(3051), 1)] functions=[(11, 1)]
+function census: 2720433 instructions, 58718 general
+  lane op       497884 GetField
+  lane op       230632 Move
+  lane op       174277 LoadConst
+  lane op       171150 JumpFalse
+  lane op       169438 LoadCapture
+  lane op       161094 LoadEnvLocal
+  lane op       155929 Call
+  lane op       153056 JumpTrue
+  lane op       128297 Binary
+  lane op       122339 LoadLocalPlain
+  lane op       121956 JumpBinaryFalse
+  lane op        67839 Return
+  lane op        66259 LoadName
+  lane op        57358 Jump
+  lane op        54395 InitializeTdz
+  lane op        41498 StoreEnvLocal
+  lane op        39447 StoreLocalPlain
+  lane op        33960 Unary
+  lane op        26974 CloneEnv
+  lane op        25472 RequireIteratorResult
+  lane op        17614 SetIndex
+  lane op        17218 MakeArray
+  lane op        15986 IteratorCleanupPush
+  lane op        15986 IteratorCleanupPop
+  lane op        15953 MakeObject2
+  lane op        15295 GetIndex
+  lane op        11118 MakeObject
+  lane op         9149 SetFieldStrict
+  lane op         8108 GetIterator
+  lane op         7241 DefineField
+  lane op         5779 IncDec
+  lane op         4950 SetField
+  lane op         3771 MakeClosure
+  lane op         2363 LoadThis
+  lane op         2355 Construct
+  lane op         1779 SetThisFieldStrict
+  lane op         1679 StoreCapture
+  lane op         1650 LoadLocal
+  lane op         1237 MakeObjectLiteral
+  lane op         1105 MakeConstArray
+  general op        12983 Binary
+  general op         8806 GetField
+  general op         4401 Call
+  general op         4366 Return
+  general op         3326 LoadConst
+  general op         2842 Move
+  general op         2693 SetFieldStrict
+  general op         2077 MakeClosure
+  general op         1628 LoadName
+  general op         1593 LoadCapture
+  general op         1454 LoadEnvLocal
+  general op         1321 DefinePropertyRecord
+  general op         1299 JumpFalse
+  general op         1176 StoreEnvLocal
+  general op         1172 Construct
+  general op         1167 LoadLocalPlain
+  general op         1118 MakeConstArray
+  general op          765 Jump
+  general op          550 InitializeThis
+  general op          460 JumpBinaryFalse
+  general op          429 JumpTrue
+  general op          356 DefineField
+  general op          342 GetIndex
+  general op          332 InitializeTdz
+  general op          286 LoadThis
+  general op          281 IncDec
+  general op          256 SetFunctionDebugName
+  general op          246 MakeObject
+  general op          191 SetFunctionName
+  general op          185 ValidateClassHeritage
+  general op          164 StoreLocalPlain
+  general op           95 SetThisFieldStrict
+  general op           63 MakeObjectLiteral
+  general op           49 CallArray
+  general op           44 CreateRegExpLiteral
+  general op           31 RequireIteratorResult
+  general op           29 Unary
+  general op           24 DefineArrayElement
+  general op           19 MakeArray
+  general op           17 CloneEnv
+  lane pair       138016 GetField -> GetField
+  lane pair        73745 LoadCapture -> GetField
+  lane pair        71242 Move -> Call
+  lane pair        68034 Binary -> JumpTrue
+  lane pair        56143 LoadConst -> Binary
+  lane pair        53835 GetField -> JumpFalse
+  lane pair        47157 LoadEnvLocal -> Call
+  lane pair        45661 GetField -> Move
+  lane pair        42639 LoadEnvLocal -> GetField
+  lane pair        42137 GetField -> JumpBinaryFalse
+  lane pair        34102 LoadConst -> Move
+  lane pair        33323 JumpFalse -> GetField
+  lane pair        32142 Binary -> JumpFalse
+  lane pair        31741 GetField -> LoadCapture
+  lane pair        28723 LoadName -> GetField
+  lane pair        28118 Move -> LoadConst
+  lane pair        27508 GetField -> JumpTrue
+  lane pair        27265 JumpTrue -> GetField
+  lane pair        27237 JumpBinaryFalse -> LoadConst
+  lane pair        26210 LoadName -> JumpBinaryFalse
+  lane pair        26012 GetField -> LoadEnvLocal
+  lane pair        25850 LoadLocalPlain -> Binary
+  lane pair        25472 RequireIteratorResult -> GetField
+  lane pair        25472 Call -> RequireIteratorResult
+  lane pair        25317 LoadCapture -> Move
+  lane pair        24129 Move -> GetField
+  lane pair        24046 JumpTrue -> LoadConst
+  lane pair        23937 LoadConst -> Return
+  lane pair        23616 LoadEnvLocal -> LoadEnvLocal
+  lane pair        22104 JumpBinaryFalse -> LoadCapture
+  lane pair        22028 JumpTrue -> LoadLocalPlain
+  lane pair        21730 JumpFalse -> Move
+  lane pair        20915 StoreEnvLocal -> LoadEnvLocal
+  lane pair        20773 JumpBinaryFalse -> GetField
+  lane pair        19893 JumpFalse -> LoadCapture
+  lane pair        19564 LoadLocalPlain -> LoadLocalPlain
+  lane pair        19317 Unary -> JumpFalse
+  lane pair        19315 GetField -> LoadConst
+  lane pair        18833 Call -> LoadCapture
+  lane pair        18292 JumpFalse -> LoadConst
+        506550 lane=     506550 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874)
+        467500 lane=     467500 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690)
+        280495 lane=     280495 general=         0 <Function> f2  @Some(52)
+        133100 lane=     133100 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360)
+        115540 lane=     115540 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658)
+        113300 lane=     113300 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720)
+        110000 lane=     110000 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484)
+         58300 lane=      58300 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494)
+         56175 lane=      56175 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831)
+         52800 lane=      52800 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f92  @Some(10369)
+         52250 lane=      52250 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027)
+         44000 lane=      44000 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f44 isObject @Some(10560)
+         42900 lane=      42900 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f81 unwrapMessage @Some(22619)
+         40700 lane=      40700 general=         0 /workspace/quench/tests/npm-perf/workloads/zod-parse.cjs f2 operations @Some(1280)
+         39600 lane=      39600 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165)
+         39600 lane=      39600 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330)
+         36300 lane=      36300 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143)
+         24200 lane=      24200 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107)
+         22000 lane=      22000 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f11  @Some(2570)
+         22000 lane=      22000 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f24 handleArrayResult @Some(34962)
+         19800 lane=      19800 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs f21  @Some(8579)
+         17800 lane=      17800 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f6 _ @Some(4908)
+         17620 lane=      17620 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/errors.cjs f26  @Some(2633)
+         17050 lane=      17050 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f15  @Some(3671)
+         17050 lane=      17050 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f196  @Some(58164)
+         17050 lane=      17050 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f11 getTypeName @Some(2876)
+         16030 lane=      16030 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f100 members @Some(29735)
+         15684 lane=      15684 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f3 $constructor @Some(1811)
+         15391 lane=      15391 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f4  @Some(4461)
+         14850 lane=      14850 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f144 _parse @Some(10174)
+         14850 lane=      14850 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f134  @Some(29191)
+         12116 lane=          0 general=     12116 <Function>  @Some(52)
+         12100 lane=      12100 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f21  @Some(3542)
+         11042 lane=      11042 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/errors.cjs f11  @Some(2510)
+          9898 lane=       9898 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f2 newError @Some(1294)
+          9472 lane=       9472 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/doc.cjs f4 write @Some(601)
+          9350 lane=       9350 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f83 attachSchema @Some(23520)
+          8800 lane=       8800 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f17 nullish @Some(4170)
+          8800 lane=       8800 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f88 parsedType @Some(26533)
+          8794 lane=       8794 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f5  @Some(4544)
+          8400 lane=       8400 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f106 defineBound @Some(31549)
+          8127 lane=       8127 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/index.cjs f2  @Some(150)
+          7361 lane=       7361 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/index.cjs f7  @Some(821)
+          7150 lane=       7150 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f29  @Some(11359)
+          6858 lane=       6858 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/index.cjs f2  @Some(150)
+          6600 lane=       6600 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f35  @Some(14464)
+          6600 lane=       6600 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f23  @Some(34042)
+          6079 lane=       6079 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/index.cjs f8  @Some(1153)
+          5886 lane=       5886 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/external.cjs f2  @Some(150)
+          5500 lane=       5500 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f3 failure @Some(4364)
+          5311 lane=       5311 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/external.cjs f8  @Some(1153)
+          4554 lane=       4554 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f4 Internals @Some(2460)
+          4400 lane=       4400 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f154  @Some(34769)
+          4400 lane=          0 general=      4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs  @Some(4800)
+          4166 lane=       4166 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/index.cjs f12  @Some(2956)
+          3866 lane=       3866 general=         0 /workspace/quench/tests/npm-perf/workloads/zod-parse.cjs f1  @Some(1)
+          3854 lane=          0 general=      3854 /workspace/quench/tests/npm-perf/workloads/zod-parse.cjs operations @Some(1280)
+          3850 lane=       3850 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f229  @Some(84472)
+          3716 lane=       3716 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/external.cjs f41  @Some(7009)
+          3668 lane=       3668 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/index.cjs f9  @Some(1588)
+          3427 lane=       3427 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f76  @Some(3976)
+          3318 lane=       3318 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f9 config @Some(6817)
+          3160 lane=       3160 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f170  @Some(45185)
+          2844 lane=       2844 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f119 get value @Some(3904)
+          2750 lane=       2750 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f146  @Some(10435)
+          2750 lane=          0 general=      2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs failure @Some(4364)
+          2724 lane=          0 general=      2724 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/doc.cjs  @Some(1023)
+          2270 lane=          0 general=      2270 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/doc.cjs  @Some(915)
+          2262 lane=       2262 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f414  @Some(58947)
+          2209 lane=          0 general=      2209 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs  @Some(4461)
+          1822 lane=       1822 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/index.cjs f66  @Some(11151)
+          1814 lane=          0 general=      1814 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs $constructor @Some(1811)
+          1478 lane=       1478 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/api.cjs f144  @Some(32740)
+          1362 lane=          0 general=      1362 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/doc.cjs  @Some(992)
+          1193 lane=       1193 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs f5 isRecursive @Some(2347)
+          1159 lane=          0 general=      1159 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/index.cjs  @Some(1)
+          1156 lane=       1156 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f321  @Some(110287)
+          1106 lane=          0 general=      1106 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs  @Some(4544)
+           976 lane=        976 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f1  @Some(1)
+           862 lane=        862 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f126  @Some(37081)
+           847 lane=          0 general=       847 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs  @Some(1)
+           694 lane=        694 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/regexes.cjs f19  @Some(13881)
+           682 lane=        682 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f26 normalizeDef @Some(38253)
+           646 lane=        646 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f1  @Some(1)
+           644 lane=          0 general=       644 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/api.cjs  @Some(1)
+           635 lane=        635 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs f7  @Some(2999)
+           560 lane=        560 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f101 own @Some(30473)
+           555 lane=          0 general=       555 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/json-schema-processors.cjs  @Some(1)
+           554 lane=          0 general=       554 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs newError @Some(1294)
+           552 lane=          0 general=       552 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/errors.cjs  @Some(2633)
+           550 lane=          0 general=       550 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/errors.cjs  @Some(2510)
+           548 lane=        548 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f103 derived @Some(31009)
+           532 lane=        532 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f161  @Some(41369)
+           504 lane=        504 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f34 mergeDefs @Some(9131)
+           500 lane=          0 general=       500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  @Some(1)
+           500 lane=          0 general=       500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/checks.cjs  @Some(4242)
+           496 lane=          0 general=       496 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/doc.cjs  @Some(856)
+           482 lane=          0 general=       482 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/external.cjs  @Some(7009)
+           473 lane=        473 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/checks.cjs f32  @Some(4242)
+           450 lane=          0 general=       450 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs  @Some(1)
+           440 lane=          0 general=       440 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/regexes.cjs  @Some(1)
+           438 lane=          0 general=       438 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/checks.cjs  @Some(1)
+           423 lane=        423 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/external.cjs f1  @Some(1)
+           386 lane=        386 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/json-schema-processors.cjs f93  @Some(40183)
+           358 lane=        358 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f168  @Some(44885)
+           354 lane=        354 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/index.cjs f2  @Some(132)
+           346 lane=        346 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f113  @Some(6835)
+           339 lane=          0 general=       339 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/compile.cjs  @Some(1)
+           318 lane=        318 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f110 defineLazyInternal @Some(33114)
+           308 lane=        308 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f172  @Some(45770)
+           294 lane=          0 general=       294 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs  @Some(1)
+           284 lane=          0 general=       284 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/index.cjs  @Some(2956)
+           280 lane=        280 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f107  @Some(31664)
+           278 lane=        278 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f114  @Some(6987)
+           274 lane=        274 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f91  @Some(10132)
+           264 lane=        264 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs f25  @Some(9587)
+           260 lane=          0 general=       260 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/parse.cjs  @Some(2687)
+           248 lane=          0 general=       248 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  @Some(110287)
+           236 lane=        236 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f2 _ensureDefaultLocale @Some(6411)
+           235 lane=        235 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/doc.cjs f9 compile @Some(1160)
+           231 lane=          0 general=       231 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/external.cjs  @Some(1153)
+           230 lane=          0 general=       230 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs  @Some(58947)
+           230 lane=          0 general=       230 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs  @Some(10458)
+           230 lane=          0 general=       230 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs  @Some(37081)
+           230 lane=          0 general=       230 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs  @Some(21148)
+           230 lane=          0 general=       230 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/json-schema-processors.cjs  @Some(40183)
+           230 lane=          0 general=       230 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/api.cjs  @Some(32740)
+           230 lane=          0 general=       230 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/regexes.cjs  @Some(13881)
+           224 lane=        224 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f50 normalizeParams @Some(14125)
+           222 lane=        222 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f163  @Some(12484)
+           217 lane=          0 general=       217 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs init @Some(2831)
+           216 lane=          0 general=       216 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs Internals @Some(2460)
+           214 lane=        214 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f238  @Some(25410)
+           212 lane=          0 general=       212 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/iso.cjs  @Some(2405)
+           211 lane=        211 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f18  @Some(5192)
+           206 lane=        206 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs f27  @Some(10229)
+           199 lane=        199 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs f26  @Some(10151)
+           191 lane=          0 general=       191 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/parse.cjs  @Some(1)
+           178 lane=        178 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f77  @Some(4766)
+           177 lane=          0 general=       177 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs  @Some(1)
+           174 lane=        174 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f306  @Some(34578)
+           171 lane=        171 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs f9 settle @Some(7359)
+           169 lane=        169 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f130  @Some(27910)
+           168 lane=        168 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f49 clone @Some(13950)
+           164 lane=          0 general=       164 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs  @Some(3976)
+           163 lane=        163 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f1  @Some(1)
+           163 lane=          0 general=       163 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/index.cjs  @Some(11151)
+           162 lane=        162 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f42  @Some(10458)
+           161 lane=        161 general=         0 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f9  @Some(2088)
+           158 lane=          0 general=       158 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/external.cjs  @Some(1)
+record census:
+         13200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @23
+         13200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @22
+         13200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @21
+         13200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @20
+         13200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @19
+         13200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @18
+          8800 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @294
+          8800 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @293
+          8800 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @292
+          8800 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @291
+          8800 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @290
+          8800 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @289
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @326
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @325
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @300
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @299
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @298
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @297
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @296
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @295
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @131
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @130
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @33
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @32
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @31
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @30
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @29
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @28
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @27
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @26
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @25
+          7700 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @24
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @101
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @100
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @99
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @98
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @97
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @96
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @95
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @79
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @78
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @77
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @76
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @75
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @61
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @60
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @59
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @58
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @57
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @56
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @55
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @54
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @53
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @52
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @51
+          7150 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @50
+          6600 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f92  @Some(10369) @13
+          6600 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f92  @Some(10369) @12
+          6600 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f92  @Some(10369) @11
+          6600 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f92  @Some(10369) @10
+          6600 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f92  @Some(10369) @3
+          6600 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f92  @Some(10369) @2
+          6600 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f92  @Some(10369) @1
+          6600 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f92  @Some(10369) @0
+          6600 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @303
+          6600 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @302
+          6600 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @301
+          6600 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @102
+          6050 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @17
+          6050 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @16
+          6050 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @15
+          6050 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @14
+          6050 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @13
+          6050 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @12
+          6050 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @11
+          6050 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @10
+          6050 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @7
+          6050 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @6
+          6050 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @5
+          6050 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @3
+          6050 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @2
+          6050 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @1
+          6050 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @0
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f81 unwrapMessage @Some(22619) @1
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f81 unwrapMessage @Some(22619) @0
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @37
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @36
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f77 aborted @Some(21720) @4
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @306
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @305
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @304
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @145
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @144
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @138
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @49
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @48
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @17
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @16
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @15
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @14
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @13
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @12
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @11
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @10
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @9
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @8
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @7
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @6
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @3
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @2
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @1
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @0
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @68
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @67
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @66
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @65
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @64
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @51
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @50
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @48
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @47
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @46
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @45
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @44
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @43
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @42
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @11
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @10
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @9
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @2
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @1
+          5500 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f83  @Some(7484) @0
+          4950 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs f21  @Some(8579) @3
+          4950 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs f21  @Some(8579) @2
+          4950 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs f21  @Some(8579) @1
+          4950 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs f21  @Some(8579) @0
+          4950 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @309
+          4950 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @308
+          4950 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @307
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f81 unwrapMessage @Some(22619) @10
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f81 unwrapMessage @Some(22619) @8
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f81 unwrapMessage @Some(22619) @7
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f81 unwrapMessage @Some(22619) @6
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f81 unwrapMessage @Some(22619) @5
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f81 unwrapMessage @Some(22619) @4
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f81 unwrapMessage @Some(22619) @3
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f44 isObject @Some(10560) @9
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f44 isObject @Some(10560) @8
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f44 isObject @Some(10560) @7
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f44 isObject @Some(10560) @6
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f44 isObject @Some(10560) @5
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f44 isObject @Some(10560) @4
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f44 isObject @Some(10560) @3
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f44 isObject @Some(10560) @2
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f44 isObject @Some(10560) @1
+          4400 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f44 isObject @Some(10560) @0
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @318
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @317
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @316
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @315
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @314
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @313
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @312
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @311
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @310
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @54
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @53
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @52
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @50
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @49
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @48
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @47
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @45
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @44
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @38
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @37
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @36
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @35
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @34
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @33
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @30
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @29
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @28
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @27
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @26
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @25
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @24
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @23
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @12
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @11
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @10
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @9
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @8
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @4
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @3
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @2
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @1
+          3850 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f173  @Some(49658) @0
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f24 handleArrayResult @Some(34962) @18
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f24 handleArrayResult @Some(34962) @17
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f24 handleArrayResult @Some(34962) @16
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f24 handleArrayResult @Some(34962) @15
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f24 handleArrayResult @Some(34962) @14
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f24 handleArrayResult @Some(34962) @2
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f24 handleArrayResult @Some(34962) @1
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f24 handleArrayResult @Some(34962) @0
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @100
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @99
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @98
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @97
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @96
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @87
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @86
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @85
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @84
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @83
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @82
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @72
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @71
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @70
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @69
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @68
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @67
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @66
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @65
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @64
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @63
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @62
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @61
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @60
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @59
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @58
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @57
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @56
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f158  @Some(35360) @55
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @24
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @23
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @22
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @21
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @20
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @19
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @18
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @17
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @16
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @15
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @14
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @13
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @12
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @11
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @10
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @3
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @2
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @1
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f131  @Some(28027) @0
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @7
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @6
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @5
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @4
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @3
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @2
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @1
+          2750 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @0
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f4  @Some(4461) @15
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f4  @Some(4461) @14
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f11 getTypeName @Some(2876) @17
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f11 getTypeName @Some(2876) @16
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f11 getTypeName @Some(2876) @14
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f11 getTypeName @Some(2876) @13
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f11 getTypeName @Some(2876) @12
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f11 getTypeName @Some(2876) @0
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @37
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @36
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @17
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @16
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @15
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @14
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @13
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @12
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @11
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @10
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @7
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @6
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @5
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @4
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @3
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @2
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @1
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f78 explicitlyAborted @Some(22165) @0
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f11  @Some(2570) @9
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f11  @Some(2570) @8
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f11  @Some(2570) @7
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f11  @Some(2570) @6
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f11  @Some(2570) @5
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f11  @Some(2570) @4
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f11  @Some(2570) @3
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f11  @Some(2570) @2
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f11  @Some(2570) @1
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f11  @Some(2570) @0
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f17 nullish @Some(4170) @4
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f17 nullish @Some(4170) @3
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f17 nullish @Some(4170) @1
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f17 nullish @Some(4170) @0
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @47
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @46
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @45
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @44
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @43
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @42
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @41
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @40
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @39
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @38
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @37
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @36
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @35
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f78  @Some(4874) @34
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @98
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @97
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @82
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @81
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @80
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @65
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @64
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @63
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @26
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @25
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @24
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @23
+          2200 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f19  @Some(5494) @22
+          2199 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f4  @Some(4461) @1
+          2199 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f4  @Some(4461) @0
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f144 _parse @Some(10174) @10
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f144 _parse @Some(10174) @8
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f144 _parse @Some(10174) @6
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f144 _parse @Some(10174) @5
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f144 _parse @Some(10174) @4
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f144 _parse @Some(10174) @3
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f144 _parse @Some(10174) @2
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f144 _parse @Some(10174) @1
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs f144 _parse @Some(10174) @0
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @29
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @28
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @27
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @26
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @25
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @23
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @17
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @16
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @15
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @14
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @13
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @12
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @11
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @10
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @9
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @8
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @7
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @6
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @5
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @4
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @3
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @2
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @1
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f31  @Some(12330) @0
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @75
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @33
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @32
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @31
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @26
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @25
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @23
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @22
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @21
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @20
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @19
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @18
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @17
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @16
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @15
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @14
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @13
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @12
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @11
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @2
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @1
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f15  @Some(2143) @0
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f15  @Some(3671) @14
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f15  @Some(3671) @13
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f15  @Some(3671) @12
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f15  @Some(3671) @2
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f15  @Some(3671) @1
+          1650 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/checks.cjs f15  @Some(3671) @0
+          1352 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @3
+          1352 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @2
+          1352 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @1
+          1352 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @0
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @146
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @145
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @103
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @102
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @101
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @100
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @99
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @98
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @97
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @96
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @95
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @94
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @93
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @91
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @90
+          1298 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @89
+          1297 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @49
+          1297 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @48
+          1296 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @47
+          1296 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @45
+          1296 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @44
+          1296 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @43
+          1296 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @42
+          1296 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @41
+          1296 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @40
+          1296 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f5 init @Some(2831) @39
+          1102 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f9 config @Some(6817) @8
+          1102 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f9 config @Some(6817) @7
+          1102 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/core.cjs f9 config @Some(6817) @0
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f5  @Some(4544) @7
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/parse.cjs f5  @Some(4544) @6
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f81 unwrapMessage @Some(22619) @2
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f88 parsedType @Some(26533) @3
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f88 parsedType @Some(26533) @1
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f88 parsedType @Some(26533) @0
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f83 attachSchema @Some(23520) @3
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f83 attachSchema @Some(23520) @2
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f134  @Some(29191) @13
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f134  @Some(29191) @12
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f134  @Some(29191) @11
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f134  @Some(29191) @10
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f134  @Some(29191) @3
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f134  @Some(29191) @2
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f134  @Some(29191) @1
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs f134  @Some(29191) @0
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @31
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @30
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @29
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @28
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @27
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @26
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @25
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @24
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @23
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @22
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @21
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @20
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @19
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @18
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @17
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @16
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @15
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @14
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @3
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @2
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @1
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs f12  @Some(3107) @0
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @368
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @367
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @363
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @362
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @361
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @357
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @356
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @355
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @354
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @353
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @352
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @351
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @350
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @349
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @348
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @347
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @342
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @341
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @340
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @339
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @338
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @337
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @336
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @335
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @334
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @333
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @288
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @287
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @286
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @285
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @284
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @283
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @282
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @281
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @280
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @279
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @278
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @277
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @276
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @275
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @272
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @271
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @270
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @269
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @268
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @267
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @266
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @265
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @264
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @263
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @261
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @260
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @259
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @255
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @254
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @253
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @252
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @251
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @250
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @249
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @248
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @247
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @246
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @245
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @244
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @243
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @242
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @241
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @240
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @239
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @238
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @237
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @236
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @231
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @230
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @229
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @228
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @227
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @226
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @225
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @224
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @223
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @222
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @221
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @220
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @219
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @218
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @217
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @216
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @215
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @214
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @213
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @212
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @211
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @210
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @209
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @204
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @203
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @202
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @201
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @200
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @199
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @198
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @197
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @196
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @195
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @191
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @190
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @189
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @188
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @187
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @186
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @185
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @184
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @183
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @182
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @181
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @180
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @179
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @178
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @177
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @176
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @175
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @174
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @173
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @168
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @167
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @166
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @165
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @164
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @163
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @162
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @161
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @160
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @159
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @158
+          1100 /workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs f84 finalizeIssue @Some(23690) @157
