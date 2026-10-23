@@ -109,7 +109,7 @@ impl<H: Host> Vm<H> {
         values.extend(
             strings
                 .into_iter()
-                .map(|atom| self.heap.alloc_string(self.atom_value(atom))),
+                .map(|atom| self.atom_string(atom)),
         );
         values.extend(symbols);
         values
