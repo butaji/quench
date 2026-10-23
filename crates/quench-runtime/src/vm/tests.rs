@@ -10539,6 +10539,10 @@ fn js_jit_compiles_number_unary_plus_and_negation_with_exact_fallback() {
             panic!("{name} should compile its Number unary denotation");
         };
         assert!(
+            compiled.uses_shared_entry(),
+            "{name} should use the common VM native-entry ABI"
+        );
+        assert!(
             compiled.native_entries() > 0,
             "{name} should have entered native code before the fallback checks"
         );

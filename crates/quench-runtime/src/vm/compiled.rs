@@ -154,6 +154,18 @@ pub(super) fn emit_number_unary_operation(
     operation.apply(&mut Emit { builder }, value)
 }
 
+fn emit_f64_entry_return(
+    builder: &mut FunctionBuilder<'_>,
+    result_pointer: ir::Value,
+    value: ir::Value,
+) {
+    builder
+        .ins()
+        .store(MemFlagsData::trusted(), value, result_pointer, 0);
+    let status = builder.ins().iconst(types::I32, 0);
+    builder.ins().return_(&[status]);
+}
+
 pub(super) fn emit_number_bitwise_operation(
     builder: &mut FunctionBuilder<'_>,
     operation: crate::vm::operations::NumberBitwise,
@@ -214,9 +226,7 @@ pub(super) fn compile_js_numeric_region(
     let params = usize::from(function.params);
     let isa = super::jit_backend::target_isa("speed", true)?;
 
-    let mut signature = ir::Signature::new(isa.default_call_conv());
-    signature.params.push(AbiParam::new(isa.pointer_type()));
-    signature.returns.push(AbiParam::new(types::F64));
+    let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
     let name = UserFuncName::user(0x5155_454e, function_id);
     let mut native = ir::Function::with_name_signature(name, signature);
     let mut builder_context = FunctionBuilderContext::new();
@@ -226,8 +236,11 @@ pub(super) fn compile_js_numeric_region(
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     builder.seal_block(entry);
-    let arguments = builder.block_params(entry)[0];
-    let mut body = Body::new(builder, arguments, None);
+    let parameters = builder.block_params(entry).to_vec();
+    let context = parameters[0];
+    let arguments = parameters[3];
+    let result_pointer = parameters[4];
+    let mut body = Body::new(builder, context, None);
     let mut registers = vec![false; usize::from(function.registers)];
     let mut locals = vec![None; usize::from(function.locals)];
 
@@ -404,7 +417,7 @@ pub(super) fn compile_js_numeric_region(
                 let value = body.read(source as u16, crate::WasmType::F64);
                 let value = emit_number_unary_operation(&mut body.builder, operation, value);
                 if instruction.returns_from_frame() {
-                    body.builder.ins().return_(&[value]);
+                    emit_f64_entry_return(&mut body.builder, result_pointer, value);
                     returned = true;
                     break;
                 }
@@ -469,7 +482,7 @@ pub(super) fn compile_js_numeric_region(
                     return None;
                 };
                 if instruction.returns_from_frame() {
-                    body.builder.ins().return_(&[value]);
+                    emit_f64_entry_return(&mut body.builder, result_pointer, value);
                     returned = true;
                     break;
                 }
@@ -484,7 +497,7 @@ pub(super) fn compile_js_numeric_region(
                     return None;
                 }
                 let value = body.read(register, crate::WasmType::F64);
-                body.builder.ins().return_(&[value]);
+                emit_f64_entry_return(&mut body.builder, result_pointer, value);
                 returned = true;
                 None
             }
@@ -520,7 +533,7 @@ pub(super) fn compile_js_numeric_region(
         code,
         params,
         requires_signed_int32_arguments: int32_bitwise,
-        result: super::js_compiled::JsJitResultKind::Number,
+        result: super::js_compiled::JsJitResultKind::SharedNumberEntry,
         field_argument,
         numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.to_vec()),
         capture_arguments: captures.to_vec(),
@@ -2943,7 +2956,7 @@ pub(super) struct CompiledJsFunction {
 
 #[derive(Clone, Copy)]
 enum CompiledJsEntry {
-    Number(unsafe extern "C" fn(*const f64) -> f64),
+    SharedNumber(Entry),
     Int32Identity {
         entry: unsafe extern "C" fn(*const f64) -> f64,
         return_pc: u32,
@@ -3047,14 +3060,10 @@ impl CompiledJsFunction {
         let numeric_field_inputs = artifact.numeric_field_inputs;
         let capture_arguments = artifact.capture_arguments;
         let (entry, return_constants, capture_argument) = match artifact.result {
-            super::js_compiled::JsJitResultKind::Number => {
-                // SAFETY: the numeric JS compiler emits `fn(*const f64) -> f64`.
-                let entry = unsafe {
-                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> f64>(
-                        code.pointer,
-                    )
-                };
-                (CompiledJsEntry::Number(entry), Vec::new(), None)
+            super::js_compiled::JsJitResultKind::SharedNumberEntry => {
+                // SAFETY: the bytecode numeric-region compiler uses `native_entry_signature`.
+                let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer) };
+                (CompiledJsEntry::SharedNumber(entry), Vec::new(), None)
             }
             super::js_compiled::JsJitResultKind::Int32Identity(return_pc) => {
                 // SAFETY: the guarded integer identity compiler emits the Number ABI.
@@ -3220,7 +3229,7 @@ impl CompiledJsFunction {
     }
 
     fn uses_numeric_field_argument(&self) -> bool {
-        self.field_argument.is_some() && matches!(self.entry, CompiledJsEntry::Number(_))
+        self.field_argument.is_some() && matches!(self.entry, CompiledJsEntry::SharedNumber(_))
     }
 
     fn capture_argument(&self) -> Option<super::js_compiled::JsJitCaptureArgument> {
@@ -3237,6 +3246,20 @@ impl CompiledJsFunction {
         interrupt: &std::sync::atomic::AtomicBool,
         poll_page: Option<(usize, usize)>,
     ) -> Option<CompiledJsResult> {
+        if let CompiledJsEntry::SharedNumber(entry) = self.entry {
+            let (status, result) = run_native_entry(
+                entry,
+                arguments,
+                interrupt,
+                poll_page,
+                self.native_entry_mode(),
+            );
+            (status == 0).then_some(())?;
+            #[cfg(test)]
+            self.native_entries
+                .set(self.native_entries.get().saturating_add(1));
+            return Some(CompiledJsResult::Number(f64::from_bits(result)));
+        }
         self.call_through_shared_entry(JsNativeCallInput::Arguments {
             values: arguments,
             interrupt,
@@ -3260,7 +3283,7 @@ impl CompiledJsFunction {
             CompiledJsEntry::NumberInterruptible(_) | CompiledJsEntry::StringHashLoop(_) => {
                 NativeEntryMode::Resumable
             }
-            CompiledJsEntry::Number(_)
+            CompiledJsEntry::SharedNumber(_)
             | CompiledJsEntry::Int32Identity { .. }
             | CompiledJsEntry::CaptureNumber(_)
             | CompiledJsEntry::StringTransform { .. }
@@ -3332,11 +3355,6 @@ impl CompiledJsFunction {
         poll_page: Option<(usize, usize)>,
     ) -> Option<CompiledJsResult> {
         match (self.entry, input) {
-            (CompiledJsEntry::Number(entry), JsNativeCallInput::Arguments { values, .. }) => {
-                // SAFETY: the artifact result kind selects this ABI and `values`
-                // contains the formal count recorded at compilation.
-                Some(CompiledJsResult::Number(unsafe { entry(values.as_ptr()) }))
-            }
             (
                 CompiledJsEntry::Int32Identity { entry, return_pc },
                 JsNativeCallInput::Arguments { values, .. },
@@ -3469,6 +3487,11 @@ impl CompiledJsFunction {
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn native_entries(&self) -> u64 {
         self.native_entries.get()
+    }
+
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn uses_shared_entry(&self) -> bool {
+        matches!(self.entry, CompiledJsEntry::SharedNumber(_))
     }
 
     pub(super) fn mapped_bytes(&self) -> usize {
@@ -7373,6 +7396,37 @@ fn run_native_adapter(
             0,
             0,
             std::ptr::null(),
+            &mut result,
+            mode,
+            entry,
+        )
+    };
+    (status, result)
+}
+
+/// Runs a JS scalar artifact whose machine code already implements the common `Entry` ABI.
+/// Its Number arguments are raw f64 words and its result is written to the shared result word.
+fn run_native_entry(
+    entry: Entry,
+    arguments: &[f64],
+    interrupt: &std::sync::atomic::AtomicBool,
+    poll_page: Option<(usize, usize)>,
+    mode: NativeEntryMode,
+) -> (u32, u64) {
+    let interrupt = poll_page.map_or_else(
+        || std::ptr::from_ref(interrupt),
+        |(start, _)| start as *const std::sync::atomic::AtomicBool,
+    );
+    let mut context = CallContext::native_adapter(std::ptr::null_mut(), interrupt, poll_page);
+    let mut result = 0u64;
+    // SAFETY: the scalar region is guarded before entry, reads only `arguments`, writes one
+    // result word, and its common ABI does not inspect the adapter payload.
+    let status = unsafe {
+        enter_native(
+            &mut context,
+            0,
+            0,
+            arguments.as_ptr().cast::<u64>(),
             &mut result,
             mode,
             entry,
