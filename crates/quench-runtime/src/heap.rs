@@ -1107,7 +1107,29 @@ impl Heap {
             return self.alloc(Cell::Object(object));
         }
         self.mark_prototype(prototype);
-        // An object's weight is one allocation, and it holds no external bytes.
+        self.insert_object_record(object)
+    }
+
+    /// `alloc_object` of `object` whose prototype is already flagged as one
+    /// (`Object::was_used_as_prototype`), as a recorded closure's are (`Vm::closure_of_template`):
+    /// the flag is never cleared, so it needs no marking.
+    pub(crate) fn alloc_object_under_flagged_prototype(&mut self, object: Object) -> Value {
+        debug_assert!(self.prototype_flagged(object.proto()));
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::Object(object));
+        }
+        self.insert_object_record(object)
+    }
+
+    /// Whether `prototype` names no object or one flagged as a prototype, as
+    /// `mark_new_prototype` leaves it.
+    fn prototype_flagged(&self, prototype: Value) -> bool {
+        self.object(prototype).is_none_or(Object::was_used_as_prototype)
+    }
+
+    /// An object record of `object`, else a slot: one allocation, with no external bytes.
+    #[inline(always)]
+    fn insert_object_record(&mut self, object: Object) -> Value {
         self.allocations += 1;
         self.allocations_since_full = self.allocations_since_full.saturating_add(1);
         self.total_allocations += 1;
@@ -1129,7 +1151,23 @@ impl Heap {
             return self.alloc(Cell::Function(Box::new(function)));
         }
         self.mark_prototype(function.object.proto());
-        // A function's weight is one allocation, and it holds no payload or external bytes.
+        self.insert_function_record(function)
+    }
+
+    /// `alloc_function` of `function` whose prototype is already flagged as one, as
+    /// `alloc_object_under_flagged_prototype` allocates an object.
+    pub(crate) fn alloc_function_under_flagged_prototype(&mut self, function: FunctionRecord) -> Value {
+        debug_assert!(self.prototype_flagged(function.object.proto()));
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::Function(Box::new(function)));
+        }
+        self.insert_function_record(function)
+    }
+
+    /// A function record of `function`, else a slot: one allocation, with no payload or
+    /// external bytes.
+    #[inline(always)]
+    fn insert_function_record(&mut self, function: FunctionRecord) -> Value {
         self.allocations += 1;
         self.allocations_since_full = self.allocations_since_full.saturating_add(1);
         self.total_allocations += 1;
