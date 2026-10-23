@@ -20,11 +20,12 @@ pub(crate) use client::{
 };
 pub(crate) use operations::{
     agent_create, agent_destroy, agent_get_name, create_server, response_destroy, response_finish,
-    response_get_header, response_get_headers, response_initialize, response_release,
+    response_get_header, response_get_headers, response_initialize,
     response_remove_header,
     response_send,
     response_set_header, response_write, response_write_head, server_address, server_close,
     server_listen, validate_header_name, validate_header_value,
+    upgrade_socket,
 };
 pub(crate) use state::State;
 
