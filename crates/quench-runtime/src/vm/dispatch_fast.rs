@@ -5178,6 +5178,7 @@ script_handler! {
             LoopContinuation::Jump => next!(cx, r, header, Carried::script(cx)),
             LoopContinuation::Resume(pc) => next!(cx, r, at(pc), Carried::script(cx)),
             LoopContinuation::Exit(pc) => exit(at(pc)),
+            LoopContinuation::Safepoint => lane_safepoint::<H>(ip, header),
         }
     }
 }
@@ -5189,6 +5190,8 @@ enum LoopContinuation {
     Resume(u32),
     /// The general path executes the instruction at this PC.
     Exit(u32),
+    /// The backward jump's safepoint ends the execution termination stopped.
+    Safepoint,
 }
 
 /// Compiles `site`'s region if it has no current code, then runs it on `r` with `entry`. A
@@ -5227,7 +5230,8 @@ fn lane_loop_run<H: Host>(
             captures: &captures,
             widened: &tier.widened,
         };
-        tier.code = super::compiled::compile_osr_region(&site.region, &observation);
+        tier.code =
+            super::compiled::compile_osr_region(&site.region, &observation, &unsafe { vm(cx) }.execution_interrupt);
         // SAFETY: as above; the observation's borrow of the heap has ended.
         unsafe { vm(cx) }.host.after_native_compilation();
         if site.diagnostics && tier.code.is_some() {
@@ -5242,7 +5246,7 @@ fn lane_loop_run<H: Host>(
     let code = tier.code.as_ref().expect("compiled above");
     // SAFETY: `r` is the running activation's register file; the entry was read from it
     // and the context just now, and native code runs no guest code.
-    let outcome = unsafe { code.run(r.0, entry) };
+    let outcome = unsafe { code.run(r.0, entry, &vm(cx).execution_interrupt) };
     if site.diagnostics {
         site.native_entry_attempts
             .set(site.native_entry_attempts.get().saturating_add(1));
@@ -5265,6 +5269,7 @@ fn lane_loop_run<H: Host>(
                     .set(site.native_region_runs.get().saturating_add(1));
                 site.widenings.set(site.widenings.get().saturating_add(1));
             }
+            LoopOutcome::Terminated => {}
         }
     }
     match outcome {
@@ -5287,6 +5292,7 @@ fn lane_loop_run<H: Host>(
             tier.code = None;
             LoopContinuation::Exit(pc)
         }
+        LoopOutcome::Terminated => LoopContinuation::Safepoint,
     }
 }
 
@@ -5303,7 +5309,7 @@ fn lane_loop_entry<H: Host>(
 ) -> Option<super::compiled::LoopEntry> {
     let vm = unsafe { vm(cx) };
     let region = &site.region;
-    let mut entry = super::compiled::LoopEntry::new(vm.execution_interrupt.atomic_flag());
+    let mut entry = super::compiled::LoopEntry::new();
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
         if slots.is_null() {
