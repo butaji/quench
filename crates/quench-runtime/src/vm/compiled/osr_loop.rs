@@ -319,21 +319,6 @@ fn unary(operator: u32) -> Option<Unary> {
     })
 }
 
-/// The float condition under which a Number comparison holds; NaN operands make every
-/// relation and `===` false and `!==` true, as these conditions do.
-fn comparison(operator: u32) -> Option<FloatCC> {
-    use BinaryOperator as B;
-    Some(match operator {
-        op if op == B::LessThan as u32 => FloatCC::LessThan,
-        op if op == B::LessEqualThan as u32 => FloatCC::LessThanOrEqual,
-        op if op == B::GreaterThan as u32 => FloatCC::GreaterThan,
-        op if op == B::GreaterEqualThan as u32 => FloatCC::GreaterThanOrEqual,
-        op if op == B::StrictEquality as u32 || op == B::Equality as u32 => FloatCC::Equal,
-        op if op == B::StrictInequality as u32 || op == B::Inequality as u32 => FloatCC::NotEqual,
-        _ => return None,
-    })
-}
-
 /// What each register of a region holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Role {
@@ -546,7 +531,9 @@ fn admit(admission: &mut Admission<'_>, instruction: WideInstruction) -> Option<
         }
         Op::Jump => {}
         Op::JumpBinaryFalse => {
-            comparison(instruction.binary_operator_field())?;
+            super::super::operations::NumberRelation::from_operator(
+                instruction.binary_operator_field(),
+            )?;
             admission.source(instruction.operand_b())?;
             admission.source(instruction.operand_c())?;
         }
@@ -2560,9 +2547,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     let condition = integer_comparison(operator)?;
                     self.builder.ins().icmp(condition, left.value, right.value)
                 } else {
-                    let condition = comparison(operator)?;
                     let (left, right) = (self.float(left), self.float(right));
-                    self.builder.ins().fcmp(condition, left, right)
+                    super::emit_number_relation(&mut self.builder, operator, left, right)?
                 };
                 let taken = self.builder.create_block();
                 let not_taken = self.builder.create_block();
@@ -2585,12 +2571,36 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
 /// `comparison` of two `i32` Numbers.
 fn integer_comparison(operator: u32) -> Option<IntCC> {
-    Some(match comparison(operator)? {
-        FloatCC::LessThan => IntCC::SignedLessThan,
-        FloatCC::LessThanOrEqual => IntCC::SignedLessThanOrEqual,
-        FloatCC::GreaterThan => IntCC::SignedGreaterThan,
-        FloatCC::GreaterThanOrEqual => IntCC::SignedGreaterThanOrEqual,
-        FloatCC::Equal => IntCC::Equal,
-        _ => IntCC::NotEqual,
-    })
+    struct IntegerCondition;
+
+    impl super::super::operations::NumberRelationStage<()> for IntegerCondition {
+        type Output = IntCC;
+
+        fn equal(&mut self, (): (), (): ()) -> Self::Output {
+            IntCC::Equal
+        }
+        fn not_equal(&mut self, (): (), (): ()) -> Self::Output {
+            IntCC::NotEqual
+        }
+        fn less_than(&mut self, (): (), (): ()) -> Self::Output {
+            IntCC::SignedLessThan
+        }
+        fn less_equal(&mut self, (): (), (): ()) -> Self::Output {
+            IntCC::SignedLessThanOrEqual
+        }
+        fn greater_than(&mut self, (): (), (): ()) -> Self::Output {
+            IntCC::SignedGreaterThan
+        }
+        fn greater_equal(&mut self, (): (), (): ()) -> Self::Output {
+            IntCC::SignedGreaterThanOrEqual
+        }
+    }
+
+    Some(
+        super::super::operations::NumberRelation::from_operator(operator)?.apply(
+            &mut IntegerCondition,
+            (),
+            (),
+        ),
+    )
 }
