@@ -23,7 +23,7 @@ const BINDING: &str = "\0binding:process-warning";
 const WARNING_MODULE: &str = "internal/process/warning.js";
 
 /// The hidden global that requires the public builtins (`commonjs::initialize`).
-const BUILTIN_REQUIRE: &str = "\0quench:require";
+const BUILTIN_REQUIRE: &str = crate::host::shared_vm::commonjs::BOOTSTRAP_REQUIRE;
 
 /// The module's `require` and `primordials`, built over the startup intrinsics (captured as
 /// Node's primordials are) from `library(id)` (one of Node's library modules), `builtin(id)`

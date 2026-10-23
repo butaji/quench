@@ -1,0 +1,690 @@
+{
+  "schema": 1,
+  "workload": "sharp-metadata",
+  "phase": "no-jit",
+  "runs": 5,
+  "qualificationReady": false,
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 5
+  },
+  "rssMeasurement": "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)",
+  "inputs": {
+    "workloadSha256": "2d2fe5241d6b498f26ba86dc9be3d14efb963f7c25b6efd2a6a505d580aa1698",
+    "packageLockSha256": "92dbfcb2312b42ddf55a8f0b06c40368544ca4b5e861782ead6770268da3c1b0",
+    "quenchBinarySha256": "c77e5b00d60f3600df644f1e7ef42aea4656c8b3ef9802dc4fcf700c2a995473",
+    "controlQuenchBinary": "/workspace/quench/work/sharp-wake-socketpair-control",
+    "controlQuenchBinarySha256": "5f093abe86aaf12ce5c5d6cbbec76fea04cff4b80a02fa30b0661d8a6ee54cb0",
+    "nodeBinary": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "bunBinary": "/workspace/quench/work/bun-install/bin/bun"
+  },
+  "nodeVersion": "v24.19.0",
+  "bunVersion": "1.4.4",
+  "summary": {
+    "quench-interpreter": {
+      "medianOperationsPerSecond": 3952.5691699604745,
+      "medianElapsedMs": 506,
+      "medianMaximumRssBytes": 42143744
+    },
+    "quench-control": {
+      "medianOperationsPerSecond": 4065.040650406504,
+      "medianElapsedMs": 492,
+      "medianMaximumRssBytes": 44539904
+    },
+    "node-jitless": {
+      "medianOperationsPerSecond": 5141.388174807198,
+      "medianElapsedMs": 389,
+      "medianMaximumRssBytes": 81788928
+    },
+    "bun-no-jit": {
+      "medianOperationsPerSecond": 7299.270072992701,
+      "medianElapsedMs": 274,
+      "medianMaximumRssBytes": 52948992
+    }
+  },
+  "output": {
+    "workload": "sharp-metadata",
+    "package": "sharp@0.35.5",
+    "warmups": 100,
+    "cases": [
+      "encoded-png-input",
+      "metadata",
+      "dimensions-and-channels"
+    ],
+    "bytes": 3830000,
+    "checksum": 1030000
+  },
+  "samples": [
+    {
+      "engine": "quench-interpreter",
+      "round": 1,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 544,
+        "operationsPerSecond": 3676.470588235294
+      },
+      "maxRssBytes": 42143744,
+      "wallTimeMs": 1036.345588,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 1,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 650,
+        "operationsPerSecond": 3076.923076923077
+      },
+      "maxRssBytes": 44539904,
+      "wallTimeMs": 1146.211163,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/sharp-wake-socketpair-control",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 1,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 401,
+        "operationsPerSecond": 4987.5311720698255
+      },
+      "maxRssBytes": 82255872,
+      "wallTimeMs": 516.162682,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 281,
+        "operationsPerSecond": 7117.437722419929
+      },
+      "maxRssBytes": 52543488,
+      "wallTimeMs": 354.401174,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 2,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 498,
+        "operationsPerSecond": 4016.0642570281125
+      },
+      "maxRssBytes": 51671040,
+      "wallTimeMs": 641.733697,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/sharp-wake-socketpair-control",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 2,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 389,
+        "operationsPerSecond": 5141.388174807198
+      },
+      "maxRssBytes": 82329600,
+      "wallTimeMs": 507.096953,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 253,
+        "operationsPerSecond": 7905.138339920949
+      },
+      "maxRssBytes": 52097024,
+      "wallTimeMs": 322.501042,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 2,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 431,
+        "operationsPerSecond": 4640.371229698376
+      },
+      "maxRssBytes": 37998592,
+      "wallTimeMs": 549.444139,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 3,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 330,
+        "operationsPerSecond": 6060.606060606061
+      },
+      "maxRssBytes": 81788928,
+      "wallTimeMs": 439.364907,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 243,
+        "operationsPerSecond": 8230.45267489712
+      },
+      "maxRssBytes": 52948992,
+      "wallTimeMs": 312.261321,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 3,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 506,
+        "operationsPerSecond": 3952.5691699604745
+      },
+      "maxRssBytes": 47624192,
+      "wallTimeMs": 612.355949,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 3,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 492,
+        "operationsPerSecond": 4065.040650406504
+      },
+      "maxRssBytes": 40763392,
+      "wallTimeMs": 616.586624,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/sharp-wake-socketpair-control",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 301,
+        "operationsPerSecond": 6644.518272425249
+      },
+      "maxRssBytes": 53649408,
+      "wallTimeMs": 377.37869,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 4,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 519,
+        "operationsPerSecond": 3853.5645472061656
+      },
+      "maxRssBytes": 50089984,
+      "wallTimeMs": 672.254476,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 4,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 458,
+        "operationsPerSecond": 4366.812227074236
+      },
+      "maxRssBytes": 40595456,
+      "wallTimeMs": 594.829473,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/sharp-wake-socketpair-control",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 4,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 350,
+        "operationsPerSecond": 5714.285714285715
+      },
+      "maxRssBytes": 81780736,
+      "wallTimeMs": 461.64288,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 5,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 487,
+        "operationsPerSecond": 4106.776180698152
+      },
+      "maxRssBytes": 38010880,
+      "wallTimeMs": 605.131193,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 5,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 479,
+        "operationsPerSecond": 4175.365344467641
+      },
+      "maxRssBytes": 48779264,
+      "wallTimeMs": 593.399287,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/sharp-wake-socketpair-control",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 5,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 454,
+        "operationsPerSecond": 4405.286343612334
+      },
+      "maxRssBytes": 81788928,
+      "wallTimeMs": 598.533933,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "sharp-metadata",
+        "package": "sharp@0.35.5",
+        "rounds": 2000,
+        "warmups": 100,
+        "cases": [
+          "encoded-png-input",
+          "metadata",
+          "dimensions-and-channels"
+        ],
+        "bytes": 3830000,
+        "checksum": 1030000,
+        "elapsedMs": 274,
+        "operationsPerSecond": 7299.270072992701
+      },
+      "maxRssBytes": 53886976,
+      "wallTimeMs": 346.114887,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/sharp-metadata.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "2000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    }
+  ]
+}

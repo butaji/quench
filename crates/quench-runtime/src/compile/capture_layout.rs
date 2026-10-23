@@ -30,6 +30,9 @@ pub(crate) struct FunctionFacts {
     pub(crate) binding_sites: bool,
     /// The (distance, slot) of each capture: the slot of the function `distance` levels out.
     pub(crate) captures: Box<[(u32, u16)]>,
+    /// The slots of its bindings that the runtime finds by name from outside its activation
+    /// (`local_name_read_by_name`).
+    pub(crate) named_slots: Box<[u16]>,
 }
 
 impl FunctionFacts {
@@ -63,8 +66,79 @@ impl FunctionFacts {
             contains_with: function.contains_with_statement(is_with_enter),
             binding_sites: !function.binding_sites.is_empty(),
             captures: captures.into(),
+            named_slots: slots_read_by_name(function, atoms).collect(),
         }
     }
+}
+
+/// The slots of `function`'s compiler bindings, which the runtime finds by name in its
+/// environment, so they live there whether or not a closure captures them.
+fn named_environment_slots<'f>(function: &'f Function, atoms: &'f CompilerAtoms<'_>) -> impl Iterator<Item = u16> + 'f {
+    function
+        .local_atoms
+        .iter()
+        .enumerate()
+        .filter(|(_, atom)| {
+            atoms
+                .get(**atom as usize)
+                .is_some_and(crate::bytecode::local_name_requires_environment)
+        })
+        .filter_map(|(slot, _)| u16::try_from(slot).ok())
+}
+
+/// The slots of `function`'s bindings that the runtime finds by name from outside its
+/// activation (`local_name_read_by_name`).
+fn slots_read_by_name<'f>(function: &'f Function, atoms: &'f CompilerAtoms<'_>) -> impl Iterator<Item = u16> + 'f {
+    function
+        .local_atoms
+        .iter()
+        .enumerate()
+        .filter(|(_, atom)| {
+            atoms.get(**atom as usize).is_some_and(|name| {
+                crate::bytecode::local_name_read_by_name(name, function.environment_atoms.contains(*atom))
+            })
+        })
+        .filter_map(|(slot, _)| u16::try_from(slot).ok())
+}
+
+/// A function's instance initializer (`Function::instance_initializer`), as the program's
+/// records tell it.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum InstanceInitializer {
+    Known(Option<u32>),
+    /// A released class constructor's record, which names it, is not at hand.
+    Unknown,
+}
+
+/// What each function's closures read of the environments they close over
+/// (`bytecode::ClosureReads`), from the facts every function's compilation recorded.
+/// `dynamic_scopes` is `dynamic_name_scopes` of `facts`; `initializers` gives each
+/// function's instance initializer.
+pub(super) fn closure_reads(
+    facts: &[FunctionFacts],
+    dynamic_scopes: &[bool],
+    initializers: &[InstanceInitializer],
+) -> crate::bytecode::ClosureReads {
+    let functions: Vec<crate::bytecode::FunctionReadFacts<'_>> = facts
+        .iter()
+        .enumerate()
+        .map(|(id, function)| {
+            let initializer = initializers.get(id).copied().unwrap_or(InstanceInitializer::Unknown);
+            crate::bytecode::FunctionReadFacts {
+                parent: function.parent,
+                is_arrow: function.is_arrow,
+                captures: &function.captures,
+                named_slots: &function.named_slots,
+                dynamic: dynamic_scopes.get(id).copied().unwrap_or(true)
+                    || matches!(initializer, InstanceInitializer::Unknown),
+                instance_initializer: match initializer {
+                    InstanceInitializer::Known(initializer) => initializer,
+                    InstanceInitializer::Unknown => None,
+                },
+            }
+        })
+        .collect();
+    crate::bytecode::ClosureReads::derive(&functions)
 }
 
 /// The slots of function `owner` that the functions in `descendants` capture, before the
@@ -163,18 +237,7 @@ pub(super) fn apply_function(
         // The runtime finds compiler bindings such as class home objects by name in
         // the environment, so they live there like captured bindings; the other
         // locals stay in registers.
-        captured.extend(
-            function
-                .local_atoms
-                .iter()
-                .enumerate()
-                .filter(|(_, atom)| {
-                    atoms
-                        .get(**atom as usize)
-                        .is_some_and(crate::bytecode::local_name_requires_environment)
-                })
-                .filter_map(|(slot, _)| u16::try_from(slot).ok()),
-        );
+        captured.extend(named_environment_slots(function, atoms));
         captured.sort_unstable();
         captured.dedup();
         // An `arguments` binding that no instruction addresses and no closure captures is
@@ -270,7 +333,7 @@ fn selective_layout_is_safe(function: &Function, id: usize, inputs: &LayoutInput
         && !function.derived_constructor
         && !function.class_initializer
         // A rest list binding directly names each parameter's own slot, as a simple one does.
-        && (function.simple_parameters || function.rest && function.parameters_bind_directly(|atom| atoms.get(atom)))
+        && function.parameters_own_their_slots(|atom| atoms.get(atom))
         && !function.has_dynamic_scope_access()
 }
 

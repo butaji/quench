@@ -192,13 +192,64 @@ impl<H: Host> Vm<H> {
     /// The cached in-loop push of `callee`, of either kind (`InLoopPush`).
     #[inline(always)]
     fn in_loop_call_entry(&mut self, p: &ResidualProgram, callee: Value) -> Option<super::InLoopCallTarget> {
-        let index = callee.heap_index()? as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
+        let Some(heap_index) = callee.heap_index() else {
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::call_eligibility(2);
+            return None;
+        };
+        let index = heap_index as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
         let epoch = self.heap.collection_epoch();
         let cached = self.call_targets[index];
         if cached.callee == callee && cached.epoch == epoch && cached.realm == self.realm.globals {
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::call_eligibility(0);
             return Some(cached);
         }
-        self.resolve_in_loop_call_target(p, callee, index, epoch)
+        let target = self.resolve_in_loop_call_target(p, callee, index, epoch);
+        #[cfg(feature = "profile-lane-exits")]
+        if target.is_some() {
+            super::lane_exits::call_eligibility(1);
+        } else {
+            self.record_call_eligibility_miss(p, callee);
+        }
+        target
+    }
+
+    #[cfg(feature = "profile-lane-exits")]
+    fn record_call_eligibility_miss(&self, p: &ResidualProgram, callee: Value) {
+        let Some(record) = self.heap.function(callee) else {
+            super::lane_exits::call_eligibility(3);
+            return;
+        };
+        let FunctionKind::User(program, function) = &record.kind else {
+            super::lane_exits::call_eligibility(3);
+            return;
+        };
+        if record.realm != self.realm.globals {
+            super::lane_exits::call_eligibility(3);
+            return;
+        }
+        let Some(owner) = (if *program == self.active_program {
+            Some(p)
+        } else {
+            self.programs.residual(*program)
+        }) else {
+            super::lane_exits::call_eligibility(4);
+            return;
+        };
+        let unsupported = owner.function_get(*function as usize).is_none_or(|body| {
+            let plan = body.call_plan(owner);
+            !plan.in_loop && !plan.settles_in_loop
+        });
+        if *function == super::ROOT_FUNCTION_ID
+            || owner.kind == crate::bytecode::ProgramKind::Wasm
+            || unsupported
+        {
+            super::lane_exits::call_eligibility(5);
+        } else {
+            // Keep this bucket conservative if a new resolver rejection is added.
+            super::lane_exits::call_eligibility(4);
+        }
     }
 
     #[inline(never)]

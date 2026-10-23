@@ -105,9 +105,14 @@ impl<H: Host> Vm<H> {
         {
             let keys = keys
                 .into_iter()
-                .map(|atom| self.heap.alloc_string(self.atom_value(atom)))
+                .map(|atom| self.atom_string(atom))
                 .collect();
             return Ok(self.own_keys_array(keys));
+        }
+        if let EnumerableOwnPropertyKind::KeyValue = kind
+            && let Some(entries) = self.shape_plain_data_entries(object)
+        {
+            return Ok(entries);
         }
         let object = self.heap.root(object);
         let mut keys = Vec::new();
@@ -167,6 +172,56 @@ impl<H: Host> Vm<H> {
         }
         self.heap.release_root(object);
         outcome
+    }
+
+    /// Object.entries for an ordinary shaped object whose enumerable fields are data slots.
+    /// It creates the mandated pair arrays and strings, but skips descriptor/key materializing
+    /// and property lookup through the generic path. Any shape that can invoke guest code falls
+    /// back before the first allocation or effect.
+    fn shape_plain_data_entries(&mut self, object: Value) -> Option<Value> {
+        let slots = self.shape_enumerable_slots(object)?;
+        let data = self.object_data(object)?;
+        let shape = data.shape();
+        if self.shape_is_dictionary(shape)
+            || slots.iter().any(|(_, slot)| {
+                self.slot_attributes(data, *slot as usize)
+                    .is_none_or(|attributes| attributes.accessor)
+            })
+        {
+            return None;
+        }
+        let values = slots
+            .iter()
+            .map(|(_, slot)| self.heap.property_get(data, *slot as usize))
+            .collect::<Option<Vec<_>>>()?;
+
+        let object_root = self.heap.root(object);
+        let mut roots = Vec::with_capacity(slots.len().saturating_mul(2));
+        let mut entries = Vec::with_capacity(slots.len());
+        for ((atom, _), value) in slots.iter().copied().zip(values) {
+            let key_value = self.heap.alloc_string(self.atom_value(atom));
+            let key = self.heap.root(key_value);
+            let entry = self.heap.alloc(Cell::Array {
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(self.array_proto),
+                    vec![self.heap.root_value(key)?, value],
+                ),
+            });
+            self.heap.release_root(key);
+            roots.push(self.heap.root(entry));
+            entries.push(entry);
+        }
+        let result = self.heap.alloc(Cell::Array {
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_proto),
+                entries,
+            ),
+        });
+        for root in roots {
+            self.heap.release_root(root);
+        }
+        self.heap.release_root(object_root);
+        Some(result)
     }
 
     pub(super) fn object_names(

@@ -149,7 +149,7 @@ impl FlatUnits {
     }
 
     /// The unit at `index`, read from the representation without making a view.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn unit(&self, index: usize) -> Option<u16> {
         match self {
             Self::Short(text) => text.as_str().as_bytes().get(index).map(|byte| u16::from(*byte)),
@@ -524,6 +524,15 @@ impl JsStringInner {
         }
     }
 
+    /// A flat `Wide` string's host text, if `host` has made it.
+    fn cached_host(&self) -> Option<&str> {
+        // SAFETY: a shared read; a `Host` is never replaced once written (`host`).
+        match unsafe { (*self.aside.get()).as_deref() } {
+            Some(Aside::Host(host)) => Some(host),
+            Some(Aside::Rope(..)) | None => None,
+        }
+    }
+
     /// A flat `Wide` string's host text, made by `make` on first use.
     fn host(&self, make: impl FnOnce() -> Rc<str>) -> &Rc<str> {
         // SAFETY: the slot is written only while empty, when no reference into it exists; a
@@ -890,6 +899,24 @@ impl JsString {
         match &self.repr {
             Repr::Flat(_) => None,
             Repr::Shared(inner) => inner.existing_host(),
+        }
+    }
+
+    /// `host_string` as an owned copy. A `Wide` string with no cached host text is
+    /// transcoded straight into the copy, so a one-off conversion (a script source handed
+    /// to the compiler) leaves no second copy on the string.
+    pub(crate) fn to_host_owned(&self) -> String {
+        match (self.flat(), &self.repr) {
+            (wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_)), Repr::Shared(inner)) => {
+                inner.cached_host().map_or_else(
+                    || {
+                        let Units::Wide(units) = wide.view() else { unreachable!("wide units") };
+                        String::from_utf16_lossy(units)
+                    },
+                    str::to_owned,
+                )
+            }
+            _ => self.host_string().to_owned(),
         }
     }
 

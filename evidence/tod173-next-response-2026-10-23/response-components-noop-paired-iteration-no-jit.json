@@ -1,0 +1,855 @@
+{
+  "schema": 1,
+  "workload": "next-response-components",
+  "phase": "no-jit",
+  "runs": 7,
+  "qualificationReady": false,
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 5
+  },
+  "rssMeasurement": "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)",
+  "inputs": {
+    "workloadSha256": "cbb9bfad9765bdebff2fde2563da48a6aea76c0f78b2ff32044cf052c42ecb87",
+    "packageLockSha256": "92dbfcb2312b42ddf55a8f0b06c40368544ca4b5e861782ead6770268da3c1b0",
+    "quenchBinarySha256": "6a50f3fc45edcb0c2d4232dc1f3e654fb13e7a379b66b492d33e7ea76a14c548",
+    "controlQuenchBinary": "/workspace/quench/work/next-response-noop-control",
+    "controlQuenchBinarySha256": "553e739ca0f3ff900c42748a0357d984372d80ed18fc21173f72019a3423333c",
+    "nodeBinary": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "bunBinary": "/workspace/quench/work/bun-install/bin/bun"
+  },
+  "nodeVersion": "v24.19.0",
+  "bunVersion": "1.4.4",
+  "summary": {
+    "quench-interpreter": {
+      "medianOperationsPerSecond": 7342.143906020558,
+      "medianElapsedMs": 2724,
+      "medianMaximumRssBytes": 96477184
+    },
+    "quench-control": {
+      "medianOperationsPerSecond": 6563.833278634723,
+      "medianElapsedMs": 3047,
+      "medianMaximumRssBytes": 99250176
+    },
+    "node-jitless": {
+      "medianOperationsPerSecond": 56338.028169014084,
+      "medianElapsedMs": 355,
+      "medianMaximumRssBytes": 152829952
+    },
+    "bun-no-jit": {
+      "medianOperationsPerSecond": 606060.6060606061,
+      "medianElapsedMs": 33,
+      "medianMaximumRssBytes": 5292032
+    }
+  },
+  "output": {
+    "workload": "next-response-components",
+    "package": "next@16.4.3",
+    "warmups": 1000,
+    "cases": [
+      "json"
+    ],
+    "bytes": 1500000
+  },
+  "samples": [
+    {
+      "engine": "quench-interpreter",
+      "round": 1,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 3109,
+        "operationsPerSecond": 6432.9366355741395
+      },
+      "maxRssBytes": 90685440,
+      "wallTimeMs": 3896.656986,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/next-response-noop-candidate",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 1,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 3216,
+        "operationsPerSecond": 6218.905472636816
+      },
+      "maxRssBytes": 110436352,
+      "wallTimeMs": 4136.712938,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/next-response-noop-control",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 1,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 390,
+        "operationsPerSecond": 51282.05128205128
+      },
+      "maxRssBytes": 152408064,
+      "wallTimeMs": 555.652871,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 33,
+        "operationsPerSecond": 606060.6060606061
+      },
+      "maxRssBytes": 2596864,
+      "wallTimeMs": 41.929507,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 2,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 2912,
+        "operationsPerSecond": 6868.131868131868
+      },
+      "maxRssBytes": 95629312,
+      "wallTimeMs": 3265.223093,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/next-response-noop-control",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 2,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 342,
+        "operationsPerSecond": 58479.53216374269
+      },
+      "maxRssBytes": 153243648,
+      "wallTimeMs": 493.694199,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 34,
+        "operationsPerSecond": 588235.2941176471
+      },
+      "maxRssBytes": 2723840,
+      "wallTimeMs": 45.760137,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 2,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 2724,
+        "operationsPerSecond": 7342.143906020558
+      },
+      "maxRssBytes": 97579008,
+      "wallTimeMs": 3007.385902,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/next-response-noop-candidate",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 3,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 347,
+        "operationsPerSecond": 57636.88760806916
+      },
+      "maxRssBytes": 152608768,
+      "wallTimeMs": 496.786075,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 31,
+        "operationsPerSecond": 645161.2903225806
+      },
+      "maxRssBytes": 2711552,
+      "wallTimeMs": 61.420331,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 3,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 2629,
+        "operationsPerSecond": 7607.455306200076
+      },
+      "maxRssBytes": 96477184,
+      "wallTimeMs": 2927.965671,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/next-response-noop-candidate",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 3,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 2968,
+        "operationsPerSecond": 6738.544474393531
+      },
+      "maxRssBytes": 99250176,
+      "wallTimeMs": 3335.447199,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/next-response-noop-control",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 34,
+        "operationsPerSecond": 588235.2941176471
+      },
+      "maxRssBytes": 7041024,
+      "wallTimeMs": 43.02712,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 4,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 2808,
+        "operationsPerSecond": 7122.507122507122
+      },
+      "maxRssBytes": 83054592,
+      "wallTimeMs": 3103.903924,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/next-response-noop-candidate",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 4,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 2979,
+        "operationsPerSecond": 6713.66230278617
+      },
+      "maxRssBytes": 97128448,
+      "wallTimeMs": 3331.099133,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/next-response-noop-control",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 4,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 352,
+        "operationsPerSecond": 56818.181818181816
+      },
+      "maxRssBytes": 152399872,
+      "wallTimeMs": 494.752121,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 5,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 2662,
+        "operationsPerSecond": 7513.1480090157775
+      },
+      "maxRssBytes": 97599488,
+      "wallTimeMs": 2945.073938,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/next-response-noop-candidate",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 5,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 3370,
+        "operationsPerSecond": 5934.718100890208
+      },
+      "maxRssBytes": 98836480,
+      "wallTimeMs": 3752.902156,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/next-response-noop-control",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 5,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 437,
+        "operationsPerSecond": 45766.59038901602
+      },
+      "maxRssBytes": 153083904,
+      "wallTimeMs": 588.993595,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 32,
+        "operationsPerSecond": 625000
+      },
+      "maxRssBytes": 5300224,
+      "wallTimeMs": 43.262745,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 6,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 3047,
+        "operationsPerSecond": 6563.833278634723
+      },
+      "maxRssBytes": 116383744,
+      "wallTimeMs": 3386.303087,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/next-response-noop-control",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 6,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 442,
+        "operationsPerSecond": 45248.86877828054
+      },
+      "maxRssBytes": 153591808,
+      "wallTimeMs": 589.129918,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 6,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 33,
+        "operationsPerSecond": 606060.6060606061
+      },
+      "maxRssBytes": 5292032,
+      "wallTimeMs": 43.760734,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 6,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 2988,
+        "operationsPerSecond": 6693.440428380188
+      },
+      "maxRssBytes": 84684800,
+      "wallTimeMs": 3306.457845,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/next-response-noop-candidate",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 7,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 355,
+        "operationsPerSecond": 56338.028169014084
+      },
+      "maxRssBytes": 152829952,
+      "wallTimeMs": 501.704616,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 7,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 31,
+        "operationsPerSecond": 645161.2903225806
+      },
+      "maxRssBytes": 8085504,
+      "wallTimeMs": 40.840673,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 7,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 2553,
+        "operationsPerSecond": 7833.920877399139
+      },
+      "maxRssBytes": 97603584,
+      "wallTimeMs": 2834.209488,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/next-response-noop-candidate",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 7,
+      "measurement": {
+        "workload": "next-response-components",
+        "package": "next@16.4.3",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "json"
+        ],
+        "bytes": 1500000,
+        "elapsedMs": 3054,
+        "operationsPerSecond": 6548.788474132286
+      },
+      "maxRssBytes": 116752384,
+      "wallTimeMs": 3400.353284,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/next-response-noop-control",
+        "/workspace/quench/tests/npm-perf/workloads/next-response-components.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+richards: LOSS (Quench worst 4400 KiB, best other 3308 KiB)
+  quench             4144    4272    4400 KiB
+  quench --jit       3968    4224    4376 KiB
+  qjs                3308    3388    3412 KiB
+deltablue: LOSS (Quench worst 6580 KiB, best other 3556 KiB)
+  quench             6452    6552    6580 KiB
+  quench --jit       6180    6224    6224 KiB
+  qjs                3556    3620    3828 KiB
+crypto: LOSS (Quench worst 8676 KiB, best other 3416 KiB)
+  quench             7736    7780    8676 KiB
+  quench --jit       8200    8320    8504 KiB
+  qjs                3416    3452    3624 KiB
+raytrace: LOSS (Quench worst 6708 KiB, best other 3368 KiB)
+  quench             6580    6580    6708 KiB
+  quench --jit       6144    6144    6144 KiB
+  qjs                3368    3452    3544 KiB
+earley-boyer: WIN (Quench worst 11292 KiB, best other 16568 KiB)
+  quench            10712   11036   11292 KiB
+  quench --jit      10668   10688   11244 KiB
+  qjs               16568   16660   16708 KiB
+regexp: LOSS (Quench worst 11376 KiB, best other 6696 KiB)
+  quench            11376   11376   11376 KiB
+  quench --jit      10904   10972   11032 KiB
+  qjs                6696    6720    6792 KiB
+splay: WIN (Quench worst 32316 KiB, best other 146908 KiB)
+  quench            32316   32316   32316 KiB
+  quench --jit      32236   32236   32236 KiB
+  qjs              146908  147020  147184 KiB
+navier-stokes: LOSS (Quench worst 8376 KiB, best other 4876 KiB)
+  quench             4528    4528    4656 KiB
+  quench --jit       8276    8300    8376 KiB
+  qjs                4876    4976    5052 KiB
+not every fixture won

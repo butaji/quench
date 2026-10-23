@@ -1,0 +1,3 @@
+{"closures":200000,"medianGcMs":"30.73","heapUsedMiB":"59.3","check":19999900000}
+{"closures":200000,"medianGcMs":"31.82","heapUsedMiB":"59.3","check":19999900000}
+{"closures":200000,"medianGcMs":"35.13","heapUsedMiB":"50.4","check":19999900000}

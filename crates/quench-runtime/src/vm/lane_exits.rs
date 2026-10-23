@@ -15,9 +15,14 @@ static DETAILS: std::sync::Mutex<Option<std::collections::HashMap<String, u64>>>
     std::sync::Mutex::new(None);
 
 static CALL_TARGET_SAMPLE: AtomicU64 = AtomicU64::new(0);
+/// Exact, opt-in census of the general dispatch loop's in-loop call-target probe.
+static CALL_ELIGIBILITY: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
 static CALL_TARGETS: std::sync::LazyLock<
     std::sync::Mutex<std::collections::HashMap<(u32, u32, u32), CallTargetProfile>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+static FIELD_PROBES: std::sync::Mutex<
+    Option<std::collections::HashMap<(u32, u32, u32, u32, usize, u32, u8, u8), u64>>,
+> = std::sync::Mutex::new(None);
 
 /// One sampled call site's target identities and function bodies.
 #[derive(Default)]
@@ -51,6 +56,41 @@ pub(super) fn call_target(
     *profile.functions.entry(target).or_default() += 1;
 }
 
+/// Record an in-loop call-target probe outcome. `outcome` indexes the labels below.
+pub(super) fn call_eligibility(outcome: usize) {
+    if let Some(counter) = CALL_ELIGIBILITY.get(outcome) {
+        counter.fetch_add(1, Ordering::Relaxed);
+        REPORT.call_once(|| {
+            // SAFETY: `report` is a plain function that outlives the process.
+            unsafe { libc::atexit(report) };
+        });
+    }
+}
+
+/// Count a field-cache outcome at a precise bytecode access. Outcomes are primary hit,
+/// primary miss, primary ineligible, inherited cache hit, shaped data read, inherited
+/// lookup, getter call, and generic property lookup (0–7). Available only in diagnostics.
+pub(super) fn field_probe(
+    program: u32,
+    function: u32,
+    pc: u32,
+    field_site: u32,
+    site: usize,
+    atom: u32,
+    part: u8,
+    outcome: u8,
+) {
+    let mut probes = FIELD_PROBES.lock().expect("field probe census");
+    *probes
+        .get_or_insert_with(Default::default)
+        .entry((program, function, pc, field_site, site, atom, part, outcome))
+        .or_default() += 1;
+    REPORT.call_once(|| {
+        // SAFETY: `report` is a plain function that outlives the process.
+        unsafe { libc::atexit(report) };
+    });
+}
+
 /// Counts one exit by a description of its operands (operator and value kinds).
 pub(super) fn record_detail(detail: String) {
     let mut details = DETAILS.lock().expect("lane exit details");
@@ -66,6 +106,31 @@ pub(super) fn record(op: Op) {
 }
 
 extern "C" fn report() {
+    const CALL_ELIGIBILITY_NAMES: [&str; 6] = [
+        "positive_cache_hit",
+        "positive_resolution",
+        "non_heap_callee",
+        "native_or_wrong_realm_or_non_callable",
+        "missing_program_or_function",
+        "unsupported_call_plan",
+    ];
+    let call_eligibility: Vec<_> = CALL_ELIGIBILITY_NAMES
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (*name, CALL_ELIGIBILITY[index].load(Ordering::Relaxed)))
+        .filter(|(_, count)| *count > 0)
+        .collect();
+    if !call_eligibility.is_empty() {
+        eprintln!("in-loop call eligibility: {call_eligibility:?}");
+    }
+    if let Some(probes) = FIELD_PROBES.lock().expect("field probe census").as_ref() {
+        let mut probes: Vec<_> = probes.iter().collect();
+        probes.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(**count));
+        eprintln!("field cache probes (program,function,pc,field_site,cache_site,atom,part,outcome):");
+        for (key, count) in probes.into_iter().take(REPORTED_DETAILS) {
+            eprintln!("  {count:>12} {key:?}");
+        }
+    }
     let mut counts: Vec<(u64, usize)> = EXITS
         .iter()
         .enumerate()

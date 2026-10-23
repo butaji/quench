@@ -171,7 +171,7 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
         && !(function.class_initializer && !function.is_arrow)
         // A rest parameter is promoted where the list binds its names directly
         // (`FunctionCompiler::binds_parameters_directly`), each its own slot.
-        && (function.simple_parameters || function.rest && function.parameters_bind_directly(|atom| (atom < atoms.len()).then(|| &atoms[atom])))
+        && function.parameters_own_their_slots(|atom| atoms.get(atom))
         // Promoted parameters leave their slots, which only an aliasing `arguments` reads.
         && (function.arguments_slot.is_none() || !function.arguments_alias_parameters())
         && !function.inherited_with_scope
@@ -1097,7 +1097,8 @@ fn selective_capture_layout_is_eligible(
         && !function.is_class_constructor
         && !function.derived_constructor
         && !function.class_initializer
-        && function.simple_parameters
+        // The compiler splits a rest list that binds directly too (`selective_layout_is_safe`).
+        && function.parameters_own_their_slots(|atom| atoms.get(atom))
         && local_atoms_are_static
         && mapped_arguments_are_captured
 }
@@ -1105,6 +1106,22 @@ fn selective_capture_layout_is_eligible(
 #[cfg(test)]
 mod tests {
     use crate::bytecode::{AtomTable, DispatchClass, Function, Instr, Op, ResidualProgram};
+
+    #[test]
+    fn rest_list_closure_layouts_are_validated() {
+        // The compiler splits a rest list that binds directly; the validator accepts what it emits.
+        let program = crate::Engine::specialize(
+            "function outer() { function log(first, ...rest) { let hidden = rest.length; return () => first + rest[0] + hidden; } return log(1, 2)(); } outer();",
+            "rest-layout.js",
+        )
+        .unwrap();
+        // Validation compiles every released function first.
+        assert_eq!(program.validate(), Ok(()));
+        assert!(program
+            .functions
+            .iter()
+            .any(|function| function.rest && function.selective_capture_slots.is_some()));
+    }
 
     #[test]
     fn binding_site_domains_are_validated() {
@@ -1291,6 +1308,7 @@ mod tests {
             replay: None,
             encoded_records: None,
             validated: Default::default(),
+            closure_reads: None,
         }
     }
 

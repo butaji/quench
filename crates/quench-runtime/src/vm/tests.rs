@@ -1435,8 +1435,9 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
       Object.setPrototypeOf(inherited, prototype);
       print(inherited.answer);
       print(inherited.getAnswer());
-      var deleted = { answer: 5 };
+      var deleted = { answer: 5, other: 6 };
       delete deleted.answer;
+      delete deleted.other;
       deleted.answer = 7;
       print(deleted.answer);
     "#;
@@ -1605,6 +1606,71 @@ fn moved_shape_lookup_index_matches_the_derived_index() {
         compared += 1;
     }
     assert!(compared > 0, "the wide object's shapes keep an index");
+}
+
+#[test]
+fn a_deletion_keeps_a_shared_shape_until_vacated_slots_outnumber_properties() {
+    let source = r#"
+      var first = { a: 1, b: 2, c: 3 };
+      var second = { a: 4, b: 5, c: 6 };
+      delete first.b;
+      delete second.b;
+      var emptied = { a: 1, b: 2 };
+      delete emptied.a;
+      delete emptied.b;
+      print([first.a + first.c + second.a + second.c, "b" in first, Object.keys(second)].join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "deletion-shapes.js").unwrap();
+    vm.execute(&program).unwrap();
+    let global = vm.realm.globals;
+    let shape_of = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        let object = vm.own_property(global, atom).expect("global binding exists");
+        vm.object_data(object).expect("object value").shape()
+    };
+    let (first, second, emptied) =
+        (shape_of(&mut vm, "first"), shape_of(&mut vm, "second"), shape_of(&mut vm, "emptied"));
+    // One vacated slot beside two properties: both objects share the deletion's shape.
+    assert!(!vm.shape_is_dictionary(first));
+    assert_eq!(first, second);
+    // Two vacated slots and no property: the object's storage is all holes.
+    assert_eq!(
+        vm.shapes[emptied as usize].dictionary_trigger,
+        Some(super::DictionaryTrigger::DeletionPattern)
+    );
+    assert_eq!(output.borrow().as_slice(), ["14 false a,c"]);
+}
+
+#[test]
+fn deleting_the_last_added_property_returns_to_the_earlier_shape() {
+    let source = r#"
+      var base = { a: 1 };
+      var stack = { a: 1 };
+      for (var id = 1; id <= 64; id++) { stack[id] = id; stack["k" + id] = id; delete stack["k" + id]; delete stack[id]; }
+      print([Object.keys(stack), stack.a, "k1" in stack].join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "deletion-rollback.js").unwrap();
+    let shapes_before = vm.shapes.len();
+    vm.execute(&program).unwrap();
+    let global = vm.realm.globals;
+    let shape_of = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        let object = vm.own_property(global, atom).expect("global binding exists");
+        vm.object_data(object).expect("object value").shape()
+    };
+    // Each key is deleted while it is the last one added: the object is back on the shape
+    // it started with, and no deletion forked a shape of its own.
+    assert_eq!(shape_of(&mut vm, "stack"), shape_of(&mut vm, "base"));
+    let deletions = vm.shapes[shapes_before..]
+        .iter()
+        .filter(|shape| matches!(shape.transition, super::ShapeTransition::Delete { .. }))
+        .count();
+    assert_eq!(deletions, 0);
+    assert_eq!(output.borrow().as_slice(), ["a 1 false"]);
 }
 
 #[test]
@@ -4646,25 +4712,13 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
         .heap
         .alloc(crate::heap::Cell::Error("suspended scope".into()));
     let held_atom = vm.intern_atom("held");
-    let continuation = Continuation {
-        context: super::activation::CallContext::Internal,
-        reflected_parameters: 0,
-        original_arguments: vec![original],
-        program: super::program_store::ProgramId::MAIN,
-        active_iterators: vec![],
-        with_objects: vec![scope],
-        function: 0,
-        pc: 0,
-        env: live,
-        this: Value::UNDEFINED,
-        locals: vec![],
-        dynamic_bindings: vec![(held_atom, held)],
-        registers: vec![],
-        completion: Completion::Yield(Value::UNDEFINED),
-        captured: false,
-        resume_register: None,
-        promise: Value::UNDEFINED,
-    };
+    let mut frame = Box::new(super::Frame::empty(super::program_store::ProgramId::MAIN, 0));
+    frame.original_arguments = vec![original];
+    frame.with_objects = vec![scope];
+    frame.env = live;
+    frame.dynamic_bindings = vec![(held_atom, held)];
+    let continuation =
+        Continuation::suspend(frame, Completion::Yield(Value::UNDEFINED), None, Value::UNDEFINED);
     let state = vm.heap.alloc(crate::heap::Cell::AwaitState(Box::new(
         crate::heap::AwaitState {
             continuation: Some(Box::new(continuation)),
@@ -4684,7 +4738,7 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
         Some(state) => state.continuation.take(),
         _ => panic!("await state"),
     };
-    assert_eq!(take(&mut vm).unwrap().original_arguments, [original]);
+    assert_eq!(take(&mut vm).unwrap().frame.original_arguments, [original]);
     assert!(take(&mut vm).is_none());
     vm.collect_now(&program);
     assert!(!vm.heap.is_live(live));
@@ -6460,9 +6514,11 @@ fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
                         assert!(
                             matches!(vm.heap.get(proxy),Some(super::Cell::Proxy {target,handler,..}) if target.is_null()&&handler.is_null())
                         );
-                        keys.into_iter()
-                            .map(|value| vm.heap.weak_handle(value).unwrap())
-                            .collect::<Vec<_>>()
+                        // A key a program spells is its shared atom string (`Vm::atom_string`),
+                        // kept with the program; the symbol key is the proxy target's own.
+                        let first = vm.intern_atom("first");
+                        assert_eq!(keys[0], vm.atom_string(first));
+                        vec![vm.heap.weak_handle(keys[1]).unwrap()]
                     }
                     Err(error) => {
                         let atom = vm.intern_atom("kind");
@@ -6971,7 +7027,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 .map(|v| vm.heap.weak_handle(*v).unwrap())
                 .collect::<Vec<_>>();
             let atom = vm.intern_atom("binding");
-            let mut frame = super::Frame {
+            let frame = super::Frame {
                 context: CallContext::Internal,
                 reflected_parameters: 0,
                 original_arguments: vec![],
@@ -6998,17 +7054,11 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 js_jit_interpreter_started: None,
                 fixed_this: false,
             };
-            let continuation = Continuation::from_frame(
-                &mut frame,
+            let continuation = Continuation::suspend(
+                Box::new(frame),
                 completion(completion_value),
                 Some(0),
                 promise,
-            );
-            assert!(
-                frame.locals.is_empty()
-                    && frame.dynamic_bindings.is_empty()
-                    && frame.registers.is_empty()
-                    && frame.active_iterators.is_empty()
             );
             let roots = vm.heap.root_count_for_test();
             let owner = if generator {
@@ -7077,7 +7127,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
             };
             assert_eq!(resumed.completion, completion(completion_value));
             assert_eq!(resumed.promise, promise);
-            let resumed = resumed.into_frame(0);
+            let resumed = resumed.resume(0);
             assert_eq!(resumed.locals, [local]);
             assert_eq!(resumed.dynamic_bindings, [(atom, binding)]);
             assert_eq!(resumed.registers, [register, iterator, Value::FALSE]);
@@ -10390,14 +10440,35 @@ if(fn().getFunctionName()!=='anonymous')throw Error('deleted length layout');
 }
 
 #[test]
+fn shared_number_arithmetic_maps_all_four_numeric_operators() {
+    use oxc_ast::ast::BinaryOperator;
+    use super::operations::NumberArithmetic;
+
+    for (operator, expected) in [
+        (BinaryOperator::Addition, NumberArithmetic::Add),
+        (BinaryOperator::Subtraction, NumberArithmetic::Subtract),
+        (BinaryOperator::Multiplication, NumberArithmetic::Multiply),
+        (BinaryOperator::Division, NumberArithmetic::Divide),
+    ] {
+        assert_eq!(NumberArithmetic::from_operator(operator as u32), Some(expected));
+    }
+    assert_eq!(
+        NumberArithmetic::from_operator(BinaryOperator::Equality as u32),
+        None
+    );
+}
+
+#[test]
 #[cfg(not(quench_profiled))]
 fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     let source = r#"
       function add(left, right) { return left + right; }
+      function subtract(left, right) { return left - right; }
       function divide(left, right) { return left / right; }
       function plusOne(value) { return value + 1; }
       for (let index = 0; index < 40; index++) {
         if (add(index, 2) !== index + 2) throw new Error('numeric result');
+        if (subtract(index + 2, 2) !== index) throw new Error('numeric subtraction result');
         if (divide(index + 1, 2) !== (index + 1) / 2) throw new Error('division result');
         if (plusOne(index) !== index + 1) throw new Error('numeric constant result');
       }
@@ -10426,13 +10497,117 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
 
-    for function in [1, 2, 3] {
+    for function in [1, 2, 3, 4] {
         assert!(matches!(
             vm.programs
                 .js_tier(super::program_store::ProgramId::MAIN, function),
             Some(super::program_store::JsTierState::Compiled(_))
         ));
     }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_compiles_number_unary_plus_and_negation_with_exact_fallback() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function plus(value) { return +value; }
+          function negate(value) { return -value; }
+          const values = [0, -0, Infinity, -Infinity, NaN];
+          for (let index = 0; index < 40; index++) {
+            const value = values[index % values.length];
+            if (!Object.is(plus(value), value)) throw Error('unary plus');
+            if (!Object.is(negate(value), -value)) throw Error('unary negation');
+          }
+          if (plus('7') !== 7) throw Error('unary plus coercion fallback');
+          let plusThrew = false;
+          try { plus(7n); } catch (error) { plusThrew = error instanceof TypeError; }
+          if (!plusThrew) throw Error('unary plus BigInt fallback');
+          if (negate(7n) !== -7n) throw Error('unary negation BigInt fallback');
+          let coercions = 0;
+          const boxed = { valueOf() { coercions++; return 5; } };
+          if (negate(boxed) !== -5 || coercions !== 1) throw Error('unary effectful fallback');
+        "#,
+        "js-jit-number-unary.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    for name in ["plus", "negate"] {
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(compiled)) =
+            vm.programs
+                .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should compile its Number unary denotation");
+        };
+        assert!(
+            compiled.uses_shared_entry(),
+            "{name} should use the common VM native-entry ABI"
+        );
+        assert!(
+            compiled.native_entries() > 0,
+            "{name} should have entered native code before the fallback checks"
+        );
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_compiles_straight_line_plain_local_temporaries() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function scaled(value) {
+            let temporary = value + 1;
+            return temporary * 2;
+          }
+          for (let index = 0; index < 40; index++) {
+            if (scaled(index) !== (index + 1) * 2) throw Error('local temporary result');
+          }
+          if (!Number.isNaN(scaled('x'))) throw Error('local temporary fallback');
+          let coercions = 0;
+          const boxed = { valueOf() { coercions++; return 5; } };
+          if (scaled(boxed) !== 12 || coercions !== 1) throw Error('effectful fallback');
+        "#,
+        "js-jit-plain-local.js",
+    ))
+    .unwrap();
+    let scaled = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "scaled")
+        })
+        .unwrap() as u32;
+    assert!(
+        super::js_compiled::compile(&program, scaled).is_some(),
+        "the generic numeric lowering should accept a straight-line plain local"
+    );
+
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, scaled),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
 }
 
 #[test]
@@ -10572,13 +10747,15 @@ fn js_jit_compiles_numeric_capture_arithmetic_and_guards_mutation() {
 fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
-          function mask(value) { return value & 7; }
+          function mask(value) { return value ^ 7; }
           for (let index = -20; index < 20; index++) {
-            if (mask(index) !== (index & 7)) throw Error('int32 bitwise');
+            if (mask(index) !== (index ^ 7)) throw Error('int32 bitwise');
           }
-          if (mask(2.5) !== 2) throw Error('fraction fallback');
-          if (mask(4294967296) !== 0) throw Error('range fallback');
-          if (mask('13') !== 5) throw Error('coercion fallback');
+          if (mask(2.5) !== (2 ^ 7)) throw Error('fraction fallback');
+          if (mask(4294967296) !== 7) throw Error('range fallback');
+          if (mask(4294967295) !== (-1 ^ 7)) throw Error('unsigned range fallback');
+          if (mask(NaN) !== 7) throw Error('non-finite fallback');
+          if (mask('13') !== 10) throw Error('coercion fallback');
           let bigintThrew = false;
           try { mask(13n); } catch (error) { bigintThrew = error instanceof TypeError; }
           if (!bigintThrew) throw Error('bigint fallback');
@@ -11089,6 +11266,60 @@ fn js_jit_lowers_guarded_numeric_field_reads_from_nonzero_formal() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_lowers_guarded_numeric_field_reads_from_captured_objects() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function makeReader() {
+            const state = {value: 7};
+            function read() { return state.value * 2; }
+            return {read, state};
+          }
+          const reader = makeReader();
+          for (let index = 0; index < 40; index++) {
+            if (reader.read() !== 14) throw Error('captured numeric field');
+          }
+          reader.state.value = '8';
+          if (reader.read() !== 16) throw Error('captured field type guard');
+          let reads = 0;
+          Object.defineProperty(reader.state, 'value', {
+            configurable: true,
+            get() { reads++; return 9; }
+          });
+          if (reader.read() !== 18 || reads !== 1) throw Error('captured accessor fallback');
+        "#,
+        "js-jit-captured-object-field.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "read")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function_id)
+    else {
+        panic!("captured-object numeric field region should compile");
+    };
+    assert_eq!(compiled.numeric_field_inputs().len(), 1);
+    assert!(matches!(
+        compiled.numeric_field_inputs()[0].receiver,
+        super::js_compiled::JsJitFieldReceiver::Capture { .. }
+    ));
+    assert!(compiled.native_entries() >= 9);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_lowers_multiple_guarded_this_field_reads_into_arithmetic() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -11295,6 +11526,7 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
     assert_eq!(programs.js_jit_tracked_function_count(), 256);
 }
 
+#[cfg(not(quench_profiled))]
 #[test]
 fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
     let program = Engine::compile(crate::ExecutionRequest::script(
@@ -12602,4 +12834,121 @@ fn fused_field_reads_of_promoted_locals_see_undefined_before_assignment() {
     let program = Engine::specialize(source, "fused-read-before-assignment.js").unwrap();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["TypeError,TypeError,TypeError"]);
+}
+
+#[test]
+fn absent_index_reads_of_ordinary_objects_still_see_every_holder_on_the_chain() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      const plain = { length: 3 };
+      for (let i = 0; i < 3; i++) check(plain[i], undefined, 'plain miss');
+      check(Array.from(plain, (_, i) => i * 2).join(), '0,2,4', 'array-like from');
+      check(Object.create({ 7: 'p' })[7], 'p', 'prototype property');
+      check(Object.create(['a', 'b'])[1], 'b', 'array prototype');
+      check(Object.create(new String('xy'))[1], 'y', 'string wrapper prototype');
+      check(Object.create(new Uint8Array([4, 5]))[1], 5, 'typed array prototype');
+      const getter = {}; Object.defineProperty(getter, 9, { get() { return 'g'; } });
+      check(Object.create(getter)[9], 'g', 'inherited getter');
+      check((function () { return Object.create(arguments)[0]; })('arg'), 'arg', 'arguments prototype');
+      const proxied = Object.create(new Proxy({}, { get: (_, key) => 'proxy ' + key }));
+      check(proxied[3], 'proxy 3', 'proxy prototype');
+      Object.prototype[11] = 'shared';
+      check({}[11], 'shared', 'Object.prototype index');
+      delete Object.prototype[11];
+      check({}[11], undefined, 'deleted Object.prototype index');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "absent-index.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "absent-index.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn array_fill_stores_plainly_only_where_no_prototype_claims_the_index() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      check(Array(5).fill(7).join(), '7,7,7,7,7', 'holes');
+      check([1, 2, 3, 4].fill(0, 1, -1).join(), '1,0,0,4', 'range');
+      const seen = [];
+      const proto = Object.create(Array.prototype);
+      Object.defineProperty(proto, 2, { set(value) { seen.push(value); }, configurable: true });
+      const holed = Object.setPrototypeOf([1, , , 4], proto);
+      holed.fill(9);
+      check(seen.join(), '9', 'inherited setter');
+      check(Object.keys(holed).join(), '0,1,3', 'setter index stays a hole');
+      Object.prototype[1] = 'shared';
+      Object.defineProperty(Object.prototype, 1, { value: 'readonly', writable: false, configurable: true });
+      const blocked = Array(3);
+      let blockedThrew = false;
+      try { blocked.fill(5); } catch (e) { blockedThrew = e instanceof TypeError; }
+      check(blockedThrew, true, 'read-only inherited index throws');
+      check(blocked.hasOwnProperty(1), false, 'read-only inherited index stays a hole');
+      check(blocked[0], 5, 'indices before it store');
+      delete Object.prototype[1];
+      let threw = false;
+      try { Object.freeze([1, 2]).fill(0); } catch (e) { threw = e instanceof TypeError; }
+      check(threw, true, 'frozen');
+      threw = false;
+      try { Object.seal(Array(2)).fill(0); } catch (e) { threw = e instanceof TypeError; }
+      check(threw, true, 'sealed holes');
+      check(Object.seal([1, 2]).fill(3).join(), '3,3', 'sealed present');
+      check(Array.prototype.fill.call({ length: 2 }, 1)[1], 1, 'array-like');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "array-fill.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "array-fill.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn define_property_keeps_its_values_through_collections_its_conversions_run() {
+    let source = r#"
+      const churn = () => { let keep = []; for (let i = 0; i < 8000; i++) keep.push({ i, s: 'x' + i }); return keep.length; };
+      const results = [];
+      for (let round = 0; round < 6; round++) {
+        const key = { toString() { churn(); return 'k' + round; } };
+        const descriptor = {
+          get enumerable() { churn(); return true; },
+          get get() { churn(); const marker = { round }; return () => marker.round; },
+        };
+        const target = Object.defineProperty({}, key, descriptor);
+        results.push(target['k' + round]);
+        if (!Object.getOwnPropertyDescriptor(target, 'k' + round).enumerable) throw Error('enumerable lost');
+        const reflected = {};
+        if (!Reflect.defineProperty(reflected, key, { get value() { churn(); return [round]; }, writable: true })) throw Error('reflect');
+        if (reflected['k' + round][0] !== round) throw Error('value lost');
+      }
+      if (results.join() !== Array.from({ length: 6 }, (_, i) => i).join()) throw Error('getter results ' + results);
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "define-roots.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "define-roots.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn object_assign_sees_prototype_setters_added_after_a_memoized_copy() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      const proto = {};
+      const src = { a: 1, b: 2 };
+      for (let i = 0; i < 4; i++) check(Object.assign(Object.create(proto), src).a, 1, 'primed');
+      let hits = 0;
+      Object.defineProperty(proto, 'a', { set(value) { hits += value; }, configurable: true });
+      const target = Object.assign(Object.create(proto), src);
+      check(hits, 1, 'setter called');
+      check(Object.prototype.hasOwnProperty.call(target, 'a'), false, 'setter kept the key off the target');
+      check(target.b, 2, 'other key copied');
+      delete proto.a;
+      Object.defineProperty(proto, 'b', { value: 0, writable: false, configurable: true });
+      let threw = false;
+      try { Object.assign(Object.create(proto), src); } catch (error) { threw = error instanceof TypeError; }
+      check(threw, true, 'read-only inherited key throws');
+      delete proto.b;
+      check(Object.assign(Object.create(proto), src).b, 2, 'plain again');
+      Object.defineProperty(Object.prototype, 'a', { set(value) { hits += 10 * value; }, configurable: true });
+      Object.assign({}, src);
+      check(hits, 11, 'Object.prototype setter');
+      delete Object.prototype.a;
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "assign-memo.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "assign-memo.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
 }

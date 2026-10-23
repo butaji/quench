@@ -1,0 +1,16 @@
+crypto.js              rss med A 2948 B 3108 d +160  score A 2311 B 2347
+crypto.js       --jit  rss med A 3848 B 3956 d +108  score A 4588 B 4368
+deltablue.js           rss med A 2852 B 2920 d +68  score A 1141 B 1192
+deltablue.js    --jit  rss med A 2816 B 3012 d +196  score A 1173 B 1089
+earley-boyer.js        rss med A 6368 B 6452 d +84  score A 3440 B 3161
+earley-boyer.js --jit  rss med A 6400 B 6540 d +140  score A 3412 B 3296
+navier-stokes.js       rss med A 3920 B 4016 d +96  score A 2697 B 2674
+navier-stokes.js--jit  rss med A 7396 B 7612 d +216  score A 22830 B 24573
+raytrace.js            rss med A 2804 B 2900 d +96  score A 1930 B 2071
+raytrace.js     --jit  rss med A 2804 B 3016 d +212  score A 2024 B 2063
+regexp.js              rss med A 5920 B 6068 d +148  score A 2404 B 2387
+regexp.js       --jit  rss med A 6040 B 6248 d +208  score A 2485 B 2421
+richards.js            rss med A 2660 B 2664 d +4  score A 1454 B 1403
+richards.js     --jit  rss med A 2648 B 2880 d +232  score A 1433 B 1516
+splay.js               rss med A 31392 B 31504 d +112  score A 3851 B 4031
+splay.js        --jit  rss med A 31424 B 31536 d +112  score A 4024 B 4043

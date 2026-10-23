@@ -1,0 +1,10 @@
+before {"closures":200000,"medianGcMs":"46.83","heapUsedMiB":"37.6","check":19999900000}
+after  {"closures":200000,"medianGcMs":"57.55","heapUsedMiB":"23.9","check":19999900000}
+before {"closures":200000,"medianGcMs":"45.16","heapUsedMiB":"37.6","check":19999900000}
+after  {"closures":200000,"medianGcMs":"58.07","heapUsedMiB":"23.9","check":19999900000}
+before {"closures":200000,"medianGcMs":"47.66","heapUsedMiB":"37.6","check":19999900000}
+after  {"closures":200000,"medianGcMs":"57.83","heapUsedMiB":"23.9","check":19999900000}
+before {"closures":200000,"medianGcMs":"45.74","heapUsedMiB":"37.6","check":19999900000}
+after  {"closures":200000,"medianGcMs":"61.17","heapUsedMiB":"23.9","check":19999900000}
+before {"closures":200000,"medianGcMs":"46.14","heapUsedMiB":"37.6","check":19999900000}
+after  {"closures":200000,"medianGcMs":"59.10","heapUsedMiB":"23.9","check":19999900000}

@@ -108,6 +108,17 @@ pub(crate) fn source_binding_name(name: &str) -> &str {
 pub(crate) fn local_name_requires_environment(name: &str) -> bool {
     name.starts_with('\0') && !name.starts_with(BLOCK_BINDING_MARKER)
 }
+/// The prefix of a class's home-object binding, which private brand checks and `super`
+/// resolve by name through the enclosing environments.
+pub(crate) const HOME_BINDING_PREFIX: &str = "\0quench:home:";
+/// Whether the runtime finds local `name` by name from outside its own activation, so a
+/// closure that never captures it may still read it: a home object (`HOME_BINDING_PREFIX`),
+/// or a compiler binding its function's environment declares (`declares_environment_atom`),
+/// which by-name loads of compiler bindings resolve.
+pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: bool) -> bool {
+    name.starts_with(HOME_BINDING_PREFIX)
+        || (declared_in_environment && local_name_requires_environment(name))
+}
 pub(crate) use control_flow::{ControlEdge, branch_table_entries};
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
@@ -700,7 +711,10 @@ pub(crate) enum JsDenotation {
     Move,
     GetField,
     NumericBinary,
+    NumericUnary,
     CapturedValue,
+    PlainLocalLoad,
+    PlainLocalStore,
     Return,
 }
 const READ_THROW: Effect = Effect::READS_HEAP.union(Effect::THROWS);
@@ -769,7 +783,7 @@ opcodes!(
     DefineArrayElement => WRITE_THROW; layout Scalar; meaning ArrayIndex, @ Register, @ fields(Register, Register, Unused),
     Binary => READ_THROW; layout Scalar; meaning BinaryOperator; js NumericBinary, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
     IncDec => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Unused),
-    Unary => READ_THROW; layout Scalar; meaning UnaryOperator, @ Returnable, @ fields(ResultRegister, Register, Unused),
+    Unary => READ_THROW; layout Scalar; meaning UnaryOperator; js NumericUnary, @ Returnable, @ fields(ResultRegister, Register, Unused),
     Delete => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Register),
     CheckPrivate => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
     PrivateIn => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Register, Unused),
@@ -796,8 +810,8 @@ opcodes!(
     SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     // The general loop's fast arms dispatch on these with the opcodes above, so they share
     // one dense range of opcode numbers.
-    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
-    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
+    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalLoad, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalStore, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
     JumpTrue => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
     // `Call` whose last window argument the instruction before it loaded from the activation's
     // `arguments` binding (`CallPlan::forwards_arguments`).
@@ -2042,10 +2056,18 @@ impl Function {
     /// nothing else.
     /// `name` spells an atom of the function's table (the program's, or the compiler's while
     /// it lays the function out).
-    pub(crate) fn parameters_bind_directly<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
+    fn parameters_bind_directly<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
         self.local_atoms[..usize::from(self.params).min(self.local_atoms.len())]
             .iter()
             .all(|atom| usize::try_from(*atom).ok().and_then(&name).is_some_and(|name| !name.starts_with('\0')))
+    }
+
+    /// Whether each parameter lives in its own named slot: a simple list, or a rest list that
+    /// binds directly (`parameters_bind_directly`). Selective capture layouts, environment
+    /// activations and promoted locals all require it, and the compiler and the validator
+    /// read this one rule.
+    pub(crate) fn parameters_own_their_slots<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
+        self.simple_parameters || self.rest && self.parameters_bind_directly(name)
     }
 
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
@@ -2115,8 +2137,7 @@ impl Function {
                 && !self.is_class_constructor
                 // A rest list binding directly fills its slot with the gathered array
                 // (`lane_activate_environment`).
-                && (self.simple_parameters
-                    || self.rest && self.parameters_bind_directly(|atom| (atom < atoms.len()).then(|| &atoms[atom])))
+                && self.parameters_own_their_slots(|atom| atoms.get(atom))
                 && self.self_binding_slot.is_none()
                 && !self.inherited_with_scope
                 && self.local_registers.is_empty()
@@ -2919,7 +2940,8 @@ pub(crate) struct ProgramSource {
     pub(crate) column_offset: u32,
     /// `source_line_starts(text)`, indexed on the first line read: error source positions
     /// read a line per throw, which a scan from the top would make linear in the source.
-    pub(crate) line_starts: std::cell::OnceCell<Box<[u32]>>,
+    /// Shared, so a copy of the source (an error's captured call sites) copies no index.
+    pub(crate) line_starts: std::cell::OnceCell<std::sync::Arc<[u32]>>,
 }
 
 /// A static item at a fixed place in the executable image, from which a snapshot measures the
@@ -3086,6 +3108,9 @@ pub struct ResidualProgram {
     pub(crate) encoded_records: Option<std::rc::Rc<EncodedRecords>>,
     /// Whether the program is known to be valid (`ValidationProof`).
     pub(crate) validated: ValidationProof,
+    /// What each function's closures read of the environments they close over, when the
+    /// compiler derived it; without it a closure keeps its whole scope chain.
+    pub(crate) closure_reads: Option<std::rc::Rc<ClosureReads>>,
 }
 
 /// The encoded records of a decoded program's deferred functions (`binary::decode_program`):
@@ -3273,7 +3298,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 104;
+    pub const FORMAT_VERSION: u8 = 105;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
@@ -3380,6 +3405,8 @@ impl ResidualProgram {
     }
 }
 mod binary;
+mod closure_reads;
+pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
 pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis};
 mod disassemble;
 #[cfg(test)]

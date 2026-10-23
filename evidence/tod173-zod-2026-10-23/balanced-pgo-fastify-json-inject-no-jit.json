@@ -1,0 +1,1266 @@
+{
+  "schema": 1,
+  "workload": "fastify-json-inject",
+  "phase": "no-jit",
+  "runs": 11,
+  "qualificationReady": false,
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 5
+  },
+  "rssMeasurement": "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)",
+  "inputs": {
+    "workloadSha256": "3dfbf65ea2847ea8a5b82430847c81b6603f137208aa27b907a6eac7bb2cae0e",
+    "packageLockSha256": "2d19fa194ac7bcf3dc26d10ee81512c2fb7840846a964b734f29ea7bc788b986",
+    "quenchBinarySha256": "4eec162cea9770d5a79dcd27bd2ffe7a9716318d445135d8ef7cf8c46c9eb700",
+    "controlQuenchBinary": "../../work/zod-pgo-control",
+    "controlQuenchBinarySha256": "e7189a58461f17530ed203bee92bd3be66968d4b39a82a0c18273dba454113f6",
+    "nodeBinary": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "bunBinary": "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun"
+  },
+  "nodeVersion": "v24.19.0",
+  "bunVersion": "1.4.4",
+  "summary": {
+    "quench-interpreter": {
+      "medianOperationsPerSecond": 2808.9887640449438,
+      "medianElapsedMs": 356,
+      "medianMaximumRssBytes": 49995776
+    },
+    "quench-control": {
+      "medianOperationsPerSecond": 2109.7046413502107,
+      "medianElapsedMs": 474,
+      "medianMaximumRssBytes": 54964224
+    },
+    "node-jitless": {
+      "medianOperationsPerSecond": 4830.917874396136,
+      "medianElapsedMs": 207,
+      "medianMaximumRssBytes": 63885312
+    },
+    "bun-no-jit": {
+      "medianOperationsPerSecond": 4854.368932038835,
+      "medianElapsedMs": 206,
+      "medianMaximumRssBytes": 46706688
+    }
+  },
+  "output": {
+    "workload": "fastify-json-inject",
+    "package": "fastify@5.12.5",
+    "warmups": 100,
+    "concurrency": 1,
+    "bytes": 58840,
+    "checksum": 81789
+  },
+  "samples": [
+    {
+      "engine": "quench-interpreter",
+      "round": 1,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 333,
+        "operationsPerSecond": 3003.003003003003
+      },
+      "maxRssBytes": 48439296,
+      "wallTimeMs": 607.792061,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 1,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 475,
+        "operationsPerSecond": 2105.2631578947367
+      },
+      "maxRssBytes": 54407168,
+      "wallTimeMs": 776.864437,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 1,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 204,
+        "operationsPerSecond": 4901.9607843137255
+      },
+      "maxRssBytes": 64856064,
+      "wallTimeMs": 418.954346,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 187,
+        "operationsPerSecond": 5347.593582887701
+      },
+      "maxRssBytes": 47308800,
+      "wallTimeMs": 348.436191,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 2,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 461,
+        "operationsPerSecond": 2169.1973969631235
+      },
+      "maxRssBytes": 54788096,
+      "wallTimeMs": 697.474244,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 2,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 203,
+        "operationsPerSecond": 4926.108374384236
+      },
+      "maxRssBytes": 64811008,
+      "wallTimeMs": 457.648022,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 206,
+        "operationsPerSecond": 4854.368932038835
+      },
+      "maxRssBytes": 46563328,
+      "wallTimeMs": 373.488544,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 2,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 352,
+        "operationsPerSecond": 2840.909090909091
+      },
+      "maxRssBytes": 50077696,
+      "wallTimeMs": 553.830759,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 3,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 207,
+        "operationsPerSecond": 4830.917874396136
+      },
+      "maxRssBytes": 63885312,
+      "wallTimeMs": 429.442887,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 233,
+        "operationsPerSecond": 4291.845493562232
+      },
+      "maxRssBytes": 46661632,
+      "wallTimeMs": 426.325799,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 3,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 374,
+        "operationsPerSecond": 2673.7967914438505
+      },
+      "maxRssBytes": 46759936,
+      "wallTimeMs": 600.236413,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 3,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 424,
+        "operationsPerSecond": 2358.490566037736
+      },
+      "maxRssBytes": 55136256,
+      "wallTimeMs": 641.918873,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 210,
+        "operationsPerSecond": 4761.9047619047615
+      },
+      "maxRssBytes": 46694400,
+      "wallTimeMs": 392.739297,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 4,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 310,
+        "operationsPerSecond": 3225.8064516129034
+      },
+      "maxRssBytes": 49995776,
+      "wallTimeMs": 494.944191,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 4,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 483,
+        "operationsPerSecond": 2070.3933747412007
+      },
+      "maxRssBytes": 54964224,
+      "wallTimeMs": 713.862823,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 4,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 224,
+        "operationsPerSecond": 4464.285714285715
+      },
+      "maxRssBytes": 58134528,
+      "wallTimeMs": 456.387384,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 5,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 338,
+        "operationsPerSecond": 2958.579881656805
+      },
+      "maxRssBytes": 50188288,
+      "wallTimeMs": 532.484639,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 5,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 474,
+        "operationsPerSecond": 2109.7046413502107
+      },
+      "maxRssBytes": 51757056,
+      "wallTimeMs": 742.01486,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 5,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 204,
+        "operationsPerSecond": 4901.9607843137255
+      },
+      "maxRssBytes": 61370368,
+      "wallTimeMs": 431.548842,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 196,
+        "operationsPerSecond": 5102.040816326531
+      },
+      "maxRssBytes": 46804992,
+      "wallTimeMs": 359.102487,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 6,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 457,
+        "operationsPerSecond": 2188.183807439825
+      },
+      "maxRssBytes": 54820864,
+      "wallTimeMs": 684.643927,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 6,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 219,
+        "operationsPerSecond": 4566.2100456621
+      },
+      "maxRssBytes": 64618496,
+      "wallTimeMs": 470.075175,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 6,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 193,
+        "operationsPerSecond": 5181.347150259067
+      },
+      "maxRssBytes": 46714880,
+      "wallTimeMs": 351.230867,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 6,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 377,
+        "operationsPerSecond": 2652.5198938992044
+      },
+      "maxRssBytes": 50610176,
+      "wallTimeMs": 587.108063,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 7,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 214,
+        "operationsPerSecond": 4672.897196261682
+      },
+      "maxRssBytes": 62214144,
+      "wallTimeMs": 479.465061,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 7,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 227,
+        "operationsPerSecond": 4405.286343612334
+      },
+      "maxRssBytes": 46878720,
+      "wallTimeMs": 426.339331,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 7,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 332,
+        "operationsPerSecond": 3012.0481927710844
+      },
+      "maxRssBytes": 50122752,
+      "wallTimeMs": 534.030712,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 7,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 466,
+        "operationsPerSecond": 2145.922746781116
+      },
+      "maxRssBytes": 54980608,
+      "wallTimeMs": 689.164844,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 8,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 196,
+        "operationsPerSecond": 5102.040816326531
+      },
+      "maxRssBytes": 46682112,
+      "wallTimeMs": 411.64168,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 8,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 413,
+        "operationsPerSecond": 2421.3075060532688
+      },
+      "maxRssBytes": 46698496,
+      "wallTimeMs": 640.678373,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 8,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 511,
+        "operationsPerSecond": 1956.9471624266146
+      },
+      "maxRssBytes": 55324672,
+      "wallTimeMs": 753.235536,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 8,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 191,
+        "operationsPerSecond": 5235.602094240838
+      },
+      "maxRssBytes": 56811520,
+      "wallTimeMs": 408.110951,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 9,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 415,
+        "operationsPerSecond": 2409.6385542168673
+      },
+      "maxRssBytes": 50089984,
+      "wallTimeMs": 616.254292,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 9,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 431,
+        "operationsPerSecond": 2320.185614849188
+      },
+      "maxRssBytes": 55631872,
+      "wallTimeMs": 672.851794,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 9,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 250,
+        "operationsPerSecond": 4000
+      },
+      "maxRssBytes": 63082496,
+      "wallTimeMs": 477.468876,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 9,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 209,
+        "operationsPerSecond": 4784.688995215311
+      },
+      "maxRssBytes": 46682112,
+      "wallTimeMs": 373.172788,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 10,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 512,
+        "operationsPerSecond": 1953.125
+      },
+      "maxRssBytes": 54992896,
+      "wallTimeMs": 765.476852,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 10,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 303,
+        "operationsPerSecond": 3300.3300330033003
+      },
+      "maxRssBytes": 64835584,
+      "wallTimeMs": 566.89673,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 10,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 226,
+        "operationsPerSecond": 4424.778761061947
+      },
+      "maxRssBytes": 46895104,
+      "wallTimeMs": 440.589517,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 10,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 356,
+        "operationsPerSecond": 2808.9887640449438
+      },
+      "maxRssBytes": 47284224,
+      "wallTimeMs": 623.758261,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 11,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 194,
+        "operationsPerSecond": 5154.639175257732
+      },
+      "maxRssBytes": 66109440,
+      "wallTimeMs": 417.853369,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 11,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 200,
+        "operationsPerSecond": 5000
+      },
+      "maxRssBytes": 46706688,
+      "wallTimeMs": 383.091434,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 11,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 407,
+        "operationsPerSecond": 2457.002457002457
+      },
+      "maxRssBytes": 46538752,
+      "wallTimeMs": 625.690578,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 11,
+      "measurement": {
+        "workload": "fastify-json-inject",
+        "package": "fastify@5.12.5",
+        "rounds": 1000,
+        "warmups": 100,
+        "concurrency": 1,
+        "bytes": 58840,
+        "checksum": 81789,
+        "elapsedMs": 484,
+        "operationsPerSecond": 2066.115702479339
+      },
+      "maxRssBytes": 52375552,
+      "wallTimeMs": 745.833914,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/fastify-json-inject.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    }
+  ]
+}

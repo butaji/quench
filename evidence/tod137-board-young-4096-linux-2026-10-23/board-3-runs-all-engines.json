@@ -1,0 +1,1961 @@
+{
+  "runs": 3,
+  "rssExec": "/tmp/claude-0/-home-user-quench/7b48bd7e-c8b8-513f-8fda-df3008a36a8f/scratchpad/rss-exec",
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/tmp/claude-0/-home-user-quench/7b48bd7e-c8b8-513f-8fda-df3008a36a8f/scratchpad/qb8/quench-node",
+      "argv": []
+    },
+    {
+      "name": "quench --jit",
+      "executable": "/tmp/claude-0/-home-user-quench/7b48bd7e-c8b8-513f-8fda-df3008a36a8f/scratchpad/qb8/quench-node",
+      "argv": [
+        "--jit"
+      ]
+    },
+    {
+      "name": "qjs",
+      "executable": "/tmp/claude-0/-home-user-quench/7b48bd7e-c8b8-513f-8fda-df3008a36a8f/scratchpad/qjs/qjs",
+      "argv": []
+    },
+    {
+      "name": "node --jitless",
+      "executable": "/opt/node22/bin/node",
+      "argv": [
+        "--jitless"
+      ]
+    },
+    {
+      "name": "node",
+      "executable": "/opt/node22/bin/node",
+      "argv": []
+    },
+    {
+      "name": "bun no-JIT",
+      "executable": "/root/.bun/bin/bun",
+      "argv": []
+    },
+    {
+      "name": "bun",
+      "executable": "/root/.bun/bin/bun",
+      "argv": []
+    }
+  ],
+  "fixtures": {
+    "richards": {
+      "valid": true,
+      "won": false,
+      "quenchWorst": 6860,
+      "otherBest": 3452,
+      "rows": [
+        {
+          "engine": "quench",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            6860,
+            2704,
+            2724
+          ],
+          "min": 2704,
+          "median": 2724,
+          "max": 6860,
+          "samples": [
+            {
+              "kib": 6860,
+              "score": 1523,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 2704,
+              "score": 1261,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 2724,
+              "score": 1363,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "quench --jit",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            2936,
+            3000,
+            2936
+          ],
+          "min": 2936,
+          "median": 2936,
+          "max": 3000,
+          "samples": [
+            {
+              "kib": 2936,
+              "score": 1257,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 3000,
+              "score": 1244,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 2936,
+              "score": 977,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "qjs",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            3544,
+            3512,
+            3452
+          ],
+          "min": 3452,
+          "median": 3512,
+          "max": 3544,
+          "samples": [
+            {
+              "kib": 3544,
+              "score": 634,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 3512,
+              "score": 524,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 3452,
+              "score": 681,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node --jitless",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            44844,
+            44904,
+            45028
+          ],
+          "min": 44844,
+          "median": 44904,
+          "max": 45028,
+          "samples": [
+            {
+              "kib": 44844,
+              "score": 1055,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 44904,
+              "score": 1091,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 45028,
+              "score": 1374,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            53456,
+            53356,
+            53476
+          ],
+          "min": 53356,
+          "median": 53456,
+          "max": 53476,
+          "samples": [
+            {
+              "kib": 53456,
+              "score": 24549,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 53356,
+              "score": 23914,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 53476,
+              "score": 28242,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun no-JIT",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            21624,
+            21636,
+            21528
+          ],
+          "min": 21528,
+          "median": 21624,
+          "max": 21636,
+          "samples": [
+            {
+              "kib": 21624,
+              "score": 1111,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 21636,
+              "score": 1274,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 21528,
+              "score": 1239,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            37684,
+            37984,
+            38076
+          ],
+          "min": 37684,
+          "median": 37984,
+          "max": 38076,
+          "samples": [
+            {
+              "kib": 37684,
+              "score": 33350,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 37984,
+              "score": 32909,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 38076,
+              "score": 36096,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        }
+      ]
+    },
+    "deltablue": {
+      "valid": true,
+      "won": true,
+      "quenchWorst": 3168,
+      "otherBest": 3804,
+      "rows": [
+        {
+          "engine": "quench",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            3016,
+            2972,
+            2960
+          ],
+          "min": 2960,
+          "median": 2972,
+          "max": 3016,
+          "samples": [
+            {
+              "kib": 3016,
+              "score": 1056,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 2972,
+              "score": 928,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 2960,
+              "score": 871,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "quench --jit",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            3064,
+            3064,
+            3168
+          ],
+          "min": 3064,
+          "median": 3064,
+          "max": 3168,
+          "samples": [
+            {
+              "kib": 3064,
+              "score": 1001,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 3064,
+              "score": 1169,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 3168,
+              "score": 1200,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "qjs",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            3804,
+            3924,
+            3916
+          ],
+          "min": 3804,
+          "median": 3916,
+          "max": 3924,
+          "samples": [
+            {
+              "kib": 3804,
+              "score": 577,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 3924,
+              "score": 622,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 3916,
+              "score": 651,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node --jitless",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            47024,
+            47028,
+            47032
+          ],
+          "min": 47024,
+          "median": 47028,
+          "max": 47032,
+          "samples": [
+            {
+              "kib": 47024,
+              "score": 1133,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 47028,
+              "score": 1276,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 47032,
+              "score": 1288,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            66196,
+            82872,
+            66684
+          ],
+          "min": 66196,
+          "median": 66684,
+          "max": 82872,
+          "samples": [
+            {
+              "kib": 66196,
+              "score": 54997,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 82872,
+              "score": 68994,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 66684,
+              "score": 62561,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun no-JIT",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            21788,
+            21692,
+            21664
+          ],
+          "min": 21664,
+          "median": 21692,
+          "max": 21788,
+          "samples": [
+            {
+              "kib": 21788,
+              "score": 866,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 21692,
+              "score": 832,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 21664,
+              "score": 732,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            43156,
+            42588,
+            42564
+          ],
+          "min": 42564,
+          "median": 42588,
+          "max": 43156,
+          "samples": [
+            {
+              "kib": 43156,
+              "score": 12854,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 42588,
+              "score": 19273,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 42564,
+              "score": 17389,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        }
+      ]
+    },
+    "crypto": {
+      "valid": true,
+      "won": false,
+      "quenchWorst": 4008,
+      "otherBest": 3588,
+      "rows": [
+        {
+          "engine": "quench",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            3284,
+            2992,
+            3124
+          ],
+          "min": 2992,
+          "median": 3124,
+          "max": 3284,
+          "samples": [
+            {
+              "kib": 3284,
+              "score": 1897,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 2992,
+              "score": 1807,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 3124,
+              "score": 2296,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "quench --jit",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            4000,
+            4008,
+            4008
+          ],
+          "min": 4000,
+          "median": 4008,
+          "max": 4008,
+          "samples": [
+            {
+              "kib": 4000,
+              "score": 3611,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 4008,
+              "score": 3668,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 4008,
+              "score": 4373,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "qjs",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            3588,
+            3624,
+            3800
+          ],
+          "min": 3588,
+          "median": 3624,
+          "max": 3800,
+          "samples": [
+            {
+              "kib": 3588,
+              "score": 579,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 3624,
+              "score": 662,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 3800,
+              "score": 718,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node --jitless",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            45176,
+            45192,
+            45172
+          ],
+          "min": 45172,
+          "median": 45176,
+          "max": 45192,
+          "samples": [
+            {
+              "kib": 45176,
+              "score": 1067,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 45192,
+              "score": 1042,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 45172,
+              "score": 1007,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            54880,
+            54284,
+            53968
+          ],
+          "min": 53968,
+          "median": 54284,
+          "max": 54880,
+          "samples": [
+            {
+              "kib": 54880,
+              "score": 31747,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 54284,
+              "score": 27774,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 53968,
+              "score": 26355,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun no-JIT",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            22072,
+            22468,
+            21928
+          ],
+          "min": 21928,
+          "median": 22072,
+          "max": 22468,
+          "samples": [
+            {
+              "kib": 22072,
+              "score": 1528,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 22468,
+              "score": 1629,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 21928,
+              "score": 1476,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            46524,
+            45456,
+            45928
+          ],
+          "min": 45456,
+          "median": 45928,
+          "max": 46524,
+          "samples": [
+            {
+              "kib": 46524,
+              "score": 29063,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 45456,
+              "score": 28244,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 45928,
+              "score": 31020,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        }
+      ]
+    },
+    "raytrace": {
+      "valid": true,
+      "won": true,
+      "quenchWorst": 3320,
+      "otherBest": 3460,
+      "rows": [
+        {
+          "engine": "quench",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            3136,
+            2880,
+            3320
+          ],
+          "min": 2880,
+          "median": 3136,
+          "max": 3320,
+          "samples": [
+            {
+              "kib": 3136,
+              "score": 1739,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 2880,
+              "score": 1688,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 3320,
+              "score": 1851,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "quench --jit",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            3008,
+            3064,
+            3084
+          ],
+          "min": 3008,
+          "median": 3064,
+          "max": 3084,
+          "samples": [
+            {
+              "kib": 3008,
+              "score": 1912,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 3064,
+              "score": 1874,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 3084,
+              "score": 1844,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "qjs",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            3468,
+            3492,
+            3460
+          ],
+          "min": 3460,
+          "median": 3468,
+          "max": 3492,
+          "samples": [
+            {
+              "kib": 3468,
+              "score": 901,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 3492,
+              "score": 875,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 3460,
+              "score": 911,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node --jitless",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            47272,
+            47272,
+            47148
+          ],
+          "min": 47148,
+          "median": 47272,
+          "max": 47272,
+          "samples": [
+            {
+              "kib": 47272,
+              "score": 2653,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 47272,
+              "score": 2784,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 47148,
+              "score": 2630,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            60268,
+            59752,
+            60316
+          ],
+          "min": 59752,
+          "median": 60268,
+          "max": 60316,
+          "samples": [
+            {
+              "kib": 60268,
+              "score": 37221,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 59752,
+              "score": 34267,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 60316,
+              "score": 37406,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun no-JIT",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            22348,
+            22224,
+            22136
+          ],
+          "min": 22136,
+          "median": 22224,
+          "max": 22348,
+          "samples": [
+            {
+              "kib": 22348,
+              "score": 1544,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 22224,
+              "score": 1422,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 22136,
+              "score": 1317,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            51856,
+            54168,
+            53240
+          ],
+          "min": 51856,
+          "median": 53240,
+          "max": 54168,
+          "samples": [
+            {
+              "kib": 51856,
+              "score": 28137,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 54168,
+              "score": 28416,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 53240,
+              "score": 28490,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        }
+      ]
+    },
+    "earley-boyer": {
+      "valid": true,
+      "won": true,
+      "quenchWorst": 6984,
+      "otherBest": 17740,
+      "rows": [
+        {
+          "engine": "quench",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            6984,
+            6484,
+            6520
+          ],
+          "min": 6484,
+          "median": 6520,
+          "max": 6984,
+          "samples": [
+            {
+              "kib": 6984,
+              "score": 2968,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 6484,
+              "score": 2991,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 6520,
+              "score": 3102,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "quench --jit",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            6552,
+            6544,
+            6880
+          ],
+          "min": 6544,
+          "median": 6552,
+          "max": 6880,
+          "samples": [
+            {
+              "kib": 6552,
+              "score": 2831,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 6544,
+              "score": 2936,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 6880,
+              "score": 3359,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "qjs",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            17740,
+            17756,
+            17752
+          ],
+          "min": 17740,
+          "median": 17752,
+          "max": 17756,
+          "samples": [
+            {
+              "kib": 17740,
+              "score": 1241,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 17756,
+              "score": 1140,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 17752,
+              "score": 1094,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node --jitless",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            76144,
+            76296,
+            76272
+          ],
+          "min": 76144,
+          "median": 76272,
+          "max": 76296,
+          "samples": [
+            {
+              "kib": 76144,
+              "score": 5111,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 76296,
+              "score": 5179,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 76272,
+              "score": 4578,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            100284,
+            88076,
+            87344
+          ],
+          "min": 87344,
+          "median": 88076,
+          "max": 100284,
+          "samples": [
+            {
+              "kib": 100284,
+              "score": 35887,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 88076,
+              "score": 35762,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 87344,
+              "score": 32495,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun no-JIT",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            25848,
+            26280,
+            26112
+          ],
+          "min": 25848,
+          "median": 26112,
+          "max": 26280,
+          "samples": [
+            {
+              "kib": 25848,
+              "score": 1797,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 26280,
+              "score": 1948,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 26112,
+              "score": 1706,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            70388,
+            69396,
+            69032
+          ],
+          "min": 69032,
+          "median": 69396,
+          "max": 70388,
+          "samples": [
+            {
+              "kib": 70388,
+              "score": 20254,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 69396,
+              "score": 19442,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 69032,
+              "score": 19777,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        }
+      ]
+    },
+    "regexp": {
+      "valid": true,
+      "won": true,
+      "quenchWorst": 6420,
+      "otherBest": 6968,
+      "rows": [
+        {
+          "engine": "quench",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            6304,
+            6180,
+            6276
+          ],
+          "min": 6180,
+          "median": 6276,
+          "max": 6304,
+          "samples": [
+            {
+              "kib": 6304,
+              "score": 2048,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 6180,
+              "score": 2357,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 6276,
+              "score": 1996,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "quench --jit",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            6400,
+            6416,
+            6420
+          ],
+          "min": 6400,
+          "median": 6416,
+          "max": 6420,
+          "samples": [
+            {
+              "kib": 6400,
+              "score": 2235,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 6416,
+              "score": 2424,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 6420,
+              "score": 1905,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "qjs",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            6968,
+            6980,
+            7028
+          ],
+          "min": 6968,
+          "median": 6980,
+          "max": 7028,
+          "samples": [
+            {
+              "kib": 6968,
+              "score": 210,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 6980,
+              "score": 223,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 7028,
+              "score": 229,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node --jitless",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            54716,
+            54980,
+            54708
+          ],
+          "min": 54708,
+          "median": 54716,
+          "max": 54980,
+          "samples": [
+            {
+              "kib": 54716,
+              "score": 2378,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 54980,
+              "score": 2930,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 54708,
+              "score": 2729,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            65312,
+            65516,
+            66204
+          ],
+          "min": 65312,
+          "median": 65516,
+          "max": 66204,
+          "samples": [
+            {
+              "kib": 65312,
+              "score": 6792,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 65516,
+              "score": 6301,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 66204,
+              "score": 6708,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun no-JIT",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            30148,
+            30184,
+            29512
+          ],
+          "min": 29512,
+          "median": 30148,
+          "max": 30184,
+          "samples": [
+            {
+              "kib": 30148,
+              "score": 425,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 30184,
+              "score": 561,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 29512,
+              "score": 576,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            52020,
+            51348,
+            52020
+          ],
+          "min": 51348,
+          "median": 52020,
+          "max": 52020,
+          "samples": [
+            {
+              "kib": 52020,
+              "score": 6371,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 51348,
+              "score": 6765,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 52020,
+              "score": 6637,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        }
+      ]
+    },
+    "splay": {
+      "valid": true,
+      "won": true,
+      "quenchWorst": 31548,
+      "otherBest": 61472,
+      "rows": [
+        {
+          "engine": "quench",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            31428,
+            31428,
+            31420
+          ],
+          "min": 31420,
+          "median": 31428,
+          "max": 31428,
+          "samples": [
+            {
+              "kib": 31428,
+              "score": 3535,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 31428,
+              "score": 3740,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 31420,
+              "score": 4455,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "quench --jit",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            31548,
+            31456,
+            31456
+          ],
+          "min": 31456,
+          "median": 31456,
+          "max": 31548,
+          "samples": [
+            {
+              "kib": 31548,
+              "score": 3903,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 31456,
+              "score": 3761,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 31456,
+              "score": 4120,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "qjs",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            159940,
+            160044,
+            159996
+          ],
+          "min": 159940,
+          "median": 159996,
+          "max": 160044,
+          "samples": [
+            {
+              "kib": 159940,
+              "score": 1830,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 160044,
+              "score": 1441,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 159996,
+              "score": 1690,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node --jitless",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            341280,
+            353348,
+            333992
+          ],
+          "min": 333992,
+          "median": 341280,
+          "max": 353348,
+          "samples": [
+            {
+              "kib": 341280,
+              "score": 3273,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 353348,
+              "score": 3529,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 333992,
+              "score": 3191,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            474128,
+            441880,
+            474276
+          ],
+          "min": 441880,
+          "median": 474128,
+          "max": 474276,
+          "samples": [
+            {
+              "kib": 474128,
+              "score": 6358,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 441880,
+              "score": 5803,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 474276,
+              "score": 6316,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun no-JIT",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            61540,
+            61472,
+            61624
+          ],
+          "min": 61472,
+          "median": 61540,
+          "max": 61624,
+          "samples": [
+            {
+              "kib": 61540,
+              "score": 3034,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 61472,
+              "score": 3089,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 61624,
+              "score": 3235,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            193224,
+            192300,
+            190760
+          ],
+          "min": 190760,
+          "median": 192300,
+          "max": 193224,
+          "samples": [
+            {
+              "kib": 193224,
+              "score": 16909,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 192300,
+              "score": 16429,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 190760,
+              "score": 19110,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        }
+      ]
+    },
+    "navier-stokes": {
+      "valid": true,
+      "won": false,
+      "quenchWorst": 7604,
+      "otherBest": 5352,
+      "rows": [
+        {
+          "engine": "quench",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            4780,
+            4068,
+            4196
+          ],
+          "min": 4068,
+          "median": 4196,
+          "max": 4780,
+          "samples": [
+            {
+              "kib": 4780,
+              "score": 2407,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 4068,
+              "score": 2558,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 4196,
+              "score": 2348,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "quench --jit",
+          "side": "quench",
+          "valid": true,
+          "kib": [
+            7532,
+            7604,
+            7596
+          ],
+          "min": 7532,
+          "median": 7596,
+          "max": 7604,
+          "samples": [
+            {
+              "kib": 7532,
+              "score": 23877,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 7604,
+              "score": 24460,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 7596,
+              "score": 24256,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "qjs",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            5352,
+            5352,
+            5352
+          ],
+          "min": 5352,
+          "median": 5352,
+          "max": 5352,
+          "samples": [
+            {
+              "kib": 5352,
+              "score": 935,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 5352,
+              "score": 1070,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 5352,
+              "score": 1144,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node --jitless",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            49360,
+            49312,
+            49356
+          ],
+          "min": 49312,
+          "median": 49356,
+          "max": 49360,
+          "samples": [
+            {
+              "kib": 49360,
+              "score": 1458,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 49312,
+              "score": 1349,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 49356,
+              "score": 1511,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "node",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            56228,
+            56372,
+            56396
+          ],
+          "min": 56228,
+          "median": 56372,
+          "max": 56396,
+          "samples": [
+            {
+              "kib": 56228,
+              "score": 27157,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 56372,
+              "score": 27399,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 56396,
+              "score": 30243,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun no-JIT",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            22128,
+            21732,
+            21656
+          ],
+          "min": 21656,
+          "median": 21732,
+          "max": 22128,
+          "samples": [
+            {
+              "kib": 22128,
+              "score": 2320,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 21732,
+              "score": 2426,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 21656,
+              "score": 2235,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        },
+        {
+          "engine": "bun",
+          "side": "other",
+          "valid": true,
+          "kib": [
+            36100,
+            36280,
+            35892
+          ],
+          "min": 35892,
+          "median": 36100,
+          "max": 36280,
+          "samples": [
+            {
+              "kib": 36100,
+              "score": 26537,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 36280,
+              "score": 26118,
+              "status": 0,
+              "valid": true
+            },
+            {
+              "kib": 35892,
+              "score": 29354,
+              "status": 0,
+              "valid": true
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "allValid": true,
+  "allWon": false
+}

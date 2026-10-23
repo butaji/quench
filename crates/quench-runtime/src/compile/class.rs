@@ -80,7 +80,7 @@ impl FunctionCompiler<'_, '_> {
         let mut method_home_atoms = FxHashMap::default();
         for element in &class.body.body {
             if let ClassElement::MethodDefinition(method) = element {
-                let atom = self.hidden_local(&format!("\0quench:home:{}", method.span.start));
+                let atom = self.hidden_local(&format!("{}{}", crate::bytecode::HOME_BINDING_PREFIX, method.span.start));
                 method_home_atoms.insert(method.span.start, atom);
             }
         }
@@ -143,12 +143,13 @@ impl FunctionCompiler<'_, '_> {
             .map(|(method, _)| method_home_atoms[&method.span.start])
             .unwrap_or_else(|| {
                 self.hidden_local(&format!(
-                    "\0quench:home:implicit-constructor:{}",
+                    "{}implicit-constructor:{}",
+                    crate::bytecode::HOME_BINDING_PREFIX,
                     class.span.start
                 ))
             });
         let class_home_atom =
-            self.hidden_local(&format!("\0quench:home:class:{}", class.span.start));
+            self.hidden_local(&format!("{}class:{}", crate::bytecode::HOME_BINDING_PREFIX, class.span.start));
         let mut private_bindings = FxHashMap::default();
         for element in &class.body.body {
             if let ClassElement::AccessorProperty(accessor) = element {

@@ -14,6 +14,8 @@ mod cell;
 mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
+mod environment_trace;
+pub(crate) use environment_trace::{ClosureReadSource, EnvironmentTrace};
 mod external;
 mod memory_stats;
 pub use memory_stats::HeapMemoryComposition;
@@ -53,6 +55,12 @@ const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_
 // A sparse element is an index and a value in a hash table, at least this many dense slots;
 // a sparse array whose elements fill as many slots as its length turns dense.
 const SPARSE_ENTRY_SLOTS: usize = size_of::<(usize, Value)>() / size_of::<Value>();
+
+/// Whether `present` elements of an array of `length` fill as many dense slots as its
+/// length, so dense storage takes no more words than sparse entries would.
+fn dense_storage_fits(present: usize, length: usize) -> bool {
+    present.saturating_mul(SPARSE_ENTRY_SLOTS) >= length
+}
 pub use pacing::MemoryPolicy;
 #[inline(always)]
 fn payload_unit() -> usize {
@@ -414,6 +422,11 @@ pub(crate) struct Heap {
     uncharged_payload_bytes: usize,
     /// What the last full collection kept, which the generational pacing grows from.
     live_after_full: usize,
+    /// What the full collection that last traced closure environments through their reads
+    /// kept (`EnvironmentTrace`); `None` before one has. Slots it cleared stay cleared, so a
+    /// later one finds only what was captured since: it runs again once the live set has
+    /// grown by `ENVIRONMENT_TRIM_GROWTH` of that.
+    live_at_environment_trim: Option<usize>,
     /// The next collection traces the whole heap.
     full_due: bool,
     /// Selects the pacing table (`MemoryPolicy::pacing`); reset keeps it.
@@ -762,6 +775,11 @@ struct SparseElements {
     values: FxHashMap<usize, Value>,
     length: usize,
 }
+/// How much the live set grows past what the last environment-trimming full collection kept
+/// before another trims (`Heap::live_at_environment_trim`): one live set, so what closures
+/// over-capture since can at most double what a trimmed heap holds.
+const ENVIRONMENT_TRIM_GROWTH: pacing::Ratio = pacing::Ratio::new(1, 1);
+
 impl Heap {
     pub fn new() -> Self {
         Self {
@@ -1080,9 +1098,24 @@ impl Heap {
         prototype: Value,
         inline: [Value; INLINE_PROPERTY_COUNT],
     ) -> Value {
-        let object = Object::from_inline_header(header, inline);
+        let Some(object) = Object::from_inline_header(header, inline) else {
+            return self.alloc_object_with_properties_of_header(header, prototype, inline);
+        };
         debug_assert!(object.proto() == prototype);
         self.alloc_object_of(object, prototype)
+    }
+
+    /// `alloc_object_from_header` of values the payload word cannot hold: arena storage.
+    #[cold]
+    fn alloc_object_with_properties_of_header(
+        &mut self,
+        header: InlineObjectHeader,
+        prototype: Value,
+        inline: [Value; INLINE_PROPERTY_COUNT],
+    ) -> Value {
+        let shape = header.shape();
+        let length = self.properties.len(ValueVec::inline_property_storage(shape));
+        self.alloc_object_with_properties(prototype, shape, &inline[..length])
     }
 
     /// `alloc_object` of `object`, whose prototype is `prototype`.
@@ -1360,8 +1393,18 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) -> Value {
-        let (properties, inline_properties) = self.initial_object_storage(shape, values, true);
-        self.alloc_object(Object::with_property_storage(proto, properties, inline_properties))
+        self.properties.assert_shape_length(shape, values.len());
+        if values.len() <= INLINE_PROPERTY_COUNT
+            && let Some(object) = Object::with_inline_values(proto, shape, values)
+        {
+            return self.alloc_object(object);
+        }
+        let properties = self.properties.with_values(shape, values);
+        self.alloc_object(Object::with_property_storage(
+            proto,
+            properties,
+            [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+        ))
     }
     /// `alloc(Cell::Array { object: array })` of a fresh array, given its first named
     /// properties `values` under `shape` first: the storage steps
@@ -1415,7 +1458,7 @@ impl Heap {
         inline: bool,
     ) -> (ValueVec, [Value; INLINE_PROPERTY_COUNT]) {
         self.properties.assert_shape_length(shape, values.len());
-        if inline && values.len() <= INLINE_PROPERTY_COUNT {
+        if inline && values.len() <= INLINE_PROPERTY_COUNT && Object::inline_values_narrow(values) {
             // At most `INLINE_PROPERTY_COUNT` values: a loop over the fixed bound unrolls to
             // element moves, where one over `values` becomes a `memcpy` call.
             let inline = std::array::from_fn(|slot| values.get(slot).copied().unwrap_or(Value::UNDEFINED));
@@ -1553,6 +1596,7 @@ impl Heap {
         self.allocations = 0;
         self.allocations_since_full = 0;
         self.live_after_full = 0;
+        self.live_at_environment_trim = None;
         self.full_due = false;
         self.pacing_state = pacing::PacingState::default();
         self.live_weight_after_previous = 0;
@@ -1677,11 +1721,18 @@ impl Heap {
     }
     #[cfg(test)]
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
-        self.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, true)
+        self.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, None, true)
     }
     /// Whether a collection requested as `full` traces and sweeps the whole heap. Records
     /// and legacy cells share one generation rule: survivors stay marked (old), the write
     /// barriers log old owners they write, and a minor traces roots and that log only.
+    /// Whether this full collection traces closure environments through their reads
+    /// (`live_at_environment_trim`).
+    fn environment_trim_due(&self) -> bool {
+        self.live_at_environment_trim.is_none_or(|trimmed| {
+            self.live_after_full >= trimmed.saturating_add(ENVIRONMENT_TRIM_GROWTH.of(trimmed))
+        })
+    }
     pub(crate) fn collection_is_full(&self, full: bool) -> bool {
         full
     }
@@ -1691,6 +1742,7 @@ impl Heap {
         roots: impl IntoIterator<Item = Value>,
         mut object_roots: impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
+        closure_reads: Option<&dyn ClosureReadSource>,
         full: bool,
     ) -> Vec<(Value, Value)> {
         let full = self.collection_is_full(full);
@@ -1776,6 +1828,13 @@ impl Heap {
             self.gc_profile.roots += work.len() as u64;
             self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
         }
+        // A full collection traces closure environments through what closures can read, once
+        // the live set has grown since the last that did: environments over-captured since
+        // then are what grew it, and slots cleared before stay cleared. Between them the
+        // trace's per-environment state would only add to each full collection's peak
+        // (V8-v7 max RSS +50 to +156 KiB on most fixtures when every full collection traced).
+        let trims_environments = full && self.environment_trim_due();
+        let mut environments = EnvironmentTrace::new(closure_reads.filter(|_| trims_environments));
         {
             let mut ephemerons = weak::EphemeronWork::default();
             if !full {
@@ -1815,18 +1874,20 @@ impl Heap {
                 parallel_object_roots,
                 &mut ephemerons,
                 GcTraceKind::Collection,
+                &mut environments,
             );
         }
         #[cfg(debug_assertions)]
         {
             if full {
-                self.debug_verify_full(&verify_roots, &mut object_roots);
+                self.debug_verify_full(&verify_roots, &mut object_roots, closure_reads.filter(|_| trims_environments));
             } else {
                 let mut pinned = verify_old_records.unwrap_or_default();
                 pinned.extend(verify_remembered_records);
                 self.debug_verify_minor(&verify_roots, &pinned, &mut object_roots);
             }
         }
+        self.clear_unread_environment_slots(environments);
         let finalization_jobs = self.prune_weak_entries(full);
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
@@ -2083,6 +2144,9 @@ impl Heap {
             self.live_after_full = live;
             self.live_weight_after_full = live_weight;
         }
+        if trims_environments && closure_reads.is_some() {
+            self.live_at_environment_trim = Some(live);
+        }
         let next = self.pacing().plan(
             &mut self.pacing_state,
             pacing::CollectionOutcome {
@@ -2324,17 +2388,20 @@ impl Heap {
         parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
         ephemerons: &mut weak::EphemeronWork,
         trace_kind: GcTraceKind,
+        environments: &mut EnvironmentTrace<'_>,
     ) {
         if self.has_direct_records() {
-            self.mark_work(work, object_roots, ephemerons, trace_kind);
+            self.mark_work(work, object_roots, ephemerons, trace_kind, environments);
             return;
         }
         if self.slots.len() < PARALLEL_MARK_MINIMUM_SLOTS {
-            self.mark_work(work, object_roots, ephemerons, trace_kind);
+            self.mark_work(work, object_roots, ephemerons, trace_kind, environments);
             return;
         }
+        // Without function records, closures are boxed cells (`Cell::Function`), whose
+        // environments the parallel trace marks whole.
         let Some(pool) = parallel_mark_pool() else {
-            self.mark_work(work, object_roots, ephemerons, trace_kind);
+            self.mark_work(work, object_roots, ephemerons, trace_kind, environments);
             return;
         };
 
@@ -2484,6 +2551,7 @@ impl Heap {
         &mut self,
         roots: &[Value],
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+        closure_reads: Option<&dyn ClosureReadSource>,
     ) {
         let parallel_marks = Self::snapshot_marks(&self.marks);
         let parallel_record_marks = self.snapshot_record_marks();
@@ -2500,6 +2568,7 @@ impl Heap {
             object_roots,
             &mut ephemerons,
             GcTraceKind::VerifyFull,
+            &mut EnvironmentTrace::new(closure_reads),
         );
         let sequential_marks = Self::snapshot_marks(&self.marks);
         let sequential_record_marks = self.snapshot_record_marks();
@@ -2551,6 +2620,7 @@ impl Heap {
             object_roots,
             &mut ephemerons,
             GcTraceKind::VerifyFull,
+            &mut EnvironmentTrace::new(None),
         );
         let verified_record_marks = self.snapshot_record_marks();
         let marked = |marks: &[u64], id: RecordId| {
@@ -2594,9 +2664,18 @@ impl Heap {
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         ephemerons: &mut weak::EphemeronWork,
         trace_kind: GcTraceKind,
+        environments: &mut EnvironmentTrace<'_>,
     ) {
         let mut last_proto = Value::UNDEFINED;
-        while let Some(value) = work.pop() {
+        loop {
+            if work.is_empty() {
+                if !environments.has_pending() {
+                    break;
+                }
+                self.trace_environment_edges(environments, work);
+                continue;
+            }
+            let value = work.pop().expect("work is not empty");
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.work_items += 1;
@@ -2680,6 +2759,7 @@ impl Heap {
                     trace_kind,
                     &mut last_proto,
                 );
+                environments.closure(function.env, &function.kind, work);
                 let mark_bits = mark_bits!(self);
                 ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
             } else if let Some(record_id) = value.direct_iterator_index() {
@@ -2764,7 +2844,16 @@ impl Heap {
                 let Some(slot) = self.slots.get_mut(index) else {
                     continue;
                 };
-                if slot.cell.is_none() || !Self::mark_serial(&self.marks, index) {
+                if slot.cell.is_none() {
+                    continue;
+                }
+                // A full collection traces environments by what their readers read.
+                if let Some(Cell::Environment { function, .. }) = &slot.cell
+                    && environments.whole(value, index as u32, *function)
+                {
+                    continue;
+                }
+                if !Self::mark_serial(&self.marks, index) {
                     continue;
                 }
                 let cell = slot.cell.as_ref().unwrap();
@@ -2889,7 +2978,7 @@ impl Heap {
         // Dense storage of the whole length takes no more words than the elements hold. Holes
         // in the dense prefix are not elements; counting them would promote an array whose
         // writes only grow its length, doubling its storage at every far write.
-        let fills = |count: usize| count.saturating_add(sparse_count).saturating_mul(SPARSE_ENTRY_SLOTS) >= length;
+        let fills = |count: usize| dense_storage_fits(count.saturating_add(sparse_count), length);
         let dense = self.array_elements(array);
         let dense_enough = fills(dense.map_or(0, |dense| dense.len()))
             && fills(dense.map_or(0, |dense| dense.iter().filter(|value| !value.is_deleted()).count()));
@@ -2942,9 +3031,10 @@ impl Heap {
         }
     }
     pub(crate) fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
-        let value = match object.inline_properties() {
-            Some(values) => values.get(slot).copied(),
-            None => self.properties.get(object.properties(), slot),
+        let value = match object.properties().has_inline_property_storage() {
+            true if slot < INLINE_PROPERTY_COUNT => object.inline_property(slot),
+            true => None,
+            false => self.properties.get(object.properties(), slot),
         }?;
         (!value.is_deleted()).then_some(value)
     }
@@ -2955,10 +3045,8 @@ impl Heap {
     /// As for `property_get_unchecked`.
     #[inline(always)]
     pub(crate) unsafe fn property_get_shaped(&self, object: &Object, slot: usize) -> Option<Value> {
-        if let Some(values) = object.inline_properties() {
-            debug_assert!(slot < INLINE_PROPERTY_COUNT);
-            // SAFETY: the caller proves that the property slot exists.
-            Some(unsafe { *values.get_unchecked(slot) })
+        if let Some(value) = object.inline_property(slot) {
+            Some(value)
         } else {
             // SAFETY: the caller proves that the property slot exists.
             unsafe { self.properties.get_shaped(object.properties(), slot) }
@@ -2971,10 +3059,8 @@ impl Heap {
     /// The slot exists and the object is not in dictionary storage.
     #[inline(always)]
     pub(crate) unsafe fn property_get_flat(&self, object: &Object, slot: usize) -> Value {
-        if let Some(values) = object.inline_properties() {
-            debug_assert!(slot < INLINE_PROPERTY_COUNT);
-            // SAFETY: the caller proves that the property slot exists.
-            unsafe { *values.get_unchecked(slot) }
+        if let Some(value) = object.inline_property(slot) {
+            value
         } else {
             // SAFETY: the caller proves the slot exists outside dictionary storage.
             unsafe { self.properties.get_flat(object.properties(), slot) }
@@ -2982,10 +3068,8 @@ impl Heap {
     }
     #[inline(always)]
     pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {
-        if let Some(values) = object.inline_properties() {
-            debug_assert!(slot < INLINE_PROPERTY_COUNT);
-            // SAFETY: the caller proves that the property slot exists.
-            unsafe { *values.get_unchecked(slot) }
+        if let Some(value) = object.inline_property(slot) {
+            value
         } else {
             // SAFETY: the caller proves that the property slot exists.
             unsafe { self.properties.get_unchecked(object.properties(), slot) }
@@ -2996,13 +3080,30 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
-            if data.inline_properties().is_some() {
-                data.set_inline_property(slot, value);
+            let vector = data.properties();
+            if !vector.has_inline_property_storage() {
+                Some(vector)
+            } else if data.store_inline_narrow(slot, value) {
                 return;
+            } else {
+                None
             }
-            data.properties()
         };
-        self.properties.set(vector, slot, value);
+        match vector {
+            Some(vector) => self.properties.set(vector, slot, value),
+            None => self.widen_inline_property(object, slot, value),
+        }
+    }
+
+    /// Stores `value` at inline `slot` of `object`, whose payload word cannot hold it: its
+    /// values move to the arena. The caller has applied the write barrier.
+    #[cold]
+    fn widen_inline_property(&mut self, object: Value, slot: usize, value: Value) {
+        let (data, properties) = self
+            .object_and_arena_mut(object)
+            .expect("property owner is an object");
+        let length = properties.len(data.properties());
+        widen_inline_storage(data, properties, data.shape(), length, slot, value);
     }
     #[inline(always)]
     pub(crate) unsafe fn property_set_unchecked(
@@ -3015,15 +3116,20 @@ impl Heap {
             let data = self
                 .object_store_mut(object, value)
                 .expect("property owner is an object");
-            if data.inline_properties().is_some() {
-                debug_assert!(slot < INLINE_PROPERTY_COUNT);
-                data.set_inline_property(slot, value);
+            let vector = data.properties();
+            if !vector.has_inline_property_storage() {
+                Some(vector)
+            } else if data.store_inline_narrow(slot, value) {
                 return;
+            } else {
+                None
             }
-            data.properties()
         };
-        // SAFETY: the caller proves that the property slot exists.
-        unsafe { self.properties.set_unchecked(vector, slot, value) };
+        match vector {
+            // SAFETY: the caller proves that the property slot exists.
+            Some(vector) => unsafe { self.properties.set_unchecked(vector, slot, value) },
+            None => self.widen_inline_property(object, slot, value),
+        }
     }
     /// `property_set_unchecked` for the direct object `record_id` names, decoded once: its
     /// values are inline or a flat arena run. Without `LOGS`, `false` leaves a store the
@@ -3052,9 +3158,11 @@ impl Heap {
                 self.object_records.get_live_mut_unbarriered(record_id)
             }
         };
-        if data.inline_properties().is_some() {
-            debug_assert!(slot < INLINE_PROPERTY_COUNT);
-            data.set_inline_property(slot, value);
+        if data.properties().has_inline_property_storage() {
+            if !data.store_inline_narrow(slot, value) {
+                let length = self.properties.len(data.properties());
+                widen_inline_storage(data, &mut self.properties, data.shape(), length, slot, value);
+            }
             return true;
         }
         let vector = data.properties();
@@ -3239,7 +3347,7 @@ impl Heap {
         object_roots(trace_kind, owner, object.shape(), object.was_used_as_prototype(), work);
         object.visit_extras_roots(|value| work.push(value));
         if let Some(values) = object.inline_properties() {
-            for &value in values {
+            for value in values {
                 if value.is_heap() && !value.is_deleted() {
                     work.push(value);
                 }
@@ -3553,7 +3661,8 @@ impl Heap {
             trace_kind,
             last_proto,
         );
-        work.extend([function.env, function.realm]);
+        // The environment edge is the caller's (`EnvironmentTrace::closure`).
+        work.push(function.realm);
     }
     pub(super) fn cell_kind(cell: &Cell) -> CellKind {
         match cell {
@@ -3764,32 +3873,49 @@ mod offset_order_tests {
     }
 }
 
+/// Moves `data`'s inline values into an arena range of `shape`, `length` values long, with
+/// `value` at `slot`: the store its payload word cannot hold (`Object::store_inline_narrow`).
+fn widen_inline_storage(
+    data: &mut Object,
+    properties: &mut ValueArena,
+    shape: u32,
+    length: usize,
+    slot: usize,
+    value: Value,
+) {
+    let mut values = data.inline_properties().expect("inline storage");
+    values[slot] = value;
+    let moved = properties.with_values(shape, &values[..length]);
+    let previous = data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+    properties.release(previous);
+}
+
 /// `Heap::property_add` on the owner's storage: writes `value` at `slot`, the owner's
 /// storage length, and moves the owner to `shape`.
 #[inline(always)]
 fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
-    let vector = data.properties();
-    match data.inline_properties().copied() {
-        Some(_) if slot < INLINE_PROPERTY_COUNT => data.set_inline_property(slot, value),
-        Some(inline) => {
-            debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
-            // One arena range sized for the grown shape, not one for the inline values that
-            // the add then outgrows at once.
-            let mut grown = [value; INLINE_PROPERTY_COUNT + 1];
-            grown[..INLINE_PROPERTY_COUNT].copy_from_slice(&inline);
-            let moved = properties.with_values(shape, &grown);
-            data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+    let mut vector = data.properties();
+    if !vector.has_inline_property_storage() {
+        let before = vector.into_parts();
+        properties.push(&mut vector, value);
+        // An append within its range leaves the storage as it was; `set_shape` below
+        // records the grown shape.
+        if vector.into_parts() != before {
+            data.set_properties(vector);
         }
-        None => {
-            let mut vector = vector;
-            let before = vector.into_parts();
-            properties.push(&mut vector, value);
-            // An append within its range leaves the storage as it was; `set_shape` below
-            // records the grown shape.
-            if vector.into_parts() != before {
-                data.set_properties(vector);
-            }
+    } else if slot < INLINE_PROPERTY_COUNT {
+        if !data.store_inline_narrow(slot, value) {
+            widen_inline_storage(data, properties, shape, slot + 1, slot, value);
         }
+    } else {
+        debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
+        // One arena range sized for the grown shape, not one for the inline values that the
+        // add then outgrows at once.
+        let inline = data.inline_properties().expect("inline storage");
+        let mut grown = [value; INLINE_PROPERTY_COUNT + 1];
+        grown[..INLINE_PROPERTY_COUNT].copy_from_slice(&inline);
+        let moved = properties.with_values(shape, &grown);
+        data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
     }
     data.set_shape(shape);
 }

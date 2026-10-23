@@ -1,0 +1,1221 @@
+{
+  "schema": 1,
+  "workload": "react-ssr",
+  "phase": "no-jit",
+  "runs": 11,
+  "qualificationReady": false,
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 5
+  },
+  "rssMeasurement": "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)",
+  "inputs": {
+    "workloadSha256": "ad3efc2b0f5b2e75726da7a16bb3ed2aa8c6e6e01e964cb52647ce9d104d6b54",
+    "packageLockSha256": "2d19fa194ac7bcf3dc26d10ee81512c2fb7840846a964b734f29ea7bc788b986",
+    "quenchBinarySha256": "4eec162cea9770d5a79dcd27bd2ffe7a9716318d445135d8ef7cf8c46c9eb700",
+    "controlQuenchBinary": "../../work/zod-pgo-control",
+    "controlQuenchBinarySha256": "e7189a58461f17530ed203bee92bd3be66968d4b39a82a0c18273dba454113f6",
+    "nodeBinary": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "bunBinary": "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun"
+  },
+  "nodeVersion": "v24.19.0",
+  "bunVersion": "1.4.4",
+  "summary": {
+    "quench-interpreter": {
+      "medianOperationsPerSecond": 780.64012490242,
+      "medianElapsedMs": 1281,
+      "medianMaximumRssBytes": 38854656
+    },
+    "quench-control": {
+      "medianOperationsPerSecond": 652.7415143603133,
+      "medianElapsedMs": 1532,
+      "medianMaximumRssBytes": 46612480
+    },
+    "node-jitless": {
+      "medianOperationsPerSecond": 1960.7843137254902,
+      "medianElapsedMs": 510,
+      "medianMaximumRssBytes": 35598336
+    },
+    "bun-no-jit": {
+      "medianOperationsPerSecond": 1883.2391713747645,
+      "medianElapsedMs": 531,
+      "medianMaximumRssBytes": 34226176
+    }
+  },
+  "output": {
+    "workload": "react-ssr",
+    "package": "react@19.3.1 + react-dom@19.3.1",
+    "warmups": 100,
+    "bytes": 4996000,
+    "checksum": 83793
+  },
+  "samples": [
+    {
+      "engine": "quench-interpreter",
+      "round": 1,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1335,
+        "operationsPerSecond": 749.0636704119851
+      },
+      "maxRssBytes": 32772096,
+      "wallTimeMs": 1650.481907,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 1,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1461,
+        "operationsPerSecond": 684.4626967830253
+      },
+      "maxRssBytes": 35823616,
+      "wallTimeMs": 1754.834627,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 1,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 520,
+        "operationsPerSecond": 1923.076923076923
+      },
+      "maxRssBytes": 35598336,
+      "wallTimeMs": 637.834407,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 526,
+        "operationsPerSecond": 1901.1406844106464
+      },
+      "maxRssBytes": 39518208,
+      "wallTimeMs": 627.049112,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 2,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1556,
+        "operationsPerSecond": 642.6735218508998
+      },
+      "maxRssBytes": 46764032,
+      "wallTimeMs": 1755.754856,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 2,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 479,
+        "operationsPerSecond": 2087.6826722338205
+      },
+      "maxRssBytes": 35581952,
+      "wallTimeMs": 586.04509,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 496,
+        "operationsPerSecond": 2016.1290322580646
+      },
+      "maxRssBytes": 34193408,
+      "wallTimeMs": 581.010962,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 2,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1133,
+        "operationsPerSecond": 882.61253309797
+      },
+      "maxRssBytes": 38854656,
+      "wallTimeMs": 1287.595893,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 3,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 483,
+        "operationsPerSecond": 2070.3933747412007
+      },
+      "maxRssBytes": 35610624,
+      "wallTimeMs": 605.345041,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 567,
+        "operationsPerSecond": 1763.668430335097
+      },
+      "maxRssBytes": 34148352,
+      "wallTimeMs": 662.071252,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 3,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1335,
+        "operationsPerSecond": 749.0636704119851
+      },
+      "maxRssBytes": 38973440,
+      "wallTimeMs": 1511.166977,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 3,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1522,
+        "operationsPerSecond": 657.030223390276
+      },
+      "maxRssBytes": 46612480,
+      "wallTimeMs": 1724.767683,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 557,
+        "operationsPerSecond": 1795.3321364452424
+      },
+      "maxRssBytes": 34242560,
+      "wallTimeMs": 641.809259,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 4,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1281,
+        "operationsPerSecond": 780.64012490242
+      },
+      "maxRssBytes": 38850560,
+      "wallTimeMs": 1441.388144,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 4,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1532,
+        "operationsPerSecond": 652.7415143603133
+      },
+      "maxRssBytes": 46612480,
+      "wallTimeMs": 1756.856059,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 4,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 516,
+        "operationsPerSecond": 1937.984496124031
+      },
+      "maxRssBytes": 35610624,
+      "wallTimeMs": 641.515538,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 5,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1261,
+        "operationsPerSecond": 793.0214115781126
+      },
+      "maxRssBytes": 38854656,
+      "wallTimeMs": 1440.438849,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 5,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1571,
+        "operationsPerSecond": 636.5372374283895
+      },
+      "maxRssBytes": 46612480,
+      "wallTimeMs": 1798.172864,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 5,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 505,
+        "operationsPerSecond": 1980.1980198019803
+      },
+      "maxRssBytes": 35602432,
+      "wallTimeMs": 623.687417,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 534,
+        "operationsPerSecond": 1872.6591760299625
+      },
+      "maxRssBytes": 34156544,
+      "wallTimeMs": 617.645027,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 6,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1559,
+        "operationsPerSecond": 641.4368184733804
+      },
+      "maxRssBytes": 46616576,
+      "wallTimeMs": 1764.987037,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 6,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 499,
+        "operationsPerSecond": 2004.0080160320642
+      },
+      "maxRssBytes": 35565568,
+      "wallTimeMs": 619.741434,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 6,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 597,
+        "operationsPerSecond": 1675.0418760469013
+      },
+      "maxRssBytes": 34226176,
+      "wallTimeMs": 681.003861,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 6,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1449,
+        "operationsPerSecond": 690.1311249137336
+      },
+      "maxRssBytes": 38969344,
+      "wallTimeMs": 1655.709766,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 7,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 517,
+        "operationsPerSecond": 1934.2359767891683
+      },
+      "maxRssBytes": 35602432,
+      "wallTimeMs": 633.881387,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 7,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 530,
+        "operationsPerSecond": 1886.7924528301887
+      },
+      "maxRssBytes": 34226176,
+      "wallTimeMs": 613.908394,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 7,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1305,
+        "operationsPerSecond": 766.2835249042146
+      },
+      "maxRssBytes": 38854656,
+      "wallTimeMs": 1477.550353,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 7,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1515,
+        "operationsPerSecond": 660.0660066006601
+      },
+      "maxRssBytes": 46616576,
+      "wallTimeMs": 1721.427985,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 8,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 544,
+        "operationsPerSecond": 1838.235294117647
+      },
+      "maxRssBytes": 34168832,
+      "wallTimeMs": 626.444784,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 8,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1239,
+        "operationsPerSecond": 807.1025020177563
+      },
+      "maxRssBytes": 38854656,
+      "wallTimeMs": 1419.704317,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 8,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1703,
+        "operationsPerSecond": 587.1990604815032
+      },
+      "maxRssBytes": 46616576,
+      "wallTimeMs": 1946.728017,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 8,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 510,
+        "operationsPerSecond": 1960.7843137254902
+      },
+      "maxRssBytes": 35540992,
+      "wallTimeMs": 623.159277,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 9,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1232,
+        "operationsPerSecond": 811.6883116883117
+      },
+      "maxRssBytes": 38854656,
+      "wallTimeMs": 1412.227987,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 9,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1503,
+        "operationsPerSecond": 665.335994677312
+      },
+      "maxRssBytes": 46616576,
+      "wallTimeMs": 1738.51202,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 9,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 519,
+        "operationsPerSecond": 1926.7822736030828
+      },
+      "maxRssBytes": 35590144,
+      "wallTimeMs": 633.340866,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 9,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 524,
+        "operationsPerSecond": 1908.3969465648854
+      },
+      "maxRssBytes": 34222080,
+      "wallTimeMs": 602.479112,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 10,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1464,
+        "operationsPerSecond": 683.0601092896175
+      },
+      "maxRssBytes": 46612480,
+      "wallTimeMs": 1664.221,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 10,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 489,
+        "operationsPerSecond": 2044.9897750511248
+      },
+      "maxRssBytes": 35610624,
+      "wallTimeMs": 595.640227,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 10,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 530,
+        "operationsPerSecond": 1886.7924528301887
+      },
+      "maxRssBytes": 34258944,
+      "wallTimeMs": 613.937895,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 10,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1294,
+        "operationsPerSecond": 772.7975270479135
+      },
+      "maxRssBytes": 38850560,
+      "wallTimeMs": 1493.270453,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 11,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 546,
+        "operationsPerSecond": 1831.5018315018315
+      },
+      "maxRssBytes": 35569664,
+      "wallTimeMs": 664.923742,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 11,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 531,
+        "operationsPerSecond": 1883.2391713747645
+      },
+      "maxRssBytes": 34267136,
+      "wallTimeMs": 616.046376,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 11,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1204,
+        "operationsPerSecond": 830.5647840531561
+      },
+      "maxRssBytes": 38854656,
+      "wallTimeMs": 1369.3064,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 11,
+      "measurement": {
+        "workload": "react-ssr",
+        "package": "react@19.3.1 + react-dom@19.3.1",
+        "rounds": 1000,
+        "warmups": 100,
+        "bytes": 4996000,
+        "checksum": 83793,
+        "elapsedMs": 1577,
+        "operationsPerSecond": 634.1154090044388
+      },
+      "maxRssBytes": 46612480,
+      "wallTimeMs": 1778.671282,
+      "stderr": "",
+      "command": [
+        "../../work/zod-pgo-control",
+        "/workspace/quench/tests/npm-perf/workloads/react-ssr.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "1000",
+        "QUENCH_BENCH_WARMUPS": "100"
+      }
+    }
+  ]
+}
