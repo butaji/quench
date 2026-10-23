@@ -301,16 +301,26 @@ pub(crate) fn preload(
     Ok(())
 }
 
+/// The entry a process restores a snapshot for: a file, or the inline source of `-e`/`-p`.
+pub(crate) enum SnapshotEntry<'a> {
+    File(&'a std::path::Path),
+    Inline(&'a str),
+}
+
 /// Where a process with these inputs finds its snapshot, when it may use one: the main
-/// thread of a file entry run without options, under an environment that changes nothing
-/// the bootstrap reads.
+/// thread of a file or inline entry run without options beyond the inline source's own
+/// (`shared_run::names_only_inline_source`), which only the part after the snapshot point
+/// reads (`commonjs::finish_initialize` installs the eval globals, `refresh_identity` the
+/// argv), under an environment that changes nothing the bootstrap reads. An inline entry had
+/// booted in full: 27 ms for `-e 'console.log(42)'` against 5.5 ms for the same file, which
+/// every child process the execa and tinyexec npm scenarios spawn paid.
 pub(crate) fn snapshot_path(
     host: &crate::host::NodeHost,
-    entry: Option<&std::path::Path>,
+    entry: Option<SnapshotEntry<'_>>,
     worker: bool,
 ) -> Option<std::path::PathBuf> {
     let entry = entry?;
-    if worker || host.eval_builtin_globals || !host.shared_state.borrow().exec_argv.is_empty() {
+    if worker || !crate::shared_run::names_only_inline_source(&host.shared_state.borrow().exec_argv) {
         return None;
     }
     if REFUSED_VARIABLES.iter().any(|name| std::env::var_os(name).is_some())
@@ -330,7 +340,10 @@ pub(crate) fn snapshot_path(
     for name in KEYED_VARIABLES {
         std::hash::Hash::hash(&std::env::var_os(name), &mut hasher);
     }
-    let kind = entry_graph::snapshot_kind(entry);
+    let kind = match entry {
+        SnapshotEntry::File(path) => entry_graph::snapshot_kind(path),
+        SnapshotEntry::Inline(source) => entry_graph::inline_snapshot_kind(source),
+    };
     Some(directory.join(format!(
         "{:016x}.{}.{SNAPSHOT_EXTENSION}",
         std::hash::Hasher::finish(&hasher),
