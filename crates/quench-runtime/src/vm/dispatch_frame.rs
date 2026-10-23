@@ -1444,6 +1444,10 @@ impl<H: Host> Vm<H> {
                         // (`SHARED_UNCACHED_SITE`) from a polymorphic one.
                         let store = matches!(instruction.op(), Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField)
                             .then(|| format!(" site={} field={}", instruction.c(), &p.atoms[instruction.imm() as usize]))
+                            .or_else(|| {
+                                matches!(instruction.op(), Op::LoadName | Op::LoadNameCall)
+                                    .then(|| format!(" name={}", &p.atoms[instruction.imm() as usize]))
+                            })
                             .unwrap_or_default();
                         super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}{store}", instruction.op(), Self::lane_runs(cursor.lane, pc)));
                     }

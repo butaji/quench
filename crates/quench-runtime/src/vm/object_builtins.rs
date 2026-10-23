@@ -118,13 +118,13 @@ impl<H: Host> Vm<H> {
         let native_for_in_keys = self.native_value(Native::ForInKeys);
         self.global(
             program,
-            "\0quench:for-in-keys",
+            crate::bytecode::FOR_IN_KEYS_BINDING,
             native_for_in_keys,
         )?;
         let native_for_in_key_is_enumerable = self.native_value(Native::ForInKeyIsEnumerable);
         self.global(
             program,
-            "\0quench:for-in-key-is-enumerable",
+            crate::bytecode::FOR_IN_KEY_IS_ENUMERABLE_BINDING,
             native_for_in_key_is_enumerable,
         )?;
         let proxy = self.native_value(Native::Proxy);
