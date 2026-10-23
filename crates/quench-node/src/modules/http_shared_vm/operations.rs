@@ -447,11 +447,9 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let incoming_destroy = context.host_function_named_with_data(
         crate::host::shared_vm::operation("httpIncomingDestroy"), "_destroy", exchange_keys,
     )?;
-    let incoming_data = context.array_rooted(&[
-        incoming_constructor, emitter, incoming_read, incoming_destroy, server_exchange, client_exchange,
-    ])?;
-    let incoming_factory = context.host_function_with_data(
-        crate::host::shared_vm::operation("httpIncomingCreate"), incoming_data,
+    let incoming_factory = super::incoming::create_function(
+        context,
+        [incoming_constructor, emitter, incoming_read, incoming_destroy, server_exchange, client_exchange],
     )?;
     let incoming_factory = context.retain(incoming_factory)?;
 
