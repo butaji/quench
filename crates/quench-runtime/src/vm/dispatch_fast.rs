@@ -11265,6 +11265,43 @@ lane_handler! {
     }
 }
 
+/// `lane_complete_activation`'s commonest completion: a JavaScript activation of the
+/// running program whose call keeps its result (`Completion::Plain`, a result register).
+/// It restores what that completion restores, without moving the activation out of the
+/// stack: the caller's registers, records, receiver and environments, and the call's
+/// result. `None` leaves every other completion to `lane_complete_activation`.
+#[inline(always)]
+fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
+    let vm = unsafe { vm(cx) };
+    let stack = &mut vm.lane_stack;
+    let top = stack.activations.last()?;
+    let ActivationKind::Script(script) = &top.kind else {
+        return None;
+    };
+    // SAFETY: the call record belongs to the caller's live view.
+    let destination = unsafe { (*top.call).a };
+    if script.completion != Completion::Plain || destination & crate::bytecode::RETURN_REGISTER != 0 {
+        return None;
+    }
+    let (call, caller_registers, caller_base, window) = (top.call, top.caller_registers, top.caller_base, top.window);
+    let (this, env, capture) = (script.caller_this, script.caller_env, script.caller_capture);
+    // SAFETY: a script activation holds no drop glue and no Wasm storage
+    // (`Activation::frame_storage_bytes`); its window starts within the values.
+    unsafe {
+        let len = stack.activations.len();
+        stack.activations.set_len(len - 1);
+        stack.values.set_len(window);
+        (*cx).registers = caller_registers;
+        (*cx).base = caller_base;
+        (*cx).memory = MemoryView::script(cx);
+        (*cx).this = this;
+        (*cx).env = env;
+        (*cx).capture = capture;
+    }
+    caller_registers.set(destination, value);
+    Some((caller_registers, following(call)))
+}
+
 /// Whether a call record that returns its callee's completion runs in the lane: from an
 /// activation, which completes in turn, or from the frame, which the general loop then
 /// completes with the value (`lane_frame_return`). A host permitting proper tail calls sends
@@ -11296,6 +11333,14 @@ fn lane_frame_return<H: Host>(vm: &mut Vm<H>, call: Ip, value: Value) -> Ip {
 /// runs: the running function is a VM frame.
 #[inline(always)]
 fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Value) -> Option<Resumed> {
+    if let Some((registers, next)) = lane_return_plain(cx, value) {
+        let view = Carried {
+            memory: MemoryView::script(cx),
+            integers: crate::value::IntegerEncoding::TAG,
+            acc: Slot::of(Value::UNDEFINED),
+        };
+        return Some(Resumed::At(registers, next, view));
+    }
     let vm = unsafe { vm(cx) };
     let mut activation = vm.lane_stack.pop_activation()?;
     loop {
