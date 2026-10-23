@@ -2030,6 +2030,18 @@ impl Function {
         self.call_plan(program).plain
     }
 
+    /// Whether every parameter slot is named by its binding rather than a hidden parameter
+    /// name, as a list that binds directly names them (`FunctionCompiler::binds_parameters_directly`):
+    /// a rest list of identifiers then fills its last slot with the rest array and binds
+    /// nothing else.
+    /// `name` spells an atom of the function's table (the program's, or the compiler's while
+    /// it lays the function out).
+    pub(crate) fn parameters_bind_directly<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
+        self.local_atoms[..usize::from(self.params).min(self.local_atoms.len())]
+            .iter()
+            .all(|atom| usize::try_from(*atom).ok().and_then(&name).is_some_and(|name| !name.starts_with('\0')))
+    }
+
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
     pub(crate) fn suspends(&self) -> bool {
         self.instructions()
@@ -2095,8 +2107,10 @@ impl Function {
                 && self.parent.is_some()
                 && !self.is_arrow
                 && !self.is_class_constructor
-                && !self.rest
-                && self.simple_parameters
+                // A rest list binding directly fills its slot with the gathered array
+                // (`lane_activate_environment`).
+                && (self.simple_parameters
+                    || self.rest && self.parameters_bind_directly(|atom| (atom < atoms.len()).then(|| &atoms[atom])))
                 && self.self_binding_slot.is_none()
                 && !self.inherited_with_scope
                 && self.local_registers.is_empty()
