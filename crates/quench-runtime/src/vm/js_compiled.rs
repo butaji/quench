@@ -20,6 +20,10 @@ pub(super) struct JsJitArtifact {
     pub(super) code: Vec<u8>,
     /// The number of formal parameters read from the argument array.
     pub(super) params: usize,
+    /// Entry guards require every formal argument to be a signed Int32.
+    /// Direct compiled calls must apply this same predicate before using the
+    /// artifact's checked conversion instructions.
+    pub(super) requires_signed_int32_arguments: bool,
     /// Numeric results retain the original ABI; string results return the selected Return PC.
     pub(super) result: JsJitResultKind,
     /// A cached data property on parameter zero supplies the native numeric input.
@@ -454,6 +458,7 @@ fn compile_int32_identity(function_id: u32, return_pc: u32) -> Option<JsJitArtif
     Some(JsJitArtifact {
         code,
         params: 1,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::Int32Identity(return_pc),
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -682,6 +687,7 @@ fn compile_capture_number(
     Some(JsJitArtifact {
         code,
         params: 0,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::CaptureNumber(capture),
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -1659,6 +1665,7 @@ fn compile_string_hash_loop(
     Some(JsJitArtifact {
         code,
         params: 1,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::StringHashLoop,
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -1772,6 +1779,7 @@ fn compile_string_transform(
     Some(JsJitArtifact {
         code,
         params: 1,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::StringTransform(transform),
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -2589,6 +2597,7 @@ fn compile_number_domain_boolean_tree(
     Some(JsJitArtifact {
         code,
         params,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::Boolean,
         field_argument,
         numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.into_vec()),
@@ -3254,40 +3263,16 @@ fn compile_numeric_loop(
                         Some((NumericFlowKind::Number, result))
                     }
                     (Op::Binary, value)
-                        if value == BinaryOperator::BitwiseOR as u32
-                            || value == BinaryOperator::BitwiseXOR as u32
-                            || value == BinaryOperator::BitwiseAnd as u32
-                            || value == BinaryOperator::ShiftLeft as u32
-                            || value == BinaryOperator::ShiftRight as u32
-                            || value == BinaryOperator::ShiftRightZeroFill as u32 =>
+                        if super::operations::NumberBitwise::from_operator(value).is_some() =>
                     {
                         let left = numeric_to_i32(&mut builder, left);
                         let right = numeric_to_i32(&mut builder, right);
-                        let shift = builder.ins().band_imm_u(right, 31);
-                        let integer = match value {
-                            value if value == BinaryOperator::BitwiseOR as u32 => {
-                                builder.ins().bor(left, right)
-                            }
-                            value if value == BinaryOperator::BitwiseXOR as u32 => {
-                                builder.ins().bxor(left, right)
-                            }
-                            value if value == BinaryOperator::BitwiseAnd as u32 => {
-                                builder.ins().band(left, right)
-                            }
-                            value if value == BinaryOperator::ShiftLeft as u32 => {
-                                builder.ins().ishl(left, shift)
-                            }
-                            value if value == BinaryOperator::ShiftRight as u32 => {
-                                builder.ins().sshr(left, shift)
-                            }
-                            _ => builder.ins().ushr(left, shift),
-                        };
-                        let result = if value == BinaryOperator::ShiftRightZeroFill as u32 {
-                            let unsigned = builder.ins().uextend(types::I64, integer);
-                            builder.ins().fcvt_from_uint(types::F64, unsigned)
-                        } else {
-                            builder.ins().fcvt_from_sint(types::F64, integer)
-                        };
+                        let result = super::compiled::emit_number_bitwise_i32(
+                            &mut builder,
+                            value,
+                            left,
+                            right,
+                        )?;
                         Some((NumericFlowKind::Number, result))
                     }
                     (Op::NumericAdd, value)
@@ -3484,6 +3469,7 @@ fn compile_numeric_loop(
     Some(JsJitArtifact {
         code,
         params,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::NumberInterruptible,
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -3860,6 +3846,7 @@ fn compile_string_branches(
     Some(JsJitArtifact {
         code,
         params,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::StringReturnPc(return_sites),
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -4192,6 +4179,7 @@ fn compile_field_reject(
     Some(JsJitArtifact {
         code,
         params: 1,
+        requires_signed_int32_arguments: false,
         result: JsJitResultKind::FieldReject {
             resume_pc,
             resume_register,
