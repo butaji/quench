@@ -71,13 +71,13 @@ impl<H: Host> Vm<H> {
                     frame: Some(mut frame),
                 } => {
                     vm.release_dead_registers(&mut frame);
-                    let continuation = Continuation::from_frame(
-                        &mut frame,
+                    let continuation = Continuation::suspend(
+                        frame,
                         Completion::Await(value),
                         Some(destination),
                         promise,
                     );
-                    vm.enqueue_async_resume(p, continuation, promise, None, value, false)?;
+                    vm.enqueue_async_resume(p, Some(continuation), promise, None, value, false)?;
                 }
                 super::FrameOutcome::Await { frame: None, .. } => {
                     return Err(JsError("async frame lost at suspension".into()));
@@ -165,17 +165,20 @@ impl<H: Host> Vm<H> {
 
     /// Suspends `continuation` on `source`: one `AwaitState` cell holds it and is both
     /// handlers of the await's reaction, so it lives exactly as long as that reaction.
+    /// Awaits `source` for a suspended activation: `continuation`, or none for an async
+    /// generator's `yield`, whose continuation stays in its generator's record
+    /// (`async_generator_yield`).
     pub(super) fn enqueue_async_resume(
         &mut self,
         p: &ResidualProgram,
-        continuation: Continuation,
+        continuation: Option<Continuation>,
         promise: Value,
         generator: Option<Value>,
         source: Value,
         yielded: bool,
     ) -> Result<(), JsError> {
         let state = self.heap.alloc_await_state(AwaitState {
-            continuation: Some(Box::new(continuation)),
+            continuation: continuation.map(Box::new),
             realm: self.realm.globals,
             promise,
             generator,
@@ -290,6 +293,22 @@ impl<H: Host> Vm<H> {
         continuation: Option<Continuation>,
         value: Value,
     ) -> Result<(), JsError> {
+        // A yield's await leaves its continuation in the generator's record: a fulfilled
+        // value completes the request and the generator stays suspended there; a rejected
+        // one resumes it at the yield with the rejection.
+        let continuation = match (continuation, resume.generator) {
+            (None, Some(generator)) if resume.yielded => {
+                if !resume.rejected {
+                    if let Some(record) = self.generator_record_mut(generator) {
+                        record.running = false;
+                    }
+                    let result = self.iterator_result(value, false)?;
+                    return self.promise_resolve_value(p, resume.promise, result);
+                }
+                self.generator_record_mut(generator).and_then(|record| record.continuation.take())
+            }
+            (continuation, _) => continuation,
+        };
         let Some(continuation) = continuation else {
             if let Some(generator) = resume.generator {
                 self.fail_async_generator(
@@ -302,10 +321,10 @@ impl<H: Host> Vm<H> {
             }
             return Err(JsError("stale async continuation".into()));
         };
-        let Some(program) = self.programs.get(continuation.program) else {
+        let Some(program) = self.programs.get(continuation.frame.program) else {
             return Err(JsError("async continuation program is unavailable".into()));
         };
-        let active_program = self.replace_active_program(continuation.program);
+        let active_program = self.replace_active_program(continuation.frame.program);
         let result =
             self.resume_async_continuation_in_program(&program, resume, continuation, value);
         self.set_active_program(active_program);
@@ -319,25 +338,14 @@ impl<H: Host> Vm<H> {
         continuation: Continuation,
         value: Value,
     ) -> Result<(), JsError> {
-        if resume.yielded && !resume.rejected {
-            if let Some(generator) = resume.generator
-                && let Some(record) = self.generator_record_mut(generator)
-            {
-                record.running = false;
-            }
-            let result = self.iterator_result(value, false)?;
-            self.promise_resolve_value(p, resume.promise, result)?;
-            return Ok(());
-        }
         if resume.yielded
             && let Some(generator) = resume.generator
             && let Some(record) = self.generator_record_mut(generator)
         {
-            record.continuation = None;
             record.running = true;
         }
         let resume_register = continuation.resume_register;
-        let mut frame = continuation.into_frame(self.with_stack.len());
+        let mut frame = continuation.resume(self.with_stack.len());
         if !resume.rejected
             && let Some(register) = resume_register
         {
@@ -347,7 +355,6 @@ impl<H: Host> Vm<H> {
             frame.registers[register as usize] = value;
         }
         self.activate_frame(&mut frame);
-        let frame = self.adopt_frame(frame);
         self.frames.push(frame);
         let initial_error = resume
             .rejected
@@ -386,15 +393,15 @@ impl<H: Host> Vm<H> {
                 frame: None,
             } => {
                 self.release_dead_registers(&mut frame);
-                let continuation = Continuation::from_frame(
-                    &mut frame,
+                let continuation = Continuation::suspend(
+                    frame,
                     Completion::Await(value),
                     Some(destination),
                     resume.promise,
                 );
                 self.enqueue_async_resume(
                     p,
-                    continuation,
+                    Some(continuation),
                     resume.promise,
                     resume.generator,
                     value,
@@ -448,7 +455,7 @@ impl<H: Host> Vm<H> {
                         p,
                         generator,
                         resume.promise,
-                        *frame,
+                        frame,
                         value,
                         destination,
                         delegated_result.is_some(),
