@@ -69,10 +69,70 @@ pub fn release_read_only_pages_after_load() {
     }
 }
 
+/// Whether a release point returns resident pages now: once the process's memory policy is
+/// selected, when its `MemoryPolicy::resident_release_interval` has passed since the last
+/// return. The pace starts at the first release point after the selection.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn release_due(policy: quench_runtime::MemoryPolicy) -> bool {
+    let interval = policy.resident_release_interval();
+    let Ok(mut last) = LAST_RELEASE.lock() else {
+        return false;
+    };
+    match *last {
+        Some(at) => at.elapsed() >= interval,
+        None => {
+            *last = Some(std::time::Instant::now());
+            interval.is_zero()
+        }
+    }
+}
+
+/// `release_due` under the process's memory policy, if one is selected.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn process_release_due() -> bool {
+    crate::shared_run::process_memory_policy().is_some_and(release_due)
+}
+
+/// Unmaps the read-only pages above from the resident set when a release is due
+/// (`process_release_due`); the next touch of each refaults it from its file.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_read_only_pages() {
+    if process_release_due() {
+        discard_read_only_pages();
+    }
+}
+
+/// A collection boundary's release under the runtime's `policy`: the read-only pages and the
+/// allocator's free pages, which the collection's sweep just freed, when a release is due
+/// (`release_due`). Every policy counts the collection for the release before output.
+pub fn release_at_collection(policy: quench_runtime::MemoryPolicy) {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    if release_due(policy) {
+        discard_read_only_pages();
+        release_free_heap_pages();
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    let _ = policy;
+    note_collection();
+}
+
+/// Releases the read-only pages around a native compilation under every policy: the code
+/// generator's pages are not the run's, which it does not touch again, so the release
+/// refaults none of the run's code, and a native compilation is a short numeric program's
+/// peak (V8-v7 `--jit` max RSS, TOD-185: Crypto 11.6-13.2 -> 9.2-9.7 MB, NavierStokes
+/// 11.1 -> 9.1).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_at_native_compilation() {
+    discard_read_only_pages();
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_at_native_compilation() {}
+
 /// Unmaps the read-only pages above from the resident set; the next touch of each refaults it
 /// from its file.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub fn release_read_only_pages() {
+fn discard_read_only_pages() {
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
@@ -307,7 +367,10 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
 /// it can drop or swap.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_code_and_data() {
-    release_read_only_pages();
+    if !process_release_due() {
+        return;
+    }
+    discard_read_only_pages();
     for (start, end) in loaded_segments(ReleasedSegment::LibraryData) {
         // SAFETY: paging out never changes a mapping's contents.
         unsafe {
@@ -355,10 +418,9 @@ impl CompileRelease {
 impl CompileRelease {
     /// How far apart this release's runs are kept.
     fn interval(self) -> std::time::Duration {
-        let returns_pages = crate::shared_run::process_memory_policy()
-            .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
+        let memory_first = crate::shared_run::process_memory_policy() == Some(quench_runtime::MemoryPolicy::MemoryFirst);
         match self {
-            Self::FirstCall if returns_pages => MEMORY_FIRST_FIRST_CALL_INTERVAL,
+            Self::FirstCall if memory_first => MEMORY_FIRST_FIRST_CALL_INTERVAL,
             Self::FirstCall | Self::CodeGeneration => LOAD_RELEASE_INTERVAL,
         }
     }
@@ -483,7 +545,7 @@ static COLLECTIONS_AT_OUTPUT_RELEASE: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(u64::MAX);
 
 /// Records a collection boundary, after which the next output releases the read-only pages.
-pub fn note_collection() {
+fn note_collection() {
     COLLECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
