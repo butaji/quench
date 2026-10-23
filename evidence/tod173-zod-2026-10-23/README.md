@@ -262,6 +262,30 @@ shared compiler lane. No package win is claimed.
 Raw reports: `zod-checkpoint-2c880083-no-jit-11.json` and
 `zod-checkpoint-2c880083-jit-11.json`.
 
+## Enlarged in-loop call-target cache (rejected)
+
+The sampled no-JIT lane-exit profile showed 21,571 positive call-target cache
+hits and 9,439 positive resolutions in 500 workload rounds; several hot call
+sites had multiple callees. I increased the direct-mapped cache from 64 to
+256 entries and ran paired production binaries on the same workload, with 11
+interleaved repetitions in each mode. The saved 64-entry production binary
+was the control; both versions produced the expected checksum.
+
+| Mode | Paired throughput ratio (candidate/control) | Faster rounds | Paired RSS ratio |
+| --- | ---: | ---: | ---: |
+| No-JIT | 0.977 | 3 / 11 | 0.947 |
+| JIT | 0.983 | 4 / 11 | 0.933 |
+
+The 256-entry cache reduced sampled RSS by about 5–7% but regressed paired
+throughput in both modes. I reverted the runtime change; this is not a win.
+Candidate binary SHA-256:
+`21f83d61eac4fda7ffb793f18153ed17925d38d9df1e0b1d746995d20347805f`;
+64-entry control SHA-256:
+`c61c923765f490a09208ebc14777bc4af89045c8132a6d8d52497891f22e6be2`.
+
+Raw reports: `zod-callcache-256-production-no-jit-11.json` and
+`zod-callcache-256-production-jit-11.json`.
+
 ## Exact field-path profile and holder-first probe screen
 
 A `profile-lane-exits` build sampled 500 rounds plus 50 warmups. The field
