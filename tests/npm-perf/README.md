@@ -108,8 +108,10 @@ The rows run `quench-node`, Node with `--jitless`, and Bun with
 `process.execArgv` confirms `--jitless`. The runner compares deterministic
 outputs and records guest throughput, elapsed time, maximum RSS, versions,
 commands and input hashes. It sets `NODE_ENV=production` for every engine.
-Linux runs sample the kernel-maintained `/proc/<pid>/status` `VmHWM` every 2 ms
-and are diagnostic only;
+Linux runs sample the live process tree's summed `/proc/<pid>/status` `VmRSS`
+every 50 ms and are diagnostic only. The sample can miss short-lived children
+and counts shared pages once per process; use the platform's maximum-RSS tool
+for qualification;
 macOS qualification reads process maximum RSS from `/usr/bin/time -l`. Set
 `QUENCH_NODE_BIN`, `NODE_BIN` and `BUN_BIN` when the binaries are outside their
 defaults.
