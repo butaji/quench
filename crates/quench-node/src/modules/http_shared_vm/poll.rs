@@ -384,6 +384,7 @@ pub(crate) fn poll(
                                 response_id,
                                 Response {
                                     socket,
+                                    virtual_response: false,
                                     async_id: request_async_id,
                                     headers: if close_after_response {
                                         vec![("Connection".to_owned(), "close".to_owned())]
