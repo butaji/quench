@@ -528,6 +528,9 @@ impl ValueArena {
     }
 
     pub(crate) fn finish_compaction(&mut self, length: usize) {
+        if std::env::var_os("QUENCH_ARENA_TRACE").is_some() {
+            eprintln!("arena-compaction len {} -> {} capacity {} released {}", self.values.len(), length, self.values.capacity(), self.released_values);
+        }
         self.values.truncate(length);
         for bucket in &mut self.free {
             bucket.clear();
@@ -557,6 +560,10 @@ impl ValueArena {
     }
 
     pub(crate) fn stats(&self) -> (usize, usize, usize) {
+        if std::env::var_os("QUENCH_ARENA_TRACE").is_some() {
+            let classes: Vec<String> = self.free.iter().enumerate().filter(|(_, b)| !b.is_empty()).map(|(i, b)| format!("{}x{}", 1usize << i, b.len())).collect();
+            eprintln!("arena-free len {} released {} classes {}", self.values.len(), self.released_values, classes.join(" "));
+        }
         (
             self.values.len(),
             self.values.capacity(),
