@@ -9,7 +9,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub use quench_wasm::{DirectiveResult, WastReport};
+mod legacy_try;
+mod shared_wast;
+pub use shared_wast::EXECUTION_MODE_VARIABLE;
+mod wast_json;
+pub use wast_json::wast_to_json;
+mod wast_protocol;
+mod wast_script;
+pub use wast_script::{run_wast, DirectiveResult, WastReport};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestFailure {
@@ -43,15 +50,11 @@ pub struct TestReport {
 
 pub struct TestSuite {
     root: PathBuf,
-    engine: quench_wasm::Engine,
 }
 
 impl TestSuite {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self {
-            root: root.into(),
-            engine: quench_wasm::Engine::new(),
-        }
+        Self { root: root.into() }
     }
 
     pub fn root(&self) -> &Path {
@@ -87,7 +90,7 @@ impl TestSuite {
             }
         };
         let filename = path.to_string_lossy();
-        self.engine.run_wast(&filename, &source)
+        run_wast(&filename, &source)
     }
 
     pub fn run_all(&self) -> TestReport {

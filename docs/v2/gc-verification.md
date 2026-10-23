@@ -51,7 +51,7 @@ runtime trades memory for speed. A runtime chooses it once, at startup
 |---|---|---|
 | Pacing table | `THROUGHPUT_PACING` | `MEMORY_FIRST_PACING` |
 | Young share of the live set | 1/8 | 1/64 |
-| Young minimum / maximum | 2^16 / 2^17 | 768 / 2^17 |
+| Young minimum / maximum | 2^16 / 2^17 | 2^13 / 2^17 |
 | Full-collection minimum | 2^18 | 384 |
 | Allocation-cap back-off after unproductive fulls | up to 2 doublings | none |
 | Pages returned at collection boundaries | no | read-only and free heap pages |

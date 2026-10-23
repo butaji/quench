@@ -18,11 +18,11 @@ const option = (name, fallback) => {
 const fixture = fixtureArg.endsWith(".js") ? fixtureArg : `${fixtureArg}.js`;
 const quench = path.resolve(
   root,
-  option("--quench", "target/bench-throughput/quench-node"),
+  option("--quench", "target/production/quench-node"),
 );
 const traceQuench = path.resolve(
   root,
-  option("--trace-quench", "target-exec-trace/bench-throughput/quench-node"),
+  option("--trace-quench", "target-exec-trace/production/quench-node"),
 );
 const sampleQuench = path.resolve(root, option("--sample-quench", quench));
 const timeoutMs = Number(option("--timeout-ms", "120000"));

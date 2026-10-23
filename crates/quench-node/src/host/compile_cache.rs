@@ -140,16 +140,9 @@ impl MappedFile {
         use std::os::fd::AsRawFd;
         let file = std::fs::File::open(path).ok()?;
         let length = usize::try_from(file.metadata().ok()?.len()).ok().filter(|length| *length > 0)?;
-        // SAFETY: a fresh read-only private mapping of an open file; the descriptor may close
-        // once the mapping exists.
-        let address = unsafe {
-            libc::mmap(std::ptr::null_mut(), length, libc::PROT_READ, libc::MAP_PRIVATE, file.as_raw_fd(), 0)
-        };
-        if address == libc::MAP_FAILED {
-            return None;
-        }
-        crate::host::resident_pages::track_read_only_mapping(address as usize, length);
-        Some(Self { address: std::ptr::NonNull::new(address.cast())?, length })
+        // The descriptor may close once the mapping exists.
+        let address = crate::host::resident_pages::map_read_only_file(file.as_raw_fd(), length)?;
+        Some(Self { address: std::ptr::NonNull::new(address as *mut u8)?, length })
     }
 }
 

@@ -5407,47 +5407,17 @@ impl<H: Host> Vm<H> {
     /// Whether `promise`'s species steps provably answer the intrinsic `%Promise%`: its
     /// `constructor` reads as plain data (`plain_named_load`) to that constructor — or to
     /// `undefined`, which PromiseSpeciesConstructor answers with the intrinsic — and the
-    /// constructor's own `@@species` is still the intrinsic accessor, whose getter returns
-    /// its receiver. Both reads observe nothing, so a failed proof only leaves the
-    /// observable steps to the general path.
+    /// constructor's own `@@species` is still an intrinsic accessor, whose getter returns
+    /// its receiver (`has_intrinsic_species_getter`). Both reads observe nothing, so a
+    /// failed proof only leaves the observable steps to the general path.
     fn promise_species_intrinsic(&mut self, promise: Value) -> bool {
         let constructor_atom = self.runtime_atoms.constructor;
         let Some(constructor) = self.plain_named_load(promise, constructor_atom) else {
             return false;
         };
-        if constructor.is_undefined() {
-            return true;
-        }
-        if constructor != self.intrinsic_promise_constructor() {
-            return false;
-        }
-        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
-            return false;
-        };
-        let Some(data) = self.object_data(constructor) else {
-            return false;
-        };
-        if data.has_side_descriptors() {
-            return false;
-        }
-        let Some(slot) =
-            self.property_shape_slot(data.shape(), property_key::PropertyKey::symbol(species))
-        else {
-            return false;
-        };
-        let Some(attributes) = self.object_data(constructor).and_then(|data| self.slot_attributes(data, slot)) else {
-            return false;
-        };
-        attributes.accessor
-            && attributes.getter.is_some_and(|getter| {
-                matches!(
-                    self.heap.function(getter),
-                    Some(FunctionRecord {
-                        kind: FunctionKind::Native(Native::PromiseSpeciesGetter),
-                        ..
-                    })
-                )
-            })
+        constructor.is_undefined()
+            || (constructor == self.intrinsic_promise_constructor()
+                && self.has_intrinsic_species_getter(constructor))
     }
 
     pub(super) fn promise_then(

@@ -359,6 +359,8 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
+        // Frameless activations' registers are no roots; their frames are.
+        self.materialize_deferred_lane();
         self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
         if full {
@@ -948,6 +950,7 @@ impl<H: Host> Vm<H> {
         self.shape_constructors.clear();
         self.transitions = transitions;
         self.shape_slot_memo.clear();
+        self.plain_copy_shapes.clear();
         self.function_name_shapes.clear();
         self.shape_attribute_memo.clear();
         self.object_shapes.fill(u32::MAX);

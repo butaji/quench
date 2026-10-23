@@ -18,9 +18,11 @@ pub(super) struct EnumerableKeyMemo {
     entries: RefCell<Box<[Option<(u32, EnumerableSlots)>]>>,
 }
 
+/// Empty until the first record, like `shape_memo::DirectMappedTable`: a program that never
+/// enumerates a shape costs no entries.
 impl Default for EnumerableKeyMemo {
     fn default() -> Self {
-        Self { entries: RefCell::new((0..ENUMERABLE_KEY_MEMO_ENTRIES).map(|_| None).collect()) }
+        Self { entries: RefCell::default() }
     }
 }
 
@@ -30,14 +32,18 @@ impl EnumerableKeyMemo {
     }
 
     pub(super) fn get(&self, shape: u32) -> Option<EnumerableSlots> {
-        match &self.entries.borrow()[Self::index(shape)] {
-            Some((recorded, slots)) if *recorded == shape => Some(slots.clone()),
+        match self.entries.borrow().get(Self::index(shape)) {
+            Some(Some((recorded, slots))) if *recorded == shape => Some(slots.clone()),
             _ => None,
         }
     }
 
     pub(super) fn record(&self, shape: u32, slots: EnumerableSlots) {
-        self.entries.borrow_mut()[Self::index(shape)] = Some((shape, slots));
+        let mut entries = self.entries.borrow_mut();
+        if entries.is_empty() {
+            *entries = (0..ENUMERABLE_KEY_MEMO_ENTRIES).map(|_| None).collect();
+        }
+        entries[Self::index(shape)] = Some((shape, slots));
     }
 
     pub(super) fn clear(&self) {

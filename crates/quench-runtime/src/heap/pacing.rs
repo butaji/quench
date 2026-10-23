@@ -354,7 +354,7 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
 /// table's only criterion), a full collection once the old generation has doubled or one live
 /// set of allocation has passed since the last one, and, when more than half of young
 /// allocations survive, full collections with one live set between them, probing survival
-/// with a minor collection every fourth one. The minimums are the pre-generational 384-cell
+/// with a minor collection every fourth one. The full-collection minimums are the pre-generational 384-cell
 /// headroom. The Score lane's table (eight live sets per young collection, four per full one,
 /// 2^15 and 2^18 minimums) raised npm peak RSS by up to 17 MiB per package (semver 27.6 ->
 /// 45.2, typescript-eslint 188 -> 226).
@@ -395,10 +395,14 @@ const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
 /// more memory.
 const MAXIMUM_YOUNG: usize = 1 << 17;
 
-/// The fewest allocations between young collections under memory-first: twice the headroom,
-/// which kept every scorecard workload's max RSS within 1 MB and 5% (1024 raised koa's by
-/// 1.1 MB; TOD-161).
-const YOUNG_MINIMUM_ALLOCATION: usize = 2 * MEMORY_FIRST_MINIMUM_ALLOCATION;
+/// The fewest allocations between young collections under memory-first. At 768 (twice the
+/// headroom, TOD-161) small heaps collected thousands of times, and collection-time page
+/// release refaulted the run's code after each: V8-v7 Score x0.80 of throughput's, x0.82 with
+/// `--jit`. At 2^13 that is x0.93 and x0.98 with max RSS geomean x0.64 and x0.65 of
+/// throughput's against x0.63 and x0.62 at 768; 2^12 gave x0.89 and x0.94 (TOD-167 sweep,
+/// static + BOLT x86_64, 4 vCPU, 2026-10-22, 5 and 3 runs; releasing pages only near the
+/// peak added nothing at 2^13). 1024 raised koa's max RSS by 1.1 MB under the earlier table.
+const YOUNG_MINIMUM_ALLOCATION: usize = 1 << 13;
 
 /// The fewest allocations between young collections under throughput: above the npm lane's
 /// 2^14 (measured only against memory-first's 768) and below the 2^17 that doubled small-heap
