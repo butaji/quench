@@ -169,3 +169,14 @@ package win. Production screens with the callback-free implementation measured
 10.7x faster on the reliable rows; Bun route and constructor samples were
 under 50 ms. Paired `iteration` RSS is diagnostic, and production RSS is
 sampled Linux data. Reports with `*-noop-*` names retain the runs.
+
+A following production candidate moves plain JSON serialization directly into
+UTF-8 bytes for `Response.json()`, bypassing the intermediate JavaScript string
+and TextEncoder. Undici retains its normal path when serialization needs guest
+code or special-value handling. Five-run paired production results against the
+previous direct-state binary improved constructor throughput by 25.8% no-JIT
+and 23.8% JIT, while sampled RSS fell 2.4% and 4.2%. Next route generation
+improved 5.6% and 1.0%, with RSS down 3.1% and 4.3%. Quench remains slower than
+Node and Bun, and its RSS remains higher than Bun's; these are component gains,
+not package wins. The `*utf8-production-paired-*` reports in
+`evidence/tod173-next-response-2026-10-23/` preserve all four paired runs.
