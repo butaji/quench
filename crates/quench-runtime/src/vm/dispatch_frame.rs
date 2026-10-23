@@ -13,7 +13,16 @@ pub(super) struct GeneralCodeCursor {
     decoded: *const WideInstruction,
     /// The function's lane view, or null where the lane does not run.
     lane: *const dispatch_fast::LaneView,
+    /// The backward jumps the activation took in the general path while it may still gain a
+    /// view (`note_back_edge`); `None` once it cannot.
+    back_edges: Option<u16>,
 }
+
+/// The backward jumps a JavaScript activation takes in the general path before its function's
+/// lane view is derived and the lane runs its loop (`Vm::note_back_edge`). Deriving a view
+/// costs some hundreds of instructions per instruction of the function; a module body that
+/// loops a few times (over its exports, say) ran faster without one.
+const HOT_LOOP_BACK_EDGES: u16 = 16;
 
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
 pub(super) struct PendingGeneralCall {
@@ -72,6 +81,7 @@ impl GeneralCodeCursor {
             wide: function_code.wide.as_ptr(),
             decoded,
             lane: std::ptr::null(),
+            back_edges: None,
         }
     }
 
@@ -106,13 +116,29 @@ impl<H: Host> Vm<H> {
         function: u32,
         lane: bool,
     ) -> GeneralCodeCursor {
+        let admitted = lane && self.lane_admits(program);
+        let view = if admitted { self.entry_lane_view(program_id, function) } else { std::ptr::null() };
         GeneralCodeCursor {
-            lane: if lane && self.lane_admits(program) {
-                self.entry_lane_view(program_id, function)
-            } else {
-                std::ptr::null()
-            },
+            lane: view,
+            // A JavaScript activation deferred its view; a loop that turns hot derives it.
+            back_edges: (admitted && view.is_null() && program.kind != crate::bytecode::ProgramKind::Wasm)
+                .then_some(0),
             ..GeneralCodeCursor::new(program_id, program, function)
+        }
+    }
+
+    /// Counts a backward jump of `cursor`'s activation in the general path; at
+    /// `HOT_LOOP_BACK_EDGES` its function's lane view is derived, which the lane enters at the
+    /// loop's next instruction.
+    #[inline(always)]
+    fn note_back_edge(&self, cursor: &mut GeneralCodeCursor) {
+        let Some(taken) = cursor.back_edges.as_mut() else {
+            return;
+        };
+        *taken += 1;
+        if *taken >= HOT_LOOP_BACK_EDGES {
+            cursor.back_edges = None;
+            cursor.lane = self.hot_loop_lane_view(cursor.program, cursor.function);
         }
     }
 
@@ -202,6 +228,16 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<FrameOutcome, JsError> {
+        #[cfg(feature = "profile-lane-exits")]
+        if let Some(caller) = self.frames.last() {
+            super::lane_exits::call_target(
+                self.active_program.raw(),
+                caller.function,
+                caller.pc as u32,
+                context.callee().unwrap_or(Value::UNDEFINED),
+                id,
+            );
+        }
         self.run_user_frame(p, id, parent, this, args, context, false)
     }
 
@@ -536,12 +572,11 @@ impl<H: Host> Vm<H> {
         frame.env = parent;
         let arrow = function.is_arrow;
         let derived = function.derived_constructor;
+        let captured_this = if arrow { self.captured_lexical_this(parent) } else { None };
         let this = if derived {
             Value::DELETED
-        } else if arrow {
-            self.captured_lexical_this(parent).unwrap_or(this)
         } else {
-            this
+            captured_this.unwrap_or(this)
         };
         frame.this = if derived || arrow {
             this
@@ -572,6 +607,9 @@ impl<H: Host> Vm<H> {
             id == super::ROOT_FUNCTION_ID
                 || function.activation_bindings_observable(&p.atoms, &p.functions),
         );
+        // An arrow whose creator's `this` binding is initialized keeps that receiver: the
+        // binding never changes once initialized (`Vm::lexical_this`).
+        frame.fixed_this |= captured_this.is_some_and(|this| !this.is_deleted());
         frame.prepare_registers_for(function);
         frame.bind_register_parameters(function, args);
         frame.initialize_promoted_registers(function, args);
@@ -623,12 +661,11 @@ impl<H: Host> Vm<H> {
         frame.env = parent;
         let arrow = function.is_arrow;
         let derived = function.derived_constructor;
+        let captured_this = if arrow { self.captured_lexical_this(parent) } else { None };
         let this = if derived {
             Value::DELETED
-        } else if arrow {
-            self.captured_lexical_this(parent).unwrap_or(this)
         } else {
-            this
+            captured_this.unwrap_or(this)
         };
         frame.this = if derived || arrow || function.strict {
             this
@@ -649,6 +686,9 @@ impl<H: Host> Vm<H> {
             id == super::ROOT_FUNCTION_ID
                 || function.activation_bindings_observable(&p.atoms, &p.functions),
         );
+        // An arrow whose creator's `this` binding is initialized keeps that receiver: the
+        // binding never changes once initialized (`Vm::lexical_this`).
+        frame.fixed_this |= captured_this.is_some_and(|this| !this.is_deleted());
         frame.prepare_registers_for(function);
         frame.bind_register_parameters(function, args);
         frame.initialize_promoted_registers(function, args);
@@ -790,7 +830,7 @@ impl<H: Host> Vm<H> {
         self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                Rc::new(rest.to_vec()),
+                rest.to_vec(),
             ),
         })
     }
@@ -808,11 +848,11 @@ impl<H: Host> Vm<H> {
         let arguments = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.object_proto),
-                Rc::new(args.to_vec()),
+                args.to_vec(),
             ),
         });
         self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
-        if mapped {
+        if function.arguments_alias_parameters() {
             let mapping = (0..function.params.min(args.len() as u16)).collect();
             if let Some(object) = self.object_data_mut(arguments) {
                 object.set_arguments_map(mapping);
@@ -1396,7 +1436,7 @@ impl<H: Host> Vm<H> {
                         let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
                         super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
                     }
-                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName | Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField | Op::LoadNameCall | Op::PrivateIn) {
+                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName | Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField | Op::LoadNameCall | Op::PrivateIn | Op::Binary | Op::JumpBinaryFalse) {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
@@ -1410,6 +1450,23 @@ impl<H: Host> Vm<H> {
                             })
                             .unwrap_or_default();
                         super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}{store}", instruction.op(), Self::lane_runs(cursor.lane, pc)));
+                    }
+                    // A `Return` exit of the loop's own entry frame: which native's call into
+                    // JavaScript started this nested run.
+                    if instruction.op() == Op::Return && pending_calls.is_empty() {
+                        let starter = self.realm.promise.active_native.last().map(|activation| activation.callable);
+                        let described = match starter.and_then(|callable| self.heap.function(callable)) {
+                            Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native), .. }) => {
+                                let name = starter
+                                    .and_then(|callable| self.own_property(callable, self.runtime_atoms.name))
+                                    .and_then(|name| self.heap.string(name).map(|text| text.to_string()))
+                                    .unwrap_or_default();
+                                format!("{native:?} {name}")
+                            }
+                            Some(crate::heap::FunctionRecord { kind: FunctionKind::User(..), .. }) => "user".into(),
+                            None => "none".into(),
+                        };
+                        super::lane_exits::record_detail(format!("Return nested run started by {described}"));
                     }
                     if instruction.op() == Op::GetField
                         && let Some(lookup) = instruction.field_lookup()
@@ -1552,6 +1609,13 @@ impl<H: Host> Vm<H> {
                 instruction_pc,
             );
             let ins = cursor.instruction(pc);
+            if self.programs.js_jit_diagnostics_enabled() {
+                self.programs.record_js_jit_general_dispatch_opcode(
+                    cursor.program,
+                    cursor.function,
+                    ins.op(),
+                );
+            }
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::count_general(
                 || {
@@ -1633,6 +1697,9 @@ impl<H: Host> Vm<H> {
                         .branch_value(value.profile_kind() as usize, truthy);
                     if truthy == (ins.op() == Op::JumpTrue) {
                         pc = ins.jump_target() as usize;
+                        if pc <= instruction_pc {
+                            self.note_back_edge(&mut cursor);
+                        }
                     }
                     continue;
                 }
@@ -1653,6 +1720,9 @@ impl<H: Host> Vm<H> {
                         );
                         if !truthy {
                             pc = ins.jump_target() as usize;
+                            if pc <= instruction_pc {
+                                self.note_back_edge(&mut cursor);
+                            }
                         }
                         continue;
                     }
@@ -1742,6 +1812,8 @@ impl<H: Host> Vm<H> {
                         }) = ins.field_lookup()
                         && let Some(object) = match base.register_index() {
                             Some(register) => Some(self.read(frame, register)),
+                            // A local base (`FieldBase::local`) is the general path's read.
+                            None if base.local_index().is_some() => None,
                             None => self.frames[frame]
                                 .fixed_this
                                 .then(|| self.frames[frame].this),
@@ -1806,6 +1878,9 @@ impl<H: Host> Vm<H> {
                 // A back edge collects only once the allocation threshold is reached.
                 Op::Jump if !self.heap.should_collect() => {
                     pc = ins.jump_target() as usize;
+                    if pc <= instruction_pc {
+                        self.note_back_edge(&mut cursor);
+                    }
                     continue;
                 }
                 _ => {}

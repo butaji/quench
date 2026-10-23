@@ -296,6 +296,13 @@ impl JsError {
     }
 }
 
+/// The Function-constructor programs one VM offers the host's compile cache. Validator and
+/// template compilers create a few large functions with the same text in every run (ajv's npm
+/// scenarios create at most seven), which the cache saves compiling again (schema-utils: -9.5%
+/// instructions); code generated with different text each time would otherwise write an entry
+/// per call. Past the budget, programs still load from the cache but are no longer offered.
+pub(super) const DYNAMIC_FUNCTIONS_KEPT: u16 = 64;
+
 impl<H: Host> Vm<H> {
     pub(super) fn error_is_error(&self, value: Value) -> bool {
         self.heap
@@ -431,7 +438,7 @@ impl<H: Host> Vm<H> {
             Ok(self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
-                    Rc::new(sites),
+                    sites,
                 ),
             }))
         })();
@@ -610,6 +617,7 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        self.materialize_deferred_lane();
         let target = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !self.is_object_like(target) {
             return Err(self.type_error(program, "invalid_argument".into()));
@@ -1261,7 +1269,8 @@ impl<H: Host> Vm<H> {
                 Native::Number => Native::NumberValueOf,
                 _ => unreachable!(),
             };
-            self.set_named(program, prototype, "valueOf", self.native_value(value_of))?;
+            let native_function = self.native_value(value_of);
+            self.set_named(program, prototype, "valueOf", native_function)?;
         }
         self.install_boolean(program)?;
         self.install_bigint(program)?;
@@ -1279,17 +1288,19 @@ impl<H: Host> Vm<H> {
                     let realm = self
                         .own_property(self.realm.globals, realm_atom)
                         .ok_or_else(|| JsError("IsHTMLDDA capability requires $262".into()))?;
+                    let native_is_h_t_m_l_d_d_a = self.native_value(Native::IsHTMLDDA);
                     self.set_named(
                         program,
                         realm,
                         "IsHTMLDDA",
-                        self.native_value(Native::IsHTMLDDA),
+                        native_is_h_t_m_l_d_d_a,
                     )?;
                     continue;
                 }
                 CapabilityId::WriteLine | CapabilityId::ClockMillis => continue,
             };
-            self.global(program, global.name, self.native_value(native))?;
+            let native_function = self.native_value(native);
+            self.global(program, global.name, native_function)?;
         }
         Ok(())
     }
@@ -1348,6 +1359,8 @@ impl<H: Host> Vm<H> {
             .get(WellKnownSymbol::ToStringTag)
             .expect("well-known toStringTag symbol installed before module source intrinsics");
         self.set_symbol_property(prototype, to_string_tag, Value::UNDEFINED)?;
+        let native_abstract_module_source_to_string_tag =
+            self.native_value(Native::AbstractModuleSourceToStringTag);
         self.set_property_attributes(
             prototype,
             PropertyKey::symbol(to_string_tag),
@@ -1356,7 +1369,7 @@ impl<H: Host> Vm<H> {
                 enumerable: false,
                 configurable: true,
                 accessor: true,
-                getter: Some(self.native_value(Native::AbstractModuleSourceToStringTag)),
+                getter: Some(native_abstract_module_source_to_string_tag),
                 setter: None,
             },
         );
@@ -1403,36 +1416,51 @@ impl<H: Host> Vm<H> {
         }
         let source = argument_strings.pop().unwrap_or_default();
         let parameters = argument_strings.join(",");
-        let source_name = format!("<Function:{}>", self.programs.len());
         let kind = match native {
             Native::AsyncFunction => crate::compile::DynamicFunctionKind::Async,
             Native::GeneratorFunction => crate::compile::DynamicFunctionKind::Generator,
             Native::AsyncGeneratorFunction => crate::compile::DynamicFunctionKind::AsyncGenerator,
             _ => crate::compile::DynamicFunctionKind::Ordinary,
         };
-        let residual = crate::Engine::specialize_function_constructor(
-            &parameters,
-            &source,
-            &source_name,
-            &*self,
-            kind,
-        )
-        .map_err(|diagnostics| {
-            if diagnostics
-                .iter()
-                .any(crate::compile::Diagnostic::is_stack_exhausted)
-            {
-                return self.stack_exhaustion_error();
-            }
-            let message = diagnostics
-                .first()
-                .map_or("invalid Function source".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
-            self.syntax_error_result(program, &message)
-                .expect_err("dynamic Function syntax errors must throw")
-        })?;
+        let dynamic = crate::compile::DynamicFunctionSource::new(&parameters, &source, kind);
+        let source_name = crate::compile::DYNAMIC_FUNCTION_SOURCE_NAME;
+        // A Function body compiles from its text alone, so its compiled form goes through the
+        // host's compile cache as a host script's does (`eval_host_script`).
+        let kept_key = [self.specialization_part(), dynamic.text.as_str()];
+        let kept = self.host.kept_compiled_program(source_name, &kept_key).and_then(|bytes| {
+            let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(dynamic.text.as_str()));
+            let specialized = self.specialized;
+            self.decode_cached_program(bytes, text, 0, source_name, specialized).ok()
+        });
+        let compiled = kept.is_none();
+        let residual = match kept {
+            Some(residual) => residual,
+            None => crate::Engine::specialize_function_constructor(&dynamic, source_name, &*self)
+                .map_err(|diagnostics| {
+                    if diagnostics
+                        .iter()
+                        .any(crate::compile::Diagnostic::is_stack_exhausted)
+                    {
+                        return self.stack_exhaustion_error();
+                    }
+                    let message = diagnostics
+                        .first()
+                        .map_or("invalid Function source".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
+                    self.syntax_error_result(program, &message)
+                        .expect_err("dynamic Function syntax errors must throw")
+                })?,
+        };
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(program, "dynamic program store is full".into()));
         };
+        if compiled
+            && self.dynamic_functions_to_keep > 0
+            && let Some(compiled) = self.programs.get(program_id)
+            && let Some(bytes) = self.encode_cached_program(&compiled)
+        {
+            self.host.keep_compiled_program(source_name, &kept_key, &bytes);
+            self.dynamic_functions_to_keep -= 1;
+        }
         let origin = self.capture_eval_origin(program)?;
         self.programs.set_origin(program_id, super::program_store::CompilationOrigin::FunctionConstructor { caller: origin });
         let residual = self
@@ -1691,10 +1719,11 @@ impl<H: Host> Vm<H> {
         let realm_async_generator_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(realm_async_iterator_proto)));
+        let native_iterator_next = self.native_value(Native::IteratorNext);
         self.set_builtin_value_named(
             realm_async_generator_proto,
             "next",
-            self.native_value(Native::IteratorNext),
+            native_iterator_next,
         )?;
         self.realm.intrinsics.iterator_prototypes.insert(
             global,
@@ -1899,7 +1928,7 @@ impl<H: Host> Vm<H> {
         let array_prototype = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(object_prototype),
-                Rc::new(Vec::new()),
+                Vec::new(),
             ),
         });
         self.install_array_for_realm(program, global, array_prototype)?;
@@ -2304,7 +2333,8 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn install_errors(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         for &(name, native) in ERROR_CONSTRUCTORS {
-            self.global(program, name, self.native_value(native))?;
+            let native_function = self.native_value(native);
+            self.global(program, name, native_function)?;
         }
         Ok(())
     }

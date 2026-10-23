@@ -300,6 +300,14 @@ fn rebuild_shape(
 }
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn set_memory_policy(&mut self, policy: crate::MemoryPolicy) {
+        self.heap.set_memory_policy(policy);
+    }
+
+    pub(crate) fn memory_policy(&self) -> crate::MemoryPolicy {
+        self.heap.memory_policy()
+    }
+
     /// Run a named collection safepoint even when the allocation threshold has
     /// not been reached. Hosts and focused conformance tests use this boundary
     /// to validate root ownership and weak/finalization ordering without
@@ -309,7 +317,7 @@ impl<H: Host> Vm<H> {
     }
 
     #[inline(always)]
-    pub(super) fn maybe_collect(&mut self, program: &ResidualProgram) {
+    pub(crate) fn maybe_collect(&mut self, program: &ResidualProgram) {
         if !self.heap.should_collect() {
             return;
         }
@@ -351,10 +359,12 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
+        // Frameless activations' registers are no roots; their frames are.
+        self.materialize_deferred_lane();
         self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
         if full {
-            self.host.at_collection_boundary();
+            self.host.at_collection_boundary(self.memory_policy());
         }
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_FUNCTION_USE").is_some() {
@@ -456,6 +466,7 @@ impl<H: Host> Vm<H> {
             self.async_generator_proto,
             self.async_from_sync_iterator_proto,
             self.regexp_proto,
+            self.reused_iterator_result,
         ]);
         // The active realm's top-level lexical bindings, then every inactive realm's.
         roots.extend(self.realm.global_lexical_bindings.values().copied());
@@ -648,7 +659,7 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
-        roots.extend(self.natives.iter().map(|(_, value)| *value));
+        roots.extend(self.natives.roots());
         roots.extend(self.atom_strings.values().copied());
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
@@ -834,9 +845,12 @@ impl<H: Host> Vm<H> {
         );
         self.descriptors
             .retain(|(object, _), _| self.heap.is_live(*object));
-        let abandoned_job_contexts = self.heap.take_abandoned_job_contexts();
-        for context in abandoned_job_contexts {
+        let abandoned = self.heap.take_abandoned_contexts();
+        for context in abandoned.jobs {
             self.release_job_context(context);
+        }
+        if !abandoned.promises.is_empty() {
+            self.host.release_promise_contexts(&abandoned.promises);
         }
         self.realm
             .promise
@@ -871,7 +885,7 @@ impl<H: Host> Vm<H> {
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
-        self.host.at_collection_boundary();
+        self.host.at_collection_boundary(self.memory_policy());
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
             let phase = format!("gc_{}_after", self.heap.collection_count());
@@ -936,6 +950,8 @@ impl<H: Host> Vm<H> {
         self.shape_constructors.clear();
         self.transitions = transitions;
         self.shape_slot_memo.clear();
+        self.plain_copy_shapes.clear();
+        self.embedding_record_shapes.clear();
         self.function_name_shapes.clear();
         self.shape_attribute_memo.clear();
         self.object_shapes.fill(u32::MAX);

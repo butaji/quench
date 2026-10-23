@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn generated_js_denotations_cover_the_native_numeric_lowerings() {
+    assert_eq!(Op::LoadConst.js_denotation(), JsDenotation::LoadConst);
+    assert_eq!(Op::Move.js_denotation(), JsDenotation::Move);
+    assert_eq!(Op::GetField.js_denotation(), JsDenotation::GetField);
+    assert_eq!(Op::LoadCapture.js_denotation(), JsDenotation::CapturedValue);
+    assert_eq!(Op::Binary.js_denotation(), JsDenotation::NumericBinary);
+    assert_eq!(Op::NumericAdd.js_denotation(), JsDenotation::NumericBinary);
+    assert_eq!(Op::NumericMultiply.js_denotation(), JsDenotation::NumericBinary);
+    assert_eq!(Op::Return.js_denotation(), JsDenotation::Return);
+    assert_eq!(Op::Call.js_denotation(), JsDenotation::Unsupported);
+}
+
+#[test]
 fn promoted_parameter_registers_survive_residual_round_trip() {
     let program = crate::Engine::specialize(
         "function read(value) { return value + 1; }",
@@ -141,6 +154,7 @@ fn decoder_rejects_out_of_range_local_load() {
             constructible: true,
             class_initializer: false,
             parameter_eval_arguments_error: false,
+            unaliased_arguments: false,
             arguments_slot: None,
             simple_parameters: true,
             strict: false,
@@ -166,6 +180,7 @@ fn decoder_rejects_out_of_range_local_load() {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: vec![].into(),
             register_roots: Default::default(),
@@ -225,6 +240,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             constructible: true,
             class_initializer: false,
             parameter_eval_arguments_error: false,
+            unaliased_arguments: false,
             arguments_slot: None,
             simple_parameters: true,
             strict: false,
@@ -250,6 +266,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: vec![].into(),
             register_roots: Default::default(),

@@ -1,4 +1,5 @@
-use crate::{Engine, Host, HostFunction, NativeContext, RootId, RootedError, Runtime};
+use crate::test_host::TestHost;
+use crate::{Engine, NativeContext, RootId, RootedError, Runtime};
 use std::{
     sync::{
         Arc,
@@ -8,35 +9,27 @@ use std::{
     thread,
     time::Duration,
 };
-struct TestHost {
+/// What the interrupted scripts' `started` native signals, and whether the host was dropped.
+struct InterruptProbe {
     started: mpsc::Sender<()>,
     dropped: Arc<AtomicBool>,
 }
-impl Drop for TestHost {
+impl Drop for InterruptProbe {
     fn drop(&mut self) {
         self.dropped.store(true, Ordering::Release)
     }
 }
-impl Host for TestHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 {
-        0.
-    }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        &[HostFunction {
-            name: "started",
-            length: 0,
-            global: Some("started"),
-            call: started,
-        }]
-    }
+fn interrupt_host(started: mpsc::Sender<()>, dropped: Arc<AtomicBool>) -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![global "started" (0) => signal_started])
+        .with_state(std::rc::Rc::new(InterruptProbe { started, dropped }))
 }
-fn started(
+fn signal_started(
     ctx: &mut NativeContext<'_, TestHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    ctx.host_mut().started.send(()).unwrap();
+    ctx.host_mut().state::<InterruptProbe>().started.send(()).unwrap();
     Ok(ctx.undefined())
 }
 #[test]
@@ -47,7 +40,7 @@ fn termination_unwinds_both_javascript_modes_without_guest_handlers() {
         let dropped = Arc::new(AtomicBool::new(false));
         let d = dropped.clone();
         let join=thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(move||{
- let mut runtime=Runtime::new(TestHost{started:ready,dropped:d});tx.send(runtime.execution_interrupt_handle()).unwrap();
+ let mut runtime=Runtime::new(interrupt_host(ready,d));tx.send(runtime.execution_interrupt_handle()).unwrap();
  let source="var caught=false,finalized=false;function inner(){started();let i=0;try{for(;;){i++}}catch(e){caught=true}finally{finalized=true}}function outer(){try{inner()}catch(e){caught=true}finally{finalized=true}}outer();";
  let program=if specialized{Engine::specialize(source,"interrupt.js")}else{Engine::specialize_unspecialized(source,"interrupt.js")}.unwrap();
  let error=runtime.execute(&program).unwrap_err();assert!(error.is_execution_terminated());assert!(error.thrown_value().is_none());
@@ -73,10 +66,7 @@ fn owned_termination_handle_stops_before_execution_and_is_send_sync() {
     let handle = crate::ExecutionInterrupt::default();
     handle.request_termination();
     let mut runtime = Runtime::new_with_execution_interrupt(
-        TestHost {
-            started: tx,
-            dropped: dropped.clone(),
-        },
+        interrupt_host(tx, dropped.clone()),
         handle,
     );
     let program = Engine::specialize("started();", "preterminated.js").unwrap();

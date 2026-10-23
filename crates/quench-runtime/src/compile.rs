@@ -195,6 +195,37 @@ pub(crate) enum DynamicFunctionKind {
 
 pub(crate) const DYNAMIC_FUNCTION_PUBLIC_NAME: &str = "anonymous";
 
+/// The name of every Function-constructor program. Its frames report their origin, not this
+/// name (`CompilationOrigin::FunctionConstructor`), so one name serves all of them and keys
+/// their compiled form by text alone.
+pub(crate) const DYNAMIC_FUNCTION_SOURCE_NAME: &str = "<Function>";
+
+/// A Function-constructor program's source: the coerced parameter and body strings,
+/// normalized, in the expression the compiler parses (`(function anonymous(…\n) {\n…\n})`),
+/// and where its parameter list ends.
+pub(crate) struct DynamicFunctionSource {
+    pub(crate) text: String,
+    parameter_list_end: usize,
+}
+
+impl DynamicFunctionSource {
+    pub(crate) fn new(parameters: &str, body: &str, kind: DynamicFunctionKind) -> Self {
+        let body = early::normalize_dynamic_function_body(body);
+        let parameters = early::normalize_dynamic_function_parameters(parameters);
+        const EXPRESSION_OPEN: &str = "(";
+        const EXPRESSION_CLOSE: &str = ")";
+        const PARAMETER_LIST_END: &str = "\n)";
+        let function_prefix = format!("{} {DYNAMIC_FUNCTION_PUBLIC_NAME}(", kind.source_prefix());
+        Self {
+            text: format!("{EXPRESSION_OPEN}{}{EXPRESSION_CLOSE}", kind.source(&parameters, &body)),
+            parameter_list_end: EXPRESSION_OPEN.len()
+                + function_prefix.len()
+                + parameters.len()
+                + PARAMETER_LIST_END.len(),
+        }
+    }
+}
+
 impl DynamicFunctionKind {
     fn source_prefix(self) -> &'static str {
         match self {
@@ -772,25 +803,18 @@ impl Engine {
     pub fn specialize_module(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_module_with_mode(source, name, SpecializationMode::Enabled)
     }
-    /// Compile already-coerced Function-constructor parameter and body strings
-    /// through the same OXC script pipeline used by ordinary source.
+    /// Compile a Function-constructor program's source through the same OXC script pipeline
+    /// used by ordinary source.
     pub(crate) fn specialize_function_constructor(
-        parameters: &str,
-        body: &str,
+        source: &DynamicFunctionSource,
         name: &str,
         atom_prefix: &dyn AtomPrefix,
-        kind: DynamicFunctionKind,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        let body = early::normalize_dynamic_function_body(body);
-        let parameters = early::normalize_dynamic_function_parameters(parameters);
-        let expression_wrapper = "(";
-        let function_prefix = format!("{} {DYNAMIC_FUNCTION_PUBLIC_NAME}(", kind.source_prefix());
-        let parameter_list_end = expression_wrapper.len() + function_prefix.len()
-            + parameters.len() + "\n)".len();
-        let source = format!("{expression_wrapper}{})", kind.source(&parameters, &body));
-        let expected_shape = ParsedProgramShape::DynamicFunction { parameter_list_end };
+        let expected_shape = ParsedProgramShape::DynamicFunction {
+            parameter_list_end: source.parameter_list_end,
+        };
         Self::specialize_with_program_shape(
-            &source,
+            &source.text,
             name,
             SpecializationMode::of(atom_prefix),
             atom_prefix,
@@ -2094,6 +2118,11 @@ impl<'a> Compiler<'a> {
     /// every function nested in it, resolves names statically, inside no function that may
     /// give it binding sites: its layout then depends on nothing compiled after it.
     fn finish_early(&mut self, id: u32) {
+        #[cfg(feature = "profile-aggregate")]
+        if std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some() {
+            // A function-level profile needs each replayable function's instruction records.
+            return;
+        }
         if !self.replayable_source || self.dynamic_binding_scopes != 0 {
             return;
         }
@@ -3116,21 +3145,41 @@ impl<'a> Compiler<'a> {
     /// The local slots a function body keeps in registers, and the promoted slots a nested
     /// function may write (clobbered). `eligible` states the activation's own conditions;
     /// the body's fixed-register facts and the register budget decide the rest. Ordinary
-    /// functions and arrows share this plan.
+    /// functions and arrows share this plan. `own_arguments` is a function's strictness and
+    /// parameters, whose own `arguments` binding a body may read; an arrow has none, so any
+    /// `arguments` it names keeps its locals in frame slots.
     #[allow(clippy::too_many_arguments)]
     fn promoted_local_plan(
         &mut self,
         eligible: bool,
+        own_arguments: Option<(bool, &[Atom])>,
         body: &[Statement<'_>],
         expression_body: Option<&Expression<'_>>,
         locals: &[Atom],
         function_scope: &FxHashSet<Atom>,
         lexical_atoms: &[Atom],
         self_binding_slot: Option<u16>,
-    ) -> (Vec<u16>, Vec<u16>) {
+    ) -> PromotedLocalPlan {
         let register_local_facts = early::fixed_register_local_facts(body, expression_body);
-        if !eligible || !register_local_facts.safe {
-            return (Vec::new(), Vec::new());
+        let rebinds_parameter = |parameters: &[Atom]| {
+            parameters
+                .iter()
+                .any(|atom| register_local_facts.bound_names.contains(&self.atoms[*atom as usize]))
+        };
+        // A strict `arguments` object is a copy of the values passed, which no parameter
+        // write reaches; a sloppy one aliases the parameters (`Function::arguments_alias_parameters`)
+        // unless the body only reads it and rebinds no parameter.
+        let unaliased_arguments = eligible
+            && register_local_facts.safe
+            && register_local_facts.arguments == early::ArgumentsUse::Reads
+            && own_arguments.is_some_and(|(strict, parameters)| !strict && !rebinds_parameter(parameters));
+        let arguments_allow_promotion = match (register_local_facts.arguments, own_arguments) {
+            (early::ArgumentsUse::None, _) => true,
+            (_, None) => false,
+            (_, Some((strict, _))) => strict || unaliased_arguments,
+        };
+        if !eligible || !register_local_facts.safe || !arguments_allow_promotion {
+            return PromotedLocalPlan { unaliased_arguments, ..Default::default() };
         }
         let arguments_atom = self.atom("arguments");
         let mut latest_local_slot = FxHashMap::default();
@@ -3165,7 +3214,7 @@ impl<'a> Compiler<'a> {
                     .contains(&self.atoms[locals[usize::from(slot)] as usize])
             })
             .collect::<Vec<_>>();
-        (promoted_local_slots, clobbered_local_slots)
+        PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments }
     }
 
     fn compile_function(
@@ -3284,9 +3333,12 @@ impl<'a> Compiler<'a> {
             && !options.class_initializer
             && !options.implicit_super
             && options.with_depth == 0
+            // A nested function's own parameters and locals are its own in eval code and host
+            // scripts too: names it does not declare resolve as they would without promotion.
             && !dynamic_eval;
-        let (promoted_local_slots, clobbered_local_slots) = self.promoted_local_plan(
+        let PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments } = self.promoted_local_plan(
             promote_plain_locals,
+            Some((root_strict, &params)),
             body,
             expression_body,
             &locals,
@@ -3451,6 +3503,7 @@ impl<'a> Compiler<'a> {
                 && !options.generator,
             class_initializer: options.class_initializer,
             parameter_eval_arguments_error: function.parameter_eval_arguments_error,
+            unaliased_arguments,
             arguments_slot,
             simple_parameters,
             strict: root_strict,
@@ -3476,6 +3529,7 @@ impl<'a> Compiler<'a> {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: function.handlers.into(),
             register_roots: Default::default(),
@@ -3684,3 +3738,13 @@ impl<'a> Compiler<'a> {
 }
 #[cfg(test)]
 mod tests;
+
+/// `Compiler::promoted_local_plan`: the local slots a body keeps in registers, those a nested
+/// function may write, and whether its mapped `arguments` is unaliased
+/// (`Function::unaliased_arguments`).
+#[derive(Default)]
+struct PromotedLocalPlan {
+    promoted_local_slots: Vec<u16>,
+    clobbered_local_slots: Vec<u16>,
+    unaliased_arguments: bool,
+}

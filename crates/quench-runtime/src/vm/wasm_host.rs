@@ -302,7 +302,7 @@ impl<H: Host> Vm<H> {
                 _ => self.heap.alloc(Cell::Array {
                     object: crate::heap::ArrayObject::new(
                         Self::empty_object(Value::NULL),
-                        values.into(),
+                        values,
                     ),
                 }),
             })
@@ -342,7 +342,7 @@ impl<H: Host> Vm<H> {
 
         let realm = match self.heap.function(wrapper) {
             Some(FunctionRecord { realm, .. })
-                if *realm == self.realm.globals || !self.shared_natives.contains(&wrapper) =>
+                if *realm == self.realm.globals || !self.is_shared_native(wrapper) =>
             {
                 *realm
             }

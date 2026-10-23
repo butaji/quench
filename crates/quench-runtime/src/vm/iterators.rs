@@ -35,6 +35,10 @@ pub(super) struct ArrayIterationProof {
     next_slot: usize,
 }
 
+/// The slots of an iterator result's shape (`Vm::iterator_result`): `value`, then `done`.
+const ITERATOR_RESULT_VALUE_SLOT: usize = 0;
+const ITERATOR_RESULT_DONE_SLOT: usize = 1;
+
 impl<H: Host> Vm<H> {
     /// ArrayAccumulation of a spread element: every value `source` iterates is appended to the
     /// literal `array`.
@@ -259,10 +263,11 @@ impl<H: Host> Vm<H> {
             "prototype",
             self.generator_proto,
         )?;
+        let native_generator_function = self.native_value(Native::GeneratorFunction);
         self.set_builtin_value_named(
             generator_function_proto,
             "constructor",
-            self.native_value(Native::GeneratorFunction),
+            native_generator_function,
         )?;
         let constructor_atom = self.runtime_atoms.constructor;
         self.set_named(
@@ -308,15 +313,17 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        let native_async_function = self.native_value(Native::AsyncFunction);
         self.set_builtin_value_named(
             async_function_proto,
             "constructor",
-            self.native_value(Native::AsyncFunction),
+            native_async_function,
         )?;
+        let native_async_generator_function = self.native_value(Native::AsyncGeneratorFunction);
         self.set_builtin_value_named(
             async_generator_function_proto,
             "constructor",
-            self.native_value(Native::AsyncGeneratorFunction),
+            native_async_generator_function,
         )?;
         self.set_property_attributes(
             async_generator_function_proto,
@@ -374,11 +381,12 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
+        let native_iterator_next = self.native_value(Native::IteratorNext);
         self.set_named(
             program,
             self.async_from_sync_iterator_proto,
             "next",
-            self.native_value(Native::IteratorNext),
+            native_iterator_next,
         )
     }
 
@@ -424,9 +432,10 @@ impl<H: Host> Vm<H> {
             self.object_proto,
             None,
         )?;
+        let native_async_generator_function = self.native_value(Native::AsyncGeneratorFunction);
         let async_generator_function_prototype = self
             .own_property(
-                self.native_value(Native::AsyncGeneratorFunction),
+                native_async_generator_function,
                 prototype_atom,
             )
             .unwrap_or(self.function_proto);
@@ -444,37 +453,42 @@ impl<H: Host> Vm<H> {
             "next",
             Native::ArrayIteratorNext,
         )?;
+        let native_array = self.native_value(Native::Array);
         self.set_builtin_value_named(
             self.array_iterator_proto,
             "constructor",
-            self.native_value(Native::Array),
+            native_array,
         )?;
         self.install_builtin_to_string_tag(self.array_iterator_proto, "Array Iterator")?;
         self.install_collection_iterators(p)?;
         let Some(iterator) = self.well_known_symbols.get(WellKnownSymbol::Iterator) else {
             return Ok(());
         };
+        let native_iterator_self = self.native_value(Native::IteratorSelf);
         self.set_index(
             p,
             self.iterator_proto,
             iterator,
-            self.native_value(Native::IteratorSelf),
+            native_iterator_self,
         )?;
+        let native_iterator_self = self.native_value(Native::IteratorSelf);
         self.set_index(
             p,
             self.string_iterator_proto,
             iterator,
-            self.native_value(Native::IteratorSelf),
+            native_iterator_self,
         )?;
+        let native_array_values = self.native_value(Native::ArrayValues);
         self.set_symbol_property(
             self.array_proto,
             iterator,
-            self.native_value(Native::ArrayValues),
+            native_array_values,
         )?;
+        let native_string_values = self.native_value(Native::StringValues);
         self.set_symbol_property(
             self.string_proto,
             iterator,
-            self.native_value(Native::StringValues),
+            native_string_values,
         )?;
         self.set_property_attributes(
             self.array_proto,
@@ -2015,7 +2029,7 @@ impl<H: Host> Vm<H> {
         let keys = self
             .heap
             .array_elements(keys_value)
-            .map_or_else(Vec::new, |elements| elements.as_ref().clone());
+            .map_or_else(Vec::new, |elements| elements.to_vec());
         let mut iterators = Vec::new();
         let mut output_keys = Vec::new();
         let mut roots = Vec::new();
@@ -2915,7 +2929,7 @@ impl<H: Host> Vm<H> {
         let env = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
-                Rc::new(vec![
+                vec![
                     if done { Value::TRUE } else { Value::FALSE },
                     iterator,
                     if close_on_rejection {
@@ -2923,7 +2937,7 @@ impl<H: Host> Vm<H> {
                     } else {
                         Value::FALSE
                     },
-                ]),
+                ],
             ),
         });
         let fulfilled = self.native_with_env(Native::AsyncFromSyncValue, env);
@@ -3201,7 +3215,7 @@ impl<H: Host> Vm<H> {
                     vm.heap.alloc(Cell::Array {
                         object: crate::heap::ArrayObject::new(
                             Self::empty_object(vm.array_proto),
-                            Rc::new(vec![value, second]),
+                            vec![value, second],
                         ),
                     })
                 })
@@ -3260,7 +3274,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether `value` is the current realm's `native` function: one installed for this realm,
-    /// or one every realm shares (`shared_natives`).
+    /// or one every realm shares (`is_shared_native`).
     pub(super) fn is_current_realm_native(&self, value: Value, native: Native) -> bool {
         matches!(
             self.heap.function(value),
@@ -3269,7 +3283,7 @@ impl<H: Host> Vm<H> {
                 realm,
                 ..
             }) if *kind == native
-                && (*realm == self.realm.globals || self.shared_natives.contains(&value))
+                && (*realm == self.realm.globals || self.is_shared_native(value))
         )
     }
 
@@ -3410,7 +3424,7 @@ impl<H: Host> Vm<H> {
                     let entry = vm.heap.alloc(Cell::Array {
                         object: crate::heap::ArrayObject::new(
                             Self::empty_object(vm.array_proto),
-                            Rc::new(vec![Value::number(index as f64), value]),
+                            vec![Value::number(index as f64), value],
                         ),
                     });
                     Some((entry, None))
@@ -3422,10 +3436,68 @@ impl<H: Host> Vm<H> {
 
     /// CreateIterResultObject: a fresh ordinary object whose `value` and `done` are data
     /// properties, laid out as the literal `{ value, done }`.
+    /// One %ArrayIteratorPrototype%.next step of a values iterator over a plain array where
+    /// it runs no guest code: the present data element at its position (`Some(Some(_))`), or
+    /// the iterator done past the end (`Some(None)`), as `take_present_array_values` decides
+    /// for every remaining step. `None` for a hole, an exotic or sparse array, another kind
+    /// or a done iterator, whose step the native makes.
+    pub(super) fn step_present_array_value(&mut self, iterator: Value) -> Option<Option<Value>> {
+        let Some(IteratorRecord {
+            source,
+            kind: IteratorKind::Array | IteratorKind::ArrayValues,
+            index,
+            done: false,
+            ext,
+            ..
+        }) = self.heap.iterator(iterator)
+        else {
+            return None;
+        };
+        let (source, position) = (*source, ext.position(*index));
+        let array = self.heap.array(source)?;
+        if array.has_indexed_descriptors()
+            || array.is_arguments_object()
+            || self.heap.sparse_length(source).is_some()
+        {
+            return None;
+        }
+        let Some(value) = array.elements().get(position).copied() else {
+            if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
+                *done = true;
+                *source = Value::UNDEFINED;
+            }
+            return Some(None);
+        };
+        if value.is_deleted() {
+            return None;
+        }
+        if let Some(IteratorRecord { index, ext, .. }) = self.heap.iterator_mut(iterator) {
+            ext.store_position(index, position + 1);
+        }
+        Some(Some(value))
+    }
+
+    /// An iterator result `{ value, done }` whose object no code but the step that reads it
+    /// back observes (a `Call` the lane recognises as an iteration step, `lane_iterator_step`):
+    /// one object, rewritten by each such step, in place of a fresh one per step.
+    pub(super) fn reused_iterator_result(&mut self, value: Value, done: bool) -> Value {
+        let result = self.reused_iterator_result;
+        if result.is_undefined() {
+            let result = self.iterator_result(value, done).expect("an iterator result allocates");
+            self.reused_iterator_result = result;
+            return result;
+        }
+        self.heap.property_set(result, ITERATOR_RESULT_VALUE_SLOT, value);
+        self.heap
+            .property_set(result, ITERATOR_RESULT_DONE_SLOT, if done { Value::TRUE } else { Value::FALSE });
+        result
+    }
+
     pub(super) fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
         let shape = match self.iterator_result_shape {
             Some(shape) => shape,
             None => {
+                // `ITERATOR_RESULT_VALUE_SLOT` and `ITERATOR_RESULT_DONE_SLOT` name these slots.
                 let atoms = [self.runtime_atoms.value, self.runtime_atoms.done];
                 let shape = self.literal_shape(&atoms);
                 self.iterator_result_shape = Some(shape);

@@ -140,12 +140,12 @@ impl<H: Host> Vm<H> {
             let Some(elements) = self.heap.array_elements_mut(group) else {
                 unreachable!("groupBy owns array groups")
             };
-            Rc::make_mut(elements).push(value);
+            elements.make_mut().push(value);
         } else {
             let group = self.heap.alloc(Cell::Array {
                 object: crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                    Rc::new(vec![value]),
+                    vec![value],
                 ),
             });
             match kind {

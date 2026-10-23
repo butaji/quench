@@ -14,6 +14,43 @@ const REPORTED_DETAILS: usize = 200;
 static DETAILS: std::sync::Mutex<Option<std::collections::HashMap<String, u64>>> =
     std::sync::Mutex::new(None);
 
+static CALL_TARGET_SAMPLE: AtomicU64 = AtomicU64::new(0);
+static CALL_TARGETS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<(u32, u32, u32), CallTargetProfile>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// One sampled call site's target identities and function bodies.
+#[derive(Default)]
+struct CallTargetProfile {
+    samples: u64,
+    callees: std::collections::HashMap<crate::value::Value, u64>,
+    functions: std::collections::HashMap<u32, u64>,
+}
+
+/// Sample one in every 64 script calls for call-site target stability. The
+/// diagnostic is opt-in at build time (`profile-lane-exits`) and keeps its per-call cost
+/// low enough to preserve useful mono/poly distribution data on long React runs.
+pub(super) fn call_target(
+    program: u32,
+    caller: u32,
+    pc: u32,
+    callee: crate::value::Value,
+    target: u32,
+) {
+    if CALL_TARGET_SAMPLE.fetch_add(1, Ordering::Relaxed) & 63 != 0 {
+        return;
+    }
+    REPORT.call_once(|| {
+        // SAFETY: `report` is a plain function that outlives the process.
+        unsafe { libc::atexit(report) };
+    });
+    let mut profiles = CALL_TARGETS.lock().expect("lane call target profile");
+    let profile = profiles.entry((program, caller, pc)).or_default();
+    profile.samples += 1;
+    *profile.callees.entry(callee).or_default() += 1;
+    *profile.functions.entry(target).or_default() += 1;
+}
+
 /// Counts one exit by a description of its operands (operator and value kinds).
 pub(super) fn record_detail(detail: String) {
     let mut details = DETAILS.lock().expect("lane exit details");
@@ -48,10 +85,35 @@ extern "C" fn report() {
             eprintln!("  {count:>12} {detail}");
         }
     }
+    let profiles = CALL_TARGETS.lock().expect("lane call target profile");
+    let mut sites: Vec<_> = profiles.iter().collect();
+    sites.sort_unstable_by_key(|(_, profile)| std::cmp::Reverse(profile.samples));
+    eprintln!("lane call targets (1/64 sample):");
+    for ((program, caller, pc), profile) in sites.into_iter().take(REPORTED_DETAILS) {
+        let top_callees = top_counts(&profile.callees, 3);
+        let top_functions = top_counts(&profile.functions, 3);
+        eprintln!(
+            "  program={program} caller={caller} pc={pc} samples={} distinct_callees={} distinct_functions={} callees={top_callees:?} functions={top_functions:?}",
+            profile.samples,
+            profile.callees.len(),
+            profile.functions.len(),
+        );
+    }
+}
+
+fn top_counts<K: Copy + std::hash::Hash + Eq>(
+    counts: &std::collections::HashMap<K, u64>,
+    limit: usize,
+) -> Vec<(K, u64)> {
+    let mut top: Vec<_> = counts.iter().map(|(key, count)| (*key, *count)).collect();
+    top.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(*count));
+    top.truncate(limit);
+    top
 }
 
 /// Per-function instruction census (`profile-lane-exits`): lane records dispatched and
-/// general-loop instructions stepped, by the function whose view or frame ran them.
+/// general-loop instructions stepped, by the function whose view or frame ran them, and the
+/// most dispatched records by function and instruction index.
 #[derive(Default)]
 struct FunctionCensus {
     /// Each lane view's record address range and its function's index, sorted by start.
@@ -70,6 +132,8 @@ struct FunctionCensus {
     general: Vec<u64>,
     general_keys: std::collections::HashMap<(u32, u32), usize>,
     last: (usize, usize, usize),
+    /// Dispatches by record address.
+    records: std::collections::HashMap<usize, u64>,
 }
 
 static FUNCTIONS: std::sync::Mutex<Option<FunctionCensus>> = std::sync::Mutex::new(None);
@@ -104,7 +168,12 @@ pub(super) fn register_view(start: usize, end: usize, label: String, ops: Vec<Op
 
 /// Count one dispatch of the lane record at `address`, `record_size` bytes per record.
 pub(super) fn count_record(address: usize, record_size: usize) {
+    REPORT_FUNCTIONS.call_once(|| {
+        // SAFETY: `report_functions` is a plain function that outlives the process.
+        unsafe { libc::atexit(report_functions) };
+    });
     with_functions(|census| {
+        *census.records.entry(address).or_default() += 1;
         let (mut start, end, index) = census.last;
         if !(address >= start && address < end) {
             let at = census.views.partition_point(|view| view.0 <= address);
@@ -164,6 +233,8 @@ pub(super) fn count_general(label: impl FnOnce() -> String, key: (u32, u32), op:
 static REPORT_FUNCTIONS: std::sync::Once = std::sync::Once::new();
 /// Functions the per-function census lists, most instructions first.
 const REPORTED_FUNCTIONS: usize = 150;
+/// Records the record census lists, most dispatched first.
+const REPORTED_RECORDS: usize = 600;
 
 extern "C" fn report_functions() {
     with_functions(|census| {
@@ -192,6 +263,16 @@ extern "C" fn report_functions() {
         }
         for (sum, lane, general, label) in rows.into_iter().take(REPORTED_FUNCTIONS) {
             eprintln!("  {sum:>12} lane={lane:>11} general={general:>10} {label}");
+        }
+        let record_size = std::mem::size_of::<super::dispatch_fast::LaneInstruction>();
+        let mut records: Vec<_> = census.records.iter().map(|(address, count)| (*count, *address)).collect();
+        records.sort_unstable_by(|a, b| b.cmp(a));
+        eprintln!("record census:");
+        for (count, address) in records.into_iter().take(REPORTED_RECORDS) {
+            let at = census.views.partition_point(|view| view.0 <= address);
+            if let Some(&(start, _, index)) = at.checked_sub(1).and_then(|at| census.views.get(at)) {
+                eprintln!("  {count:>12} {} @{}", census.labels[index], (address - start) / record_size);
+            }
         }
     });
 }

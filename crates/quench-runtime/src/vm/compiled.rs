@@ -43,6 +43,10 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
 
+#[path = "compiled/osr_loop.rs"]
+mod osr_loop;
+pub(super) use osr_loop::{LoopEntry, LoopOutcome, LoopRegion, Observation, Widening};
+
 /// How the shared VM executes JavaScript and Wasm functions. Compiled code is
 /// lazy and falls back to the interpreter; both modes use the same VM, heap,
 /// frames and host APIs.
@@ -367,13 +371,13 @@ fn jit_emscripten_memcpy_leaf_enabled() -> bool {
         .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
 }
 
-/// Keep the numeric hash-map loop as an opt-in experiment until it has a
-/// matched score win.
+/// Run the guarded numeric hash-map loop by default. Set the environment
+/// variable to `0` to retain the interpreter path for A/B measurement.
 fn jit_numeric_find_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var(JIT_NUMERIC_FIND_ENV)
-            .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    *ENABLED.get_or_init(|| match std::env::var_os(JIT_NUMERIC_FIND_ENV) {
+        None => true,
+        Some(value) => matches!(value.to_str(), Some("1" | "true")),
     })
 }
 
@@ -592,13 +596,18 @@ struct CallContext {
 
 impl CallContext {
     /// A nested native entry shares the caller's instance and callout state,
-    /// but needs its own stack budget, guard-resume stack pointer and raised
-    /// completion, as a nested `run_compiled` invocation would.
+    /// but needs its own guard-resume stack pointer and raised completion, as a
+    /// nested `run_compiled` invocation would. Its stack limit is never below
+    /// the caller's: recursion through the callout (a runaway `call_indirect`)
+    /// spends the outermost entry's budget and traps as exhausted, rather than
+    /// taking a fresh budget at each level until the native stack overflows.
     fn nested_entry(&self) -> Self {
         let marker = 0u8;
         let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
         Self {
-            stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
+            stack_limit: self
+                .stack_limit
+                .max(stack_pointer.saturating_sub(COMPILED_STACK_BUDGET)),
             interrupt: self.interrupt,
             table: self.table,
             vm: self.vm,
@@ -2169,14 +2178,40 @@ impl CompiledProgram {
     }
 }
 
+/// With `QUENCH_WASM_JIT_PERF_MAP` set, names each compiled Wasm function's code for
+/// `perf` (`/tmp/perf-PID.map`) and writes the module's code to `/tmp/quench-jit-PID-BASE.bin`
+/// for disassembly at `BASE` (diagnostics only).
+fn write_perf_map(base: usize, bytes: &[u8], spans: &[(usize, usize, usize)]) {
+    if std::env::var_os("QUENCH_WASM_JIT_PERF_MAP").is_none() {
+        return;
+    }
+    use std::io::Write;
+    let pid = std::process::id();
+    if let Ok(mut map) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("/tmp/perf-{pid}.map"))
+    {
+        for &(offset, len, index) in spans {
+            let _ = writeln!(map, "{:x} {len:x} wasm-function-{index}", base + offset);
+        }
+    }
+    let _ = std::fs::write(format!("/tmp/quench-jit-{pid}-{base:x}.bin"), bytes);
+}
+
 /// Executable memory holding a program's machine code.
-struct CodeMemory {
+pub(super) struct CodeMemory {
     pointer: *mut u8,
     length: usize,
 }
 
 impl CodeMemory {
-    fn new(bytes: &[u8]) -> Option<Self> {
+    /// The first byte of the executable mapping.
+    pub(super) fn pointer(&self) -> *mut u8 {
+        self.pointer
+    }
+
+    pub(super) fn new(bytes: &[u8]) -> Option<Self> {
         let length = bytes.len().max(1);
         // `mmap` rounds to whole pages. Store that rounded length explicitly
         // so the JS tier's budget reflects its executable mappings.
@@ -2221,6 +2256,47 @@ impl Drop for CodeMemory {
     }
 }
 
+/// A native OSR region published by the shared compiler. Its lowerer is private to this
+/// module; lanes only ask the region to run and inspect its exact-PC widening result.
+pub(super) struct CompiledOsrRegion(osr_loop::CompiledLoop);
+
+impl CompiledOsrRegion {
+    /// # Safety
+    /// `registers` and `entry` must describe the live activation guarded by the lane.
+    pub(super) unsafe fn run(
+        &self,
+        registers: *mut crate::value::Value,
+        entry: &LoopEntry,
+    ) -> LoopOutcome {
+        // SAFETY: the caller keeps the guarded activation and entry alive for this run.
+        unsafe { self.0.run(registers, entry) }
+    }
+
+    pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
+        self.0.widening(pc)
+    }
+}
+
+/// Analyze a loop candidate through the shared region compiler's OSR mode.
+pub(super) fn analyze_osr_region(
+    function: &Function,
+    decoded: &[WideInstruction],
+    constants: &[crate::value::Value],
+    live: Option<&[u64]>,
+    header: u32,
+    backedge: u32,
+) -> Option<LoopRegion> {
+    osr_loop::region(function, decoded, constants, live, header, backedge)
+}
+
+/// Compile one admitted OSR region and publish it through the shared executable-memory path.
+pub(super) fn compile_osr_region(
+    region: &LoopRegion,
+    observation: &Observation<'_>,
+) -> Option<CompiledOsrRegion> {
+    osr_loop::compile(region, observation).map(CompiledOsrRegion)
+}
+
 /// A guarded JavaScript numeric function compiled from a narrow residual
 /// bytecode subset. It owns one W^X executable mapping and has no heap roots.
 pub(super) struct CompiledJsFunction {
@@ -2230,6 +2306,7 @@ pub(super) struct CompiledJsFunction {
     mapped_bytes: usize,
     return_constants: Vec<(u32, u32)>,
     field_argument: Option<super::js_compiled::JsJitFieldArgument>,
+    numeric_field_inputs: Vec<super::js_compiled::JsJitNumericFieldInput>,
     capture_argument: Option<super::js_compiled::JsJitCaptureArgument>,
     capture_arguments: Vec<super::js_compiled::JsJitCaptureArgument>,
     #[cfg(test)]
@@ -2292,6 +2369,7 @@ impl CompiledJsFunction {
         let code = CodeMemory::new(&artifact.code)?;
         let mapped_bytes = code.length;
         let field_argument = artifact.field_argument;
+        let numeric_field_inputs = artifact.numeric_field_inputs;
         let capture_arguments = artifact.capture_arguments;
         let (entry, return_constants, capture_argument) = match artifact.result {
             super::js_compiled::JsJitResultKind::Number => {
@@ -2437,6 +2515,7 @@ impl CompiledJsFunction {
             mapped_bytes,
             return_constants,
             field_argument,
+            numeric_field_inputs,
             capture_argument,
             capture_arguments,
             #[cfg(test)]
@@ -2454,6 +2533,14 @@ impl CompiledJsFunction {
 
     pub(super) fn field_argument(&self) -> Option<super::js_compiled::JsJitFieldArgument> {
         self.field_argument
+    }
+
+    pub(super) fn numeric_field_inputs(&self) -> &[super::js_compiled::JsJitNumericFieldInput] {
+        &self.numeric_field_inputs
+    }
+
+    fn uses_numeric_field_argument(&self) -> bool {
+        self.field_argument.is_some() && matches!(self.entry, CompiledJsEntry::Number(_))
     }
 
     fn capture_argument(&self) -> Option<super::js_compiled::JsJitCaptureArgument> {
@@ -6710,19 +6797,14 @@ impl<H: Host> Vm<H> {
         let program_id = self.frames[frame].program;
         let function_id = self.frames[frame].function;
         let function = program.function_get(function_id as usize)?;
-        let numeric_find_candidate = if jit_numeric_find_enabled() {
-            self.programs
-                .js_jit_numeric_find_candidate(program_id, function_id, function)
-        } else {
-            None
-        };
+        let facts = self.programs.js_entry_facts(program_id, function_id)?;
+        let numeric_find_candidate = facts.numeric_find.filter(|_| jit_numeric_find_enabled());
         if let Some(candidate) = numeric_find_candidate
             && let Some(result) = self.js_jit_numeric_find_at_entry(program, frame, candidate)
         {
             return Some(result);
         }
-        let field_increment_candidate =
-            super::js_compiled::cached_this_field_increment_candidate(program, function);
+        let field_increment_candidate = facts.field_increment;
         let mut field_increment_diagnostic_entry_recorded = false;
         if let Some(candidate) = field_increment_candidate {
             let fixed_this = self.frames[frame].fixed_this;
@@ -6762,7 +6844,7 @@ impl<H: Host> Vm<H> {
             }
         }
         let field_return_candidate =
-            super::js_compiled::cached_this_field_return_candidate(function);
+            facts.field_return;
         let mut field_return_diagnostic_entry_recorded = field_increment_diagnostic_entry_recorded;
         if let Some(candidate) = field_return_candidate {
             let fixed_this = self.frames[frame].fixed_this;
@@ -6822,21 +6904,21 @@ impl<H: Host> Vm<H> {
             _ => None,
         };
         let numeric_loop_candidate =
-            compiled_tier.is_none() && super::js_compiled::has_numeric_loop_candidate(function);
+            compiled_tier.is_none() && facts.numeric_loop;
         let int32_bitwise_candidate =
-            super::js_compiled::has_int32_bitwise_candidate(program, function);
+            facts.int32_bitwise;
         let int32_identity_candidate =
-            super::js_compiled::int32_identity_return_candidate(program, function).is_some();
+            facts.int32_identity;
         let capture_argument = match compiled_tier {
             Some(compiled) => compiled.capture_argument(),
-            None => super::js_compiled::number_capture_candidate(function),
+            None => facts.number_capture,
         };
         let mut capture_arguments: smallvec::SmallVec<
             [super::js_compiled::JsJitCaptureArgument; 4],
         > = smallvec::SmallVec::new();
         if let Some(compiled) = compiled_tier {
             capture_arguments.extend_from_slice(compiled.capture_arguments());
-        } else if let Some(candidate) = super::js_compiled::numeric_capture_candidate(function) {
+        } else if let Some(candidate) = facts.numeric_capture.clone() {
             capture_arguments.extend(candidate);
         }
         let capture_number = capture_argument.and_then(|capture| {
@@ -6845,19 +6927,44 @@ impl<H: Host> Vm<H> {
         });
 
         let params = usize::from(function.params);
-        let registers = self.frames[frame].registers.get(..params)?;
+        let registers = self.frames[frame].registers.get(..params)?.to_vec();
         let first_argument = registers.first().copied();
-        let field_argument = match compiled_tier {
-            Some(compiled) => compiled.field_argument(),
-            None => super::js_compiled::cached_field_argument_candidate(function),
+        let mut numeric_field_inputs: smallvec::SmallVec<
+            [super::js_compiled::JsJitNumericFieldInput; 4],
+        > = smallvec::SmallVec::new();
+        if let Some(compiled) = compiled_tier {
+            numeric_field_inputs.extend_from_slice(compiled.numeric_field_inputs());
+        } else if let Some(inputs) = &facts.numeric_field_inputs {
+            numeric_field_inputs.extend_from_slice(inputs);
+        }
+        let is_field_receiver_parameter = |parameter: usize| {
+            numeric_field_inputs.iter().any(|input| {
+                input.receiver
+                    == super::js_compiled::JsJitFieldReceiver::Parameter(parameter as u16)
+            })
         };
+        let numeric_field_argument = match compiled_tier {
+            Some(compiled) if compiled.uses_numeric_field_argument() => compiled.field_argument(),
+            Some(_) => None,
+            None => facts.numeric_field_argument,
+        };
+        let field_argument_uses_numeric_abi = numeric_field_argument.is_some();
+        let field_argument = numeric_field_argument.or_else(|| match compiled_tier {
+            Some(compiled) => compiled.field_argument(),
+            None if numeric_field_inputs.is_empty() => facts.field_argument,
+            None => None,
+        });
         let field_reject_candidate = match compiled_tier {
             Some(compiled) => compiled.is_field_reject(),
-            None => super::js_compiled::is_field_reject_candidate(function),
+            None => facts.field_reject,
         };
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
-        for value in registers {
+        for (index, value) in registers.iter().copied().enumerate() {
+            if is_field_receiver_parameter(index) {
+                arguments.push(0.0);
+                continue;
+            }
             match value.as_number() {
                 Some(value) => arguments.push(value),
                 None => {
@@ -6880,20 +6987,90 @@ impl<H: Host> Vm<H> {
         } else {
             numeric = false;
         }
+        if !numeric_field_inputs.is_empty() {
+            for input in numeric_field_inputs.iter().copied() {
+                let receiver = match input.receiver {
+                    super::js_compiled::JsJitFieldReceiver::This => {
+                        if !self.frames[frame].fixed_this {
+                            numeric = false;
+                            break;
+                        }
+                        self.frames[frame].this
+                    }
+                    super::js_compiled::JsJitFieldReceiver::Parameter(parameter) => {
+                        let Some(receiver) = registers.get(usize::from(parameter)).copied() else {
+                            numeric = false;
+                            break;
+                        };
+                        receiver
+                    }
+                };
+                match self.cached_field_hit(program, receiver, input.cache_site) {
+                    super::object::FieldCacheProbe::Hit(value) => {
+                        if let Some(value) = value.as_number() {
+                            arguments.push(value);
+                        } else {
+                            numeric = false;
+                            break;
+                        }
+                    }
+                    super::object::FieldCacheProbe::OrdinaryMiss
+                    | super::object::FieldCacheProbe::Ineligible => {
+                        numeric = false;
+                        break;
+                    }
+                }
+            }
+        }
         if let Some(field_argument) = field_argument {
             let receiver = first_argument?;
             arguments.clear();
-            numeric = false;
-            if let super::object::FieldCacheProbe::Hit(value) =
-                self.cached_field_hit(program, receiver, field_argument.cache_site)
-            {
-                if let Some(number) = value.as_number() {
-                    arguments.push(number);
-                    numeric = true;
-                } else if field_reject_candidate {
-                    // Strict inequality against a Number is true for every non-Number
-                    // value. NaN therefore takes the guarded early-return path.
-                    arguments.push(f64::NAN);
+            if !field_argument_uses_numeric_abi {
+                numeric = false;
+                if let super::object::FieldCacheProbe::Hit(value) =
+                    self.cached_field_hit(program, receiver, field_argument.cache_site)
+                {
+                    if let Some(value) = value.as_number() {
+                        arguments.push(value);
+                        numeric = true;
+                    } else if field_reject_candidate {
+                        // Strict inequality against a Number is true for every
+                        // non-Number value, so NaN takes the guarded early return.
+                        arguments.push(f64::NAN);
+                    }
+                } else {
+                    arguments.clear();
+                }
+            } else {
+                numeric = true;
+                // Preserve numeric arguments after the receiver. The compiler
+                // keeps the object's ABI slot as a placeholder, then appends
+                // the guarded field value after parameters and captures.
+                for (index, value) in registers.iter().copied().enumerate() {
+                    if index == 0 {
+                        arguments.push(0.0);
+                    } else if let Some(value) = value.as_number() {
+                        arguments.push(value);
+                    } else {
+                        numeric = false;
+                        break;
+                    }
+                }
+                if captures_numeric {
+                    arguments.extend(capture_values.iter().copied());
+                } else {
+                    numeric = false;
+                }
+                if let super::object::FieldCacheProbe::Hit(value) =
+                    self.cached_field_hit(program, receiver, field_argument.cache_site)
+                {
+                    if let Some(number) = value.as_number() {
+                        arguments.push(number);
+                    } else {
+                        numeric = false;
+                    }
+                } else {
+                    numeric = false;
                 }
             }
         }
@@ -6904,7 +7081,7 @@ impl<H: Host> Vm<H> {
         }
         let string_hash_candidate = match compiled_tier {
             Some(compiled) => compiled.is_string_hash_loop(),
-            None => super::js_compiled::has_string_hash_loop_candidate(program, function),
+            None => facts.string_hash_loop,
         } && params == 1
             && self.js_jit_string_hash_guard()
             && first_argument.is_some_and(|value| self.heap.is_string(value));
@@ -6919,7 +7096,7 @@ impl<H: Host> Vm<H> {
         };
         let string_transform_kind = match compiled_tier {
             Some(compiled) => compiled.string_transform_kind(),
-            None => super::js_compiled::string_transform_candidate(program, function),
+            None => facts.string_transform,
         };
         let string_transform = string_transform_kind
             .filter(|kind| self.js_jit_string_transform_guard(*kind))
@@ -7004,7 +7181,10 @@ impl<H: Host> Vm<H> {
                     program_id,
                     function_id,
                     numeric,
-                    (numeric && (numeric_loop_candidate || field_argument.is_some()))
+                    (numeric
+                        && (numeric_loop_candidate
+                            || field_argument.is_some()
+                            || !numeric_field_inputs.is_empty()))
                         || int32_identity_candidate
                         || (field_reject_candidate && arguments.len() == 1)
                         || capture_number.is_some()
@@ -7023,7 +7203,9 @@ impl<H: Host> Vm<H> {
                     .programs
                     .js_jit_diagnostics_enabled()
                     .then(std::time::Instant::now);
+                self.host.before_native_compilation();
                 let artifact = super::js_compiled::compile(&residual, function_id);
+                self.host.after_native_compilation();
                 let artifact_failed = artifact.is_none();
                 let compile_rejection = artifact_failed.then(|| {
                     super::js_compiled::candidate_rejection_reason(&residual, function_id)
@@ -7230,6 +7412,7 @@ impl<H: Host> Vm<H> {
         // captures. Those artifacts must use the ordinary frame-entry path,
         // where the capture guards and ABI values are assembled together.
         if compiled.field_argument().is_some()
+            || !compiled.numeric_field_inputs().is_empty()
             || compiled.is_capture_number()
             || !compiled.capture_arguments().is_empty()
             || compiled.is_string_transform()
@@ -7567,6 +7750,7 @@ impl<H: Host> Vm<H> {
         }
         let mut bytes = Vec::new();
         let mut offsets = vec![None; count];
+        let mut spans = Vec::new();
         let mut entries = vec![None; count];
         let mut calls = Vec::new();
         let place = |bytes: &mut Vec<u8>, code: Vec<u8>| {
@@ -7621,8 +7805,10 @@ impl<H: Host> Vm<H> {
                 }
                 return None;
             }
+            let body_len = body.len();
             let offset = place(&mut bytes, body);
             offsets[index] = Some(offset);
+            spans.push((offset, body_len, index));
             calls.extend(function_calls.into_iter().map(|call| (offset, call)));
             let memory = MemoryArguments::of(fixed_base, guarded);
             let entry = analysis.compile_entry(&*isa, index, plans[index].as_ref()?, memory)?;
@@ -7644,6 +7830,7 @@ impl<H: Host> Vm<H> {
         let memory = CodeMemory::new(&bytes)?;
         let mapped_bytes = memory.length;
         let base = memory.pointer as usize;
+        write_perf_map(base, &bytes, &spans);
         let table: Box<[usize]> = offsets
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))
@@ -7897,7 +8084,7 @@ impl<H: Host> Vm<H> {
                     .residual(program)
                     .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
                 {
-                    self.host.before_wasm_native_compilation();
+                    self.host.before_native_compilation();
                 }
                 if wasm_root_only || wasm_root_first {
                     // This explicit diagnostic mode compiles only the

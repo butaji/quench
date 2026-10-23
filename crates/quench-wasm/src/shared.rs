@@ -402,7 +402,8 @@ fn decode_elements(
     Ok(elements)
 }
 
-pub(crate) fn decode_globals(
+/// Decode a global section into `globals` under `types`, checking each initializer.
+pub fn decode_globals(
     reader: wasmparser::GlobalSectionReader<'_>,
     globals: &mut Vec<WasmGlobal>,
     types: &WasmTypes,
@@ -445,8 +446,9 @@ mod tests {
     use super::*;
     use quench_runtime::{ExecutionRequest, Host, Runtime};
 
+    /// The one host these tests run under: each host type compiles the VM again.
     #[derive(Default)]
-    struct TestHost;
+    pub(super) struct TestHost;
     impl Host for TestHost {
         fn write_line(&mut self, _: &str) {}
         fn clock_millis(&mut self) -> f64 {
