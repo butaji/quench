@@ -2868,7 +2868,7 @@ impl<H: Host> Vm<H> {
             } else {
                 if self.descriptor_field(p, current, self.runtime_atoms.get)?.is_some()
                     || self.descriptor_field(p, current, self.runtime_atoms.set)?.is_some()
-                    || !self.descriptor_flag(current, "writable")
+                    || !self.descriptor_flag(current, self.runtime_atoms.writable)
                 {
                     return Ok(false);
                 }

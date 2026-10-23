@@ -1851,7 +1851,7 @@ impl<H: Host> Vm<H> {
                     let key = self.heap.root_value(key_root).unwrap();
                     let object = self.heap.root_value(object_root).unwrap();
                     let descriptor = self.object_get_own_property_descriptor(p, &[object, key])?;
-                    if self.descriptor_flag(descriptor, "enumerable") {
+                    if self.descriptor_flag(descriptor, self.runtime_atoms.enumerable) {
                         let key = self.heap.root_value(key_root).unwrap();
                         if let Some(name) = self.heap.string(key).cloned() {
                             names.push(self.intern_js_atom(&name));

@@ -361,18 +361,16 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn own_descriptor_record(&mut self, descriptor: Value) -> PropertyDescriptorRecord {
+        let atoms = &self.runtime_atoms;
         let fields = [
-            "value",
-            "writable",
-            "enumerable",
-            "configurable",
-            "get",
-            "set",
+            atoms.value,
+            atoms.writable,
+            atoms.enumerable,
+            atoms.configurable,
+            atoms.get,
+            atoms.set,
         ]
-        .map(|name| {
-            let atom = self.intern_atom(name);
-            self.own_property(descriptor, atom)
-        });
+        .map(|atom| self.own_property(descriptor, atom));
         let [value, writable, enumerable, configurable, getter, setter] = fields;
         PropertyDescriptorRecord {
             value,
@@ -788,7 +786,7 @@ impl<H: Host> Vm<H> {
         if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
             let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
             return Ok((!descriptor.is_undefined())
-                .then(|| self.descriptor_flag(descriptor, "enumerable")));
+                .then(|| self.descriptor_flag(descriptor, self.runtime_atoms.enumerable)));
         }
         // A deferred module namespace evaluates its module on first access.
         let roots = [self.heap.root(target), self.heap.root(key)];
@@ -867,7 +865,7 @@ impl<H: Host> Vm<H> {
                 if current.is_undefined() {
                     return Ok(Value::UNDEFINED);
                 }
-                if !self.descriptor_flag(current, "configurable") {
+                if !self.descriptor_flag(current, self.runtime_atoms.configurable) {
                     return Err(self.type_error(
                         p,
                         "proxy getOwnPropertyDescriptor trap cannot hide a target property".into(),
@@ -923,8 +921,7 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    pub(super) fn descriptor_flag(&mut self, descriptor: Value, name: &str) -> bool {
-        let atom = self.intern_atom(name);
+    pub(super) fn descriptor_flag(&mut self, descriptor: Value, atom: Atom) -> bool {
         self.own_property(descriptor, atom)
             .is_some_and(|value| self.truthy(value))
     }
