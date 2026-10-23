@@ -107,6 +107,18 @@ pub(super) fn emit_number_arithmetic(
     left: ir::Value,
     right: ir::Value,
 ) -> Option<ir::Value> {
+    let operation = super::operations::NumberArithmetic::from_operator(operator)?;
+    Some(emit_number_arithmetic_operation(
+        builder, operation, left, right,
+    ))
+}
+
+fn emit_number_arithmetic_operation(
+    builder: &mut FunctionBuilder<'_>,
+    operation: super::operations::NumberArithmetic,
+    left: ir::Value,
+    right: ir::Value,
+) -> ir::Value {
     struct Emit<'a, 'f> {
         builder: &'a mut FunctionBuilder<'f>,
     }
@@ -128,13 +140,7 @@ pub(super) fn emit_number_arithmetic(
         }
     }
 
-    Some(
-        crate::vm::operations::NumberArithmetic::from_operator(operator)?.apply(
-            &mut Emit { builder },
-            left,
-            right,
-        ),
-    )
+    operation.apply(&mut Emit { builder }, left, right)
 }
 
 /// Emit one JavaScript int32 bitwise operation from already-converted ToInt32
@@ -410,36 +416,23 @@ pub(super) fn compile_js_numeric_region(
                 let left = read_operand(&mut body, instruction.operand_b(), &registers)?;
                 let right = read_operand(&mut body, instruction.operand_c(), &registers)?;
                 let op = instruction.binary_operator();
-                let value = match (instruction.op(), op) {
-                    (Op::Binary, op)
-                        if super::operations::NumberArithmetic::from_operator(op).is_some() =>
-                    {
-                        emit_number_arithmetic(&mut body.builder, op, left, right)?
-                    }
-                    (Op::Binary, op)
-                        if int32_bitwise
-                            && super::operations::NumberBitwise::from_operator(op)
-                                .is_some_and(
-                                    super::operations::NumberBitwise::in_signed_int32_domain,
-                                ) =>
-                    {
-                        let left = body.builder.ins().fcvt_to_sint(types::I32, left);
-                        let right = body.builder.ins().fcvt_to_sint(types::I32, right);
-                        emit_number_bitwise_i32(&mut body.builder, op, left, right)?
-                    }
-                    (Op::NumericAdd, op)
-                        if super::operations::NumberArithmetic::from_operator(op)
-                            == Some(super::operations::NumberArithmetic::Add) =>
-                    {
-                        emit_number_arithmetic(&mut body.builder, op, left, right)?
-                    }
-                    (Op::NumericMultiply, op)
-                        if super::operations::NumberArithmetic::from_operator(op)
-                            == Some(super::operations::NumberArithmetic::Multiply) =>
-                    {
-                        emit_number_arithmetic(&mut body.builder, op, left, right)?
-                    }
-                    _ => return None,
+                let arithmetic = super::operations::NumberArithmetic::from_js_instruction(
+                    instruction.op(),
+                    op,
+                );
+                let value = if let Some(operation) = arithmetic {
+                    emit_number_arithmetic_operation(&mut body.builder, operation, left, right)
+                } else if instruction.op() == Op::Binary
+                    && int32_bitwise
+                    && super::operations::NumberBitwise::from_operator(op).is_some_and(
+                        super::operations::NumberBitwise::in_signed_int32_domain,
+                    )
+                {
+                    let left = body.builder.ins().fcvt_to_sint(types::I32, left);
+                    let right = body.builder.ins().fcvt_to_sint(types::I32, right);
+                    emit_number_bitwise_i32(&mut body.builder, op, left, right)?
+                } else {
+                    return None;
                 };
                 if instruction.returns_from_frame() {
                     body.builder.ins().return_(&[value]);
