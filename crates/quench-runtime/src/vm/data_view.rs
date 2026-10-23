@@ -578,6 +578,8 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The `width` bytes at `index` as an unsigned integer in the given byte order: one read
+    /// of the buffer for the whole field.
     fn data_view_read(
         &self,
         buffer: Value,
@@ -585,18 +587,24 @@ impl<H: Host> Vm<H> {
         width: usize,
         little_endian: bool,
     ) -> Result<u64, JsError> {
-        let mut value = 0;
-        for byte_index in 0..width {
-            let byte = self.data_view_byte(buffer, index + byte_index)? as u64;
-            if little_endian {
-                value |= byte << (byte_index * 8);
-            } else {
-                value = value << 8 | byte;
-            }
-        }
-        Ok(value)
+        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
+            return Err(JsError("DataView buffer is invalid".into()));
+        };
+        let bytes = bytes.read();
+        let field = bytes
+            .get(index..index.saturating_add(width))
+            .ok_or_else(|| JsError("DataView byte offset is out of range".into()))?;
+        let mut word = [0; DATA_VIEW_DOUBLE_WIDTH];
+        word[..width].copy_from_slice(field);
+        Ok(if little_endian {
+            u64::from_le_bytes(word)
+        } else {
+            u64::from_be_bytes(word) >> ((DATA_VIEW_DOUBLE_WIDTH - width) * u8::BITS as usize)
+        })
     }
 
+    /// Writes the low `width` bytes of `value` at `index` in the given byte order: one write
+    /// of the buffer for the whole field.
     fn data_view_write(
         &mut self,
         buffer: Value,
@@ -605,14 +613,19 @@ impl<H: Host> Vm<H> {
         value: u64,
         little_endian: bool,
     ) -> Result<(), JsError> {
-        for byte_index in 0..width {
-            let shift = if little_endian {
-                byte_index * 8
-            } else {
-                (width - byte_index - 1) * 8
-            };
-            self.data_view_write_byte(buffer, index + byte_index, (value >> shift) as u8)?;
-        }
+        let encoded = if little_endian {
+            value.to_le_bytes()
+        } else {
+            (value << ((DATA_VIEW_DOUBLE_WIDTH - width) * u8::BITS as usize)).to_be_bytes()
+        };
+        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) else {
+            return Err(JsError("DataView buffer is invalid".into()));
+        };
+        let mut guard = bytes.make_mut();
+        let Some(field) = guard.get_mut(index..index.saturating_add(width)) else {
+            return Err(JsError("DataView byte offset is out of range".into()));
+        };
+        field.copy_from_slice(&encoded[..width]);
         Ok(())
     }
 
