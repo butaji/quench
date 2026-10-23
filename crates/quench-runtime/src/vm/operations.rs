@@ -179,6 +179,16 @@ macro_rules! number_bitwise {
                 None
             }
 
+            /// The signed int32 operation denoted by an eligible JavaScript
+            /// bytecode and operator. Bitwise operands may be narrowed only
+            /// for the general `Binary` instruction; entry guards are checked
+            /// separately by the caller.
+            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
+                (instruction == Op::Binary)
+                    .then(|| Self::from_operator(operator))
+                    .flatten()
+            }
+
             /// Whether this operation produces a signed Int32 from signed Int32
             /// inputs, which is the current entry guard's proof domain.
             pub(super) const fn in_signed_int32_domain(self) -> bool {
@@ -415,7 +425,7 @@ fn numeric_number_result(operator: BinaryOperator, left: f64, right: f64) -> f64
 
 #[cfg(test)]
 mod numeric_instruction_tests {
-    use super::{NumberArithmetic, Op};
+    use super::{NumberArithmetic, NumberBitwise, Op};
     use oxc_ast::ast::BinaryOperator;
 
     #[test]
@@ -447,6 +457,42 @@ mod numeric_instruction_tests {
                 Op::NumericMultiply,
                 BinaryOperator::Addition as u32
             ),
+            None
+        );
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(Op::Binary, BinaryOperator::Subtraction as u32),
+            Some(NumberArithmetic::Subtract)
+        );
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(Op::Binary, BinaryOperator::Division as u32),
+            Some(NumberArithmetic::Divide)
+        );
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(Op::Return, BinaryOperator::Addition as u32),
+            None
+        );
+    }
+
+    #[test]
+    fn int32_bitwise_bytecodes_are_selected_only_from_general_binary() {
+        for (operator, operation) in [
+            (BinaryOperator::BitwiseAnd, NumberBitwise::And),
+            (BinaryOperator::BitwiseOR, NumberBitwise::Or),
+            (BinaryOperator::BitwiseXOR, NumberBitwise::Xor),
+            (BinaryOperator::ShiftLeft, NumberBitwise::ShiftLeft),
+            (BinaryOperator::ShiftRight, NumberBitwise::ShiftRight),
+            (
+                BinaryOperator::ShiftRightZeroFill,
+                NumberBitwise::ShiftRightUnsigned,
+            ),
+        ] {
+            assert_eq!(
+                NumberBitwise::from_js_instruction(Op::Binary, operator as u32),
+                Some(operation)
+            );
+        }
+        assert_eq!(
+            NumberBitwise::from_js_instruction(Op::NumericAdd, BinaryOperator::BitwiseXOR as u32),
             None
         );
     }
