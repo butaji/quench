@@ -1,7 +1,8 @@
 use super::net_connect_error::TcpConnectFailure;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
-use std::collections::{HashMap, VecDeque};
+use rustc_hash::FxHashMap;
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 #[cfg(unix)]
@@ -317,12 +318,12 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
 /// endpoint IDs and parsed state; this is the one owner of socket bytes and
 /// OS handles for that execution path.
 pub(crate) struct Transport {
-    native_tcp_connecting: HashMap<u64, NativeConnecting>,
-    native_tcp_unbound: HashMap<u64, super::tcp_owned::TcpOwned>,
+    native_tcp_connecting: FxHashMap<u64, NativeConnecting>,
+    native_tcp_unbound: FxHashMap<u64, super::tcp_owned::TcpOwned>,
     next_id: u64,
-    listeners: HashMap<u64, Listener>,
-    sockets: HashMap<u64, SharedSocket>,
-    connecting: HashMap<u64, ConnectingSocket>,
+    listeners: FxHashMap<u64, Listener>,
+    sockets: FxHashMap<u64, SharedSocket>,
+    connecting: FxHashMap<u64, ConnectingSocket>,
     closing_sockets: VecDeque<(CloseTarget, ClosingSocket)>,
     /// Where socket reads land before their bytes are copied out (`poll_sockets`), zeroed
     /// once: a fresh one zeroed its `TCP_READ_CHUNK` bytes at every poll.
@@ -365,6 +366,13 @@ impl Write for RawStream {
             Self::Tcp(stream) => stream.write(bytes),
             #[cfg(unix)]
             Self::Local(stream) => stream.write(bytes),
+        }
+    }
+    fn write_vectored(&mut self, parts: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        match self {
+            Self::Tcp(stream) => stream.write_vectored(parts),
+            #[cfg(unix)]
+            Self::Local(stream) => stream.write_vectored(parts),
         }
     }
     fn flush(&mut self) -> std::io::Result<()> {
@@ -603,12 +611,12 @@ pub(crate) enum TransportEvent {
 impl Transport {
     pub(crate) fn new() -> Self {
         Self {
-            native_tcp_connecting: HashMap::new(),
-            native_tcp_unbound: HashMap::new(),
+            native_tcp_connecting: FxHashMap::default(),
+            native_tcp_unbound: FxHashMap::default(),
             next_id: FIRST_TRANSPORT_ID,
-            listeners: HashMap::new(),
-            sockets: HashMap::new(),
-            connecting: HashMap::new(),
+            listeners: FxHashMap::default(),
+            sockets: FxHashMap::default(),
+            connecting: FxHashMap::default(),
             closing_sockets: VecDeque::new(),
             read_buffer: vec![0; TCP_READ_CHUNK].into_boxed_slice(),
         }
@@ -846,6 +854,35 @@ pub(crate) fn write_with(
         .get_mut(&socket)
         .ok_or_else(|| "shared TCP socket is not connected".to_owned())?;
     encode(&mut stream.pending_write);
+    Ok(())
+}
+
+/// Queue `parts` in order, first offering them to the kernel in one vectored write when
+/// the socket has nothing queued, as libuv's `uv_try_write` does before queueing a stream
+/// write: only the bytes the kernel declines are copied into the pending output. Failures
+/// and completion delivery stay with `poll`, which retries the queued bytes.
+pub(crate) fn write_parts<const N: usize>(
+    transport: &mut Transport,
+    socket: u64,
+    parts: [&[u8]; N],
+) -> Result<(), String> {
+    let stream = transport
+        .sockets
+        .get_mut(&socket)
+        .ok_or_else(|| "shared TCP socket is not connected".to_owned())?;
+    let mut written = 0;
+    let admitted = stream.write_offset == stream.pending_write.len()
+        && stream.completions.is_empty()
+        && stream.write_failure.is_none()
+        && matches!(stream.delivery, DeliveryPhase::Delivered);
+    if let (true, SocketStream::Plain(raw)) = (admitted, &mut stream.stream) {
+        written = raw.write_vectored(&parts.map(std::io::IoSlice::new)).unwrap_or(0);
+    }
+    for part in parts {
+        let skipped = written.min(part.len());
+        written -= skipped;
+        stream.pending_write.extend_from_slice(&part[skipped..]);
+    }
     Ok(())
 }
 

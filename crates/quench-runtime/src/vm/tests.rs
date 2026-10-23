@@ -10047,6 +10047,63 @@ fn string_repeat_limits_preserve_lazy_utf16_length_and_fractional_counts() {
 }
 
 #[test]
+fn empty_string_repeat_keeps_coercion_order_without_allocating_a_copy() {
+    let source = r#"
+      let conversions = 0;
+      const empty = '';
+      const repeated = empty.repeat({
+        valueOf() { conversions++; return Number.MAX_SAFE_INTEGER; }
+      });
+      print(repeated === '');
+      print(conversions);
+      print(new String('').repeat(Number.MAX_SAFE_INTEGER) === '');
+      for (const invalid of [Infinity, -1]) {
+        try { empty.repeat(invalid); print('missing error'); }
+        catch (error) { print(error.name); }
+      }
+      try { empty.repeat(Symbol()); print('missing error'); }
+      catch (error) { print(error.name); }
+    "#;
+    let program = Engine::specialize(source, "empty-repeat-fast-path.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["true", "1", "true", "RangeError", "RangeError", "TypeError"]
+    );
+}
+
+#[test]
+fn decode_uri_reuses_unescaped_input_and_preserves_uri_semantics() {
+    let source = r#"
+      const input = 'plain café / text';
+      print(decodeURI(input) === input);
+      print(decodeURI('%E2%82%AC%3F') + '|' + decodeURIComponent('%E2%82%AC%3F'));
+      for (const malformed of ['%', '%2', '%C0%AF', '%E0%80%AF', '%ED%A0%80']) {
+        try { decodeURI(malformed); print('missing error'); }
+        catch (error) { print(error.name + ':' + error.message); }
+      }
+    "#;
+    let program = Engine::specialize(source, "decode-uri-fast-path.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        [
+            "true",
+            "€%3F|€?",
+            "URIError:URI malformed",
+            "URIError:URI malformed",
+            "URIError:URI malformed",
+            "URIError:URI malformed",
+            "URIError:URI malformed",
+        ]
+    );
+}
+
+#[test]
 fn string_constructor_and_template_coercion_preserve_wtf16_and_original_hooks() {
     let source = r#"
       for (const text of ["\ud800", "\ud801", "\udfff", "a\ud800b", "\ud83d\ude00"]) {
@@ -11059,6 +11116,58 @@ fn js_jit_lowers_multiple_guarded_this_field_reads_into_arithmetic() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_compiles_guarded_field_bitwise_boolean_regions() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function isHeldOrSuspended() {
+            return (this.state & 1) !== 0 || this.state === 2;
+          }
+          for (let index = 0; index < 48; index++) {
+            const state = index % 3;
+            const receiver = {state};
+            const expected = (state & 1) !== 0 || state === 2;
+            if (isHeldOrSuspended.call(receiver) !== expected) throw Error('field bitwise result');
+          }
+          let reads = 0;
+          const accessor = {get state() { reads++; return 1; }};
+          if (isHeldOrSuspended.call(accessor) !== true || reads !== 1) throw Error('accessor fallback');
+          if (isHeldOrSuspended.call({state: 1.5}) !== true) throw Error('fractional fallback');
+          if (isHeldOrSuspended.call({state: '1'}) !== true) throw Error('coercion fallback');
+        "#,
+        "js-jit-field-bitwise-boolean.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "isHeldOrSuspended")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function_id)
+    else {
+        panic!("guarded field predicate should compile\n{}", program.disassemble());
+    };
+    assert_eq!(compiled.numeric_field_inputs().len(), 2);
+    assert!(compiled.native_entries() >= 8);
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_field_reject_resumes_interpreter_on_match_and_accessor() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -11178,6 +11287,24 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
         assert!(!programs.note_js_function_entry(id, function, false, false));
     }
     assert_eq!(programs.js_jit_tracked_function_count(), 256);
+}
+
+#[test]
+fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "function add(a, b) { return a + b; } add(1, 2);",
+        "js-jit-rejected-lane.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    let id = vm.programs.insert(program.clone()).unwrap();
+
+    assert!(vm.js_tier_may_claim(&program, id, 1));
+    vm.programs
+        .reject_js_function(id, 1, "unsupported-shape");
+    assert!(vm.programs.js_tier_declined(id, 1));
+    assert!(!vm.js_tier_may_claim(&program, id, 1));
 }
 
 #[test]
@@ -11334,6 +11461,30 @@ for(const object of [{},[],function(){},Object.create(null)]) {
         let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
         Vm::new(TestHost::default()).execute(&decoded).unwrap();
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn eval_comment_only_sources_take_the_empty_script_fast_path() {
+    let source = r#"
+if (eval('/* block comment */ // trailing comment') !== undefined) throw Error('comment completion');
+if (eval('\uFEFF/* Unicode space */\u2028// line comment') !== undefined) throw Error('Unicode trivia');
+if (eval('// line comment\u2028 11') !== 11) throw Error('line separator ended comment');
+if (eval('/* comment */ 17') !== 17) throw Error('executable source was skipped');
+let invalid = false;
+try { eval('/* unterminated'); } catch (error) { invalid = error instanceof SyntaxError; }
+if (!invalid) throw Error('unterminated comment accepted');
+"#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "eval-comment-fast-path.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "eval-comment-fast-path.js").unwrap(),
+    ] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
     }
 }
 
