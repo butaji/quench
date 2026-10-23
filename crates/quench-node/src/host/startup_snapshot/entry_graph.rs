@@ -13,9 +13,11 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Names through which a file loads modules no static import names: CommonJS `require` (and
-/// `module.require`, `createRequire`), and `process.getBuiltinModule`. A match anywhere, a
-/// comment or string included, counts.
-const MODULE_LOADING_NAMES: &[&str] = &["require", "getBuiltinModule"];
+/// `module.require`, `createRequire`), `process.getBuiltinModule`, and `console`, whose first
+/// use loads Node's console and inspection modules, which the preloaded builtins hold (a file
+/// printing one line: 22.9 ms on the bootstrap, 15.8 ms on the preloaded builtins). A match
+/// anywhere, a comment or string included, counts.
+const MODULE_LOADING_NAMES: &[&str] = &["require", "getBuiltinModule", "console"];
 /// The files the scan reads before the run starts. A larger own graph is a program whose own
 /// loading outweighs what restoring the builtins costs it.
 const SCANNED_FILES: usize = 64;
@@ -75,6 +77,16 @@ impl Scan {
             }
         }
         Some(())
+    }
+}
+
+/// The snapshot kind a process whose entry is the inline source `source` (`-e`, `-p`)
+/// restores, by the rule `snapshot_kind` applies to a file: the bootstrap alone when it names
+/// no module and no way of loading one.
+pub(super) fn inline_snapshot_kind(source: &str) -> SnapshotKind {
+    match source_specifiers(source) {
+        Some(specifiers) if specifiers.is_empty() => SnapshotKind::Bootstrap,
+        _ => SnapshotKind::Preloaded,
     }
 }
 
