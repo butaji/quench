@@ -130,6 +130,30 @@ pub(super) fn emit_number_arithmetic_operation(
     operation.apply(&mut Emit { builder }, left, right)
 }
 
+pub(super) fn emit_number_unary_operation(
+    builder: &mut FunctionBuilder<'_>,
+    operation: super::operations::NumberUnary,
+    value: ir::Value,
+) -> ir::Value {
+    struct Emit<'a, 'f> {
+        builder: &'a mut FunctionBuilder<'f>,
+    }
+
+    impl crate::vm::operations::NumberUnaryStage<ir::Value> for Emit<'_, '_> {
+        type Output = ir::Value;
+
+        fn plus(&mut self, value: ir::Value) -> Self::Output {
+            value
+        }
+
+        fn negate(&mut self, value: ir::Value) -> Self::Output {
+            self.builder.ins().fneg(value)
+        }
+    }
+
+    operation.apply(&mut Emit { builder }, value)
+}
+
 pub(super) fn emit_number_bitwise_operation(
     builder: &mut FunctionBuilder<'_>,
     operation: crate::vm::operations::NumberBitwise,
@@ -361,6 +385,30 @@ pub(super) fn compile_js_numeric_region(
                         offset,
                     ))
                 }
+            }
+            JsDenotation::NumericUnary => {
+                if instruction.numeric_local_target().is_some()
+                    || (instruction.result_flags() != 0
+                        && instruction.result_flags() != RETURN_REGISTER)
+                {
+                    return None;
+                }
+                let operation = super::operations::NumberUnary::from_js_instruction(
+                    instruction.op(),
+                    instruction.unary_operator(),
+                )?;
+                let source = usize::from(instruction.register_b());
+                if !*registers.get(source)? {
+                    return None;
+                }
+                let value = body.read(source as u16, crate::WasmType::F64);
+                let value = emit_number_unary_operation(&mut body.builder, operation, value);
+                if instruction.returns_from_frame() {
+                    body.builder.ins().return_(&[value]);
+                    returned = true;
+                    break;
+                }
+                Some(value)
             }
             JsDenotation::NumericBinary => {
                 if instruction.numeric_local_target().is_some()
