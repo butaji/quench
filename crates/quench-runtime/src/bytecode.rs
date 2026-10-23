@@ -1223,6 +1223,10 @@ pub struct Function {
     /// Lexical HomeObject captured by methods and arrows containing `super`.
     pub super_home_atom: Option<Atom>,
     pub constructible: bool,
+    /// An ordinary function expression whose `prototype` no program text observes until a
+    /// callee's legacy `caller` reaches it (`compile::call_only`): its closures make none
+    /// at creation.
+    pub prototype_unobservable: bool,
     pub class_initializer: bool,
     pub parameter_eval_arguments_error: bool,
     /// A mapped `arguments` binding whose mapping nothing can observe: the body only reads
@@ -1308,6 +1312,7 @@ pub(crate) struct FunctionHeader {
     pub(crate) is_generator: bool,
     pub(crate) is_class_constructor: bool,
     pub(crate) constructible: bool,
+    pub(crate) prototype_unobservable: bool,
     pub(crate) inherited_with_scope: bool,
 }
 
@@ -1325,6 +1330,7 @@ impl FunctionHeader {
             is_generator: function.is_generator,
             is_class_constructor: function.is_class_constructor,
             constructible: function.constructible,
+            prototype_unobservable: function.prototype_unobservable,
             inherited_with_scope: function.inherited_with_scope,
         }
     }
@@ -3251,7 +3257,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 103;
+    pub const FORMAT_VERSION: u8 = 104;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
