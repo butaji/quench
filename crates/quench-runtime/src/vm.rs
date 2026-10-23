@@ -44,6 +44,8 @@ fn fresh_random_seed() -> u64 {
 pub(super) const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 pub(super) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
 pub(super) const ROOT_FUNCTION_ID: u32 = 0;
+/// The values a call roots besides its arguments: the callee and the receiver.
+const CALL_ROOTS_BESIDE_ARGUMENTS: usize = 2;
 
 #[derive(Clone, Copy, Default)]
 struct RuntimeAtoms {
@@ -3065,12 +3067,16 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         target: Option<CallTarget>,
     ) -> Result<Value, JsError> {
-        self.with_call_roots(
-            std::iter::once(callee)
-                .chain(std::iter::once(this))
-                .chain(args.iter().copied()),
-            |vm| vm.call_value_with_target_inner(p, callee, this, args, target),
-        )
+        // The roots are pushed as a slice: a chained iterator's extend cost a callback from an
+        // array method about 60 instructions (`Array.prototype.map`, 1,000-element arrays).
+        let start = self.active_call_roots.len();
+        self.active_call_roots.reserve(args.len() + CALL_ROOTS_BESIDE_ARGUMENTS);
+        self.active_call_roots.push(callee);
+        self.active_call_roots.push(this);
+        self.active_call_roots.extend_from_slice(args);
+        let result = self.call_value_with_target_inner(p, callee, this, args, target);
+        self.active_call_roots.truncate(start);
+        result
     }
 
     fn call_value_from_frame(
