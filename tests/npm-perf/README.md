@@ -5,6 +5,41 @@ the no-JIT package sequence. Repeat the package sequence with JIT enabled
 afterward. Quench defaults to the interpreter and enables its compiled mode
 with `--jit`; its production executable is `target/production/quench-node`.
 
+## Fastify
+
+`fastify-json-http.cjs` measures a schema-validated JSON route over one real
+HTTP/1.1 keep-alive connection. Fastify's `inject()` path is not used because
+Quench currently rejects its shared response object before it becomes active;
+the real listener path works and is covered by the framework compatibility
+scenario. The workload checks each response's status and bytes before reporting
+the request rate. Fastify 5.12.5 and its dependencies are pinned in the lockfile.
+
+```sh
+cd tests/npm-perf
+npm ci
+node run-workload.mjs fastify-json-http no-jit 11 ../../target/fastify-no-jit.json
+node run-workload.mjs fastify-json-http jit 11 ../../target/fastify-jit.json
+```
+
+The runner reports end-to-end client request throughput, output parity, and
+sampled peak RSS for Quench, Node, and Bun. This workload includes both the
+client request machinery and Fastify's server path, so compare identical engine
+and runtime versions on the same host.
+
+An 11-round, 1,000-request Linux diagnostic measured no-JIT Quench at
+304.5 requests/s / 45.56 MB sampled max RSS, Node `--jitless` at 1,658.4 /
+52.94 MB, and Bun no-JIT at 1,416.4 / 49.29 MB. JIT measured Quench at
+314.5 / 43.18 MB, Node at 3,891.1 / 71.93 MB, and Bun at 3,194.9 /
+81.54 MB. Output parity matched. Quench's sampled RSS was lower, but throughput
+was far behind both engines in both phases; Linux RSS is diagnostic only.
+
+A candidate that removed repeated request and response header-boundary scans
+was rejected after interleaved 11-round A/B screens at 1,000 requests. No-JIT
+candidate/control measured 304.5 / 45.56 MB versus 327.5 / 45.11 MB; JIT
+measured 314.5 / 43.18 MB versus 323.3 / 42.75 MB. Output parity matched, but
+the candidate lost speed and added RSS in both phases, so the runtime change
+was reverted. The paired reports are in `work/fastify-perf/`.
+
 ## React / react-dom
 
 The first workload repeatedly server renders a fixed component tree with
@@ -622,3 +657,11 @@ Linux RSS samples are diagnostic; output parity matched in all runs. Reports
 are in the local `work/react-perf` scratch directory as
 `react-movemove-{nojit,jit}-1000-11.json` and
 `react-occupied-sweep-{nojit,jit}-1000-11.json`.
+
+A lazy canonical empty-string record was tested with GC rooting and
+snapshot/restore reconstruction. It passed its focused heap test, but lost the
+interleaved 11-round no-JIT React screen: 518.4 renders/s / 37.59 MB versus the
+control at 548.2 / 36.27 MB. Output matched. The allocation branch and
+long-lived root cost more than the saved empty records in this workload, so
+the runtime change was reverted. Report:
+`work/react-perf/react-empty-string-nojit-1000-11.json`.
