@@ -2224,12 +2224,7 @@ impl Function {
     pub(crate) fn has_dynamic_scope_access(&self) -> bool {
         self.inherited_with_scope
             || !self.binding_sites.is_empty()
-            || self.instructions().any(|instruction| {
-                instruction.op() == Op::ResolveName
-                    || (instruction.op().is_call_with_eval_flags()
-                        && (ImmediateLayout::direct_eval(instruction.imm())
-                            || ImmediateLayout::parameter_eval(instruction.imm())))
-            })
+            || self.instructions().any(WideInstruction::resolves_dynamic_scope)
     }
 
     /// Whether the body enters a `with` statement, whose by-name loads may denote
