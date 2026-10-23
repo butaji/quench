@@ -340,6 +340,7 @@ measured on the same binary and lost.
 | Charge property-arena growth toward the next collection | Max RSS 0.619 → 0.617 of Throughput (RegExp −0.2 MB), Score −1.6% | branch `meas-gc-charge-arena`, TOD-137 comment |
 | Release the worker stack below the current frame at MemoryFirst collections | −148 to +216 KiB per row (5 runs, unbolted same-layout static builds): no consistent change; the stack is about 110 KiB resident and regrows to the same depth | branch `cand-gc-stack-release`, TOD-137 comment |
 | `MADV_RANDOM` on the clean segments under MemoryFirst (no readahead into the page cache) | +56 to +228 KiB on 14 of 16 rows against current v2-gc (5 runs, unbolted static, same tree) | branch `cand-gc-random-text`, TOD-137 comment |
+| Earlier first collection under MemoryFirst (first young 512–2048 against 4096), to release warm-up code sooner | No consistent change in median or worst max RSS on six fixtures (9 runs, one gc-tuning binary); a re-run trailing release from a helper thread also showed none | branches `cand-gc-first-young`, `cand-gc-trailing-release2`, TOD-137 comment |
 
 ### 8.3 Where the peak is now (MemoryFirst, no JIT)
 
