@@ -10480,6 +10480,10 @@ fn js_jit_enters_compiled_known_callees_without_pushing_a_frame() {
         panic!("the numeric callee should be compiled");
     };
     assert!(
+        compiled.uses_leaf_entry(),
+        "the non-polling numeric artifact should use the shared leaf entry"
+    );
+    assert!(
         compiled.native_entries() >= 9,
         "promotion plus the remaining statically-known calls should enter native code"
     );
@@ -10807,6 +10811,10 @@ fn js_jit_interrupt_exits_through_the_shared_native_entry() {
     ));
     let compiled = super::compiled::CompiledJsFunction::from_artifact(artifact)
         .expect("shared executable mapping");
+    assert!(
+        !compiled.uses_leaf_entry(),
+        "an interruptible loop must retain the resumable native entry"
+    );
     let interrupt = std::sync::atomic::AtomicBool::new(true);
 
     let result = compiled.call(&[1_000_000.0], &interrupt, None);
