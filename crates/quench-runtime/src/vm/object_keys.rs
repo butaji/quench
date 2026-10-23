@@ -1,6 +1,7 @@
 use super::property_key::PropertyKey;
 use super::*;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum EnumerableOwnPropertyKind {
     Key,
     Value,
@@ -93,6 +94,50 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    /// `Object.values` or `Object.entries` of an object whose enumerable keys its shape lists
+    /// (`shape_enumerable_slots`), all data properties: each value is a slot read, observing
+    /// nothing. Each item is kept in the call roots while the next allocates. `None` leaves
+    /// keys, accessors and every other object to the general path.
+    fn shape_enumerable_data_items(&mut self, object: Value, kind: EnumerableOwnPropertyKind) -> Option<Value> {
+        if kind == EnumerableOwnPropertyKind::Key {
+            return None;
+        }
+        let slots = self.shape_enumerable_slots(object)?;
+        let data = self.object_data(object)?;
+        let values = slots
+            .iter()
+            .map(|&(_, slot)| {
+                let slot = slot as usize;
+                self.slot_attributes(data, slot)
+                    .is_some_and(|attributes| !attributes.accessor)
+                    .then(|| self.heap.property_get(data, slot))
+                    .flatten()
+            })
+            .collect::<Option<Vec<Value>>>()?;
+        let start = self.active_call_roots.len();
+        self.active_call_roots.push(object);
+        let mut items = Vec::with_capacity(values.len());
+        for (&(atom, _), value) in slots.iter().zip(values) {
+            let item = match kind {
+                EnumerableOwnPropertyKind::KeyValue => {
+                    let key = self.atom_string(atom);
+                    self.active_call_roots.push(key);
+                    self.heap.alloc(Cell::Array {
+                        object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), vec![key, value]),
+                    })
+                }
+                _ => value,
+            };
+            self.active_call_roots.push(item);
+            items.push(item);
+        }
+        let result = self.heap.alloc(Cell::Array {
+            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), items),
+        });
+        self.active_call_roots.truncate(start);
+        Some(result)
+    }
+
     pub(super) fn enumerable_own_properties(
         &mut self,
         p: &ResidualProgram,
@@ -108,6 +153,9 @@ impl<H: Host> Vm<H> {
                 .map(|atom| self.atom_string(atom))
                 .collect();
             return Ok(self.own_keys_array(keys));
+        }
+        if let Some(items) = self.shape_enumerable_data_items(object, kind) {
+            return Ok(items);
         }
         let object = self.heap.root(object);
         let mut keys = Vec::new();

@@ -330,7 +330,10 @@ impl<'a> Units<'a> {
         }
         let last = self.len() - search.len();
         if let (Self::Ascii(haystack), Units::Ascii(needle)) = (self, search) {
-            return (start..=last).find(|index| haystack[*index..*index + needle.len()] == *needle);
+            if start > last {
+                return None;
+            }
+            return memchr::memmem::find(&haystack[start..], needle).map(|offset| start + offset);
         }
         let first = search.at(0);
         (start..=last).find(|index| {
