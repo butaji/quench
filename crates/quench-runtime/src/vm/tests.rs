@@ -10425,14 +10425,35 @@ if(fn().getFunctionName()!=='anonymous')throw Error('deleted length layout');
 }
 
 #[test]
+fn shared_number_arithmetic_maps_all_four_numeric_operators() {
+    use oxc_ast::ast::BinaryOperator;
+    use super::operations::NumberArithmetic;
+
+    for (operator, expected) in [
+        (BinaryOperator::Addition, NumberArithmetic::Add),
+        (BinaryOperator::Subtraction, NumberArithmetic::Subtract),
+        (BinaryOperator::Multiplication, NumberArithmetic::Multiply),
+        (BinaryOperator::Division, NumberArithmetic::Divide),
+    ] {
+        assert_eq!(NumberArithmetic::from_operator(operator as u32), Some(expected));
+    }
+    assert_eq!(
+        NumberArithmetic::from_operator(BinaryOperator::Equality as u32),
+        None
+    );
+}
+
+#[test]
 #[cfg(not(quench_profiled))]
 fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     let source = r#"
       function add(left, right) { return left + right; }
+      function subtract(left, right) { return left - right; }
       function divide(left, right) { return left / right; }
       function plusOne(value) { return value + 1; }
       for (let index = 0; index < 40; index++) {
         if (add(index, 2) !== index + 2) throw new Error('numeric result');
+        if (subtract(index + 2, 2) !== index) throw new Error('numeric subtraction result');
         if (divide(index + 1, 2) !== (index + 1) / 2) throw new Error('division result');
         if (plusOne(index) !== index + 1) throw new Error('numeric constant result');
       }
@@ -10461,7 +10482,7 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
 
-    for function in [1, 2, 3] {
+    for function in [1, 2, 3, 4] {
         assert!(matches!(
             vm.programs
                 .js_tier(super::program_store::ProgramId::MAIN, function),
