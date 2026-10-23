@@ -8417,14 +8417,22 @@ impl<H: Host> Vm<H> {
         program: ProgramId,
         env: Value,
     ) -> *const crate::heap::EnvironmentSlots {
-        // A frameless activation's function has no environment of its own.
-        let capture = match self.environment_capture_slots(env, false, 0) {
-            Some((slots, None)) => slots
-                .dense()
-                .map_or(std::ptr::null(), |slots| slots as *const crate::heap::EnvironmentSlots),
-            _ => return std::ptr::null(),
+        // A frameless activation's function has no environment of its own: its depth-0
+        // captures are the closure environment's dense slots (`Vm::environment_capture_slots`),
+        // read here with the facts the store tag needs from the same cell.
+        let Some(Cell::Environment { function, slots, scope, .. }) = self.heap.get(env) else {
+            return std::ptr::null();
         };
-        if !capture.is_null() && self.admits_every_direct_store(code, program, env) {
+        if *function == u32::MAX || *function == super::ROOT_FUNCTION_ID {
+            return std::ptr::null();
+        }
+        let Some(dense) = slots.dense() else {
+            return std::ptr::null();
+        };
+        let capture: *const crate::heap::EnvironmentSlots = dense;
+        if super::environment::direct_store_owner(code, program, *function, scope)
+            .is_some_and(super::environment::owner_admits_every_direct_store)
+        {
             self.heap.remember_cell(env);
             return capture.map_addr(|address| address | CAPTURE_STORES);
         }
