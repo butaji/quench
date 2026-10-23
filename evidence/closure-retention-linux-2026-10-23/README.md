@@ -216,3 +216,22 @@ V8-v7 has few over-captured environments, so it pays for the readable-slot table
 larger code without gaining from them. Merging waits on cutting that cost: build the table
 only for programs with shared closure environments, or derive it lazily at the first full
 collection that traces one. Then rerun this A/B.
+
+## After gating the trim and indexing traced environments sparsely
+
+Commit: `Trim closure environments only as the live set grows; index traced environments sparsely`.
+
+- **Unbolted, against v2-gc** (`v8v7-gated-unbolted-*`):
+  - MemoryFirst medians average about +40 KiB, with rows from −172 to +152.
+  - Throughput is mixed, apart from one EarleyBoyer +540 sample.
+- **Bolted, each binary with a BOLT profile retrained on itself**
+  (`v8v7-gated-bolted-retrained-memory-first-7-runs.txt`): +68 to +232 KiB on 15 of 16 rows,
+  so the cost is real. Score is within noise.
+- **Trim on against trim off, in one binary** (`trim-on-off-same-binary-7-runs.txt`): the
+  trim itself accounts for at most about 100 KiB (RayTrace, RegExp), and 0 on most rows.
+- **Sampled `/proc` peaks** differ by only 20–40 KiB, while the kernel's max RSS differs more.
+  The rest of the cost is therefore a short spike that the sampler misses, and it has not been
+  located yet.
+
+Status: the branch stays unmerged. It is semantically ready (885/885 tests), but on V8-v7 it
+costs 70–230 KiB of max RSS.
