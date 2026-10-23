@@ -40,3 +40,29 @@ implementation, measure hot functions with exclusive costs or opcode-level
 sampling and select a region that removes meaningful dispatch while preserving
 call, exception, allocation, GC, and continuation semantics. This profile does
 not support a 20% performance claim.
+
+## No-JIT dispatch profile
+
+To inspect shared interpreter work, I also built a separate release binary
+with `quench-runtime/profile-aggregate` and ran the same 1,000-iteration,
+50-warmup workload with `QUENCH_PROFILE_ALL_PROGRAMS=1` and
+`QUENCH_PROFILE_RETAIN_BYTECODE=1`. This profiling build is deliberately
+isolated under `target/profile-diagnostic`; its 5.4k ops/s result is not
+comparable to the uninstrumented production control.
+
+The profile attributes large executed-instruction counts to Zod's
+`v4/core/schemas.cjs` (969,150 instructions in one anonymous function and
+254,100 in another), `v4/core/util.cjs` (`finalizeIssue`: 905,100;
+`aborted`: 216,300), and `v4/core/core.cjs` (`init`: 103,054; `_`: 34,491).
+The wrapper itself executes 80,850 instructions across 1,050 entries. These
+counts include loops in the relevant functions and are not exclusive CPU
+times. The wider interpreter profile also records 292,393 dynamic calls,
+958,681 field-cache hits, and 132,465 misses across loaded programs; these are
+VM-wide counters and should not be attributed to the Zod package alone.
+
+This strengthens the case for a general shared dispatch/region optimization
+over the cached getter micro-path: hot work spans schema functions, issue
+construction, field reads, and calls. It still does not identify a safe fused
+region or establish a ≥20% ceiling; the next profiling step must map hot
+anonymous function IDs to source ranges and split exclusive from descendant
+costs before lowering effectful calls.
