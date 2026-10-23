@@ -475,3 +475,14 @@ the instrumented run's timing is diagnostic only. Output matched at 2,498,000
 bytes/checksum 41826. Report:
 `work/react-perf/react-movecall-relations-500.json` and
 `work/react-perf/react-movecall-relations-500.log`.
+
+Clearing script activation windows of at most eight registers exactly, instead
+of always writing the 16-register fill block, reduced work but lost throughput.
+The short screen measured 308.3 renders/s / 25.95 MB versus 335.7 / 27.75 MB
+for the same-run control. The full 11-round paired run confirmed a smaller
+regression: 313.2 / 27.22 MB versus 327.0 / 27.68 MB (-4.2% speed, -1.7% RSS).
+Output matched at 24,980,000 bytes/checksum 414318; the implementation was
+reverted. Next is a guarded adjacent own-field pair, based on the 2.91M dynamic
+`GetField → GetField` transitions in the 500-render profile. Reports:
+`work/react-perf/react-exact-small-fill-screen-3.json` and
+`work/react-perf/react-exact-small-fill-11.json`.
