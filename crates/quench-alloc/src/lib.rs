@@ -329,6 +329,21 @@ impl QuenchAlloc {
         }
         class_of(layout.size())
     }
+
+    /// `alloc` once the switch is on: a small request from its class, any other (or one no
+    /// page can serve) from the system allocator, which then frees it (`owns`).
+    #[inline(never)]
+    unsafe fn alloc_enabled(layout: Layout) -> *mut u8 {
+        if let Some(class) = Self::small_class(layout) {
+            // SAFETY: a small class.
+            let block = unsafe { allocate(class) };
+            if !block.is_null() {
+                return block;
+            }
+        }
+        // SAFETY: forwarded unchanged.
+        unsafe { System.alloc(layout) }
+    }
 }
 
 impl Default for QuenchAlloc {
@@ -615,18 +630,11 @@ unsafe fn take_block(page: *mut Page, class: usize) -> *mut u8 {
 unsafe impl GlobalAlloc for QuenchAlloc {
     #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        // The switch first: until it is on, a request costs one load before the system
-        // allocator.
+        // The switch first, and the enabled path out of line: until the switch is on, a
+        // request costs one load and a jump to the system allocator, with no frame of its own.
         if ENABLED.load(Ordering::Relaxed) {
-            if let Some(class) = Self::small_class(layout) {
-                // SAFETY: a small class.
-                let block = unsafe { allocate(class) };
-                if !block.is_null() {
-                    return block;
-                }
-                // No page could be had: the system allocator stands in, and frees the block
-                // (`owns`).
-            }
+            // SAFETY: forwarded unchanged.
+            return unsafe { Self::alloc_enabled(layout) };
         }
         // SAFETY: forwarded unchanged.
         unsafe { System.alloc(layout) }
