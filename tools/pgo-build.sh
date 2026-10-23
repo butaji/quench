@@ -52,6 +52,15 @@ run_limited() {
         "$@"
     fi
 }
+run_training_limited() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 120 "$@"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        gtimeout 120 "$@"
+    else
+        "$@"
+    fi
+}
 
 # Link OpenSSL statically where its archives exist: a shared libcrypto/libssl is loaded and
 # relocated at every start (~1 MB of startup RSS on x86_64 Linux) although only TLS uses it,
@@ -99,7 +108,7 @@ if (( react_training_rounds > 0 )); then
     NODE_ENV=production \
         QUENCH_BENCH_ROUNDS="$react_training_rounds" \
         QUENCH_BENCH_WARMUPS=250 \
-        run_limited "$instrumented" tests/npm-perf/workloads/react-ssr.cjs >/dev/null
+        run_training_limited "$instrumented" tests/npm-perf/workloads/react-ssr.cjs >/dev/null
 fi
 unset LLVM_PROFILE_FILE
 
