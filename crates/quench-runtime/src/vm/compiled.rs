@@ -153,6 +153,18 @@ pub(super) fn emit_number_bitwise_i32(
     left: ir::Value,
     right: ir::Value,
 ) -> Option<ir::Value> {
+    let operation = crate::vm::operations::NumberBitwise::from_operator(operator)?;
+    Some(emit_number_bitwise_operation(
+        builder, operation, left, right,
+    ))
+}
+
+fn emit_number_bitwise_operation(
+    builder: &mut FunctionBuilder<'_>,
+    operation: crate::vm::operations::NumberBitwise,
+    left: ir::Value,
+    right: ir::Value,
+) -> ir::Value {
     struct Emit<'a, 'f> {
         builder: &'a mut FunctionBuilder<'f>,
     }
@@ -183,13 +195,12 @@ pub(super) fn emit_number_bitwise_i32(
         }
     }
 
-    let operation = crate::vm::operations::NumberBitwise::from_operator(operator)?;
     let bits = operation.apply(&mut Emit { builder }, left, right);
     if operation == crate::vm::operations::NumberBitwise::ShiftRightUnsigned {
         let unsigned = builder.ins().uextend(types::I64, bits);
-        Some(builder.ins().fcvt_from_uint(types::F64, unsigned))
+        builder.ins().fcvt_from_uint(types::F64, unsigned)
     } else {
-        Some(builder.ins().fcvt_from_sint(types::F64, bits))
+        builder.ins().fcvt_from_sint(types::F64, bits)
     }
 }
 
@@ -422,15 +433,19 @@ pub(super) fn compile_js_numeric_region(
                 );
                 let value = if let Some(operation) = arithmetic {
                     emit_number_arithmetic_operation(&mut body.builder, operation, left, right)
-                } else if instruction.op() == Op::Binary
-                    && int32_bitwise
-                    && super::operations::NumberBitwise::from_operator(op).is_some_and(
-                        super::operations::NumberBitwise::in_signed_int32_domain,
+                } else if let Some(operation) =
+                    super::operations::NumberBitwise::from_js_instruction(
+                        instruction.op(),
+                        op,
                     )
+                    .filter(|operation| {
+                        int32_bitwise
+                            && operation.in_signed_int32_domain()
+                    })
                 {
                     let left = body.builder.ins().fcvt_to_sint(types::I32, left);
                     let right = body.builder.ins().fcvt_to_sint(types::I32, right);
-                    emit_number_bitwise_i32(&mut body.builder, op, left, right)?
+                    emit_number_bitwise_operation(&mut body.builder, operation, left, right)
                 } else {
                     return None;
                 };
