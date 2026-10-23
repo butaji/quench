@@ -1564,6 +1564,7 @@ impl<H: Host> Vm<H> {
                     )
                 },
                 (cursor.program.raw(), cursor.function),
+                ins.op(),
             );
             pc += 1;
             #[cfg(feature = "profile-aggregate")]

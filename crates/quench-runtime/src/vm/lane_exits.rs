@@ -60,6 +60,8 @@ struct FunctionCensus {
     view_ops: std::collections::HashMap<usize, Vec<Op>>,
     /// Lane records dispatched by opcode, and by the opcode dispatched just before.
     op_counts: Vec<u64>,
+    /// General-loop instructions run, by opcode.
+    general_op_counts: Vec<u64>,
     pair_counts: std::collections::HashMap<(usize, usize), u64>,
     previous_op: Option<Op>,
     labels: Vec<String>,
@@ -137,8 +139,12 @@ pub(super) fn count_record(address: usize, record_size: usize) {
 const REPORTED_DISPATCHES: usize = 40;
 
 /// Count one general-loop instruction of the function `label` names.
-pub(super) fn count_general(label: impl FnOnce() -> String, key: (u32, u32)) {
+pub(super) fn count_general(label: impl FnOnce() -> String, key: (u32, u32), op: Op) {
     with_functions(|census| {
+        if census.general_op_counts.is_empty() {
+            census.general_op_counts = vec![0; Op::COUNT];
+        }
+        census.general_op_counts[op as usize] += 1;
         let index = match census.general_keys.get(&key) {
             Some(index) => *index,
             None => {
@@ -172,6 +178,12 @@ extern "C" fn report_functions() {
         ops.sort_unstable_by(|a, b| b.1.cmp(a.1));
         for (op, count) in ops.into_iter().take(REPORTED_DISPATCHES) {
             eprintln!("  lane op {count:>12} {}", Op::NAMES[op]);
+        }
+        let mut general_ops: Vec<_> =
+            census.general_op_counts.iter().enumerate().filter(|(_, count)| **count > 0).collect();
+        general_ops.sort_unstable_by(|a, b| b.1.cmp(a.1));
+        for (op, count) in general_ops.into_iter().take(REPORTED_DISPATCHES) {
+            eprintln!("  general op {count:>12} {}", Op::NAMES[op]);
         }
         let mut pairs: Vec<_> = census.pair_counts.iter().collect();
         pairs.sort_unstable_by(|a, b| b.1.cmp(a.1));
