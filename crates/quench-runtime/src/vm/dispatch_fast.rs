@@ -8892,7 +8892,7 @@ script_handler! {
         let globals = vm.realm.globals;
         let value = match vm.cached_field_hit(code, globals, i.c) {
             super::object::FieldCacheProbe::Hit(value) => value,
-            _ => {
+            probe => {
                 if let Some(getter) = vm.cached_field_getter(globals, atom, vm.field_cache_index(i.c)) {
                     if !unsafe { (*cx).script_calls } {
                         return exit(ip);
@@ -8911,7 +8911,14 @@ script_handler! {
                 // data property through its shape walk. An absent name is `undefined` to
                 // `typeof` and raises on the general path otherwise.
                 match vm.plain_global_lookup(atom) {
-                    Some(Some(value)) => value,
+                    Some(Some(value)) => {
+                        // A present binding the site's cache missed (the global object has
+                        // grown since) is recorded for the next load.
+                        if matches!(probe, super::object::FieldCacheProbe::OrdinaryMiss) {
+                            vm.field_miss_data_value(globals, atom, vm.field_cache_index(i.c));
+                        }
+                        value
+                    }
                     Some(None) if KIND == LOAD_NAME_TYPEOF => Value::UNDEFINED,
                     _ => return exit(ip),
                 }
