@@ -306,8 +306,9 @@ impl<H: Host> Vm<H> {
                 "SharedArrayBuffer",
             ),
         ] {
+            let native_function = self.native_value(native);
             self.install_buffer_species(
-                self.native_value(native),
+                native_function,
                 prototype,
                 self.realm.globals,
                 tag,

@@ -634,6 +634,27 @@ impl ValueArena {
         }
     }
 
+    /// Whether `vector`, an arena vector outside dictionary storage of `len` values, has room
+    /// for one more value without moving its range (`push`'s `grow`).
+    #[inline(always)]
+    pub(crate) fn appends_in_place(vector: ValueVec, len: usize) -> bool {
+        len < Self::ordered_capacity(vector, len)
+    }
+
+    /// `push` of `value` to `vector` of `len` values where `appends_in_place` holds: the
+    /// store alone.
+    ///
+    /// # Safety
+    /// `vector` is an arena vector outside dictionary storage of `len` values, whose range has
+    /// room for one more (`appends_in_place`).
+    #[inline(always)]
+    pub(crate) unsafe fn push_in_place(&mut self, vector: ValueVec, len: usize, value: Value) {
+        debug_assert!(!vector.has_inline_property_storage() && !vector.is_dictionary());
+        debug_assert!(len == self.len(vector) && Self::appends_in_place(vector, len));
+        // SAFETY: the range from `start` holds its capacity, past `len`, reserved in `values`.
+        unsafe { *self.values.get_unchecked_mut(vector.start() + len) = value };
+    }
+
     fn allocate(&mut self, capacity: usize, max_start: usize) -> Option<usize> {
         let bucket = Self::bucket(capacity);
         if let Some(start) = self.free[bucket].pop() {

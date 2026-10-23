@@ -1,0 +1,18 @@
+== no-JIT: Score factor needed = 1.2*best/quench ; RSS factor = quench max/(0.8*lowest)  [MemoryFirst | Throughput]
+richards       score    1258 need x 1.33 (bun no-JIT) rss   3248 x1.16 (qjs) | score    1300 need x 1.19 (node --jitless) rss   4448 x1.63 (qjs)
+deltablue      score    1200 need x 1.29 (node --jitless) rss   3428 x1.13 (qjs) | score     922 need x 1.63 (node --jitless) rss   7012 x2.23 (qjs)
+crypto         score    1856 need x 0.96 (bun no-JIT) rss   3760 x1.28 (qjs) | score    2321 need x 0.85 (bun no-JIT) rss   8284 x2.81 (qjs)
+raytrace       score    2065 need x 1.46 (node --jitless) rss   3744 x1.32 (qjs) | score    2152 need x 1.56 (node --jitless) rss   7048 x2.49 (qjs)
+earley-boyer   score    3109 need x 1.79 (node --jitless) rss   7048 x0.50 (qjs) | score    3625 need x 1.55 (node --jitless) rss  11340 x0.80 (qjs)
+regexp         score    2130 need x 1.48 (node --jitless) rss   6864 x1.22 (qjs) | score    2301 need x 1.47 (node --jitless) rss  12020 x2.12 (qjs)
+splay          score    3313 need x 1.12 (node --jitless) rss  31772 x0.65 (bun no-JIT) | score    3715 need x 1.04 (node --jitless) rss  33260 x0.68 (bun no-JIT)
+navier-stokes  score    2624 need x 1.07 (bun no-JIT) rss   4832 x1.15 (qjs) | score    2622 need x 1.19 (bun no-JIT) rss   4832 x1.15 (qjs)
+== JIT: Score factor needed = 1.2*best/quench ; RSS factor = quench max/(0.8*lowest)  [MemoryFirst | Throughput]
+richards       score    1273 need x31.41 (bun) rss   3160 x1.13 (qjs) | score    1020 need x38.96 (bun) rss   4056 x1.49 (qjs)
+deltablue      score    1120 need x62.54 (node) rss   3300 x1.08 (qjs) | score    1140 need x63.01 (node) rss   6528 x2.07 (qjs)
+crypto         score    4682 need x 8.54 (bun) rss   4120 x1.41 (qjs) | score    4233 need x 8.86 (bun) rss   8540 x2.89 (qjs)
+raytrace       score    2087 need x20.42 (node) rss   3160 x1.11 (qjs) | score    2514 need x15.62 (node) rss   6376 x2.26 (qjs)
+earley-boyer   score    2933 need x13.43 (node) rss   6672 x0.47 (qjs) | score    3653 need x10.26 (node) rss  10820 x0.76 (qjs)
+regexp         score    2048 need x 3.29 (node) rss   6684 x1.19 (qjs) | score    2427 need x 3.12 (bun) rss  11516 x2.04 (qjs)
+splay          score    3369 need x 6.42 (bun) rss  31584 x0.25 (qjs) | score    3676 need x 5.79 (bun) rss  32792 x0.26 (qjs)
+navier-stokes  score   18854 need x 1.82 (node) rss   7696 x1.84 (qjs) | score   17451 need x 2.07 (node) rss   7944 x1.88 (qjs)

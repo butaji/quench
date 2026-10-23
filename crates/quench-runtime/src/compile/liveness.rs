@@ -396,6 +396,7 @@ mod tests {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: vec![].into(),
             register_roots: Default::default(),

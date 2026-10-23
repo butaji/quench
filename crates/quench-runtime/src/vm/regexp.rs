@@ -4,8 +4,27 @@ use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Recently matched strings whose prepared subjects are kept (`Vm::regexp_subject`): a
-/// scanner's input plus the few short strings it tests between matches.
+/// scanner's input plus the few strings it tests between matches.
 const REGEXP_SUBJECT_CACHE_ENTRIES: usize = 4;
+
+/// A subject prepared for one operation's searches (`Vm::regexp_subject`).
+pub(super) enum PreparedSubject {
+    /// Built for this operation alone, as its searches keep nothing in it.
+    Local(quench_regexp::Subject),
+    /// Shared through the subject cache, which keeps its decoded units.
+    Shared(Rc<quench_regexp::Subject>),
+}
+
+impl std::ops::Deref for PreparedSubject {
+    type Target = quench_regexp::Subject;
+
+    fn deref(&self) -> &quench_regexp::Subject {
+        match self {
+            Self::Local(subject) => subject,
+            Self::Shared(subject) => subject,
+        }
+    }
+}
 // A short string's units fit a subject's inline text.
 const _: () = assert!(super::wtf16::SHORT_ASCII_CAPACITY <= quench_regexp::INLINE_SUBJECT_BYTES);
 
@@ -684,7 +703,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
             return None;
         };
-        Some((Rc::clone(&meta.matcher), flags))
+        Some((Self::regexp_matcher(meta).ok()?, flags))
     }
 
     /// `GetMethod(receiver, symbol)` for a RegExp `receiver` whose shape and prototype's
@@ -992,34 +1011,41 @@ impl<H: Host> Vm<H> {
         Ok(matcher)
     }
 
-    /// The prepared form of `input`, rebuilt only when it is not among the recently matched
-    /// strings. A scanner alternates matches over its input with checks of short tokens, so
-    /// remembering a few keeps the input's preparation across them.
-    fn regexp_subject(&mut self, input: &JsString) -> Rc<quench_regexp::Subject> {
+    /// The prepared form of `input` for the searches of `matcher`. A subject keeps only the
+    /// units it decodes (`Regex::searches_undecoded`), and preparing one touches no unit, so
+    /// a search that decodes nothing prepares it in place; another finds it among the
+    /// recently matched strings, rebuilt only when it is not one of them. A scanner
+    /// alternates matches over its input with checks of short tokens, so remembering a few
+    /// keeps the input's decoding across them.
+    fn regexp_subject(&mut self, input: &JsString, matcher: &quench_regexp::Regex) -> PreparedSubject {
         let flat = input.flat_unkept();
         let text = match &*flat {
-            // A short subject is copied inline and has no shared storage to recognize it by, so
-            // it neither consults nor displaces the cache. The last one is kept by content, as
-            // routers match one short path against many patterns; otherwise its slot is reused
-            // once no match holds it.
+            // A short subject is copied inline, so its decoding, at most a few units, is
+            // never worth finding again.
             FlatUnits::Short(text) => {
-                if let Some(subject) = &self.regexp_short_subject
-                    && subject.spells_ascii(text.as_str())
-                {
-                    return Rc::clone(subject);
-                }
-                if let Some(slot) = self.regexp_short_subject.as_mut()
-                    && let Some(reused) = Rc::get_mut(slot)
-                {
-                    reused.respell_short_ascii(text.as_str());
-                    return Rc::clone(slot);
-                }
-                let subject = Rc::new(quench_regexp::Subject::short_ascii(text.as_str()));
-                self.regexp_short_subject = Some(Rc::clone(&subject));
-                return subject;
+                return PreparedSubject::Local(quench_regexp::Subject::short_ascii(text.as_str()));
             }
             FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) | FlatUnits::Wide(_) => &*flat,
+            // A matcher subject owns whole wide storage, so a slice's run is copied into one;
+            // it is not kept, as nothing else holds that copy to find it by.
+            FlatUnits::WideSlice(_) => {
+                let crate::vm::wtf16::Units::Wide(units) = flat.view() else {
+                    unreachable!("a wide slice views wide units")
+                };
+                return PreparedSubject::Local(quench_regexp::Subject::new(Rc::from(units)));
+            }
         };
+        let fresh = || match text {
+            // Wide storage always holds a non-ASCII unit (`FlatUnits::Wide`).
+            FlatUnits::Wide(units) => quench_regexp::Subject::from_non_ascii(Rc::clone(units)),
+            ascii => {
+                let (text, range) = ascii.shared_ascii().expect("short subjects returned above");
+                quench_regexp::Subject::from_ascii(Rc::clone(text), range)
+            }
+        };
+        if matcher.searches_undecoded(!matches!(text, FlatUnits::Wide(_))) {
+            return PreparedSubject::Local(fresh());
+        }
         let cached = self.regexp_subjects.iter().position(|subject| match text {
             FlatUnits::Wide(units) => subject.is_text_of(units),
             ascii => ascii
@@ -1030,26 +1056,19 @@ impl<H: Host> Vm<H> {
         // least recent entry's place, reusing its allocation when no match holds it.
         if let Some(position) = cached {
             self.regexp_subjects[..=position].rotate_right(1);
-            return Rc::clone(&self.regexp_subjects[0]);
+            return PreparedSubject::Shared(Rc::clone(&self.regexp_subjects[0]));
         }
-        let fresh = match text {
-            FlatUnits::Wide(units) => quench_regexp::Subject::new(Rc::clone(units)),
-            ascii => {
-                let (text, range) = ascii.shared_ascii().expect("short subjects returned above");
-                quench_regexp::Subject::from_ascii(Rc::clone(text), range)
-            }
-        };
         if self.regexp_subjects.len() < REGEXP_SUBJECT_CACHE_ENTRIES {
-            self.regexp_subjects.push(Rc::new(fresh));
+            self.regexp_subjects.push(Rc::new(fresh()));
         } else {
             let least_recent = self.regexp_subjects.last_mut().expect("the cache is full");
             match Rc::get_mut(least_recent) {
-                Some(reused) => *reused = fresh,
-                None => *least_recent = Rc::new(fresh),
+                Some(reused) => *reused = fresh(),
+                None => *least_recent = Rc::new(fresh()),
             }
         }
         self.regexp_subjects.rotate_right(1);
-        Rc::clone(&self.regexp_subjects[0])
+        PreparedSubject::Shared(Rc::clone(&self.regexp_subjects[0]))
     }
 
     /// `RegExp.prototype[@@replace]` for a receiver whose exec, flags and lastIndex are its
@@ -1069,7 +1088,11 @@ impl<H: Host> Vm<H> {
         flags: RegExpFlags,
         result_used: bool,
     ) -> Result<Value, JsError> {
-        let subject = self.regexp_subject(input);
+        // Matching, slicing and substitution all read the input; a rope the program keeps
+        // (V8-v7 RegExp's input variants) would otherwise keep a flat copy of its text for its
+        // life once replaced: 837 KiB of RegExp's 4.3 MB malloc peak (massif, 2026-10-22).
+        let input = &input.unkept_flat();
+        let subject = self.regexp_subject(input, matcher);
         if let FastReplacement::Template(template) = replacement {
             if !template.units().iter().any(|unit| unit == u16::from(b'$')) {
                 return self.regexp_replace_with_literal(
@@ -1528,7 +1551,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::RegExp { meta, .. }) = self.heap.get(regexp) else {
             return None;
         };
-        let matcher = &meta.matcher;
+        let matcher = Self::regexp_matcher(meta).ok()?;
         let intrinsics = self
             .realm
             .intrinsics
@@ -1545,7 +1568,7 @@ impl<H: Host> Vm<H> {
                 Native::RegExpExec,
                 false,
             ))
-        .then(|| Rc::clone(matcher))
+        .then_some(matcher)
     }
 
     /// `RegExp.prototype[@@split]` steps 19–25 for a sticky `splitter` this call created,
@@ -1564,7 +1587,7 @@ impl<H: Host> Vm<H> {
         unicode: bool,
     ) -> Result<Value, JsError> {
         let size = input.units().len();
-        let subject = self.regexp_subject(input);
+        let subject = self.regexp_subject(input, matcher);
         let mut last_match = None;
         let mut p_index = 0usize;
         let mut q = 0usize;
@@ -1898,7 +1921,7 @@ impl<H: Host> Vm<H> {
         matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
     ) -> Result<Value, JsError> {
-        let subject = self.regexp_subject(input);
+        let subject = self.regexp_subject(input, matcher);
         // Only the last match's captures are observable (the legacy statics), so every match
         // keeps its range alone; the statics find the last again from its start if read.
         let ranges = self.regexp_global_matches(
@@ -2279,7 +2302,7 @@ impl<H: Host> Vm<H> {
                             source: source.clone(),
                             flags: RegExpFlags::validated(&flags),
                             legacy_constructor: owner,
-                            matcher,
+                            matcher: crate::heap::RegExpMatcher::compiled(matcher),
                         })
                     })
                     .map_err(|error| Rc::<str>::from(error.to_string()));
@@ -2310,6 +2333,7 @@ impl<H: Host> Vm<H> {
         matcher: Rc<quench_regexp::Regex>,
         legacy_constructor: crate::heap::RegExpLegacyOwner,
     ) -> Result<Value, JsError> {
+        let matcher = crate::heap::RegExpMatcher::compiled(matcher);
         let meta = Rc::new(crate::heap::RegExpMeta { source, flags, legacy_constructor, matcher });
         self.regexp_from_meta(prototype, meta)
     }
@@ -2405,7 +2429,7 @@ impl<H: Host> Vm<H> {
                 let meta = Rc::make_mut(meta);
                 meta.source = source;
                 meta.flags = RegExpFlags::validated(&flags);
-                meta.matcher = matcher;
+                meta.matcher = crate::heap::RegExpMatcher::compiled(matcher);
                 let last_index = vm.intern_atom("lastIndex");
                 vm.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
                 Ok(receiver)
@@ -2517,7 +2541,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<quench_regexp::Match>, JsError> {
         let (regex, stateful, sticky) = match self.heap.get(this) {
             Some(Cell::RegExp { meta, .. }) => (
-                Rc::clone(&meta.matcher),
+                Self::regexp_matcher(meta)?,
                 meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY)),
                 meta.flags.contains(RegExpFlags::STICKY),
             ),
@@ -2544,7 +2568,7 @@ impl<H: Host> Vm<H> {
             }
             return Ok(None);
         }
-        let subject = self.regexp_subject(input);
+        let subject = self.regexp_subject(input, &regex);
         let matched = if sticky {
             // A start inside a surrogate pair resolves to the next code point, which a
             // sticky match may not move to.
@@ -2851,7 +2875,7 @@ impl<H: Host> Vm<H> {
         else {
             return;
         };
-        let subject = self.regexp_subject(&input);
+        let subject = self.regexp_subject(&input, &matcher);
         let matched = matcher
             .find_in_subject(&subject, start)
             .next()
@@ -2989,6 +3013,16 @@ impl<H: Host> Vm<H> {
                 pair,
             ),
         })
+    }
+
+    /// `meta`'s matcher, compiled now if it has none (`RegExpMatcher`): the pattern compiled
+    /// when the record was first made, so it compiles again.
+    pub(super) fn regexp_matcher(meta: &crate::heap::RegExpMeta) -> Result<Rc<quench_regexp::Regex>, JsError> {
+        if let Some(matcher) = meta.matcher.0.get() {
+            return Ok(Rc::clone(matcher));
+        }
+        let matcher = Rc::new(Self::compile_regexp(&meta.source, &meta.flags.text(), PatternValidity::EarlyChecked)?);
+        Ok(Rc::clone(meta.matcher.0.get_or_init(|| matcher)))
     }
 
     pub(super) fn compile_regexp(
