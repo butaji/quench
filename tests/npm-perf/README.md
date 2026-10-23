@@ -738,3 +738,16 @@ does not amortize its entry guard cost and was reverted. The next JIT direction
 is a multi-operation, generic-Value tracelet that can cover repeated
 field/load/branch regions in the hot React functions, with interpreter side
 exits for dynamic operations.
+
+To select a region from dynamic rather than static bytecode shape, the
+`profile-aggregate` diagnostic now records straight-line triples by program,
+function, and start PC. A 500-render React profile found the most repeated site
+in `react-dom-server-legacy.node.production.js`: function 192, PCs 0–2,
+`Binary → JumpFalse → LoadCapture` executed 537,350 times. Another site in
+function 175, PCs 68–70, `GetField → Binary → JumpBinaryFalse`, had the same
+count. The workload produced 2,498,000 bytes/checksum 41826. This is an
+instrumented profile, not a timing result. The next candidate must lower a
+bounded region with generic values and exact side exits; `Binary` can invoke
+JavaScript coercion, so it cannot be treated as a primitive operation without
+a guard and a pre-effect exit. This profile narrows the search, but it does not
+yet establish a performance win.
