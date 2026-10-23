@@ -70,18 +70,11 @@ pub fn release_read_only_pages_after_load() {
 }
 
 /// Whether the process's memory policy returns resident pages at the release points
-/// (`MemoryPolicy::returns_resident_pages`), set once it is selected (`apply_policy`). Until
-/// then, and under the default throughput policy, the read-only releases do nothing.
-static RETURNS_RESIDENT_PAGES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Takes the process's memory policy for the releases below.
-pub fn apply_policy(policy: quench_runtime::MemoryPolicy) {
-    RETURNS_RESIDENT_PAGES.store(policy.returns_resident_pages(), std::sync::atomic::Ordering::Relaxed);
-}
-
+/// (`MemoryPolicy::returns_resident_pages`). Until it is selected, and under the default
+/// throughput policy, the read-only releases do nothing.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn returns_resident_pages() -> bool {
-    RETURNS_RESIDENT_PAGES.load(std::sync::atomic::Ordering::Relaxed)
+    crate::shared_run::process_memory_policy().is_some_and(quench_runtime::MemoryPolicy::returns_resident_pages)
 }
 
 /// Unmaps the read-only pages above from the resident set; the next touch of each refaults it
@@ -376,8 +369,7 @@ impl CompileRelease {
 impl CompileRelease {
     /// How far apart this release's runs are kept.
     fn interval(self) -> std::time::Duration {
-        let returns_pages = crate::shared_run::process_memory_policy()
-            .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
+        let returns_pages = returns_resident_pages();
         match self {
             Self::FirstCall if returns_pages => MEMORY_FIRST_FIRST_CALL_INTERVAL,
             Self::FirstCall | Self::CodeGeneration => LOAD_RELEASE_INTERVAL,
