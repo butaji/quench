@@ -6483,9 +6483,11 @@ fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
                         assert!(
                             matches!(vm.heap.get(proxy),Some(super::Cell::Proxy {target,handler,..}) if target.is_null()&&handler.is_null())
                         );
-                        keys.into_iter()
-                            .map(|value| vm.heap.weak_handle(value).unwrap())
-                            .collect::<Vec<_>>()
+                        // A key a program spells is its shared atom string (`Vm::atom_string`),
+                        // kept with the program; the symbol key is the proxy target's own.
+                        let first = vm.intern_atom("first");
+                        assert_eq!(keys[0], vm.atom_string(first));
+                        vec![vm.heap.weak_handle(keys[1]).unwrap()]
                     }
                     Err(error) => {
                         let atom = vm.intern_atom("kind");
