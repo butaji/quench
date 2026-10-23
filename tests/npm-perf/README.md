@@ -816,14 +816,23 @@ call-capable execution remains necessary.
 
 `ws-echo.cjs` uses pinned `ws@8.18.3` for a local WebSocket client/server
 upgrade and sequential binary echo workload. It validates every echoed frame
-and reports bytes and checksum. A Node smoke run completed with matching
-output. Quench currently cannot run this workload: its HTTP server responds
-with status 426 instead of delivering the WebSocket `upgrade` event and raw
-socket to `ws`. The client also exposed that Quench's HTTP request option
-parser must accept the string port returned by `URL.port`; that compatibility
-gap is fixed. The remaining upgrade failure happens before timing, so `ws`
-must not be counted as a performance comparison until the HTTP server exposes
-the upgrade socket and the client can consume a 101 response.
+and reports bytes and checksum. Quench now transfers upgraded HTTP transports
+to `net.Socket` on both client and server, emits the server `upgrade` event,
+and delivers status 101 through `ClientRequest.upgrade`. The client also
+accepts the string port returned by `URL.port`.
+
+A three-round Linux diagnostic used 300 echo messages and 20 warmups per
+process. All engines produced the same 12,490 bytes and checksum 25,143. Quench
+still loses throughput and RSS against both runtimes:
+
+| Mode | Quench | Node | Bun |
+| --- | ---: | ---: | ---: |
+| No-JIT | 1,277 ops/s, 38.7 MB | 7,692 ops/s, 33.1 MB | 42,857 ops/s, 7.1 MB |
+| JIT | 1,068 ops/s, 33.8 MB | 12,500 ops/s, 36.2 MB | 42,857 ops/s, 3.1 MB |
+
+These short screens establish compatibility only, not a performance win.
+Their Linux process-tree RSS samples are diagnostic; reports are in
+`target/perf-reports/ws-echo-upgrade-{nojit,jit}-3.json`.
 
 ## Fresh `v2-merged` production screen
 

@@ -653,6 +653,45 @@ pub(crate) fn create_server(
     Ok(server)
 }
 
+/// Adopt an HTTP transport as a public Node net.Socket when the HTTP parser
+/// encounters a protocol upgrade. The existing socket id stays attached to the
+/// TCP transport; registering the socket transfers read delivery to net.Socket.
+pub(crate) fn upgrade_socket(
+    context: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = args
+        .first()
+        .copied()
+        .ok_or_else(|| RootedError::host("HTTP upgrade socket id is missing"))?;
+    let id_number = context
+        .rooted_value(id)
+        .and_then(Value::as_number)
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .ok_or_else(|| RootedError::host("HTTP upgrade socket id is invalid"))?
+        as u64;
+    let undefined = context.undefined();
+    let handle =
+        super::super::net_reference_shared_vm::create_socket_handle(context, undefined, &[id])?;
+    let options = context.object_rooted()?;
+    set(context, options, "handle", handle)?;
+    let yes = context.boolean(true);
+    set(context, options, "readable", yes)?;
+    set(context, options, "writable", yes)?;
+    let constructor = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .net_socket_constructor
+        .ok_or_else(|| RootedError::host("net.Socket constructor is unavailable"))?;
+    let socket = context.construct_rooted(constructor, constructor, &[options])?;
+    let id_value = context.number(id_number as f64);
+    set(context, socket, "__quenchNetSocketId", id_value)?;
+    super::super::net_shared_vm::register_socket(context, socket, id_number)?;
+    Ok(socket)
+}
+
 pub(crate) fn server_listen(
     context: &mut Context<'_>,
     receiver: RootId,
@@ -852,12 +891,17 @@ pub(crate) fn server_close(
             net_shared_vm::close_listener(&mut guard.tcp, listener);
         }
         idle_sockets.retain(|socket| {
-            guard
+            !guard
                 .http
-                .responses
-                .values()
-                .filter(|response| response.socket == *socket)
-                .all(|response| response.lifecycle.is_terminal())
+                .connections
+                .get(socket)
+                .is_some_and(|connection| connection.upgraded)
+                && guard
+                    .http
+                    .responses
+                    .values()
+                    .filter(|response| response.socket == *socket)
+                    .all(|response| response.lifecycle.is_terminal())
         });
         for socket in idle_sockets {
             // A response can be terminal while its bytes are still queued in

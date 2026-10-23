@@ -79,6 +79,7 @@ pub(crate) struct ServerConnection {
     pub(crate) server: u64,
     pub(crate) received: Vec<u8>,
     pub(crate) request_dispatched: bool,
+    pub(crate) upgraded: bool,
 }
 
 pub(crate) struct Response {
