@@ -137,6 +137,56 @@ pub(super) fn emit_number_arithmetic(
     )
 }
 
+/// Emit one JavaScript int32 bitwise operation from already-converted ToInt32
+/// operands, using the same operator selection as `operations`' interpreter
+/// stage. The unsigned shift keeps its bits in `i32` until the final unsigned
+/// conversion back to Number.
+pub(super) fn emit_number_bitwise_i32(
+    builder: &mut FunctionBuilder<'_>,
+    operator: u32,
+    left: ir::Value,
+    right: ir::Value,
+) -> Option<ir::Value> {
+    struct Emit<'a, 'f> {
+        builder: &'a mut FunctionBuilder<'f>,
+    }
+
+    impl crate::vm::operations::NumberBitwiseStage<ir::Value> for Emit<'_, '_> {
+        type Output = ir::Value;
+
+        fn and(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            self.builder.ins().band(left, right)
+        }
+        fn or(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            self.builder.ins().bor(left, right)
+        }
+        fn xor(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            self.builder.ins().bxor(left, right)
+        }
+        fn shift_left(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            let shift = self.builder.ins().band_imm_u(right, 31);
+            self.builder.ins().ishl(left, shift)
+        }
+        fn shift_right(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            let shift = self.builder.ins().band_imm_u(right, 31);
+            self.builder.ins().sshr(left, shift)
+        }
+        fn shift_right_unsigned(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+            let shift = self.builder.ins().band_imm_u(right, 31);
+            self.builder.ins().ushr(left, shift)
+        }
+    }
+
+    let operation = crate::vm::operations::NumberBitwise::from_operator(operator)?;
+    let bits = operation.apply(&mut Emit { builder }, left, right);
+    if operation == crate::vm::operations::NumberBitwise::ShiftRightUnsigned {
+        let unsigned = builder.ins().uextend(types::I64, bits);
+        Some(builder.ins().fcvt_from_uint(types::F64, unsigned))
+    } else {
+        Some(builder.ins().fcvt_from_sint(types::F64, bits))
+    }
+}
+
 /// Compile a JS numeric function-entry region with the same register views used by Wasm and
 /// OSR regions. JS admission, cache probes and exact fallback remain VM responsibilities; this
 /// frontend only receives the already-validated scalar denotations and their entry inputs.
@@ -342,25 +392,14 @@ pub(super) fn compile_js_numeric_region(
                     }
                     (Op::Binary, op)
                         if int32_bitwise
-                            && matches!(
-                                op,
-                                x if x == oxc_ast::ast::BinaryOperator::BitwiseAnd as u32
-                                    || x == oxc_ast::ast::BinaryOperator::BitwiseOR as u32
-                                    || x == oxc_ast::ast::BinaryOperator::BitwiseXOR as u32
-                            ) =>
+                            && super::operations::NumberBitwise::from_operator(op)
+                                .is_some_and(
+                                    super::operations::NumberBitwise::in_signed_int32_domain,
+                                ) =>
                     {
                         let left = body.builder.ins().fcvt_to_sint(types::I32, left);
                         let right = body.builder.ins().fcvt_to_sint(types::I32, right);
-                        let value = match op {
-                            x if x == oxc_ast::ast::BinaryOperator::BitwiseAnd as u32 => {
-                                body.builder.ins().band(left, right)
-                            }
-                            x if x == oxc_ast::ast::BinaryOperator::BitwiseOR as u32 => {
-                                body.builder.ins().bor(left, right)
-                            }
-                            _ => body.builder.ins().bxor(left, right),
-                        };
-                        body.builder.ins().fcvt_from_sint(types::F64, value)
+                        emit_number_bitwise_i32(&mut body.builder, op, left, right)?
                     }
                     (Op::NumericAdd, op)
                         if super::operations::NumberArithmetic::from_operator(op)
@@ -427,6 +466,7 @@ pub(super) fn compile_js_numeric_region(
     Some(super::js_compiled::JsJitArtifact {
         code,
         params,
+        requires_signed_int32_arguments: int32_bitwise,
         result: super::js_compiled::JsJitResultKind::Number,
         field_argument,
         numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.to_vec()),
@@ -2823,6 +2863,7 @@ pub(super) struct CompiledJsFunction {
     _code: CodeMemory,
     entry: CompiledJsEntry,
     params: usize,
+    requires_signed_int32_arguments: bool,
     mapped_bytes: usize,
     return_constants: Vec<(u32, u32)>,
     field_argument: Option<super::js_compiled::JsJitFieldArgument>,
@@ -3079,6 +3120,7 @@ impl CompiledJsFunction {
             _code: code,
             entry,
             params: artifact.params,
+            requires_signed_int32_arguments: artifact.requires_signed_int32_arguments,
             mapped_bytes,
             return_constants,
             field_argument,
@@ -3096,6 +3138,10 @@ impl CompiledJsFunction {
 
     pub(super) fn is_int32_identity(&self) -> bool {
         matches!(self.entry, CompiledJsEntry::Int32Identity { .. })
+    }
+
+    pub(super) fn requires_signed_int32_arguments(&self) -> bool {
+        self.requires_signed_int32_arguments
     }
 
     pub(super) fn field_argument(&self) -> Option<super::js_compiled::JsJitFieldArgument> {
@@ -8246,6 +8292,13 @@ impl<H: Host> Vm<H> {
             let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
             for argument in arguments.iter().take(params) {
                 numeric_arguments.push(argument.as_number()?);
+            }
+            if compiled.requires_signed_int32_arguments()
+                && !numeric_arguments
+                    .iter()
+                    .all(|value| super::js_compiled::is_i32_number(*value))
+            {
+                return None;
             }
             if compiled.is_int32_identity()
                 && !numeric_arguments
