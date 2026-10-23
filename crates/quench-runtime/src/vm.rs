@@ -479,9 +479,14 @@ impl Frame {
     ) {
         debug_assert_eq!(self.locals.len(), usize::from(function.locals));
         debug_assert_eq!(self.registers.len(), usize::from(function.registers));
+        let rest = function.rest.then(|| function.params - 1);
         for entry in &function.local_registers {
-            // A promoted parameter starts as its argument and a promoted `var` as undefined.
-            let initial = if entry.local < function.params {
+            // A promoted parameter starts as its argument, a promoted rest parameter as the
+            // array its slot holds (`bind_activation_arguments`), and a promoted `var` as
+            // undefined.
+            let initial = if Some(entry.local) == rest {
+                self.locals[usize::from(entry.local)]
+            } else if entry.local < function.params {
                 args.get(usize::from(entry.local))
                     .copied()
                     .unwrap_or(Value::UNDEFINED)

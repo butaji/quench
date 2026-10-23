@@ -790,7 +790,7 @@ impl<H: Host> Vm<H> {
 
     /// The rest parameter's array of the arguments past the fixed parameters.
     #[inline(never)]
-    fn rest_parameter_array(&mut self, rest: &[Value]) -> Value {
+    pub(super) fn rest_parameter_array(&mut self, rest: &[Value]) -> Value {
         self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
