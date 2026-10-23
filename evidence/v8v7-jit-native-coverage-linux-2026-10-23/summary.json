@@ -1,0 +1,26 @@
+{
+  "richards": {
+    "exit": 0,
+    "elapsed_s": 2.077,
+    "score": "Score: 258",
+    "error_tail": null
+  },
+  "deltablue": {
+    "exit": 0,
+    "elapsed_s": 2.094,
+    "score": "Score: 219",
+    "error_tail": null
+  },
+  "crypto": {
+    "exit": 0,
+    "elapsed_s": 5.183,
+    "score": "Score: 2530",
+    "error_tail": null
+  },
+  "navier-stokes": {
+    "exit": 0,
+    "elapsed_s": 2.072,
+    "score": "Score: 22253",
+    "error_tail": null
+  }
+}
