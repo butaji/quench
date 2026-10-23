@@ -822,3 +822,30 @@ parser must accept the string port returned by `URL.port`; that compatibility
 gap is fixed. The remaining upgrade failure happens before timing, so `ws`
 must not be counted as a performance comparison until the HTTP server exposes
 the upgrade socket and the client can consume a 101 response.
+
+## Fresh `v2-merged` production screen
+
+After merging the latest `v2-merged` tip, the PGO production binary was rebuilt
+and these Linux 11-round screens were rerun. Quench still loses throughput on
+all three workloads; these measurements do not meet the 20% speed target.
+Linux `VmHWM` is sampled every 2 ms and remains diagnostic, not platform
+qualification.
+
+| Workload and mode | Quench median | Node median | Bun median |
+| --- | ---: | ---: | ---: |
+| React SSR, no-JIT, 1,000 renders | 533/s, 38.9 MB | 1,629/s, 36.2 MB | 1,466/s, 37.3 MB |
+| React SSR, JIT, 1,000 renders | 500/s, 30.0 MB | 14,493/s, 47.2 MB | 7,692/s, 92.0 MB |
+| Zod parse, no-JIT, 1,000 ops | 36,364/s, 26.0 MB | 68,966/s, 39.5 MB | 65,574/s, 35.1 MB |
+| Zod parse, JIT, 1,000 ops | 35,088/s, 23.1 MB | 222,222/s, 52.0 MB | 235,294/s, 47.7 MB |
+| Pino JSON, no-JIT, 5,000 records | 21,459/s, 34.1 MB | 58,824/s, 31.0 MB | 43,860/s, 42.2 MB |
+| Pino JSON, JIT, 5,000 records | 18,868/s, 31.4 MB | 147,059/s, 43.3 MB | 185,185/s, 49.7 MB |
+
+React's JIT screen retains a large RSS reduction but is 96.6% slower than Node.
+Zod's RSS is over 20% lower than both engines in both modes, while throughput
+is 47–85% lower. Pino JIT RSS is 27–37% lower, while throughput is 87–90%
+lower; in no-JIT its RSS is above Node's. Reports are in
+`target/perf-reports/{react,zod-parse,pino-json}-{nojit,jit}-merged-11.json`.
+The React JIT diagnostic recorded zero native entries across 58 functions;
+the hottest render functions fell back 42,680–215,160 times each in a
+200-render sample. The next runtime change should target broad native coverage
+for closure/capture-heavy functions and validate both throughput and RSS.
