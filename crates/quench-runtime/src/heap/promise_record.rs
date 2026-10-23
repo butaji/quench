@@ -66,12 +66,13 @@ impl PromiseRecord {
         }
     }
 
-    pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
-        std::iter::once(self.result).chain(
-            self.reactions
-                .iter()
-                .flat_map(|reaction| [reaction.on_fulfilled, reaction.on_rejected, reaction.next]),
-        )
+    pub(crate) fn append_roots(&self, roots: &mut Vec<Value>) {
+        roots.push(self.result);
+        for reaction in &self.reactions {
+            roots.push(reaction.on_fulfilled);
+            roots.push(reaction.on_rejected);
+            roots.push(reaction.next);
+        }
     }
 
     /// The host job contexts its pending reactions hold, which the host releases when the

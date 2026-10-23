@@ -131,16 +131,16 @@ impl<H: Host> Vm<H> {
             _ if let Some(value) = self.heap.string(source)  => value.clone(),
             _ => return Ok(source),
         };
-        let text = source_text.host_string().to_owned();
+        let cache_source = (!self.direct_eval).then(|| source_text.clone());
+        let text = source_text.host_string();
         let inherited_strict = self.direct_eval
             && (self.in_class_initializer(p)
                 || self.frames.last()
                     .and_then(|frame| p.function_get(frame.function as usize))
                     .is_some_and(|function| function.strict));
-        self.validate_eval_arguments_context(p, &text)?;
+        self.validate_eval_arguments_context(p, text)?;
         let source_name = format!("<Eval:{}>", self.programs.len());
-        let cache_source = (!self.direct_eval).then_some(source_text);
-        self.eval_global_script_with_cache(p, &text, inherited_strict, &source_name, cache_source, false)
+        self.eval_global_script_with_cache(p, text, inherited_strict, &source_name, cache_source, false)
     }
 
     pub(super) fn eval_global_script(
@@ -456,7 +456,13 @@ impl<H: Host> Vm<H> {
             self.host.keep_compiled_program(name, &[mode, goal, source], &bytes);
         }
         // Its final source is settled, so a function compiles again from it on first call.
-        residual.release_replayable_records();
+        #[cfg(feature = "profile-aggregate")]
+        let retain_profile_records = std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some();
+        #[cfg(not(feature = "profile-aggregate"))]
+        let retain_profile_records = false;
+        if !retain_profile_records {
+            residual.release_replayable_records();
+        }
         Ok(crate::PreparedScript { program: Rc::new(residual) })
     }
 

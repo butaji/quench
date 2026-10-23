@@ -1666,6 +1666,13 @@ impl<H: Host> Vm<H> {
                 | crate::WasmReferenceKind::DeclaredGc { .. } => crate::WasmValue::GcRef(value),
             });
         }
+        // A vector lives only in its cell, which the scalar probes below would miss first.
+        if ty == crate::WasmType::V128 {
+            return match self.heap.get(value) {
+                Some(Cell::WasmV128(bits)) => Ok(crate::WasmValue::V128(u128::from_le_bytes(*bits))),
+                _ => Err(JsError::validation("invalid Wasm scalar representation".into())),
+            };
+        }
         let bits = if let Some(bits) = value.as_int() {
             Some(crate::wasm::ScalarBits::Bits32(bits as u32))
         } else if let Some(bits) = self.decode_bits64(value) {
@@ -1685,23 +1692,7 @@ mod tests {
     use super::*;
     use wasmparser::Operator;
 
-    struct GcTestHost;
 
-    impl crate::Host for GcTestHost {
-        fn write_line(&mut self, _: &str) {}
-
-        fn clock_millis(&mut self) -> f64 {
-            0.0
-        }
-
-        fn globals(&self) -> &'static [crate::HostGlobal] {
-            const GLOBALS: &[crate::HostGlobal] = &[crate::HostGlobal {
-                name: "$262",
-                capability: crate::CapabilityId::CreateRealm,
-            }];
-            GLOBALS
-        }
-    }
 
     #[test]
     fn javascript_and_wasm_jit_share_one_vm_and_backend() {
@@ -3198,7 +3189,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut vm = Vm::new(GcTestHost);
+        let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
         let bootstrap =
             crate::Engine::specialize("void 0", "jit-indirect-gc-bootstrap.js").unwrap();

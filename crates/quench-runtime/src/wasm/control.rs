@@ -832,10 +832,64 @@ impl Lowering<'_> {
                 constant,
             ));
         }
+        // `x ^ y` and `x - y` are nonzero exactly when `x != y`: a test of either is the
+        // comparison.
+        if matches!(
+            I32BinaryOperator::from_register_op(instruction.op()),
+            Some(I32BinaryOperator::Xor | I32BinaryOperator::Subtract)
+        ) {
+            self.code.pop();
+            return Ok(Condition::Comparison(
+                I32BinaryOperator::NotEqual,
+                instruction.b(),
+                instruction.c(),
+            ));
+        }
+        if matches!(
+            I32BinaryOperator::from_immediate_op(instruction.op()),
+            Some(I32BinaryOperator::Xor | I32BinaryOperator::Subtract)
+        ) && let Ok(constant) = i16::try_from(instruction.imm() as i32)
+        {
+            self.code.pop();
+            return Ok(Condition::ConstantComparison(
+                I32BinaryOperator::NotEqual,
+                instruction.b(),
+                constant,
+            ));
+        }
         if instruction.op() == Op::WasmI32Unary
             && I32UnaryOperator::from_tag(instruction.imm()) == Some(I32UnaryOperator::EqualZero)
         {
             self.code.pop();
+            // `x ^ y` or `x - y` tested for zero, computed only for the test: `x == y`.
+            if let Some((_, difference)) = self.fusable_last()
+                && difference.a() == instruction.b()
+                && !self.is_local_register(difference.a())
+            {
+                if matches!(
+                    I32BinaryOperator::from_register_op(difference.op()),
+                    Some(I32BinaryOperator::Xor | I32BinaryOperator::Subtract)
+                ) {
+                    self.code.pop();
+                    return Ok(Condition::Comparison(
+                        I32BinaryOperator::Equal,
+                        difference.b(),
+                        difference.c(),
+                    ));
+                }
+                if matches!(
+                    I32BinaryOperator::from_immediate_op(difference.op()),
+                    Some(I32BinaryOperator::Xor | I32BinaryOperator::Subtract)
+                ) && let Ok(constant) = i16::try_from(difference.imm() as i32)
+                {
+                    self.code.pop();
+                    return Ok(Condition::ConstantComparison(
+                        I32BinaryOperator::Equal,
+                        difference.b(),
+                        constant,
+                    ));
+                }
+            }
             return Ok(Condition::Zero(instruction.b()));
         }
         Ok(Condition::Value(condition))

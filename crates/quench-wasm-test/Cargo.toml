@@ -5,10 +5,15 @@ edition = "2021"
 description = "WebAssembly testsuite runner for Quench"
 license = "MIT"
 
+[lib]
+# No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
+doctest = false
+
 [dependencies]
 quench-wasm = { path = "../quench-wasm" }
 quench-runtime = { path = "../quench-runtime" }
 wasmparser = "0.247"
+wast = "247"
 quench-stack = { path = "../quench-stack" }
 walkdir = "2"
 serde_json = "1"

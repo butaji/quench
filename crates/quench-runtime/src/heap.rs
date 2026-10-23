@@ -2667,7 +2667,7 @@ impl Heap {
                     self.gc_profile.marked_kinds[CellKind::AwaitState as usize] += 1;
                 }
                 // SAFETY: a direct await Value names an initialized record.
-                work.extend(unsafe { self.await_records.get_live(record_id) }.roots());
+                unsafe { self.await_records.get_live(record_id) }.extend_roots(work);
             } else if let Some(record_id) = value.direct_promise_index() {
                 if !self.promise_records.mark(record_id) {
                     continue;
@@ -2688,7 +2688,7 @@ impl Heap {
                     trace_kind,
                     &mut last_proto,
                 );
-                work.extend(promise.record.roots());
+                promise.record.append_roots(work);
                 let mark_bits = mark_bits!(self);
                 ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
             } else {
@@ -3065,6 +3065,36 @@ impl Heap {
         self.note_object_slots(object, slot + 1);
     }
 
+    /// `record_property_add_at` out of line, for an add whose storage moves or whose store
+    /// the write barrier logs, so a caller's plain appends keep their code call-free.
+    #[inline(never)]
+    pub(crate) fn record_property_add_moving(&mut self, object: Value, slot: usize, value: Value, shape: u32) {
+        self.record_property_add_at(object, slot, value, shape);
+    }
+
+    /// `record_property_add_at` of an add the record admits as a plain append
+    /// (`Object::admits_plain_append`): the store into storage that does not move. A store
+    /// the write barrier would log is left to the caller (`false`, nothing changed), as for
+    /// `record_property_set_flat`, so this one makes no call.
+    #[inline(always)]
+    pub(crate) fn record_property_append_plain(&mut self, record_id: u32, slot: usize, value: Value, shape: u32) -> bool {
+        if self.object_records.store_logs(record_id, value) {
+            return false;
+        }
+        let Self {
+            object_records,
+            properties,
+            ..
+        } = &mut *self;
+        // SAFETY: the caller read the record from a direct-object Value; `&mut self` is
+        // exclusive, and the barrier logs nothing for this store.
+        let data = unsafe { object_records.get_live_mut_unbarriered(record_id) };
+        data.append_plain(properties, slot, value, shape);
+        #[cfg(feature = "profile-memory")]
+        self.note_object_slots(Value::direct_object(record_id), slot + 1);
+        true
+    }
+
     #[cfg(feature = "profile-memory")]
     pub(crate) fn set_memory_allocation_site(&mut self, program: u32, function: u32, pc: usize) {
         self.memory_profile
@@ -3264,7 +3294,7 @@ impl Heap {
                 object(&iterator.object);
                 Self::iterator_edges(iterator, work);
             }
-            Cell::AwaitState(state) => work.extend(state.roots()),
+            Cell::AwaitState(state) => state.extend_roots(work),
             Cell::ArrayFromAsyncState(state) => {
                 work.extend([state.output, state.result, state.this_arg]);
                 work.extend(state.iterator);
@@ -3323,7 +3353,7 @@ impl Heap {
             Cell::PromiseResolvingState { promise, .. } => work.push(*promise),
             Cell::Promise(promise) => {
                 object(&promise.object);
-                work.extend(promise.record.roots());
+                promise.record.append_roots(work);
             }
             Cell::Date { object: value, .. }
             | Cell::TemporalDuration { object: value, .. }
@@ -3453,7 +3483,7 @@ impl Heap {
             }
         }
         if let Some(record) = generator {
-            work.extend(record.roots());
+            record.extend_roots(work);
         }
     }
     /// A function's edges: its object, closure environment and realm.

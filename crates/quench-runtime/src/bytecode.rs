@@ -1,6 +1,21 @@
 use smallvec::SmallVec;
 
 pub(crate) const INTRINSIC_REGEXP_BINDING: &str = "\0quench:intrinsic-regexp";
+/// Internal global bindings, which compiled code loads by name and no source text can
+/// declare: the for-in key list and its per-key enumerability check, iterator closing and
+/// `with` scope exit (`WITH_ENTER_BINDING` enters).
+pub(crate) const FOR_IN_KEYS_BINDING: &str = "\0quench:for-in-keys";
+pub(crate) const FOR_IN_KEY_IS_ENUMERABLE_BINDING: &str = "\0quench:for-in-key-is-enumerable";
+pub(crate) const ITERATOR_CLOSE_BINDING: &str = "\0quench:iterator-close";
+pub(crate) const WITH_EXIT_BINDING: &str = "\0quench:with-exit";
+/// Every internal global the realm installs on its global object.
+pub(crate) const INTERNAL_GLOBAL_BINDINGS: [&str; 5] = [
+    FOR_IN_KEYS_BINDING,
+    FOR_IN_KEY_IS_ENUMERABLE_BINDING,
+    ITERATOR_CLOSE_BINDING,
+    WITH_ENTER_BINDING,
+    WITH_EXIT_BINDING,
+];
 
 /// The native an engine-internal intrinsic name stands for: a by-name read of it resolves to
 /// that native before consulting any binding (`Vm::intrinsic_name_value`), and no source
@@ -17,9 +32,9 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
         "\0quench:object-define-property" => Native::ObjectDefineProperty,
         "\0quench:object-freeze" => Native::ObjectFreeze,
         // The iteration helpers each realm also installs on its global object.
-        "\0quench:iterator-close" => Native::IteratorClose,
-        "\0quench:for-in-keys" => Native::ForInKeys,
-        "\0quench:for-in-key-is-enumerable" => Native::ForInKeyIsEnumerable,
+        ITERATOR_CLOSE_BINDING => Native::IteratorClose,
+        FOR_IN_KEYS_BINDING => Native::ForInKeys,
+        FOR_IN_KEY_IS_ENUMERABLE_BINDING => Native::ForInKeyIsEnumerable,
         _ => return None,
     })
 }
@@ -102,6 +117,16 @@ pub(crate) const RETURN_REGISTER: Register = 1 << 15;
 /// past the range this last one, for which the VM never records a cache entry, so those
 /// sites always take the uncached lookup.
 pub(crate) const SHARED_UNCACHED_SITE: u16 = u16::MAX - 1;
+/// The sites below `SHARED_UNCACHED_SITE` a program shares by property name once its
+/// `UNIQUE_CACHE_SITES` run out: every named load, or every named store, of one atom past
+/// that point names the same one (`Compiler::name_shared_cache_site`). A site's entries are
+/// right for its single atom whichever instruction records them; the loads and stores of a
+/// name keep separate sites, since a load's entry (a read-only field, an inherited holder)
+/// is no store's. TypeScript's 3.6 MB bundle runs out of unique sites before its node and
+/// symbol constructors, whose `this` field adds went uncached.
+pub(crate) const NAME_SHARED_CACHE_SITES: u16 = 8192;
+/// The sites a program numbers one per instruction, below the name-shared ones.
+pub(crate) const UNIQUE_CACHE_SITES: u16 = SHARED_UNCACHED_SITE - NAME_SHARED_CACHE_SITES;
 pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
 pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 pub(crate) const INLINE_OBJECT_SITE_ATOMS: usize = 2;
@@ -579,7 +604,7 @@ impl ImmediateLayout {
 }
 
 macro_rules! opcodes {
-    ($($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
+    ($($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
         pub enum Op { $($name),+ }
@@ -605,6 +630,9 @@ macro_rules! opcodes {
             const IMMEDIATE_ROLES: [ImmediateRole; Self::COUNT] = [$(
                 opcodes!(@immediate $($immediate_role)?; $layout)),+
             ];
+            const JS_DENOTATIONS: [JsDenotation; Self::COUNT] = [$(
+                opcodes!(@js $($js_denotation)?)),+
+            ];
 
             pub(crate) const fn effect(self) -> Effect {
                 Self::EFFECTS[self as usize]
@@ -628,6 +656,10 @@ macro_rules! opcodes {
 
             pub(crate) const fn immediate_role(self) -> ImmediateRole {
                 Self::IMMEDIATE_ROLES[self as usize]
+            }
+
+            pub(crate) const fn js_denotation(self) -> JsDenotation {
+                Self::JS_DENOTATIONS[self as usize]
             }
 
             pub(crate) const fn is_wide_marker(self) -> bool {
@@ -655,6 +687,21 @@ macro_rules! opcodes {
     (@immediate $role:ident;) => { ImmediateRole::$role };
     (@immediate; $layout:ident) => { ImmediateRole::LayoutEncoded };
     (@immediate;) => { compile_error!("opcode must declare an immediate role or layout") };
+    (@js $denotation:ident) => { JsDenotation::$denotation };
+    (@js) => { JsDenotation::Unsupported };
+}
+
+/// The guarded JavaScript denotation available to the shared compiled region
+/// analyzer. This describes an instruction operation, never a source pattern.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum JsDenotation {
+    Unsupported,
+    LoadConst,
+    Move,
+    GetField,
+    NumericBinary,
+    CapturedValue,
+    Return,
 }
 const READ_THROW: Effect = Effect::READS_HEAP.union(Effect::THROWS);
 const WRITE_THROW: Effect = Effect::WRITES_HEAP.union(Effect::THROWS);
@@ -664,13 +711,13 @@ opcodes!(
     Nop => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
     CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning EnvironmentCloneIndex, @ Register, @ fields(Unused, Unused, Unused),
     Wide => Effect::PURE; layout Scalar; meaning WideInstructionIndex, @ Register, @ fields(WideIndexChunk, WideIndexChunk, WideIndexChunk),
-    LoadConst => Effect::PURE; layout Scalar; meaning ConstantIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadConst => Effect::PURE; layout Scalar; meaning ConstantIndex; js LoadConst, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadLocal => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
     StoreLocal => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
     StoreVarBinding => CALL_EFFECT; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, Unused, Unused),
     LoadEnvLocal => Effect::READS_HEAP; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreEnvLocal => Effect::WRITES_HEAP; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
-    LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot; js CapturedValue, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreCapture => Effect::WRITES_HEAP; layout CaptureDepthAndSlot, @ Register, @ fields(Register, Unused, Unused),
     LoadName => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
     LoadNameCall => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, WriteRegister, CacheSiteIndex),
@@ -708,7 +755,7 @@ opcodes!(
     Await => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     Yield => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair, @ RegisterReadWrite, @ fields(ResultRegister, Register, ReadWriteRegister),
-    GetField => READ_THROW; layout Scalar; meaning FieldLookup, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
+    GetField => READ_THROW; layout Scalar; meaning FieldLookup; js GetField, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
     GetIndex => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, NumericIndexOperand, NumericIndexOperand),
     ToPropertyKey => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     ToNumeric => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
@@ -720,13 +767,13 @@ opcodes!(
     SetThisField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     SetIndex => WRITE_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(Register, Register, Register),
     DefineArrayElement => WRITE_THROW; layout Scalar; meaning ArrayIndex, @ Register, @ fields(Register, Register, Unused),
-    Binary => READ_THROW; layout Scalar; meaning BinaryOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    Binary => READ_THROW; layout Scalar; meaning BinaryOperator; js NumericBinary, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
     IncDec => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Unused),
     Unary => READ_THROW; layout Scalar; meaning UnaryOperator, @ Returnable, @ fields(ResultRegister, Register, Unused),
     Delete => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Register),
     CheckPrivate => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
     PrivateIn => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Register, Unused),
-    Move => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    Move => Effect::PURE; layout Scalar; meaning Unused; js Move, @ Register, @ fields(ResultRegister, Register, Unused),
     Call => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
     CallArray => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
     CallKnown => CALL_EFFECT; layout CallWindow; flow Call, @ Returnable, @ fields(ResultRegister, FunctionIndex, Unused),
@@ -736,10 +783,10 @@ opcodes!(
     Jump => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow Jump, @ Register, @ fields(Unused, Unused, Unused),
     JumpFalse => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
     JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(BinaryOperator, Operand, Operand),
-    Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Register, Unused, Unused),
+    Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal; js Return, @ Register, @ fields(Register, Unused, Unused),
     Throw => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Register, Unused, Unused),
-    NumericAdd => READ_THROW; layout Scalar; meaning AdditionOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
-    NumericMultiply => READ_THROW; layout Scalar; meaning MultiplicationOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    NumericAdd => READ_THROW; layout Scalar; meaning AdditionOperator; js NumericBinary, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    NumericMultiply => READ_THROW; layout Scalar; meaning MultiplicationOperator; js NumericBinary, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
     InitializeThis => CALL_EFFECT.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
     CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadCachedTemplateObject => Effect::READS_HEAP; layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -1227,6 +1274,9 @@ pub struct Function {
     pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
     /// Lazily derived `names_resolve_statically`; never serialized.
     pub(crate) static_name_scope: std::cell::OnceCell<bool>,
+    /// Whether the JavaScript tier's candidate filter admits the function
+    /// (`js_compiled::function_candidate`), derived on its first entry; never serialized.
+    pub(crate) js_tier_candidate: std::cell::OnceCell<bool>,
     /// Lazily derived `call_plan`; never serialized.
     pub(crate) call_plan: std::cell::OnceCell<CallPlan>,
     pub(crate) handlers: crate::heap::ThinBoxSlice<Handler>,
@@ -1359,6 +1409,10 @@ pub(crate) struct CallPlan {
     /// generator, async function, class constructor or field initializer and raises no
     /// parameter-scope `arguments` error.
     pub(crate) in_loop: bool,
+    /// An async function whose body never suspends (`Function::suspends`): a plain call may
+    /// push it in place as `in_loop` bodies are pushed, settling the promise it returns with
+    /// the body's completion (`PendingGeneralCall::settles`).
+    pub(crate) settles_in_loop: bool,
     /// Legacy `caller`/`arguments` reflection may observe the activation
     /// (`!has_restricted_legacy_caller_access`).
     pub(crate) legacy_reflection: bool,
@@ -1976,6 +2030,12 @@ impl Function {
         self.call_plan(program).plain
     }
 
+    /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
+    pub(crate) fn suspends(&self) -> bool {
+        self.instructions()
+            .any(|instruction| matches!(instruction.op(), Op::Await | Op::Yield | Op::YieldStar))
+    }
+
     /// The function's `CallPlan`, derived on first use.
     #[inline(always)]
     pub(crate) fn call_plan(&self, program: &ResidualProgram) -> CallPlan {
@@ -2012,6 +2072,12 @@ impl Function {
                 && !self.is_class_constructor
                 && !self.derived_constructor
                 && !self.parameter_eval_arguments_error;
+            let settles_in_loop = self.is_async
+                && !self.is_generator
+                && !self.is_class_constructor
+                && !self.derived_constructor
+                && !self.parameter_eval_arguments_error
+                && !self.suspends();
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
             let live_parameters = self.reflects_live_parameters(program);
             let forwards_arguments = self.forwards_arguments_only();
@@ -2061,6 +2127,7 @@ impl Function {
                 environment_activation,
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
+                settles_in_loop,
                 legacy_reflection,
                 live_parameters,
                 addresses_locals,
@@ -2233,12 +2300,7 @@ impl Function {
     pub(crate) fn has_dynamic_scope_access(&self) -> bool {
         self.inherited_with_scope
             || !self.binding_sites.is_empty()
-            || self.instructions().any(|instruction| {
-                instruction.op() == Op::ResolveName
-                    || (instruction.op().is_call_with_eval_flags()
-                        && (ImmediateLayout::direct_eval(instruction.imm())
-                            || ImmediateLayout::parameter_eval(instruction.imm())))
-            })
+            || self.instructions().any(WideInstruction::resolves_dynamic_scope)
     }
 
     /// Whether the body enters a `with` statement, whose by-name loads may denote
@@ -2513,14 +2575,25 @@ pub(crate) struct FieldBase(pub(crate) u16);
 impl FieldBase {
     pub(crate) const THIS: Self = Self(u16::MAX);
     pub(crate) const NESTED: u16 = u16::MAX - 1;
+    const LOCAL_FLAG: u16 = 0x4000;
 
     pub(crate) fn register(value: Register) -> Self {
-        debug_assert!(value < Self::NESTED);
+        debug_assert!(value <= REGISTER_MASK);
         Self(value)
     }
 
     pub(crate) fn register_index(self) -> Option<Register> {
-        (self != Self::THIS).then_some(self.0)
+        (self.0 <= REGISTER_MASK).then_some(self.0)
+    }
+
+    pub(crate) fn local(value: u16) -> Option<Self> {
+        (value <= REGISTER_MASK).then_some(Self(Self::LOCAL_FLAG | value))
+    }
+
+    pub(crate) fn local_index(self) -> Option<u16> {
+        (self.0 & Self::LOCAL_FLAG != 0
+            && self.0 & !(Self::LOCAL_FLAG | REGISTER_MASK) == 0)
+            .then_some(self.0 & REGISTER_MASK)
     }
 }
 
@@ -3241,6 +3314,11 @@ impl ResidualProgram {
 
     /// Decodes `encode_trusted`'s bytes into a program proven valid: this build's compiler
     /// output, which the host keys by build and whose checksum held.
+    /// `decode_trusted`, with the program's atoms named by `intern`'s ids.
+    pub(crate) fn decode_trusted_interned(bytes: KeptBytes, intern: &mut dyn FnMut(&str) -> u32) -> Result<Self, String> {
+        binary::decode_trusted_program_interned(bytes, intern)
+    }
+
     pub(crate) fn decode_trusted(bytes: KeptBytes) -> Result<Self, String> {
         let program = binary::decode_trusted_program(bytes)?;
         program.validated.establish();
