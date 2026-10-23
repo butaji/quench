@@ -53,3 +53,39 @@ Reports:
 - `next-no-jit-20000-5.json`, `next-jit-20000-5.json`
 - `vite-no-jit-500-5.json`, `vite-jit-500-5.json`
 - `undici-no-jit-5.json`
+
+## sharp async and concurrency follow-up
+
+Additional workloads are `sharp-metadata.cjs`, `sharp-resize-concurrent.cjs`
+(four simultaneous `toBuffer()` tasks), and a WebP effort-zero preview variant.
+`sharp-resize-effort0.cjs` and all resulting five-run measurements are retained
+with the original package reports.
+
+| Workload / phase | Quench ops/s / MiB | Quench control | Node ops/s / MiB | Bun ops/s / MiB |
+| --- | ---: | ---: | ---: | ---: |
+| metadata, eventfd no-JIT | 3,953 / 40.19 | 4,065 / 42.48 | 5,141 / 78.00 | 7,299 / 50.50 |
+| metadata, eventfd JIT | 4,124 / 34.56 | 4,098 / 37.81 | 5,208 / 88.07 | 7,463 / 62.81 |
+| resize x4, eventfd no-JIT | 650 / 45.92 | 642 / 48.29 | 675 / 96.96 | 680 / 65.59 |
+| resize x4, eventfd JIT | 642 / 45.43 | 654 / 47.93 | 678 / 110.26 | 675 / 75.37 |
+
+The eventfd implementation is compared to the immediately preceding Unix
+socket-pair candidate; its speed is within 3% in every phase and its sampled
+RSS is lower. The initial condition-variable prototype measured metadata at
+4,338 / 36.47 MiB no-JIT and 4,167 / 34.77 MiB JIT versus the original
+production control at 819 / 41.91 MiB and 814 / 38.35 MiB. It was replaced
+because a condition-variable wait could defer socket readiness; eventfd shares
+the existing `ppoll` with TCP descriptors. The new eventfd run is documented
+separately and does not claim the prototype's exact speedup.
+
+The effort-zero encoder did not close the gap: Quench measured 376 / 47.40 MiB
+no-JIT and 379 / 46.54 MiB JIT, versus Node at 552 / 57.99 and 526 / 70.09,
+and Bun at 546 / 57.86 and 552 / 67.93. None of these Linux samples
+qualifies. The eventfd change improves async completion delivery, but sharp
+still does not meet the cross-runtime throughput gate.
+
+Additional follow-up reports:
+
+- `sharp-metadata-baseline-no-jit-5.json`, `sharp-metadata-baseline-jit-5.json`
+- `sharp-metadata-eventfd-no-jit-5.json`, `sharp-metadata-eventfd-jit-5.json`
+- `sharp-concurrent-eventfd-no-jit-5.json`, `sharp-concurrent-eventfd-jit-5.json`
+- `sharp-effort0-no-jit-5.json`, `sharp-effort0-jit-5.json`

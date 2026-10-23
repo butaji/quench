@@ -423,7 +423,7 @@ node_api! {
     fn node_api_post_finalizer(env: *mut Env, finalize: Finalize, data: *mut c_void, hint: *mut c_void) -> Status {
         api(env, |env, _| {
             finalize.ok_or(Status::InvalidArg)?;
-            env.events.lock().unwrap_or_else(|e| e.into_inner()).push_back(super::work::Event::Finalize(Finalizer { callback: finalize, data, hint }));
+            super::work::push(&env.events, super::work::Event::Finalize(Finalizer { callback: finalize, data, hint }));
             Ok(())
         })
     }
