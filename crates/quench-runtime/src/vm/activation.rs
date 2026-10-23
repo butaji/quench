@@ -1,5 +1,4 @@
 use super::program_store::ProgramId;
-use super::{ActiveIterator, Atom};
 use crate::Value;
 use std::collections::VecDeque;
 
@@ -84,25 +83,27 @@ impl CallContext {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+/// A suspended activation: its frame, kept whole with the buffers it ran with, and what
+/// its resumer reads. Suspending moves the frame in and resuming moves it back out
+/// (`resume`), so neither copies frame state nor gives up the frame's storage.
+#[derive(Clone)]
 pub(crate) struct Continuation {
-    pub context: CallContext,
-    pub reflected_parameters: u16,
-    pub original_arguments: Vec<Value>,
-    pub program: ProgramId,
-    pub function: u32,
-    pub pc: usize,
-    pub env: Value,
-    pub this: Value,
-    pub locals: Vec<Value>,
-    pub dynamic_bindings: Vec<(Atom, Value)>,
-    pub registers: Vec<Value>,
-    pub active_iterators: Vec<ActiveIterator>,
-    pub with_objects: Vec<Value>,
+    pub frame: Box<super::Frame>,
     pub completion: Completion,
-    pub captured: bool,
     pub resume_register: Option<u16>,
     pub promise: Value,
+}
+
+impl std::fmt::Debug for Continuation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Continuation")
+            .field("program", &self.frame.program)
+            .field("function", &self.frame.function)
+            .field("pc", &self.frame.pc)
+            .field("completion", &self.completion)
+            .field("resume_register", &self.resume_register)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -139,73 +140,50 @@ pub(crate) struct AsyncGeneratorRequest {
 }
 
 impl Continuation {
-    pub(super) fn from_frame(
-        frame: &mut super::Frame,
+    /// `frame`, suspended with `completion`; `resume_register` receives the value it resumes
+    /// with, and `promise` is an async activation's result.
+    pub(super) fn suspend(
+        mut frame: Box<super::Frame>,
         completion: Completion,
         resume_register: Option<u16>,
         promise: Value,
     ) -> Self {
         frame.js_jit_interpreter_started = None;
-        frame.initialized_registers = 0;
-        Self {
-            context: std::mem::replace(&mut frame.context, CallContext::Internal),
-            reflected_parameters: std::mem::take(&mut frame.reflected_parameters),
-            original_arguments: std::mem::take(&mut frame.original_arguments),
-            program: frame.program,
-            function: frame.function,
-            pc: frame.pc,
-            env: frame.env,
-            this: frame.this,
-            locals: std::mem::take(&mut frame.locals),
-            dynamic_bindings: std::mem::take(&mut frame.dynamic_bindings),
-            registers: std::mem::take(&mut frame.registers),
-            active_iterators: std::mem::take(&mut frame.active_iterators),
-            with_objects: std::mem::take(&mut frame.with_objects),
-            completion,
-            captured: frame.captured,
-            resume_register,
-            promise,
-        }
+        Self { frame, completion, resume_register, promise }
     }
 
-    pub(super) fn into_frame(self, with_base: usize) -> super::Frame {
-        let initialized_registers = self.registers.len();
-        super::Frame {
-            context: self.context,
-            reflected_parameters: self.reflected_parameters,
-            original_arguments: self.original_arguments,
-            program: self.program,
-            function: self.function,
-            pc: self.pc,
-            pc_is_resume: true,
-            source_field: None,
-            binding_site_pc: None,
-            env: self.env,
-            this: self.this,
-            locals: self.locals,
-            dynamic_bindings: self.dynamic_bindings,
-            captured: self.captured,
-            registers: self.registers,
-            initialized_registers,
-            capture_cache: super::CaptureCache::default(),
-            active_iterators: self.active_iterators,
-            with_objects: self.with_objects,
-            with_base,
-            js_jit_interpreter_started: None,
-            fixed_this: false,
-        }
+    /// The suspended frame, ready to push: it continues after its suspending instruction,
+    /// every register holds a value, and the state a run derives for itself (the operation's
+    /// field and binding site, the capture cache, a fixed `this`, the `with` base) starts anew.
+    pub(super) fn resume(self, with_base: usize) -> Box<super::Frame> {
+        let mut frame = self.frame;
+        frame.pc_is_resume = true;
+        frame.source_field = None;
+        frame.binding_site_pc = None;
+        frame.initialized_registers = frame.registers.len();
+        frame.capture_cache = super::CaptureCache::default();
+        frame.with_base = with_base;
+        frame.js_jit_interpreter_started = None;
+        frame.fixed_this = false;
+        frame
+    }
+
+    /// The program the suspended activation runs.
+    pub(crate) fn program(&self) -> ProgramId {
+        self.frame.program
     }
 
     /// Its edges, appended to `out` a slice at a time: the GC traces every suspended frame
     /// this way, where a chained iterator pushes value by value.
     pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {
-        out.extend(self.context.callee());
-        out.extend_from_slice(&self.original_arguments);
-        out.extend_from_slice(&self.with_objects);
-        out.extend([self.env, self.this]);
-        out.extend_from_slice(&self.locals);
-        out.extend(self.dynamic_bindings.iter().map(|(_, value)| *value));
-        out.extend_from_slice(&self.registers);
+        let frame = &self.frame;
+        out.extend(frame.context.callee());
+        out.extend_from_slice(&frame.original_arguments);
+        out.extend_from_slice(&frame.with_objects);
+        out.extend([frame.env, frame.this]);
+        out.extend_from_slice(&frame.locals);
+        out.extend(frame.dynamic_bindings.iter().map(|(_, value)| *value));
+        out.extend_from_slice(&frame.registers);
         out.extend(match self.completion {
             Completion::GeneratorStart => None,
             Completion::Return(value)
@@ -223,31 +201,87 @@ impl Continuation {
     }
 }
 
+use crate::snapshot::Snap;
+
+/// A suspended activation as a snapshot records it: its frame's suspended state, field by
+/// field, then its resumer's; a restored continuation's frame starts its run anew on resume.
+impl Snap for Continuation {
+    fn snap(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
+        let super::Frame {
+            context, reflected_parameters, original_arguments, program, function, pc, env, this,
+            locals, dynamic_bindings, registers, active_iterators, with_objects, captured,
+            pc_is_resume: _, source_field: _, binding_site_pc: _, initialized_registers: _,
+            capture_cache: _, with_base: _, js_jit_interpreter_started: _, fixed_this: _,
+        } = &*self.frame;
+        context.snap(writer)?;
+        reflected_parameters.snap(writer)?;
+        original_arguments.snap(writer)?;
+        program.snap(writer)?;
+        function.snap(writer)?;
+        pc.snap(writer)?;
+        env.snap(writer)?;
+        this.snap(writer)?;
+        locals.snap(writer)?;
+        dynamic_bindings.snap(writer)?;
+        registers.snap(writer)?;
+        active_iterators.snap(writer)?;
+        with_objects.snap(writer)?;
+        self.completion.snap(writer)?;
+        captured.snap(writer)?;
+        self.resume_register.snap(writer)?;
+        self.promise.snap(writer)
+    }
+
+    fn unsnap(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
+        let context = Snap::unsnap(reader)?;
+        let reflected_parameters = Snap::unsnap(reader)?;
+        let original_arguments = Snap::unsnap(reader)?;
+        let program = Snap::unsnap(reader)?;
+        let mut frame = Box::new(super::Frame::empty(program, 0));
+        frame.context = context;
+        frame.reflected_parameters = reflected_parameters;
+        frame.original_arguments = original_arguments;
+        frame.function = Snap::unsnap(reader)?;
+        frame.pc = Snap::unsnap(reader)?;
+        frame.env = Snap::unsnap(reader)?;
+        frame.this = Snap::unsnap(reader)?;
+        frame.locals = Snap::unsnap(reader)?;
+        frame.dynamic_bindings = Snap::unsnap(reader)?;
+        frame.registers = Snap::unsnap(reader)?;
+        frame.active_iterators = Snap::unsnap(reader)?;
+        frame.with_objects = Snap::unsnap(reader)?;
+        let completion = Snap::unsnap(reader)?;
+        frame.captured = Snap::unsnap(reader)?;
+        Ok(Self {
+            frame,
+            completion,
+            resume_register: Snap::unsnap(reader)?,
+            promise: Snap::unsnap(reader)?,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn continuation_roots_include_frame_and_completion_values() {
-        let continuation = Continuation {
-            context: CallContext::Function(Value::heap(9)),
-            reflected_parameters: 0,
-            original_arguments: vec![Value::heap(10)],
-            program: ProgramId::MAIN,
-            function: 3,
-            pc: 7,
-            env: Value::heap(1),
-            this: Value::heap(2),
-            locals: vec![Value::heap(4)],
-            dynamic_bindings: vec![(0, Value::heap(8))],
-            registers: vec![Value::heap(5)],
-            with_objects: vec![Value::heap(11)],
-            active_iterators: vec![],
-            completion: Completion::Await(Value::heap(6)),
-            captured: false,
-            resume_register: Some(1),
-            promise: Value::heap(7),
-        };
+        let mut frame = Box::new(super::super::Frame::empty(ProgramId::MAIN, 0));
+        frame.context = CallContext::Function(Value::heap(9));
+        frame.original_arguments = vec![Value::heap(10)];
+        frame.function = 3;
+        frame.pc = 7;
+        frame.env = Value::heap(1);
+        frame.this = Value::heap(2);
+        frame.locals = vec![Value::heap(4)];
+        frame.dynamic_bindings = vec![(0, Value::heap(8))];
+        frame.registers = vec![Value::heap(5)];
+        frame.with_objects = vec![Value::heap(11)];
+        frame.with_base = 3;
+        frame.fixed_this = true;
+        let continuation =
+            Continuation::suspend(frame, Completion::Await(Value::heap(6)), Some(1), Value::heap(7));
         assert_eq!(
             continuation.roots(),
             [
@@ -263,18 +297,12 @@ mod tests {
                 Value::heap(7)
             ]
         );
-        let mut frame = continuation.into_frame(0);
+        // The resumed frame keeps the suspended state and starts its own run anew.
+        let frame = continuation.resume(0);
         assert_eq!(frame.original_arguments, [Value::heap(10)]);
         assert_eq!(frame.with_objects, [Value::heap(11)]);
-        let restored = Continuation::from_frame(
-            &mut frame,
-            Completion::Await(Value::heap(6)),
-            Some(1),
-            Value::heap(7),
-        );
-        assert!(frame.original_arguments.is_empty());
-        assert_eq!(restored.original_arguments, [Value::heap(10)]);
-        assert!(frame.with_objects.is_empty());
-        assert_eq!(restored.with_objects, [Value::heap(11)]);
+        assert_eq!((frame.function, frame.pc, frame.with_base), (3, 7, 0));
+        assert_eq!(frame.initialized_registers, frame.registers.len());
+        assert!(frame.pc_is_resume && !frame.fixed_this);
     }
 }

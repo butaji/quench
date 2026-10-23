@@ -200,25 +200,24 @@ impl<H: Host> Vm<H> {
         if let Some(IteratorRecord { source, .. }) = self.heap.iterator_mut(generator) {
             *source = generator;
         }
-        if let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(generator) {
-            ext.generator = Some(Box::new(GeneratorRecord {
-                continuation: Some(Continuation::from_frame(
-                    &mut frame,
-                    Completion::GeneratorStart,
-                    None,
-                    Value::UNDEFINED,
-                )),
-                realm,
-                done: false,
-                running: false,
-                requests: std::collections::VecDeque::new(),
-            }));
-        } else {
+        let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(generator) else {
+            self.pool_frame(frame);
             return Err(JsError(
                 "generator allocation lost its iterator cell".into(),
             ));
-        }
-        self.pool_frame(frame);
+        };
+        ext.generator = Some(Box::new(GeneratorRecord {
+            continuation: Some(Continuation::suspend(
+                frame,
+                Completion::GeneratorStart,
+                None,
+                Value::UNDEFINED,
+            )),
+            realm,
+            done: false,
+            running: false,
+            requests: std::collections::VecDeque::new(),
+        }));
         Ok(generator)
     }
 
@@ -515,9 +514,9 @@ impl<H: Host> Vm<H> {
             _ => return None,
         };
         let continuation = record.continuation.as_ref()?;
-        let program = self.programs.get(continuation.program)?;
-        let function = program.function_get(continuation.function as usize)?;
-        let instruction = *function.code.get(continuation.pc)?;
+        let program = self.programs.get(continuation.frame.program)?;
+        let function = program.function_get(continuation.frame.function as usize)?;
+        let instruction = *function.code.get(continuation.frame.pc)?;
         let instruction = if instruction.is_wide() {
             function.wide.get(instruction.wide_index()).copied()?
         } else {
@@ -527,6 +526,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let iterator = *continuation
+            .frame
             .registers
             .get(usize::from(instruction.register_c()))?;
         (!iterator.is_undefined()).then_some((iterator, instruction.result_register()))
@@ -626,12 +626,12 @@ impl<H: Host> Vm<H> {
             }
             let program = self
                 .programs
-                .get(continuation.program)
+                .get(continuation.frame.program)
                 .ok_or_else(|| JsError("generator continuation program is unavailable".into()))?;
-            let Some(function) = program.function_get(continuation.function as usize) else {
+            let Some(function) = program.function_get(continuation.frame.function as usize) else {
                 return Err(JsError("generator function is invalid".into()));
             };
-            let suspended_instruction = continuation.pc.saturating_sub(1) as u32;
+            let suspended_instruction = continuation.frame.pc.saturating_sub(1) as u32;
             function
                 .handlers
                 .iter()
@@ -642,8 +642,8 @@ impl<H: Host> Vm<H> {
                     Some((
                         handler.return_target?,
                         handler.return_slot?,
-                        continuation.captured,
-                        continuation.env,
+                        continuation.frame.captured,
+                        continuation.frame.env,
                         handler.end - handler.start,
                     ))
                 })
@@ -666,7 +666,7 @@ impl<H: Host> Vm<H> {
             let Some(continuation) = record.continuation.as_mut() else {
                 return Err(JsError("generator is suspended".into()));
             };
-            let Some(target_slot) = continuation.locals.get_mut(usize::from(slot)) else {
+            let Some(target_slot) = continuation.frame.locals.get_mut(usize::from(slot)) else {
                 return Err(JsError("generator return slot is out of bounds".into()));
             };
             *target_slot = value;
@@ -675,7 +675,7 @@ impl<H: Host> Vm<H> {
             .generator_record_mut(generator)
             .and_then(|record| record.continuation.as_mut())
         {
-            continuation.pc = target as usize;
+            continuation.frame.pc = target as usize;
             continuation.resume_register = None;
             continuation.completion = Completion::Return(value);
         }
@@ -746,8 +746,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.with_call_roots(continuation.roots(), |vm| {
             let mut first_error = None;
-            for cleanup in continuation.active_iterators.iter().rev() {
-                let Some(&done) = continuation.registers.get(usize::from(cleanup.done)) else {
+            for cleanup in continuation.frame.active_iterators.iter().rev() {
+                let Some(&done) = continuation.frame.registers.get(usize::from(cleanup.done)) else {
                     first_error
                         .get_or_insert_with(|| JsError("invalid iterator cleanup state".into()));
                     continue;
@@ -755,7 +755,7 @@ impl<H: Host> Vm<H> {
                 if vm.truthy(done) {
                     continue;
                 }
-                let Some(&iterator) = continuation.registers.get(usize::from(cleanup.iterator))
+                let Some(&iterator) = continuation.frame.registers.get(usize::from(cleanup.iterator))
                 else {
                     first_error
                         .get_or_insert_with(|| JsError("invalid iterator cleanup target".into()));
@@ -1016,9 +1016,10 @@ impl<H: Host> Vm<H> {
             if let Some(record) = self.generator_record_mut(generator)
                 && let Some(continuation) = record.continuation.as_mut()
             {
-                continuation.pc += 1;
+                continuation.frame.pc += 1;
                 continuation.resume_register = None;
                 if let Some(slot) = continuation
+                    .frame
                     .registers
                     .get_mut(destination.as_number().unwrap_or(0.0) as usize)
                 {
@@ -1093,7 +1094,7 @@ impl<H: Host> Vm<H> {
             self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
             return Ok(promise);
         };
-        continuation.pc += 1;
+        continuation.frame.pc += 1;
         continuation.resume_register = None;
         let mut roots = continuation.roots();
         roots.extend([generator, reason]);
@@ -1105,7 +1106,7 @@ impl<H: Host> Vm<H> {
                 Ok((rejected, promise))
             })
         })?;
-        self.enqueue_async_resume(p, continuation, promise, Some(generator), rejected, false)?;
+        self.enqueue_async_resume(p, Some(continuation), promise, Some(generator), rejected, false)?;
         Ok(promise)
     }
 
@@ -1153,9 +1154,9 @@ impl<H: Host> Vm<H> {
         if let Some(record) = self.generator_record_mut(generator)
             && let Some(continuation) = record.continuation.as_mut()
         {
-            continuation.pc += 1;
+            continuation.frame.pc += 1;
             continuation.resume_register = None;
-            if let Some(register) = continuation.registers.get_mut(usize::from(destination)) {
+            if let Some(register) = continuation.frame.registers.get_mut(usize::from(destination)) {
                 *register = value;
             }
         }
@@ -1234,23 +1235,23 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         initial_error: Option<JsError>,
     ) -> Result<Value, JsError> {
-        let (continuation, realm, done, running) = {
+        let (continuation, realm, done) = {
             let Some(record) = self.generator_record_mut(generator) else {
                 return Err(JsError("generator receiver is invalid".into()));
             };
             if record.running {
                 return Err(JsError("generator is already running".into()));
             }
-            (
-                record.continuation.take(),
-                record.realm,
-                record.done,
-                record.running,
-            )
+            let continuation = record.continuation.take();
+            // A suspended generator that resumes runs from here; one that has not started and
+            // receives an abrupt completion closes without running.
+            record.running = !record.done
+                && continuation.as_ref().is_some_and(|continuation| {
+                    initial_error.is_none()
+                        || !matches!(continuation.completion, Completion::GeneratorStart)
+                });
+            (continuation, record.realm, record.done)
         };
-        if running {
-            return Err(JsError("generator is already running".into()));
-        }
         if done {
             if let Some(error) = initial_error {
                 return Err(error);
@@ -1261,20 +1262,18 @@ impl<H: Host> Vm<H> {
         if matches!(continuation.completion, Completion::GeneratorStart)
             && let Some(error) = initial_error
         {
-            let frame = continuation.into_frame(self.with_stack.len());
-            self.pool_frame(frame);
+            self.pool_frame(continuation.resume(self.with_stack.len()));
             self.close_generator(generator)?;
             return Err(error);
         }
-        let execution_program = self
-            .programs
-            .get(continuation.program)
-            .ok_or_else(|| JsError("generator continuation program is unavailable".into()))?;
-        if let Some(record) = self.generator_record_mut(generator) {
-            record.running = true;
-        }
+        let Some(execution_program) = self.programs.get(continuation.frame.program) else {
+            if let Some(record) = self.generator_record_mut(generator) {
+                record.running = false;
+            }
+            return Err(JsError("generator continuation program is unavailable".into()));
+        };
         let resume_register = continuation.resume_register;
-        let mut frame = continuation.into_frame(self.with_stack.len());
+        let mut frame = continuation.resume(self.with_stack.len());
         if initial_error.is_none()
             && let Some(register) = resume_register
         {
@@ -1291,7 +1290,6 @@ impl<H: Host> Vm<H> {
         let previous_program = self.replace_active_program(frame.program);
         let previous_global = self.switch_realm_global(realm);
         self.activate_frame(&mut frame);
-        let frame = self.adopt_frame(frame);
         self.frames.push(frame);
         let result = self.run_frame_general_with_error(
             &execution_program,
@@ -1322,8 +1320,8 @@ impl<H: Host> Vm<H> {
             } => {
                 if let Some(record) = self.generator_record_mut(generator) {
                     record.running = false;
-                    record.continuation = Some(Continuation::from_frame(
-                        &mut frame,
+                    record.continuation = Some(Continuation::suspend(
+                        frame,
                         Completion::Yield(value),
                         Some(destination),
                         Value::UNDEFINED,
@@ -1496,12 +1494,11 @@ impl<H: Host> Vm<H> {
             if matches!(continuation.completion, Completion::GeneratorStart)
                 && let Some(error) = initial_error
             {
-                let frame = continuation.into_frame(vm.with_stack.len());
-                vm.pool_frame(frame);
+                vm.pool_frame(continuation.resume(vm.with_stack.len()));
                 vm.fail_async_generator(p, generator, promise, error)?;
                 return Ok(promise);
             }
-            let execution_program = match vm.programs.get(continuation.program) {
+            let execution_program = match vm.programs.get(continuation.frame.program) {
                 Some(program) => program,
                 None => {
                     vm.fail_async_generator(
@@ -1514,7 +1511,7 @@ impl<H: Host> Vm<H> {
                 }
             };
             let resume_register = continuation.resume_register;
-            let mut frame = continuation.into_frame(vm.with_stack.len());
+            let mut frame = continuation.resume(vm.with_stack.len());
             if initial_error.is_none()
                 && let Some(register) = resume_register
             {
@@ -1532,7 +1529,6 @@ impl<H: Host> Vm<H> {
             let previous_program = vm.replace_active_program(frame.program);
             let previous_global = vm.switch_realm_global(realm);
             vm.activate_frame(&mut frame);
-            let frame = vm.adopt_frame(frame);
             vm.frames.push(frame);
             let result = vm.run_frame_general_with_error(
                 &execution_program,
@@ -1563,7 +1559,7 @@ impl<H: Host> Vm<H> {
                     p,
                     generator,
                     promise,
-                    *frame,
+                    frame,
                     value,
                     destination,
                     delegated_result.is_some(),
@@ -1573,13 +1569,13 @@ impl<H: Host> Vm<H> {
                     destination,
                     frame: None,
                 }) => {
-                    let continuation = Continuation::from_frame(
-                        &mut frame,
+                    let continuation = Continuation::suspend(
+                        frame,
                         Completion::Await(value),
                         Some(destination),
                         promise,
                     );
-                    vm.enqueue_async_resume(p, continuation, promise, Some(generator), value, false)?;
+                    vm.enqueue_async_resume(p, Some(continuation), promise, Some(generator), value, false)?;
                 }
                 Ok(_) => {
                     vm.pool_frame(frame);
@@ -1600,27 +1596,28 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         generator: Value,
         promise: Value,
-        mut frame: Frame,
+        frame: Box<Frame>,
         value: Value,
         destination: u16,
         delegated: bool,
     ) -> Result<(), JsError> {
-        let continuation = Continuation::from_frame(
-            &mut frame,
+        let continuation = Continuation::suspend(
+            frame,
             Completion::Yield(value),
             Some(destination),
             Value::UNDEFINED,
         );
         if let Some(record) = self.generator_record_mut(generator) {
             record.running = !delegated;
-            record.continuation = Some(continuation.clone());
+            record.continuation = Some(continuation);
         }
         if delegated {
             let result = self.iterator_result(value, false)?;
             self.promise_resolve_value(p, promise, result)?;
             return Ok(());
         }
-        self.enqueue_async_resume(p, continuation, promise, Some(generator), value, true)
+        // The yield awaits its value first; its continuation stays in the record.
+        self.enqueue_async_resume(p, None, promise, Some(generator), value, true)
     }
 
     pub(super) fn finish_async_generator(

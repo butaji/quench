@@ -235,3 +235,18 @@ Commit: `Trim closure environments only as the live set grows; index traced envi
 
 Status: the branch stays unmerged. It is semantically ready (885/885 tests), but on V8-v7 it
 costs 70–230 KiB of max RSS.
+
+## Runtime cost, in one binary
+
+`runtime-cost-same-binary-7-runs.txt`: one static build with diagnostic switches, MemoryFirst, 7
+interleaved runs, a separate warm compile cache per arm.
+- **Switching off the reader tables and the environment trace** (`noreads`) changes median max
+  RSS by −52 to +24 KiB: RayTrace −52, RegExp −28, every other row within ±24.
+- **Switching off the `fill` fast path** changes it by −52 to +20 KiB.
+
+The behaviour therefore costs at most about 50 KiB at run time. The rest of the gap between
+separately built binaries, even bolted ones, is code size and layout, which every code
+addition shifts and which the trunk's BOLT retraining resets (TOD-171).
+
+**Merged into v2-gc on that basis.** The next V8-v7 board, built on a profile retrained for
+trunk, records the combined effect.

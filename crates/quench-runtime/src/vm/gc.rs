@@ -990,7 +990,7 @@ impl<H: Host> Vm<H> {
         self.embedding_record_shapes.clear();
         self.function_name_shapes.clear();
         self.shape_attribute_memo.clear();
-        self.object_shapes.fill(u32::MAX);
+        self.object_shapes.reset();
         self.invalidate_field_caches();
         self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);
         self.megamorphic_methods.clear();
