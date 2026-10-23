@@ -1688,6 +1688,9 @@ pub(crate) struct Vm<H> {
     /// Owners with out-of-cell edges at the previous collection, which sizes the next index.
     gc_owned_root_count: usize,
     frame_pool: Vec<Box<Frame>>,
+    /// Emptied call stacks of finished general loops, one per nesting level reached: a loop
+    /// takes one on entry, so running a job allocates no stack of its own.
+    pending_call_stacks: Vec<Vec<dispatch_frame::PendingGeneralCall>>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
     /// Whether Wasm functions with a compiled denotation run as native code.
@@ -1717,6 +1720,14 @@ pub(crate) struct Vm<H> {
     /// (`Native::runs_beside_activations`), which the first observer of the frame stack makes
     /// frames (`materialize_deferred_lane`).
     lane_deferred: Option<dispatch_fast::DeferredLaneCall>,
+    /// The module the host resolved each (referrer, specifier) of a static request to since
+    /// the last collection (`Vm::resolve_module_request`). The graph's passes (collection,
+    /// pending dependencies, instantiation, evaluation) resolve each request again, and each
+    /// resolution read the file and its package scope anew: 3,824 resolutions of 863
+    /// requests, 19% of the date-fns npm scenario. A host must load the same module for the
+    /// same (referrer, specifier) each time (ECMA-262 HostLoadImportedModule), as Node's
+    /// module map does; a collection drops the sources held here.
+    resolved_module_requests: rustc_hash::FxHashMap<(String, String), crate::host::ModuleSource>,
     /// Per host function, `Host::host_function_runs_beside_activations`, derived on first use.
     host_beside_activations: std::cell::OnceCell<Box<[bool]>>,
     /// The completion a frame's own call record returns, made by a lane activation

@@ -106,7 +106,15 @@ const MODULE_FACTORY: &str = r#"((initializeServer, EventEmitter, request, creat
     outgoing.end();
     return outgoing;
   };
-  return { Server, createServer, request, get, Agent, globalAgent, IncomingMessage, ServerResponse };
+  // Node's default --max-http-header-size, exposed for HTTP client libraries.
+  const maxHeaderSize = 16 * 1024;
+  const api = { Server, createServer, request, get, Agent, globalAgent, IncomingMessage, ServerResponse };
+  Object.defineProperty(api, "maxHeaderSize", {
+    configurable: true,
+    enumerable: true,
+    get() { return maxHeaderSize; },
+  });
+  return api;
 })"#;
 
 // Node's lib/https.js agent over the HTTP agent's pool state. Fastify and the AWS SDK

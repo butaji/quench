@@ -108,8 +108,10 @@ The rows run `quench-node`, Node with `--jitless`, and Bun with
 `process.execArgv` confirms `--jitless`. The runner compares deterministic
 outputs and records guest throughput, elapsed time, maximum RSS, versions,
 commands and input hashes. It sets `NODE_ENV=production` for every engine.
-Linux runs sample the kernel-maintained `/proc/<pid>/status` `VmHWM` every 2 ms
-and are diagnostic only;
+Linux runs sample the live process tree's summed `/proc/<pid>/status` `VmRSS`
+every 50 ms and are diagnostic only. The sample can miss short-lived children
+and counts shared pages once per process; use the platform's maximum-RSS tool
+for qualification;
 macOS qualification reads process maximum RSS from `/usr/bin/time -l`. Set
 `QUENCH_NODE_BIN`, `NODE_BIN` and `BUN_BIN` when the binaries are outside their
 defaults.
@@ -701,3 +703,151 @@ control at 548.2 / 36.27 MB. Output matched. The allocation branch and
 long-lived root cost more than the saved empty records in this workload, so
 the runtime change was reverted. Report:
 `work/react-perf/react-empty-string-nojit-1000-11.json`.
+
+The aggregate string profiler was corrected after review found that its old
+`JsString::capacity()` probe flattened ropes while measuring them. The updated
+profile reads existing flat payload bytes and records non-flattening concat
+shapes. Across 1,000 React renders it counted 1,192,215 newly allocated
+string+string concats: 601,065 inline-flat plus 591,150 rope left operands,
+1,192,215 inline-flat right operands, and 600,015 flat plus 592,200 rope
+results. Early cache hits are counted separately and are not included in these
+shape totals. Output matched at 4,996,000 bytes/checksum 83793. This is
+instrumented diagnostic data, not a performance score. Summary:
+`target/perf-reports/react-aggregate-string-shapes.json`.
+
+A `Move`→`GetField` bytecode rewrite was screened with a production PGO build
+trained on 500 React renders. A correctness review added a guard for parameter
+registers, since `Function.arguments` can observe writes that ordinary
+liveness considers dead; the focused parameter/temp rewrite test passed. In
+three 500-render paired samples, no-JIT measured 427.4 renders/s / 36.34 MB
+for the candidate versus 469.9 / 32.15 MB for the PGO control (-9.1% speed,
++13.0% RSS). JIT measured 519.8 / 29.62 MB versus 508.6 / 30.47 MB (+2.2%
+speed, -2.8% RSS). Output matched in both modes. The no-JIT regression rules
+out this candidate for the dual-mode target, so the runtime rewrite and its
+test were reverted. Reports:
+`target/perf-reports/react-move-getfield-pgo-screen-no-jit.json` and
+`target/perf-reports/react-move-getfield-pgo-screen-jit.json`.
+
+A guarded `completeShell` entry prefix read the cached `trackedPostpones`
+property, tested it against null, staged the capture/literal/argument registers,
+and resumed immediately before the dynamic call. The call and all misses stayed
+on the interpreter path. Its 11-round, 1,000-render JIT screen measured 481.7
+renders/s / 29.41 MB sampled maximum RSS versus the control at 502.3 / 29.76
+MB (-4.1% throughput, -1.2% RSS); output matched at 4,996,000 bytes/checksum
+83793. Linux RSS is diagnostic, and the candidate/control PGO profiles were
+not identical, so this was a screen rather than qualification. The short prefix
+does not amortize its entry guard cost and was reverted. The next JIT direction
+is a multi-operation, generic-Value tracelet that can cover repeated
+field/load/branch regions in the hot React functions, with interpreter side
+exits for dynamic operations.
+
+To select a region from dynamic rather than static bytecode shape, the
+`profile-aggregate` diagnostic now records straight-line triples by program,
+function, and start PC. A 500-render React profile found the most repeated site
+in `react-dom-server-legacy.node.production.js`: function 192, PCs 0–2,
+`Binary → JumpFalse → LoadCapture` executed 537,350 times. Another site in
+function 175, PCs 68–70, `GetField → Binary → JumpBinaryFalse`, had the same
+count. The workload produced 2,498,000 bytes/checksum 41826. This is an
+instrumented profile, not a timing result. The next candidate must lower a
+bounded region with generic values and exact side exits; `Binary` can invoke
+JavaScript coercion, so it cannot be treated as a primitive operation without
+a guard and a pre-effect exit. This profile narrows the search, but it does not
+yet establish a performance win.
+
+The Undici workload uses pinned `undici@7.30.1` `Pool.request()` calls against
+a loopback HTTP server with four connections, fixed JSON responses, and body
+checks. It resolves the local npm package explicitly because Bun's built-in
+`undici` shim omits `Pool.close()`. Quench initially failed package startup
+because `node:http.maxHeaderSize` was missing; the API now exposes Node's
+default 16,384-byte value through a getter with Node's property descriptor,
+and the full workload completes.
+
+The 11-round JIT screen used 1,000 requests and 50 warmups per process. Quench
+measured 1,116 requests/s and 44.6 MB sampled RSS, Node 5,464 / 81.3 MB, and
+Bun 6,250 / 93.5 MB. Quench is about 80–82% slower, though its sampled RSS is
+45–52% lower. For JIT-off, Node `--jitless` removes the `WebAssembly` global
+that Undici's llhttp parser requires, so that comparison is unavailable.
+The 11-round Quench/Bun screen measured 1,171 / 45.8 MB for Quench and
+2,119 / 49.1 MB for Bun: Quench is 44.7% slower and uses only 6.7% less
+sampled RSS. Linux RSS is diagnostic, so neither mode qualifies for the 20%
+target. Reports are local at `target/perf-reports/undici-pool-{jit,nojit}-11.json`.
+
+The first Zod v4 workload uses flat and nested object schemas, a discriminated
+union, successful `parse`, and invalid `safeParse` with issue-path checks. The
+11-round clean-production screen used 1,000 rounds and 50 warmups per process;
+output checks matched across engines. No-JIT throughput was 22,599 operations/s
+for Quench, 78,431 for Node `--jitless`, and 61,538 for Bun with JIT disabled.
+JIT throughput was 22,857 for Quench, 137,931 for Node, and 173,913 for Bun.
+Quench already used less sampled RSS in every comparison: 28.5 MB versus
+39.5/35.0 MB no-JIT, and 24.5 MB versus 52.1/47.9 MB with JIT. It does not
+meet the 20% threshold on no-JIT RSS against Bun (18.5% lower), and it misses
+the throughput threshold by a wide margin in both modes. Linux RSS is
+diagnostic; these results are a screen, not platform qualification. The local
+reports are `target/perf-reports/zod-parse-nojit-11.json` and
+`target/perf-reports/zod-parse-jit-11.json`. A separate JIT diagnostic run
+recorded 210 function records and zero native compiles. The wrapper's
+`operations` function alone fell back 1,050 times with
+`unsupported-lowering-shape-or-codegen-failure`; its bytecode includes 34
+`GetField`, 13 `Binary`, four dynamic `Call`, and nine `JumpTrue` operations.
+This explains why enabling JIT barely changes Zod throughput: the hot call path
+does not enter native code. Extending native execution across these dynamic
+operations is the primary JIT direction, with exact semantic side exits.
+
+The Pino workload uses pinned `pino@10.4.0` with structured JSON, a request
+serializer, and redaction into a synchronous in-memory sink. Timestamp and base
+fields are disabled so output checksums are stable between processes. The
+11-round, 5,000-record screen matched output across all engines. No-JIT
+throughput was 15,823 records/s for Quench, 58,140 for Node, and 44,248 for
+Bun; sampled RSS was 38.1, 31.0, and 42.3 MB. JIT throughput was 14,451 for
+Quench, 151,515 for Node, and 172,414 for Bun; sampled RSS was 34.8, 43.8,
+and 49.3 MB. Quench misses speed in both modes; JIT RSS is over 20% lower than
+both engines, while no-JIT RSS is 22.8% higher than Node and only 10% lower
+than Bun. Linux RSS remains diagnostic. Reports are local at
+`target/perf-reports/pino-json-{nojit,jit}-11.json`.
+
+JIT diagnostics show the `logRequest` wrapper has 5,250 fallback entries,
+zero native entries, and is rejected as
+`unsupported-lowering-shape-or-codegen-failure`. Its body includes object
+creation, a dynamic logger call, and redaction data access. One small getter
+compiled, but that does not cover the hot logging operation; broad generic
+call-capable execution remains necessary.
+
+## ws
+
+`ws-echo.cjs` uses pinned `ws@8.18.3` for a local WebSocket client/server
+upgrade and sequential binary echo workload. It validates every echoed frame
+and reports bytes and checksum. A Node smoke run completed with matching
+output. Quench currently cannot run this workload: its HTTP server responds
+with status 426 instead of delivering the WebSocket `upgrade` event and raw
+socket to `ws`. The client also exposed that Quench's HTTP request option
+parser must accept the string port returned by `URL.port`; that compatibility
+gap is fixed. The remaining upgrade failure happens before timing, so `ws`
+must not be counted as a performance comparison until the HTTP server exposes
+the upgrade socket and the client can consume a 101 response.
+
+## Fresh `v2-merged` production screen
+
+After merging the latest `v2-merged` tip, the PGO production binary was rebuilt
+and these Linux 11-round screens were rerun. Quench still loses throughput on
+all three workloads; these measurements do not meet the 20% speed target.
+Linux `VmHWM` is sampled every 2 ms and remains diagnostic, not platform
+qualification.
+
+| Workload and mode | Quench median | Node median | Bun median |
+| --- | ---: | ---: | ---: |
+| React SSR, no-JIT, 1,000 renders | 533/s, 38.9 MB | 1,629/s, 36.2 MB | 1,466/s, 37.3 MB |
+| React SSR, JIT, 1,000 renders | 500/s, 30.0 MB | 14,493/s, 47.2 MB | 7,692/s, 92.0 MB |
+| Zod parse, no-JIT, 1,000 ops | 36,364/s, 26.0 MB | 68,966/s, 39.5 MB | 65,574/s, 35.1 MB |
+| Zod parse, JIT, 1,000 ops | 35,088/s, 23.1 MB | 222,222/s, 52.0 MB | 235,294/s, 47.7 MB |
+| Pino JSON, no-JIT, 5,000 records | 21,459/s, 34.1 MB | 58,824/s, 31.0 MB | 43,860/s, 42.2 MB |
+| Pino JSON, JIT, 5,000 records | 18,868/s, 31.4 MB | 147,059/s, 43.3 MB | 185,185/s, 49.7 MB |
+
+React's JIT screen retains a large RSS reduction but is 96.6% slower than Node.
+Zod's RSS is over 20% lower than both engines in both modes, while throughput
+is 47–85% lower. Pino JIT RSS is 27–37% lower, while throughput is 87–90%
+lower; in no-JIT its RSS is above Node's. Reports are in
+`target/perf-reports/{react,zod-parse,pino-json}-{nojit,jit}-merged-11.json`.
+The React JIT diagnostic recorded zero native entries across 58 functions;
+the hottest render functions fell back 42,680–215,160 times each in a
+200-render sample. The next runtime change should target broad native coverage
+for closure/capture-heavy functions and validate both throughput and RSS.

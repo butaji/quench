@@ -1057,6 +1057,22 @@ impl<H: Host> Vm<H> {
             .iter()
             .fold(EMPTY_SHAPE, |shape, atom| self.transition_shape(shape, *atom))
     }
+    /// A user function's own data `length`, as its closure's shape holds it: `None` for a
+    /// native or bound function, whose `length` other paths answer, a shape with getter slots
+    /// or an object with side descriptors (which may make it an accessor), and a deleted
+    /// `length` (`Function.prototype`'s answers then).
+    pub(super) fn plain_function_length(&self, value: Value) -> Option<Value> {
+        if !matches!(self.heap.function(value), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
+            return None;
+        }
+        let object = self.object_data(value)?;
+        if object.has_side_descriptors() || self.shapes[object.shape() as usize].facts.slot_getters() {
+            return None;
+        }
+        let slot = self.shape_slot(object.shape(), self.length_atom)?;
+        self.heap.property_get(object, slot)
+    }
+
     pub(super) fn own_property(&self, object: Value, atom: Atom) -> Option<Value> {
         if atom == self.length_atom
             && let Some(length) = self.own_array_length(object)
@@ -1816,10 +1832,16 @@ impl<H: Host> Vm<H> {
         if !self.string_field_site_cacheable(p, atom) {
             return None;
         }
-        // A name the cache does not hold, as an absent `type`, is a data walk of the
-        // prototype chain, which the string's own index and `length` keys never shadow.
-        self.string_prototype_field_hit(site)
-            .or_else(|| self.plain_named_get(self.string_proto, atom))
+        // A name the chain lacks, as an absent `type`, is `undefined` by a data walk of the
+        // prototype chain, which the string's own index and `length` keys never shadow. A
+        // present one the site has not recorded is left to the general read, which records
+        // it (`get_string_field_miss`), so the site's later reads hit.
+        self.string_prototype_field_hit(site).or_else(|| {
+            match self.plain_property_lookup(self.string_proto, PropertyKey::string(atom)) {
+                Some(None) => Some(Value::UNDEFINED),
+                _ => None,
+            }
+        })
     }
 
     /// Whether a string primitive's read of `atom` in `p` can take the `String.prototype`
