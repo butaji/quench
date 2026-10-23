@@ -22,6 +22,33 @@ pub const MEMORY_POLICY_ENV: &str = "QUENCH_MEMORY_POLICY";
 /// The CLI's form of `MEMORY_POLICY_ENV`, which takes precedence over it.
 const MEMORY_POLICY_FLAG: &str = "--memory-policy";
 
+/// The options that name the inline source (`-e`, `-p` and their combined forms), each
+/// followed by the source; a print option followed by another option is a switch instead.
+const INLINE_SOURCE_OPTIONS: &[&str] = &["-e", "--eval", "-pe", "-ep", "-p", "--print"];
+const PRINT_SWITCHES: &[&str] = &["-p", "--print"];
+/// The forms that carry the inline source after an equals sign.
+const INLINE_SOURCE_ASSIGNMENTS: &[&str] = &["--eval=", "--print="];
+
+/// Whether `exec_argv` holds only the inline source's options and their sources, as the CLI
+/// records them (none at all included): the bootstrap reads no other option.
+pub(crate) fn names_only_inline_source(exec_argv: &[String]) -> bool {
+    let mut entries = exec_argv.iter().peekable();
+    while let Some(entry) = entries.next() {
+        if INLINE_SOURCE_ASSIGNMENTS.iter().any(|form| entry.starts_with(form)) {
+            continue;
+        }
+        if !INLINE_SOURCE_OPTIONS.contains(&entry.as_str()) {
+            return false;
+        }
+        let switch = PRINT_SWITCHES.contains(&entry.as_str())
+            && entries.peek().is_none_or(|next| next.starts_with('-'));
+        if !switch {
+            entries.next();
+        }
+    }
+    true
+}
+
 /// Under the throughput policy (`MemoryPolicy::Throughput`), glibc's trim threshold is raised
 /// from its 128 KiB default, which pinning the mmap threshold (quench-node's `main`) also pins:
 /// once that much is free at the top of an arena it is returned (`MADV_DONTNEED` in a thread's
@@ -38,7 +65,20 @@ const TRIM_THRESHOLD_VARIABLE: &str = "MALLOC_TRIM_THRESHOLD_";
 
 /// The allocator setting the process's `policy` takes, applied once when it is selected
 /// (`select_memory_policy`); an explicit `TRIM_THRESHOLD_VARIABLE` wins.
+///
+/// Throughput serves small requests from Quench's size-classed allocator, which the runtime's
+/// bulk frees and reallocations of the same sizes favor: wall time on npm scenarios -4 to -15%
+/// (x86_64 Linux VM, 4 cores, 2026-10-20: chalk 125 -> 107 ms, typescript 576 -> 505), and
+/// JetStream bigint-noble 8.28 -> 13.87, json-parse-inspector 109.8 -> 133.1 (TOD-167).
+/// Memory-first keeps the system allocator: the size classes' partly used pages raised V8-v7
+/// max RSS (static x86_64, unbolted, 2026-10-18, KiB): Crypto 4272 -> 4640, Richards 3716 ->
+/// 4064, RayTrace 3884 -> 4128, DeltaBlue 3840 -> 4120, RegExp 7612 -> 7980. Blocks the system
+/// allocator handed out before the selection stay its own (`quench_alloc::owns`).
 fn apply_allocator_policy(policy: MemoryPolicy) {
+    #[cfg(target_os = "linux")]
+    if policy == MemoryPolicy::Throughput {
+        quench_alloc::QuenchAlloc::enable();
+    }
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     if policy == MemoryPolicy::Throughput && std::env::var_os(TRIM_THRESHOLD_VARIABLE).is_none() {
         // SAFETY: mallopt only adjusts allocator parameters.
@@ -327,7 +367,12 @@ fn execute_shared_on_worker(
     let request = ExecutionRequest { source: &source, name: &name, kind };
     let in_worker = worker.is_some();
     let host = new_host(worker)?;
-    let snapshot_path = crate::host::startup_snapshot::snapshot_path(&host, entry_file.as_deref(), in_worker);
+    let snapshot_entry = match &entry_file {
+        Some(path) => Some(crate::host::startup_snapshot::SnapshotEntry::File(path)),
+        None if eval_builtin_globals => Some(crate::host::startup_snapshot::SnapshotEntry::Inline(&source)),
+        None => None,
+    };
+    let snapshot_path = crate::host::startup_snapshot::snapshot_path(&host, snapshot_entry, in_worker);
     let snapshot = snapshot_path.as_deref().and_then(crate::host::startup_snapshot::load_or_schedule);
     let mut runtime = EntryRuntime {
         runtime: std::mem::ManuallyDrop::new(Runtime::new(host)),
@@ -533,13 +578,13 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
                 });
                 break;
             }
-            "-e" | "--eval" | "-pe" | "-ep" | "-p" | "--print" => {
+            option if INLINE_SOURCE_OPTIONS.contains(&option) => {
                 let option = args[index].clone();
                 print |= matches!(option.as_str(), "-pe" | "-ep" | "-p" | "--print");
                 exec_argv.push(option.clone());
                 // Node's optional print argument treats an empty argument as
                 // the first guest argv entry, unlike --eval's required argument.
-                if matches!(option.as_str(), "-p" | "--print")
+                if PRINT_SWITCHES.contains(&option.as_str())
                     && args.get(index + 1).is_some_and(String::is_empty)
                 {
                     eval_source = Some(String::new());
@@ -547,7 +592,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
                     break;
                 }
                 // --print is also a switch when followed by --eval.
-                if matches!(option.as_str(), "-p" | "--print")
+                if PRINT_SWITCHES.contains(&option.as_str())
                     && args.get(index + 1).is_some_and(|next| next.starts_with('-'))
                 {
                     index += 1;
@@ -559,7 +604,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
                 exec_argv.push(source.clone());
                 eval_source = Some(source);
             }
-            option if option.starts_with("--eval=") || option.starts_with("--print=") => {
+            option if INLINE_SOURCE_ASSIGNMENTS.iter().any(|form| option.starts_with(form)) => {
                 let (name, source) = option.split_once('=').expect("matched equals option");
                 print |= name == "--print";
                 exec_argv.push(option.to_owned());

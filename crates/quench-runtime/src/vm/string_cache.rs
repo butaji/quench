@@ -27,6 +27,18 @@ impl<H: Host> Vm<H> {
         let cache_index = Self::concat_cache_index(left, right)?;
         if let Some(result) = self.cached_concat(left, right) {
             #[cfg(feature = "profile-aggregate")]
+            if let (Some(left), Some(right), Some(result_text)) = (
+                self.heap.string(left),
+                self.heap.string(right),
+                self.heap.string(result),
+            ) {
+                self.profile.string_concat_shapes(
+                    left.profile_shape(),
+                    right.profile_shape(),
+                    result_text.profile_shape() != 2,
+                );
+            }
+            #[cfg(feature = "profile-aggregate")]
             self.profile.concat_cache(true);
             return Some(result);
         }
@@ -35,8 +47,16 @@ impl<H: Host> Vm<H> {
             else {
                 return None;
             };
+            #[cfg(feature = "profile-aggregate")]
+            let operand_shapes = (left.profile_shape(), right.profile_shape());
             let mut text = left.clone();
             text.push_js_string(right);
+            #[cfg(feature = "profile-aggregate")]
+            self.profile.string_concat_shapes(
+                operand_shapes.0,
+                operand_shapes.1,
+                text.profile_shape() != 2,
+            );
             #[cfg(feature = "profile-aggregate")]
             self.profile.string_concat_size(text.len());
             text
