@@ -41,7 +41,7 @@ const MAX_REGION_ARRAYS: usize = 8;
 const MAX_REGION_CAPTURES: usize = 16;
 const MAX_REGION_FIELDS: usize = 16;
 /// The largest native body a region may produce.
-const MAX_CODE_BYTES: usize = 64 * 1024;
+pub(super) const MAX_CODE_BYTES: usize = 64 * 1024;
 
 /// What native code writes to its result word: the outcome in the high word, a bytecode PC
 /// in the low one.
@@ -1275,37 +1275,13 @@ fn counted_loop(
     })
 }
 
-/// A compiled region: one W^X mapping, its native entry, and what each `LoopOutcome::Widen`
-/// PC found was no `i32`.
-///
-/// The entry has the compiled functions' ABI (`super::Entry`): the call context, the
-/// register file as the base, an unused length, the entry record as the arguments, and the
-/// result word, which receives the outcome; it returns a zero status, or the terminated one
-/// through the trampoline when its poll faults.
-pub(super) struct CompiledLoop {
-    _code: super::CodeMemory,
-    pub(super) entry: super::Entry,
-    widenings: std::collections::BTreeMap<u32, Widening>,
-}
-
-impl CompiledLoop {
-    /// What a `LoopOutcome::Widen` at `pc` found was no `i32`.
-    pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
-        self.widenings.get(&pc).copied()
-    }
-
-}
-
-/// Native code for `region` under `observation`, or `None` when Cranelift declines it. Its
-/// backward jumps read `poll`, the VM's poll page, where every run enters through the
-/// trampoline (`super::poll_address`), and check the call context's interrupt flag
-/// otherwise.
-pub(super) fn compile(
+/// Lower `region` to a shared-entry Cranelift function and return its exact-PC widening map.
+pub(super) fn lower(
     region: &LoopRegion,
     observation: &Observation<'_>,
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
     poll: Option<i64>,
-) -> Option<CompiledLoop> {
-    let isa = super::jit_backend::target_isa("speed", false)?;
+) -> Option<(ir::Function, std::collections::BTreeMap<u32, Widening>)> {
     let pointer = isa.pointer_type();
     let signature = super::native_entry_signature(pointer, isa.default_call_conv());
     let mut native = ir::Function::with_name_signature(
@@ -1319,21 +1295,7 @@ pub(super) fn compile(
     let builder = FunctionBuilder::new(&mut native, &mut context);
     let widenings = Lowering::new(builder, region, observation, pointer, webs, representations, captures, counted, poll)
         .lower(isa.frontend_config())?;
-    let mut context = cranelift_codegen::Context::for_function(native);
-    let compiled = context
-        .compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default())
-        .ok()?;
-    if !compiled.buffer.relocs().is_empty() {
-        return None;
-    }
-    let code = compiled.code_buffer();
-    if code.is_empty() || code.len() > MAX_CODE_BYTES {
-        return None;
-    }
-    let memory = super::CodeMemory::new(code)?;
-    // SAFETY: the lowering emits the `super::Entry` signature.
-    let entry = unsafe { std::mem::transmute::<*mut u8, super::Entry>(memory.pointer()) };
-    Some(CompiledLoop { _code: memory, entry, widenings })
+    Some((native, widenings))
 }
 
 /// The Cranelift user-function namespace of loop regions ("QLOP").

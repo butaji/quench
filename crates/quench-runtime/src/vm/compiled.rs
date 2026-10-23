@@ -2872,7 +2872,11 @@ impl Drop for CodeMemory {
 
 /// A native OSR region published by the shared compiler. Its lowerer is private to this
 /// module; lanes only ask the region to run and inspect its exact-PC widening result.
-pub(super) struct CompiledOsrRegion(osr_loop::CompiledLoop);
+pub(super) struct CompiledOsrRegion {
+    _code: CodeMemory,
+    entry: Entry,
+    widenings: std::collections::BTreeMap<u32, Widening>,
+}
 
 impl CompiledOsrRegion {
     /// Runs the region on `registers` with `entry`'s record, through the native entry every
@@ -2901,7 +2905,7 @@ impl CompiledOsrRegion {
                 entry.words(),
                 &mut word,
                 NativeEntryMode::Resumable,
-                self.0.entry,
+                self.entry,
             )
         };
         if i64::from(status) == TERMINATED_STATUS {
@@ -2912,7 +2916,7 @@ impl CompiledOsrRegion {
     }
 
     pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
-        self.0.widening(pc)
+        self.widenings.get(&pc).copied()
     }
 }
 
@@ -2934,7 +2938,45 @@ pub(super) fn compile_osr_region(
     observation: &Observation<'_>,
     interrupt: &crate::execution_interrupt::ExecutionInterrupt,
 ) -> Option<CompiledOsrRegion> {
-    osr_loop::compile(region, observation, poll_address(interrupt)).map(CompiledOsrRegion)
+    let isa = super::jit_backend::target_isa("speed", false)?;
+    let (function, widenings) = osr_loop::lower(
+        region,
+        observation,
+        &*isa,
+        poll_address(interrupt),
+    )?;
+    let (_code, entry) = compile_and_publish_entry(function, &*isa, osr_loop::MAX_CODE_BYTES)?;
+    Some(CompiledOsrRegion {
+        _code,
+        entry,
+        widenings,
+    })
+}
+
+/// Compile and publish a fully lowered native entry that has no relocations.
+///
+/// JS scalar regions and OSR regions both use this entry contract. Wasm functions
+/// with internal calls have a separate linking phase before publication.
+fn compile_and_publish_entry(
+    function: ir::Function,
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    max_code_bytes: usize,
+) -> Option<(CodeMemory, Entry)> {
+    let mut context = cranelift_codegen::Context::for_function(function);
+    let compiled = context
+        .compile(isa, &mut cranelift_codegen::control::ControlPlane::default())
+        .ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    let code = compiled.code_buffer();
+    if code.is_empty() || code.len() > max_code_bytes {
+        return None;
+    }
+    let memory = CodeMemory::new(code)?;
+    // SAFETY: callers lower the function with `native_entry_signature`.
+    let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
+    Some((memory, entry))
 }
 
 /// A guarded JavaScript numeric function compiled from a narrow residual
