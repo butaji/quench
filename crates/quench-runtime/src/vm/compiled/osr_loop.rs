@@ -25,7 +25,7 @@ use crate::bytecode::{
     FieldBase, FieldLookup, Function, Op, Operand, OperandKind, Register, WideInstruction,
 };
 use crate::value::{Value, ValueLayout};
-use super::super::operations::NumberArithmetic;
+use super::super::operations::{NumberArithmetic, NumberUnary};
 use cranelift_codegen::ir::{
     self, InstBuilder, UserFuncName,
     condcodes::{FloatCC, IntCC},
@@ -302,19 +302,16 @@ fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
 /// A unary operator a region lowers on a Number.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Unary {
-    Plus,
-    Negate,
+    Number(NumberUnary),
     BitwiseNot,
 }
 
-fn unary(operator: u32) -> Option<Unary> {
-    use UnaryOperator as U;
-    Some(match operator {
-        op if op == U::UnaryPlus as u32 => Unary::Plus,
-        op if op == U::UnaryNegation as u32 => Unary::Negate,
-        op if op == U::BitwiseNot as u32 => Unary::BitwiseNot,
-        _ => return None,
-    })
+fn unary(instruction: Op, operator: u32) -> Option<Unary> {
+    if let Some(operation) = NumberUnary::from_js_instruction(instruction, operator) {
+        return Some(Unary::Number(operation));
+    }
+    (instruction == Op::Unary && operator == UnaryOperator::BitwiseNot as u32)
+        .then_some(Unary::BitwiseNot)
 }
 
 /// What each register of a region holds.
@@ -492,7 +489,7 @@ fn admit(admission: &mut Admission<'_>, instruction: WideInstruction) -> Option<
             admission.number(instruction.register_b())?;
         }
         Op::Unary => {
-            unary(instruction.unary_operator())?;
+            unary(instruction.op(), instruction.unary_operator())?;
             admission.result(instruction)?;
             admission.number(instruction.register_b())?;
         }
@@ -852,8 +849,8 @@ fn definition(
                 Arithmetic::Int32(_) => Representation::Int32,
             }
         }
-        Op::Unary => match unary(instruction.unary_operator())? {
-            Unary::Plus | Unary::Negate => registers(instruction.register_b()),
+        Op::Unary => match unary(instruction.op(), instruction.unary_operator())? {
+            Unary::Number(_) => registers(instruction.register_b()),
             Unary::BitwiseNot => Representation::Int32,
         },
         Op::GetIndex => element_representation(instruction, observation),
@@ -2418,9 +2415,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Op::Unary => {
                 let operand = self.register(instruction.register_b());
                 let result = instruction.result_register();
-                let value = match unary(instruction.unary_operator())? {
-                    Unary::Plus => operand,
-                    Unary::Negate
+                let value = match unary(instruction.op(), instruction.unary_operator())? {
+                    Unary::Number(NumberUnary::Plus) => operand,
+                    Unary::Number(NumberUnary::Negate)
                         if operand.representation == Representation::Int32
                             && self.result_representation() == Representation::Int32 =>
                     {
@@ -2433,9 +2430,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
                         let value = self.body.builder.ins().ineg(operand.value);
                         Typed { value, representation: Representation::Int32 }
                     }
-                    Unary::Negate => {
+                    Unary::Number(NumberUnary::Negate) => {
                         let number = self.float(operand);
-                        let value = self.body.builder.ins().fneg(number);
+                        let value = super::emit_number_unary_operation(
+                            &mut self.body.builder,
+                            NumberUnary::Negate,
+                            number,
+                        );
                         Typed { value, representation: Representation::Float64 }
                     }
                     Unary::BitwiseNot => {
