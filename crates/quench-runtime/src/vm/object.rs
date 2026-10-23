@@ -619,14 +619,17 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether storing each index of `indices`, none of them own, on `array` is a plain
-    /// data definition (`inherited_index_unclaimed`).
+    /// data definition (`inherited_index_unclaimed`). A single index (a push) is checked
+    /// alone, which costs less than the chain-wide proof; a wider range proves the chain once.
     pub(super) fn array_indices_store_plainly(
         &self,
         array: Value,
         mut indices: std::ops::Range<usize>,
     ) -> bool {
-        self.prototypes_hold_no_index(array)
-            || indices.all(|index| self.inherited_index_unclaimed(array, index))
+        if indices.len() > 1 && self.prototypes_hold_no_index(array) {
+            return true;
+        }
+        indices.all(|index| self.inherited_index_unclaimed(array, index))
     }
 
     /// Whether no prototype of `object` holds any array index or could answer one outside its
