@@ -402,7 +402,12 @@ const MAXIMUM_YOUNG: usize = 1 << 17;
 /// throughput's against x0.63 and x0.62 at 768; 2^12 gave x0.89 and x0.94 (TOD-167 sweep,
 /// static + BOLT x86_64, 4 vCPU, 2026-10-22, 5 and 3 runs; releasing pages only near the
 /// peak added nothing at 2^13). 1024 raised koa's max RSS by 1.1 MB under the earlier table.
-const YOUNG_MINIMUM_ALLOCATION: usize = 1 << 13;
+/// Since the first-call and memo-table changes, 2^12 against 2^13 lowers median max RSS on 14
+/// of 16 V8-v7 rows by 76-416 KiB (Splay flat) and the worst run on 14, for Score x0.86-0.88 on
+/// DeltaBlue, RayTrace and RegExp, x0.91 on EarleyBoyer and none elsewhere; this table's
+/// criterion is RSS (one gc-tuning binary, 9 interleaved runs, x86_64 4 vCPU, 2026-10-23;
+/// 2^11 cost RayTrace x0.65 for little more).
+const YOUNG_MINIMUM_ALLOCATION: usize = 1 << 12;
 
 /// The fewest allocations between young collections under throughput: above the npm lane's
 /// 2^14 (measured only against memory-first's 768) and below the 2^17 that doubled small-heap
