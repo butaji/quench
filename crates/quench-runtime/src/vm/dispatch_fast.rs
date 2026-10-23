@@ -9155,7 +9155,6 @@ fn lane_apply_activation<H: Host>(
     i: &LaneInstruction,
     native: Native,
 ) -> Option<Result<(Registers, Ip), Ip>> {
-    let vm = unsafe { vm(cx) };
     // SAFETY: the call's window is registers of the running function.
     let args = unsafe { lane_call_window(r, i) };
     let argument = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
@@ -9164,6 +9163,25 @@ fn lane_apply_activation<H: Host>(
         _ => (argument(0), argument(1), *args.get(2)?),
     };
     let listed = !(native == Native::FunctionApply && (list.is_undefined() || list.is_null()));
+    lane_list_activation(cx, r, ip, i, callee, receiver, list, listed)
+}
+
+/// `callee`'s activation with `receiver` and the elements of `list`, a dense array without
+/// holes (none when not `listed`), for an applied call or a spread call (`CallArray`), whose
+/// argument array the call's spread evaluation built; `None` for any other list.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn lane_list_activation<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    callee: Value,
+    receiver: Value,
+    list: Value,
+    listed: bool,
+) -> Option<Result<(Registers, Ip), Ip>> {
+    let vm = unsafe { vm(cx) };
     let dense = |vm: &Vm<H>| {
         vm.heap.array(list).is_some_and(|array| {
             !array.is_arguments_object()
@@ -9199,6 +9217,21 @@ fn lane_apply_activation<H: Host>(
     let elements: &[Value] = if listed { vm.heap.array_elements(list)?.as_slice() } else { &[] };
     let arguments = ActivationArguments::Kept(elements.as_ptr(), elements.len());
     Some(lane_activate_keeping::<H, true>(cx, r, ip, target, arguments, this, false, None))
+}
+
+script_handler! {
+    /// A spread call (`CallArray`), whose window holds the argument array the spread built:
+    /// the callee's activation with its elements, as an applied call's
+    /// (`lane_list_activation`); any other call takes the general path.
+    #[inline(never)]
+    fn lane_call_array<>(cx, r, ip, i, view) {
+        let list = r.get(ImmediateLayout::call_window_base(i.imm()));
+        match lane_list_activation(cx, r, ip, i, r.get(i.b), r.get(i.c), list, true) {
+            Some(Ok((registers, base))) => next!(cx, registers, base, Carried::script(cx)),
+            Some(Err(next)) => next,
+            None => exit(ip),
+        }
+    }
 }
 
 /// Values an applied frame call copies out without allocating their list.
@@ -12536,6 +12569,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::WasmFillRegisters => Some(lane_fill_registers::<H>),
         Op::CallKnown => Some(lane_call_known::<H>),
         Op::Call => Some(lane_script_call::<H>),
+        Op::CallArray => Some(lane_call_array::<H>),
         Op::Construct => Some(lane_script_construct::<H>),
         Op::LoadName => Some(lane_load_name_first::<H, LOAD_NAME>),
         Op::LoadNameCall => Some(lane_load_name_first::<H, LOAD_NAME_CALL>),
@@ -12735,7 +12769,7 @@ fn lane_operand(
 /// other result flag.
 fn lane_call_fits(instruction: WideInstruction) -> bool {
     match instruction.op() {
-        Op::Call => {
+        Op::Call | Op::CallArray => {
             lane_returns(instruction)
                 && !instruction.direct_eval()
                 && !instruction.parameter_eval()
