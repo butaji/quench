@@ -75,13 +75,21 @@ pub(super) fn transfers(
     Some(
         function
             .instructions()
-            .map(|instruction| {
-                (
-                    uses(instruction, methods, fields, superinstructions),
-                    definitions(instruction, superinstructions),
-                )
-            })
+            .map(|instruction| transfer(instruction, methods, fields, superinstructions))
             .collect(),
+    )
+}
+
+/// One instruction's (uses, definitions) register masks, the entry `transfers` records for it.
+pub(super) fn transfer(
+    instruction: WideInstruction,
+    methods: &(impl MethodArguments + ?Sized),
+    fields: &[FieldSite],
+    superinstructions: &[Superinstruction],
+) -> (u64, u64) {
+    (
+        uses(instruction, methods, fields, superinstructions),
+        definitions(instruction, superinstructions),
     )
 }
 
