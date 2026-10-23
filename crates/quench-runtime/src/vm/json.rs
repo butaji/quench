@@ -111,6 +111,10 @@ struct JsonPlainWrite {
     object_lacks_to_json: Option<(u32, Value)>,
     array_lacks_to_json: Option<(u32, Value)>,
     output: JsonText,
+    /// Each key written so far, as its quoted bytes' range in `key_text`: an object's keys
+    /// recur across the objects of a payload, so each is quoted once.
+    quoted_keys: rustc_hash::FxHashMap<Atom, (u32, u32)>,
+    key_text: JsonText,
 }
 
 impl JsonPlainWrite {
@@ -121,6 +125,8 @@ impl JsonPlainWrite {
             object_lacks_to_json: None,
             array_lacks_to_json: None,
             output: JsonText::new(),
+            quoted_keys: Default::default(),
+            key_text: JsonText::new(),
         }
     }
 }
@@ -1265,7 +1271,7 @@ impl<H: Host> Vm<H> {
             if written != 0 {
                 plain.output.push(b',');
             }
-            self.write_json_key(atom, &mut plain.output);
+            self.write_plain_json_key(atom, plain);
             plain.output.push(b':');
             match self.json_write_plain(member, plain) {
                 Some(true) => written += 1,
@@ -1769,6 +1775,16 @@ impl<H: Host> Vm<H> {
     }
 
     /// QuoteJSONString of the property name `atom`, written from the atom's own text.
+    /// `write_json_key` through the stringification's quoted keys (`JsonPlainWrite`).
+    fn write_plain_json_key(&self, atom: Atom, plain: &mut JsonPlainWrite) {
+        let (start, end) = *plain.quoted_keys.entry(atom).or_insert_with(|| {
+            let start = plain.key_text.len();
+            self.write_json_key(atom, &mut plain.key_text);
+            (start as u32, plain.key_text.len() as u32)
+        });
+        plain.output.extend_from_slice(&plain.key_text[start as usize..end as usize]);
+    }
+
     fn write_json_key(&self, atom: Atom, output: &mut JsonText) {
         match self.atom_text(atom) {
             AtomText::Host(text) => write_json_utf8(text.as_bytes(), output),
