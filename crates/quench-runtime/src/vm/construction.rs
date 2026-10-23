@@ -323,8 +323,6 @@ impl<H: Host> Vm<H> {
         self.closure_in_realm(p, id, env, self.realm.globals)
     }
 
-    /// A closure of `template`'s function over `env`, as `closure_in_realm` makes a
-    /// recorded one.
     /// A closure's object allocated finished: its own `length`, `name` and `prototype` under
     /// `shape`, as the recorded adds would leave them, inline where they fit, else in the
     /// property arena.
@@ -349,17 +347,19 @@ impl<H: Host> Vm<H> {
         crate::heap::Object::with_property_storage(function_prototype, storage, inline)
     }
 
+    /// A closure of `template`'s function over `env`. The template's prototypes were flagged
+    /// as prototypes by the closure it was recorded from, which needs no marking again.
     fn closure_of_template(&mut self, template: ClosureTemplate, env: Value) -> Value {
         let prototype = template
             .prototype
-            .map(|(parent, _)| self.heap.alloc_object(Self::empty_object(parent)));
+            .map(|(parent, _)| self.heap.alloc_object_under_flagged_prototype(Self::empty_object(parent)));
         let object = self.finished_closure_object(
             template.function_prototype,
             template.shape,
             [template.length, template.name],
             prototype,
         );
-        let function = self.heap.alloc_function(FunctionRecord {
+        let function = self.heap.alloc_function_under_flagged_prototype(FunctionRecord {
             object,
             realm: template.realm,
             kind: template.kind,

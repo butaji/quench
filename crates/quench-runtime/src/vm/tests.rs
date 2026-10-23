@@ -10425,12 +10425,7 @@ if(fn().getFunctionName()!=='anonymous')throw Error('deleted length layout');
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     let source = r#"
       function add(left, right) { return left + right; }
@@ -10476,12 +10471,7 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
 fn js_jit_enters_compiled_known_callees_without_pushing_a_frame() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -10515,18 +10505,17 @@ fn js_jit_enters_compiled_known_callees_without_pushing_a_frame() {
         panic!("the numeric callee should be compiled");
     };
     assert!(
+        compiled.uses_leaf_entry(),
+        "the non-polling numeric artifact should use the shared leaf entry"
+    );
+    assert!(
         compiled.native_entries() >= 9,
         "promotion plus the remaining statically-known calls should enter native code"
     );
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_number_capture_returns_and_observes_mutation() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -10570,12 +10559,7 @@ fn js_jit_compiles_number_capture_returns_and_observes_mutation() {
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_numeric_capture_arithmetic_and_guards_mutation() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -10619,12 +10603,7 @@ fn js_jit_compiles_numeric_capture_arithmetic_and_guards_mutation() {
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -10664,12 +10643,7 @@ fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_guarded_int32_identity_arm_and_falls_back_for_other_types() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -10735,12 +10709,7 @@ fn js_jit_compiles_guarded_int32_identity_arm_and_falls_back_for_other_types() {
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -10813,12 +10782,89 @@ fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
+fn js_jit_interrupt_exits_through_the_shared_native_entry() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function sumTo(limit) {
+            let sum = 0;
+            let index = 0;
+            while (index < limit) {
+              sum = sum + index;
+              index = index + 1;
+            }
+            return sum;
+          }
+        "#,
+        "js-jit-interrupt-adapter.js",
+    ))
+    .unwrap();
+    let artifact = super::js_compiled::compile(&program, 1).expect("numeric loop artifact");
+    assert!(matches!(
+        artifact.result,
+        super::js_compiled::JsJitResultKind::NumberInterruptible
+    ));
+    let compiled = super::compiled::CompiledJsFunction::from_artifact(artifact)
+        .expect("shared executable mapping");
+    assert!(
+        !compiled.uses_leaf_entry(),
+        "an interruptible loop must retain the resumable native entry"
+    );
+    let interrupt = std::sync::atomic::AtomicBool::new(true);
+
+    let result = compiled.call(&[1_000_000.0], &interrupt, None);
+
+    assert!(result.is_none(), "interrupted native execution must not return a guest result");
+    assert_eq!(compiled.native_entries(), 1, "the shared adapter must enter once");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_compiles_a_guarded_numeric_field_loop() {
+    let source = r#"
+      function sum(item) {
+        let total = 0;
+        for (let index = 0; index < item.limit; index++) total += index;
+        return total;
+      }
+      const item = { limit: 10000 };
+      let answer = 0;
+      for (let call = 0; call < 100; call++) answer += sum(item);
+      print(answer);
+    "#;
+    let program = Engine::specialize(source, "osr-numeric-field.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "sum")
+        })
+        .unwrap();
+
+    let compiled_output = Rc::new(RefCell::new(Vec::new()));
+    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    assert_eq!(compiled_output.borrow().as_slice(), ["4999500000"]);
+    let views = compiled
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot sum loop lane view");
+    let osr = view.osr_diagnostics();
+    assert_eq!(osr.admitted_sites, 1, "OSR analysis rejected the field loop");
+    assert_eq!(osr.currently_compiled_sites, 1, "field loop did not compile natively");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_guarded_string_hash_loop_and_falls_back_after_intrinsic_change() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -10856,12 +10902,7 @@ fn js_jit_compiles_guarded_string_hash_loop_and_falls_back_after_intrinsic_chang
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_leading_underscore_string_helpers_and_guards_intrinsic_changes() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -10910,12 +10951,7 @@ fn js_jit_compiles_leading_underscore_string_helpers_and_guards_intrinsic_change
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
 fn js_jit_merges_boolean_branch_states_for_numeric_equality_chains() {
     let source =
         r#"
@@ -10995,12 +11031,7 @@ fn js_jit_merges_boolean_branch_states_for_numeric_equality_chains() {
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_cached_numeric_kind_field_switches() {
     let source = r#"
       function isMethodOrAccessor(node) {
@@ -11046,12 +11077,7 @@ fn js_jit_compiles_cached_numeric_kind_field_switches() {
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
 fn js_jit_lowers_guarded_numeric_field_reads_from_nonzero_formal() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -11097,12 +11123,7 @@ fn js_jit_lowers_guarded_numeric_field_reads_from_nonzero_formal() {
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
 fn js_jit_lowers_multiple_guarded_this_field_reads_into_arithmetic() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -11145,12 +11166,7 @@ fn js_jit_lowers_multiple_guarded_this_field_reads_into_arithmetic() {
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_guarded_field_bitwise_boolean_regions() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -11197,12 +11213,7 @@ fn js_jit_compiles_guarded_field_bitwise_boolean_regions() {
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
 fn js_jit_field_reject_resumes_interpreter_on_match_and_accessor() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -11250,12 +11261,7 @@ fn js_jit_field_reject_resumes_interpreter_on_match_and_accessor() {
 }
 
 #[test]
-#[cfg(not(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-)))]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_forward_numeric_branches_to_rooted_string_returns() {
     let source = r#"
       const rating = price => price < 100 ? '€' : price < 1000 ? '€€' : '€€€';
@@ -11427,12 +11433,7 @@ fn js_jit_keeps_promotion_pending_until_a_numeric_entry() {
     assert!(programs.note_js_function_entry(id, 1, true, false));
 }
 
-#[cfg(any(
-    feature = "profile-aggregate",
-    feature = "profile-trace",
-    feature = "profile-memory",
-    feature = "profile-gc-time"
-))]
+#[cfg(quench_profiled)]
 #[test]
 fn js_jit_leaves_profiling_builds_on_the_instrumented_dispatcher() {
     let program = Engine::compile(crate::ExecutionRequest::script(

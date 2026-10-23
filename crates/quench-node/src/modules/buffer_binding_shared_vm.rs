@@ -214,9 +214,39 @@ fn encoding_id(c: &mut Context<'_>, args: &[RootId], position: usize) -> Result<
 
 /// `StringBytes::Encode`: decoded bytes as a string, within the engine's length limit.
 pub(crate) fn decode_bytes(c: &mut Context<'_>, bytes: &[u8], encoding: &str) -> Result<RootId, RootedError> {
-    match codec::decode_units_limited(bytes, encoding, Context::MAX_STRING_CODE_UNITS) {
-        Some(units) => Ok(c.string_units_rooted(&units)),
-        None => Err(string_too_long(c)),
+    decoded_string(c, bytes, encoding).ok_or_else(|| string_too_long(c))
+}
+
+/// `bytes` decoded under `encoding` as a string, or `None` past the longest string.
+fn decoded_string(c: &mut Context<'_>, bytes: &[u8], encoding: &str) -> Option<RootId> {
+    match decode_text(bytes, encoding)? {
+        DecodedText::Direct(text) => Some(c.decoded_string_rooted(text)),
+        DecodedText::Units(units) => Some(c.string_units_rooted(&units)),
+    }
+}
+
+/// A decoding's result: text the bytes spell directly, or UTF-16 code units.
+enum DecodedText<'a> {
+    Direct(&'a str),
+    Units(Vec<u16>),
+}
+
+/// `bytes` decoded under `encoding`, or `None` past the longest string. Bytes that spell
+/// their text directly (valid UTF-8 under `utf8`, ASCII under `latin1` and `ascii`) are the
+/// text itself; the rest decode through UTF-16 code units (`codec::decode_units_limited`).
+/// A 176 KB ASCII JSON file read as UTF-8 took 0.78 ms through the code units, against
+/// Bun's 0.12-0.16 (x86_64 VM, 2026-10-23).
+fn decode_text<'a>(bytes: &'a [u8], encoding: &str) -> Option<DecodedText<'a>> {
+    let maximum = Context::MAX_STRING_CODE_UNITS;
+    let direct = match encoding {
+        "utf8" => std::str::from_utf8(bytes).ok(),
+        "latin1" | "ascii" if bytes.is_ascii() => std::str::from_utf8(bytes).ok(),
+        _ => None,
+    };
+    match direct {
+        // A UTF-8 text has at most one UTF-16 code unit per byte.
+        Some(text) if text.len() <= maximum => Some(DecodedText::Direct(text)),
+        _ => codec::decode_units_limited(bytes, encoding, maximum).map(DecodedText::Units),
     }
 }
 
@@ -237,12 +267,16 @@ fn slice(c: &mut Context<'_>, args: &[RootId], encoding: &str) -> Result<RootId,
     if end > length {
         return Err(index_out_of_range(c));
     }
-    let maximum = Context::MAX_STRING_CODE_UNITS;
+    // The text leaves the buffer's borrow as an owned copy before the string is made.
     let decoded = c.with_buffer_bytes_rooted(view, |bytes| {
-        codec::decode_units_limited(bytes.get(start..end).unwrap_or_default(), encoding, maximum)
+        decode_text(bytes.get(start..end).unwrap_or_default(), encoding).map(|decoded| match decoded {
+            DecodedText::Direct(text) => Ok(text.to_owned()),
+            DecodedText::Units(units) => Err(units),
+        })
     });
     match decoded.flatten() {
-        Some(units) => Ok(c.string_units_rooted(&units)),
+        Some(Ok(text)) => Ok(c.decoded_string_rooted(&text)),
+        Some(Err(units)) => Ok(c.string_units_rooted(&units)),
         None => Err(string_too_long(c)),
     }
 }
