@@ -8,8 +8,8 @@ use crate::snapshot::{read_list, Reader, SnapshotError, SnapshotResult, Writer};
 
 impl Heap {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        if !self.abandoned_job_contexts.is_empty() {
-            return Err(SnapshotError::unsupported("host job contexts awaiting release"));
+        if !self.abandoned_contexts.is_empty() {
+            return Err(SnapshotError::unsupported("host contexts awaiting release"));
         }
         writer.len(self.slots.len());
         for slot in self.slots.iter() {
@@ -49,11 +49,16 @@ impl Heap {
         Ok(())
     }
 
-    pub(crate) fn read_snapshot(reader: &mut Reader<'_>, decoder: &mut CellDecoder<'_>) -> SnapshotResult<Self> {
+    /// A snapshot keeps no policy: the restored heap paces under the restoring runtime's.
+    pub(crate) fn read_snapshot(
+        reader: &mut Reader<'_>,
+        policy: super::MemoryPolicy,
+    ) -> SnapshotResult<Self> {
         let mut heap = Self::new();
+        heap.set_memory_policy(policy);
         let slots = reader.len()?;
         for index in 0..slots {
-            let cell = if reader.bool()? { Some(Cell::read_snapshot(reader, decoder)?) } else { None };
+            let cell = if reader.bool()? { Some(Cell::read_snapshot(reader)?) } else { None };
             let live = cell.is_some();
             heap.slots.push(Slot { cell });
             if index / 64 == heap.marks.len() {
@@ -112,7 +117,7 @@ impl Heap {
         let live_weight = live + self.payload_bytes / payload_unit();
         self.live_weight_after_previous = live_weight;
         self.live_weight_after_full = live_weight;
-        self.threshold = pacing().young_budget(live);
+        self.threshold = self.pacing().young_budget(live);
         self.max_threshold = self.max_threshold.max(self.threshold);
         self.full_due = false;
     }

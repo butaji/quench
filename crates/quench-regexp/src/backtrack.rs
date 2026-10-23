@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use std::ops::Range;
 
 use super::{
-    class_is_single_unit, class_matches, equal, is_line_terminator, is_word_mode, merge_flags,
+    canonical, canonical_preimages_of, class_is_single_unit, class_matches, equal, is_line_terminator, is_word_mode, merge_flags,
     literal_finder, Assertion, Backreference, ClassExpr, ClassItem, ClassKind, Expr, Flags, LiteralFinder, Lookaround,
     Unit, ASCII_MAX,
 };
@@ -104,10 +104,42 @@ enum UnitTest {
 /// A set of units: exact for ASCII by bitmap, and by `beyond` for any other unit.
 struct UnitSet {
     ascii: u128,
-    /// `ascii` as one flag per ASCII unit, derived by `UnitSet::of`: a test of an ASCII unit
-    /// loads its flag instead of shifting the 128-bit mask.
-    table: [bool; ASCII_UNITS as usize],
     beyond: Beyond,
+}
+
+/// The ASCII units of a mask as one flag per unit, derived for the sets a program matches
+/// with (`MatchSet`): a test of an ASCII unit loads its flag instead
+/// of shifting the 128-bit mask. The set algebra that builds those sets keeps only the mask.
+type AsciiTable = [bool; ASCII_UNITS as usize];
+
+fn ascii_table(ascii: u128) -> AsciiTable {
+    std::array::from_fn(|unit| ascii >> unit & 1 != 0)
+}
+
+/// A set a program's instructions test units against: the set with its `AsciiTable`.
+struct MatchSet {
+    table: AsciiTable,
+    beyond: Beyond,
+}
+
+impl From<UnitSet> for MatchSet {
+    fn from(set: UnitSet) -> Self {
+        Self {
+            table: ascii_table(set.ascii),
+            beyond: set.beyond,
+        }
+    }
+}
+
+impl MatchSet {
+    #[inline(always)]
+    fn contains(&self, value: u32) -> bool {
+        if value < ASCII_UNITS {
+            self.table[value as usize]
+        } else {
+            self.beyond.matches(value)
+        }
+    }
 }
 
 /// How a `UnitSet` decides a unit past ASCII.
@@ -139,11 +171,7 @@ enum Beyond {
 impl UnitSet {
     /// The set of the ASCII units in `ascii` and the units past ASCII `beyond` admits.
     fn of(ascii: u128, beyond: Beyond) -> Self {
-        Self {
-            ascii,
-            table: std::array::from_fn(|unit| ascii >> unit & 1 != 0),
-            beyond,
-        }
+        Self { ascii, beyond }
     }
 
     /// The set of both: their tests are moved, not copied, as a fold over an alternation's
@@ -163,15 +191,6 @@ impl UnitSet {
     /// Whether no unit is in the set.
     fn is_empty(&self) -> bool {
         self.ascii == 0 && self.beyond.is_never()
-    }
-
-    #[inline(always)]
-    fn contains(&self, value: u32) -> bool {
-        if value < ASCII_UNITS {
-            self.table[value as usize]
-        } else {
-            self.beyond.matches(value)
-        }
     }
 }
 
@@ -229,6 +248,14 @@ impl Beyond {
                         bits | (u128::MAX >> (ASCII_UNITS - 1 - max)) & (u128::MAX << min)
                     });
                 if *negative { !members } else { members }
+            }
+            // The units folding to the literal's canonical form: that form and its preimages.
+            Self::Literal { value, unicode } => {
+                let form = canonical(*value, *unicode);
+                std::iter::once(form)
+                    .chain(canonical_preimages_of(form, *unicode))
+                    .filter(|unit| *unit < ASCII_UNITS && canonical(*unit, *unicode) == form)
+                    .fold(0u128, |bits, unit| bits | 1 << unit)
             }
             _ => (0..ASCII_UNITS)
                 .filter(|value| self.matches(*value))
@@ -418,30 +445,36 @@ struct Workspace {
 
 pub(crate) struct Program {
     instructions: Box<[Inst]>,
-    sets: Box<[UnitSet]>,
+    sets: Box<[MatchSet]>,
     /// Capture index lists for `ResetCaptures` and `Backreference`.
     lists: Box<[u32]>,
     /// The starts of guarded bodies, for `GuardedSplit`.
-    guards: Box<[Starts]>,
+    guards: Box<[MatchStarts]>,
     capture_count: usize,
     register_count: usize,
     /// Where matches can start; `None` where any position can.
-    starts: Option<Starts>,
+    starts: Option<MatchStarts>,
     /// How an ASCII subject's scan finds the next of `starts`' units; derived from them once
     /// here, as the set algebra that builds `starts` never scans. Only their ASCII part
     /// matters there: an ASCII subject holds no other unit.
     scan: AsciiScan,
-    /// The literal bytes every match begins with, searched for directly in ASCII subjects.
-    prefix: Option<LiteralFinder>,
+    /// The literal units every match begins with, searched for directly in ASCII subjects.
+    prefix: Option<Prefix>,
+    /// Where a run starts once the prefix scan has found its units: past the prefix's
+    /// `Inst::Unit`s, at this pc and this many units on. `None` when no scan proves them,
+    /// as an `anchored` search's single start, which no scan finds.
+    entry: Option<u32>,
     /// Whether a match can only start at the subject's start (`Starts::only_at_start` with
     /// `at_start`); one with neither start can never match, which the run finds at once.
     anchored: bool,
     /// For an `anchored` pattern, a superset of the units its match consumes first at the
     /// subject's start (`anchored_first_units`), so a search whose first unit is outside it
     /// fails without a run; `None` where no such set is known.
-    anchored_first: Option<UnitSet>,
+    anchored_first: Option<MatchSet>,
     /// The length of `prefix` when it is the whole pattern and the pattern has no captures:
-    /// an ASCII subject's match is then where the search finds it, with no run.
+    /// an ASCII subject's match is then where the search finds it, with no run. A folded
+    /// prefix holds this only in an ASCII subject, whose units have no other case forms
+    /// (the Kelvin sign and long s are past ASCII); other subjects run the program.
     literal_length: Option<usize>,
 }
 
@@ -456,9 +489,9 @@ struct Unsupported;
 
 struct Compiler {
     instructions: Vec<Inst>,
-    sets: Vec<UnitSet>,
+    sets: Vec<MatchSet>,
     lists: Vec<u32>,
-    guards: Vec<Starts>,
+    guards: Vec<MatchStarts>,
     registers: u32,
     /// Bodies being compiled that one path may run more than once, or whose registers a
     /// caller keeps across their run: loops with more than one iteration and lookarounds.
@@ -495,7 +528,7 @@ impl Compiler {
     fn split(&mut self, alternative: u32, body: &Expr, flags: Flags) -> Inst {
         match starts(body, flags) {
             Some(guard) => {
-                self.guards.push(guard);
+                self.guards.push(guard.into());
                 Inst::GuardedSplit {
                     alternative,
                     guard: self.guards.len() as u32 - 1,
@@ -506,7 +539,7 @@ impl Compiler {
     }
 
     fn set(&mut self, beyond: Beyond) -> UnitTest {
-        self.sets.push(UnitSet::new(beyond));
+        self.sets.push(UnitSet::new(beyond).into());
         UnitTest::Set(self.sets.len() as u32 - 1)
     }
 
@@ -717,11 +750,129 @@ impl Compiler {
     }
 }
 
-/// The ASCII units every match of `expr` begins with, matched exactly.
-fn literal_prefix(expr: &Expr, flags: Flags, prefix: &mut Vec<u8>) -> bool {
+/// The bit in which an ASCII letter's two cases differ.
+const ASCII_CASE_BIT: u8 = 0x20;
+
+/// One unit of a literal prefix in an ASCII subject: the bytes that are `folded` once
+/// `case_bit` is set in them. A letter matched without case has `ASCII_CASE_BIT`; a unit
+/// with one ASCII form has none, so only `folded` itself matches.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct PrefixUnit {
+    folded: u8,
+    case_bit: u8,
+}
+
+impl PrefixUnit {
+    /// The unit whose ASCII forms are the members of `ascii`: one byte, or a letter's two
+    /// cases. `None` for any other set, which no single folded byte describes.
+    fn of(ascii: u128) -> Option<Self> {
+        let low = ascii.trailing_zeros() as u8;
+        match ascii.count_ones() {
+            1 => Some(Self { folded: low, case_bit: 0 }),
+            2 if ascii == Self::case_pair(low) => Some(Self { folded: low | ASCII_CASE_BIT, case_bit: ASCII_CASE_BIT }),
+            _ => None,
+        }
+    }
+
+    /// `low` and the unit `ASCII_CASE_BIT` above it, one bit per unit.
+    fn case_pair(low: u8) -> u128 {
+        1u128 << low | 1u128 << (low | ASCII_CASE_BIT)
+    }
+
+    #[inline(always)]
+    fn admits(self, unit: u8) -> bool {
+        unit | self.case_bit == self.folded
+    }
+
+    /// The bytes it admits, one bit per unit.
+    fn ascii(self) -> u128 {
+        1u128 << self.folded | 1u128 << (self.folded & !self.case_bit)
+    }
+}
+
+/// The literal units every match begins with, searched for directly in an ASCII subject:
+/// its bytes when they match exactly, else their folded forms (`PrefixUnit`).
+enum Prefix {
+    Exact(LiteralFinder),
+    /// A prefix matched without case: a scan for its `anchor`th unit, a caseless one where
+    /// it has one, then a check of the others.
+    Folded {
+        units: Box<[PrefixUnit]>,
+        anchor: usize,
+        scan: StartBytes,
+    },
+}
+
+impl Prefix {
+    fn of(units: &[PrefixUnit]) -> Option<Self> {
+        if units.is_empty() {
+            return None;
+        }
+        if units.iter().all(|unit| unit.case_bit == 0) {
+            return Some(Self::Exact(literal_finder(&units.iter().map(|unit| unit.folded).collect::<Vec<_>>())));
+        }
+        let anchor = units.iter().position(|unit| unit.case_bit == 0).unwrap_or(0);
+        Some(Self::Folded {
+            units: units.into(),
+            anchor,
+            scan: StartBytes::of(units[anchor].ascii())?,
+        })
+    }
+
+    /// The first position from `from` through `last` where `bytes` holds the prefix.
+    #[inline(always)]
+    fn find(&self, bytes: &[u8], from: usize, last: usize) -> Option<usize> {
+        match self {
+            Self::Exact(finder) => {
+                // A start after `last` is no answer, so the scan stops where such a match begins.
+                let end = last.saturating_add(finder.needle().len()).min(bytes.len());
+                bytes.get(from..end).and_then(|window| finder.find(window)).map(|offset| from + offset)
+            }
+            Self::Folded { units, anchor, scan } => Self::find_folded(units, *anchor, *scan, bytes, from, last),
+        }
+    }
+
+    #[inline(never)]
+    fn find_folded(
+        units: &[PrefixUnit],
+        anchor: usize,
+        scan: StartBytes,
+        bytes: &[u8],
+        mut from: usize,
+        last: usize,
+    ) -> Option<usize> {
+        while from <= last {
+            let window = from + anchor;
+            let start = window + scan.find(bytes.get(window..)?)? - anchor;
+            if start > last {
+                return None;
+            }
+            let candidate = bytes.get(start..start + units.len())?;
+            if candidate.iter().zip(units).all(|(unit, prefix)| prefix.admits(*unit)) {
+                return Some(start);
+            }
+            from = start + 1;
+        }
+        None
+    }
+}
+
+/// The ASCII units every match of `expr` begins with (`PrefixUnit`), whether matched
+/// exactly or without case. Every unit compiles to one `Inst::Unit`, so a run whose start
+/// the prefix scan found may begin after them (`Program::entry`).
+fn literal_prefix(expr: &Expr, flags: Flags, prefix: &mut Vec<PrefixUnit>) -> bool {
     match expr {
         Expr::Literal(value) if !flags.ignore_case && *value < ASCII_UNITS => {
-            prefix.push(*value as u8);
+            prefix.push(PrefixUnit { folded: *value as u8, case_bit: 0 });
+            true
+        }
+        Expr::Literal(value) if *value < ASCII_UNITS => {
+            // An ASCII subject holds only the literal's ASCII forms (`Beyond::ascii_mask`).
+            let forms = Beyond::Literal { value: *value, unicode: flags.unicode }.ascii_mask();
+            let Some(unit) = PrefixUnit::of(forms) else {
+                return false;
+            };
+            prefix.push(unit);
             true
         }
         Expr::Sequence(parts) => {
@@ -760,7 +911,7 @@ enum AsciiScan {
     Nothing,
     Bytes(StartBytes),
     Ranges(StartRanges),
-    /// Unit by unit, through `UnitSet::table`.
+    /// Unit by unit, through `MatchSet::table`.
     Table,
 }
 
@@ -929,7 +1080,26 @@ impl Starts {
             self.units.union(other.units),
         )
     }
+}
 
+/// `Starts` a program tests positions against: its units as a `MatchSet`.
+struct MatchStarts {
+    at_start: bool,
+    at_end: bool,
+    units: MatchSet,
+}
+
+impl From<Starts> for MatchStarts {
+    fn from(starts: Starts) -> Self {
+        Self {
+            at_start: starts.at_start,
+            at_end: starts.at_end,
+            units: starts.units.into(),
+        }
+    }
+}
+
+impl MatchStarts {
     #[inline(always)]
     fn admits<T: Text + ?Sized>(&self, text: &T, position: usize) -> bool {
         (self.at_start && position == 0)
@@ -1097,6 +1267,12 @@ impl Program {
         let mut prefix = Vec::new();
         let whole_literal = literal_prefix(expr, flags, &mut prefix);
         let starts = starts(expr, flags);
+        let anchored = starts.as_ref().is_some_and(|starts| starts.only_at_start);
+        let entry = u32::try_from(prefix.len()).ok().filter(|length| {
+            !anchored
+                && *length > 0
+                && compiler.instructions[..prefix.len()].iter().all(|instruction| matches!(instruction, Inst::Unit(_)))
+        });
         Some(Self {
             instructions: compiler.instructions.into_boxed_slice(),
             sets: compiler.sets.into_boxed_slice(),
@@ -1104,16 +1280,16 @@ impl Program {
             guards: compiler.guards.into_boxed_slice(),
             capture_count,
             register_count: compiler.registers as usize,
-            anchored: starts.as_ref().is_some_and(|starts| starts.only_at_start),
-            anchored_first: starts
-                .as_ref()
-                .is_some_and(|starts| starts.only_at_start)
+            anchored,
+            anchored_first: anchored
                 .then(|| anchored_first_units(expr, flags))
-                .flatten(),
+                .flatten()
+                .map(MatchSet::from),
             scan: starts.as_ref().map_or(AsciiScan::Nothing, |starts| AsciiScan::of(starts.units.ascii)),
-            starts,
-            prefix: (!prefix.is_empty()).then(|| literal_finder(&prefix)),
+            starts: starts.map(MatchStarts::from),
             literal_length: (whole_literal && capture_count == 0 && !prefix.is_empty()).then_some(prefix.len()),
+            prefix: Prefix::of(&prefix),
+            entry,
         })
     }
 
@@ -1139,7 +1315,7 @@ impl Program {
     /// Whether every ASCII search starts by finding `literal` as the program's prefix
     /// (`next_start`).
     pub(crate) fn searches_prefix(&self, literal: &[u8]) -> bool {
-        self.prefix.as_ref().is_some_and(|prefix| prefix.needle() == literal)
+        matches!(&self.prefix, Some(Prefix::Exact(prefix)) if prefix.needle() == literal)
     }
 
     /// The step budget of a search over `length` units, when a linear-time backend can
@@ -1242,10 +1418,12 @@ impl Program {
             let mut steps = budget.unwrap_or(usize::MAX);
             stack.clear();
             stack.push(Frame::Barrier);
+            let (pc, position) = self.entry(text, start);
+            let at = (pc, start, position);
             let found = if budget.is_some() {
-                self.run::<T, true>(text, 0, start, Some(search), registers, stack, &mut steps)?
+                self.run::<T, true>(text, at, Some(search), registers, stack, &mut steps)?
             } else {
-                self.run::<T, false>(text, 0, start, Some(search), registers, stack, &mut steps)?
+                self.run::<T, false>(text, at, Some(search), registers, stack, &mut steps)?
             };
             let Some((start, end)) = found else {
                 return Ok(None);
@@ -1259,6 +1437,16 @@ impl Program {
         })
     }
 
+    /// The pc and position a run from the search start `start` (`next_start`) begins at:
+    /// past the prefix the scan of an ASCII subject has matched there (`entry`).
+    #[inline(always)]
+    fn entry<T: Text + ?Sized>(&self, text: &T, start: usize) -> (u32, usize) {
+        match (self.entry, text.bytes()) {
+            (Some(pc), Some(_)) => (pc, start + pc as usize),
+            _ => (0, start),
+        }
+    }
+
     /// The first position from `from` through `last` where a match can start.
     #[inline(always)]
     fn next_start<T: Text + ?Sized>(&self, text: &T, from: usize, last: usize) -> Option<usize> {
@@ -1270,12 +1458,7 @@ impl Program {
             return (from == 0).then_some(0);
         }
         if let (Some(prefix), Some(bytes)) = (&self.prefix, text.bytes()) {
-            // A start after `last` is no answer, so the scan stops where such a match begins.
-            let end = last.saturating_add(prefix.needle().len()).min(bytes.len());
-            return bytes
-                .get(from..end)
-                .and_then(|window| prefix.find(window))
-                .map(|offset| from + offset);
+            return prefix.find(bytes, from, last);
         }
         match &self.starts {
             None => Some(from),
@@ -1300,7 +1483,7 @@ impl Program {
     /// `next_start` by a `memchr` scan of an ASCII subject for one to `START_SCAN_BYTES`
     /// start units, out of line so `run`, whose restarts call it, keeps its registers.
     #[inline(never)]
-    fn scan_start_bytes(starts: &Starts, scan: AsciiScan, bytes: &[u8], from: usize, last: usize) -> Option<usize> {
+    fn scan_start_bytes(starts: &MatchStarts, scan: AsciiScan, bytes: &[u8], from: usize, last: usize) -> Option<usize> {
         // The positions admitted in order: the subject's start, a start byte, its end.
         if starts.at_start && from == 0 {
             return Some(0);
@@ -1320,14 +1503,12 @@ impl Program {
     fn run<T: Text + ?Sized, const BUDGETED: bool>(
         &self,
         text: &T,
-        mut pc: u32,
-        mut position: usize,
+        (mut pc, mut start, mut position): (u32, usize, usize),
         search: Option<Search>,
         registers: &mut [usize],
         stack: &mut Vec<Frame>,
         steps: &mut usize,
     ) -> Result<Option<(usize, usize)>, Exhausted> {
-        let mut start = position;
         let length = text.len();
         // The steps left, held here and written back where the run returns or recurses.
         let mut left = *steps;
@@ -1566,7 +1747,7 @@ impl Program {
                     let base = stack.len();
                     stack.push(Frame::Barrier);
                     *steps = left;
-                    let found = self.run::<T, BUDGETED>(text, pc + 1, position, None, registers, stack, steps)?;
+                    let found = self.run::<T, BUDGETED>(text, (pc + 1, position, position), None, registers, stack, steps)?;
                     left = *steps;
                     match (found.is_some(), negative) {
                         (true, false) => {
@@ -1622,8 +1803,7 @@ impl Program {
                         };
                         stack.push(Frame::Barrier);
                         start = next;
-                        pc = 0;
-                        position = next;
+                        (pc, position) = self.entry(text, next);
                         break;
                     }
                     Some(frame @ (Frame::Restore { .. } | Frame::RestoreCapture { .. })) => {
@@ -1748,6 +1928,22 @@ mod tests {
         }
     }
 
+    /// A case-folded literal's derived ASCII mask: the units its per-unit test admits, for
+    /// literals that fold with ASCII letters (the Kelvin sign, long s) and others.
+    #[test]
+    fn literal_ascii_mask_matches_each_unit() {
+        const LITERALS_CHECKED: u32 = 0x2200;
+        for value in 0..LITERALS_CHECKED {
+            for unicode in [false, true] {
+                let beyond = Beyond::Literal { value, unicode };
+                let each = (0..ASCII_UNITS)
+                    .filter(|unit| beyond.matches(*unit))
+                    .fold(0u128, |bits, unit| bits | 1 << unit);
+                assert_eq!(beyond.ascii_mask(), each, "{value:#x} unicode={unicode}");
+            }
+        }
+    }
+
     /// Every pattern, flag set and subject: the compiled program's match against the
     /// repository matcher's, from each start position.
     #[test]
@@ -1853,6 +2049,16 @@ mod tests {
             r"(;)?\s|(x)?$",
             r"(?:(\w+):)?(\w*)",
             r"(?:[+, ]|ab)",
+            // Literal prefixes: whole literals with and without case, folded prefixes with
+            // and without a caseless unit, followed by captures and other parts.
+            r"zfvr",
+            r"aBc",
+            r"a(b)c",
+            r"##yv4##",
+            r"k#s",
+            r"kelvin",
+            r"ss\w",
+            r"Ab|c",
         ];
         let subjects = [
             "",
@@ -1896,6 +2102,9 @@ mod tests {
             // A split-style subject: a separator run, then ones past one scan block.
             "a ; b;c ;d , e+f..............................; g ;",
             "xb yb\nab b$a cd bd ac",
+            "xxZfVr zfvrzfv aBC Abc abC",
+            "##YV4## ##yv4# K#S k#\u{17F}",
+            "\u{212A}elvin kElvin KELVIN \u{17F}\u{17F}x sSx",
         ];
         for flags in ["", "i", "m", "s", "u", "im", "iu"] {
             for pattern in patterns {

@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 description = "Shared recursion budget and worker stack policy for Quench runtimes"
+
+[lib]
+# No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
+doctest = false

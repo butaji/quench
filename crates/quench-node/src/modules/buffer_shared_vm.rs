@@ -98,16 +98,20 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 
 /// Installs `globalThis.Buffer` as Node's accessor pair (non-enumerable getter `get` and
 /// setter `set` over one binding) and the canonical `NodeBuffer` alias. The `buffer` module is
-/// built on the first read of either, not at start-up.
+/// built on the first read of either, not at start-up; the getter then holds the constructor
+/// that read loaded, as Node's holds the one its bootstrap loaded.
 pub(crate) fn install_global(c: &mut Context<'_>) -> Result<(), RootedError> {
     let load = c.host_function(crate::host::shared_vm::operation("bufferConstructor"))?;
     let installer = c.evaluate_script_rooted(
         r#"(load) => {
   let _Buffer;
-  let assigned = false;
+  let bound = false;
   Object.defineProperty(globalThis, "Buffer", {
-    get() { return assigned ? _Buffer : load(); },
-    set(value) { assigned = true; _Buffer = value; },
+    get() {
+      if (!bound) { _Buffer = load(); bound = true; }
+      return _Buffer;
+    },
+    set(value) { bound = true; _Buffer = value; },
     enumerable: false,
     configurable: true,
   });

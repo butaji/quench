@@ -55,6 +55,8 @@ pub(crate) enum FlatUnits {
     /// A run of longer ASCII storage, shared instead of copied, as V8's sliced strings are:
     /// taking the rest of a scanned text costs one small record, not a copy of the rest.
     AsciiSlice(Rc<AsciiSlice>),
+    /// UTF-16 units, at least one of them non-ASCII: all-ASCII text is always stored narrow
+    /// (`flat_units`, `flattened`), which the regexp subject relies on (`regexp_subject`).
     Wide(Rc<[u16]>),
     /// A run of longer `Wide` storage, shared instead of copied as `AsciiSlice` shares ASCII
     /// storage. Its units may all be ASCII (the tail of a text whose only wide units lie
@@ -840,6 +842,17 @@ impl JsString {
                 Some(units) => std::borrow::Cow::Borrowed(units),
                 None => std::borrow::Cow::Owned(Self::flattened(inner)),
             },
+        }
+    }
+
+    /// A flat string with this string's units that leaves a rope unflattened (`flat_unkept`):
+    /// the copy lives only as long as the returned string. An operation that reads a rope
+    /// many times through helpers that take a string uses it in place of the rope, so the
+    /// rope does not keep a flat copy of its text for its own life.
+    pub(crate) fn unkept_flat(&self) -> JsString {
+        match &self.repr {
+            Repr::Flat(_) => self.clone(),
+            Repr::Shared(_) => Self::from_flat(self.flat_unkept().into_owned()),
         }
     }
 

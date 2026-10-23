@@ -927,6 +927,7 @@ impl Engine {
                 constructible: false,
                 class_initializer: false,
                 parameter_eval_arguments_error: false,
+                unaliased_arguments: false,
                 arguments_slot: None,
                 simple_parameters: true,
                 strict: true,
@@ -952,6 +953,7 @@ impl Engine {
                 activation_bindings: Default::default(),
                 live_parameter_reflection: Default::default(),
                 static_name_scope: Default::default(),
+                js_tier_candidate: Default::default(),
                 call_plan: Default::default(),
                 handlers: lowering.handlers.into(),
                 register_roots: Default::default(),
@@ -1718,7 +1720,7 @@ impl Lowering<'_> {
     }
 
     /// Whether `register` holds a Wasm local rather than an operand-stack value.
-    fn is_local_register(&self, register: Register) -> bool {
+    pub(super) fn is_local_register(&self, register: Register) -> bool {
         self.local_base
             .is_some_and(|base| (base..base + self.locals).contains(&register))
     }

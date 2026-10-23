@@ -429,8 +429,31 @@ pub(super) fn expression_contains_direct_eval(expression: &Expression<'_>) -> bo
     finder.0
 }
 
+/// How a body reaches its own `arguments` binding, ordered so the widest use found wins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum ArgumentsUse {
+    None,
+    /// Only `arguments.length` and `arguments[key]` reads: no call through, write to,
+    /// `delete` of or escape of the object.
+    Reads,
+    /// Any other reference.
+    Escapes,
+}
+
+/// Whether `expression` names `arguments` itself.
+fn names_arguments(expression: &Expression<'_>) -> bool {
+    matches!(expression.without_parentheses(), Expression::Identifier(identifier) if identifier.name == ARGUMENTS)
+}
+
+const LENGTH_NAME: &str = "length";
+
 pub(super) struct FixedRegisterLocalFacts {
+    /// Promotion is sound but for the body's `arguments` use, which `arguments` states.
     pub(super) safe: bool,
+    pub(super) arguments: ArgumentsUse,
+    /// Every name the body declares or assigns, at any depth: a parameter among them may be
+    /// rebound.
+    pub(super) bound_names: FxHashSet<String>,
     /// Names written somewhere other than at statement level (see `statement_level_write`).
     /// A register-resident local loads as its register itself, so it stays sound only while
     /// no write can land between a read and that read's consumer within one statement.
@@ -443,6 +466,8 @@ pub(super) fn fixed_register_local_facts(
 ) -> FixedRegisterLocalFacts {
     struct Facts {
         safe: bool,
+        arguments: ArgumentsUse,
+        bound_names: FxHashSet<String>,
         nested_written_names: FxHashSet<String>,
     }
 
@@ -476,8 +501,13 @@ pub(super) fn fixed_register_local_facts(
                 },
                 _ => return false,
             };
-            self.safe &= target.name != "arguments";
+            self.safe &= target.name != ARGUMENTS;
+            self.bound_names.insert(target.name.to_string());
             true
+        }
+
+        fn use_arguments(&mut self, kind: ArgumentsUse) {
+            self.arguments = self.arguments.max(kind);
         }
     }
 
@@ -486,13 +516,55 @@ pub(super) fn fixed_register_local_facts(
             &mut self,
             identifier: &oxc_ast::ast::IdentifierReference<'a>,
         ) {
-            self.safe &= identifier.name != "arguments";
+            if identifier.name == ARGUMENTS {
+                self.use_arguments(ArgumentsUse::Escapes);
+            }
+        }
+
+        fn visit_binding_identifier(&mut self, identifier: &oxc_ast::ast::BindingIdentifier<'a>) {
+            self.bound_names.insert(identifier.name.to_string());
+        }
+
+        fn visit_static_member_expression(&mut self, member: &oxc_ast::ast::StaticMemberExpression<'a>) {
+            if names_arguments(&member.object) && member.property.name == LENGTH_NAME {
+                self.use_arguments(ArgumentsUse::Reads);
+            } else {
+                walk::walk_static_member_expression(self, member);
+            }
+        }
+
+        fn visit_computed_member_expression(&mut self, member: &oxc_ast::ast::ComputedMemberExpression<'a>) {
+            if names_arguments(&member.object) {
+                self.use_arguments(ArgumentsUse::Reads);
+                self.visit_expression(&member.expression);
+            } else {
+                walk::walk_computed_member_expression(self, member);
+            }
+        }
+
+        // A member of `arguments` as a callee or tag passes the object as the receiver.
+        fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+            if call.callee.without_parentheses().as_member_expression().is_some_and(|member| names_arguments(member.object())) {
+                self.use_arguments(ArgumentsUse::Escapes);
+            }
+            walk::walk_call_expression(self, call);
+        }
+
+        fn visit_tagged_template_expression(&mut self, tagged: &oxc_ast::ast::TaggedTemplateExpression<'a>) {
+            if tagged.tag.without_parentheses().as_member_expression().is_some_and(|member| names_arguments(member.object())) {
+                self.use_arguments(ArgumentsUse::Escapes);
+            }
+            walk::walk_tagged_template_expression(self, tagged);
         }
 
         fn visit_simple_assignment_target(&mut self, target: &SimpleAssignmentTarget<'a>) {
             if let SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = target {
                 self.nested_written_names
                     .insert(identifier.name.to_string());
+                self.bound_names.insert(identifier.name.to_string());
+            }
+            if target.as_member_expression().is_some_and(|member| names_arguments(member.object())) {
+                self.use_arguments(ArgumentsUse::Escapes);
             }
             walk::walk_simple_assignment_target(self, target);
         }
@@ -503,6 +575,7 @@ pub(super) fn fixed_register_local_facts(
         ) {
             self.nested_written_names
                 .insert(property.binding.name.to_string());
+            self.bound_names.insert(property.binding.name.to_string());
             walk::walk_assignment_target_property_identifier(self, property);
         }
 
@@ -535,8 +608,19 @@ pub(super) fn fixed_register_local_facts(
         }
 
         fn visit_unary_expression(&mut self, expression: &UnaryExpression<'a>) {
+            // Only `delete name` reaches a binding, and `delete arguments[k]` unmaps a
+            // parameter from a mapped `arguments`; deleting any other member (`delete o[k]`)
+            // leaves every local where it was.
             if expression.operator == oxc_syntax::operator::UnaryOperator::Delete {
-                self.safe = false;
+                let reaches_binding = match expression.argument.without_parentheses() {
+                    Expression::Identifier(_) => true,
+                    expression => expression.as_member_expression().is_none_or(|member| {
+                        matches!(member.object().without_parentheses(), Expression::Identifier(object) if object.name == "arguments")
+                    }),
+                };
+                if reaches_binding {
+                    self.safe = false;
+                }
             }
             walk::walk_unary_expression(self, expression);
         }
@@ -556,6 +640,8 @@ pub(super) fn fixed_register_local_facts(
 
     let mut facts = Facts {
         safe: true,
+        arguments: ArgumentsUse::None,
+        bound_names: FxHashSet::default(),
         nested_written_names: FxHashSet::default(),
     };
     for statement in body {
@@ -566,6 +652,8 @@ pub(super) fn fixed_register_local_facts(
     }
     FixedRegisterLocalFacts {
         safe: facts.safe,
+        arguments: facts.arguments,
+        bound_names: facts.bound_names,
         nested_written_names: facts.nested_written_names,
     }
 }

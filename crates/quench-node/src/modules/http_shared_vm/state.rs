@@ -9,6 +9,7 @@ pub(crate) struct State {
     pub(crate) status_reasons: HashMap<u16, Vec<u8>>,
     pub(crate) response_factory: Option<RootId>,
     pub(crate) incoming_factory: Option<RootId>,
+    pub(crate) response_tracking: Option<ResponseTracking>,
     pub(crate) servers: HashMap<u64, Server>,
     pub(crate) connections: HashMap<u64, ServerConnection>,
     pub(crate) responses: HashMap<u64, Response>,
@@ -32,6 +33,37 @@ impl State {
             .filter_map(|(id, response)| (response.socket == socket).then_some(*id))
             .collect::<Vec<_>>();
         ids.into_iter().filter_map(|id| self.responses.remove(&id)).collect()
+    }
+}
+
+/// The objects every response is registered with as it is made (`response_initialize`): a
+/// WeakMap from response to exchange id, which `_send` reads, and a FinalizationRegistry whose
+/// cleanup releases the host's entry, with the intrinsic methods that register a response.
+#[derive(Clone, Copy)]
+pub(crate) struct ResponseTracking {
+    pub(crate) responses: RootId,
+    pub(crate) map_set: RootId,
+    pub(crate) registry: RootId,
+    pub(crate) register: RootId,
+}
+
+impl ResponseTracking {
+    pub(crate) fn roots(self) -> [RootId; 4] {
+        [self.responses, self.map_set, self.registry, self.register]
+    }
+}
+
+impl crate::host::startup_snapshot::HostSnap for ResponseTracking {
+    fn write(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        self.roots().iter().try_for_each(|root| root.write(writer))
+    }
+    fn read(reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<Self, String> {
+        Ok(Self {
+            responses: RootId::read(reader)?,
+            map_set: RootId::read(reader)?,
+            registry: RootId::read(reader)?,
+            register: RootId::read(reader)?,
+        })
     }
 }
 
@@ -171,6 +203,7 @@ impl State {
             status_reasons: HashMap::new(),
             response_factory: None,
             incoming_factory: None,
+            response_tracking: None,
             servers: HashMap::new(),
             connections: HashMap::new(),
             responses: HashMap::new(),
@@ -233,6 +266,7 @@ impl State {
             status_reasons,
             response_factory,
             incoming_factory,
+            response_tracking,
             servers,
             connections,
             responses,
@@ -263,6 +297,7 @@ impl State {
         }
         response_factory.write(writer)?;
         incoming_factory.write(writer)?;
+        response_tracking.write(writer)?;
         // The agents the bootstrap made, which hold no socket yet.
         writer.len(agents.len());
         agents.keys().try_for_each(|agent| agent.write(writer))
@@ -279,6 +314,7 @@ impl State {
         }
         self.response_factory = HostSnap::read(reader)?;
         self.incoming_factory = HostSnap::read(reader)?;
+        self.response_tracking = HostSnap::read(reader)?;
         self.agents.clear();
         for _ in 0..reader.len()? {
             self.agents.insert(HostSnap::read(reader)?, HashSet::new());
