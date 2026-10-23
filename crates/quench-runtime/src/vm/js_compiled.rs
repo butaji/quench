@@ -126,10 +126,6 @@ pub(super) enum JsJitStringTransform {
 // Keep straight-line native regions short so an interpreter interrupt cannot
 // be delayed by a large, uninterruptible compiled body.
 const MAX_INSTRUCTIONS: usize = 256;
-// Native entry guards and VM return plumbing dominate bodies with too little
-// arithmetic, branching, or guarded heap work. This generic estimate is a
-// promotion-cost floor, not a semantic eligibility rule.
-const MIN_JS_JIT_WORK_UNITS: usize = 2;
 const MAX_REGISTERS: usize = 256;
 const MAX_CODE_BYTES: usize = 64 * 1024;
 const MAX_PARAMETERS: usize = 8;
@@ -650,9 +646,6 @@ pub(super) fn candidate_rejection_reason(
     }
     if function.code.len() > MAX_INSTRUCTIONS {
         return "bytecode-limit";
-    }
-    if js_native_work_units(function) < MIN_JS_JIT_WORK_UNITS {
-        return "below-native-entry-cost-floor";
     }
     if int32_identity_return_candidate(program, function).is_some() {
         return "int32-identity-return";
@@ -3985,7 +3978,6 @@ pub(super) fn function_candidate(function: &Function, program: &crate::bytecode:
 
 fn scanned_function_candidate(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
     !function.code.is_empty()
-        && js_native_work_units(function) >= MIN_JS_JIT_WORK_UNITS
         && function.code.len() <= MAX_INSTRUCTIONS
         && (function.wide.is_empty()
             || wide_boolean_tree_candidate(function)
@@ -3993,21 +3985,6 @@ fn scanned_function_candidate(function: &Function, program: &crate::bytecode::Re
         && usize::from(function.registers) <= MAX_REGISTERS
         && usize::from(function.params) <= MAX_PARAMETERS
         && (eligible(function, program) || field_reject_layout(function).is_some())
-}
-
-/// A conservative estimate of work that native code can remove from the lane.
-/// Constants, moves, and returns are mostly call/dispatch plumbing, while
-/// arithmetic, branches, and guarded reads have meaningful lowering work.
-fn js_native_work_units(function: &Function) -> usize {
-    function
-        .code
-        .iter()
-        .map(|packed| match packed.as_wide().op() {
-            Op::Binary | Op::Unary | Op::GetField => 2,
-            Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse => 1,
-            _ => 0,
-        })
-        .sum()
 }
 
 #[derive(Clone, Copy)]
