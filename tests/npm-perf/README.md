@@ -986,3 +986,14 @@ generation measured 6,061 / 69.2 and 5,848 / 48.7 for Quench, versus Node at
 variation. The response and Next workloads still do not win; Bun samples are
 too short to qualify. Post-merge reports are in
 `evidence/tod173-next-response-2026-10-23/`.
+
+For the private JSON-byte stream, removing explicit no-op `pull` and `cancel`
+callbacks produced a repeatable paired `iteration` improvement of about 10–12%
+for `Response.json()` in both modes. Next route generation improved about 7%
+no-JIT and was flat in JIT. The current production candidate measured 15,588 /
+89.7 MiB no-JIT and 13,387 / 69.2 MiB JIT for the response constructor, and
+6,281 / 63.2 MiB and 6,427 / 42.5 MiB for route generation. Node remains 3.2–
+10.7x faster on the reliable rows; Bun's samples are too short to qualify. The
+optimization is retained as a component gain, not a package win. Paired
+iteration and production reports with `noop` in their names are in the evidence
+folder.

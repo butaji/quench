@@ -25,12 +25,8 @@ fn patch_node_source(relative: &str, source: &str) -> Option<String> {
         const source = webidl.util.getCopyOfBytesHeldByBufferSource(object);
         let controller = null;
         const stream = new ReadableStream({
-          pull() {
-          },
           start(c) {
             controller = c;
-          },
-          cancel() {
           },
           type: "bytes"
         });

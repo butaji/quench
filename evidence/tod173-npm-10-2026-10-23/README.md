@@ -155,3 +155,17 @@ measured 6,061 / 69.2 and 5,848 / 48.7 for Quench, versus Node at 28,902 / 79.6
 and 57,471 / 88.5. Same-source Quench control rows were within measurement
 noise; Bun's samples remain under 50 ms. The merge did not change the conclusion.
 Post-merge reports use the `*-post-merge-*` names in the same evidence folder.
+
+The private JSON-byte stream then dropped its explicit no-op `pull` and
+`cancel` callbacks, using the stream's built-in no-op algorithms. Seven-run
+paired `iteration` binaries (same merged code and compiler settings) measured
+`Response.json()` at 7,342 versus 6,564 ops/s no-JIT and 7,215 versus 6,560
+JIT. Next route generation measured 3,181 versus 2,982 ops/s no-JIT and 3,083
+versus 3,075 JIT. The response-constructor gain repeated; the end-to-end JIT
+route difference is within noise. This is a component improvement, not a
+package win. Production screens with the callback-free implementation measured
+15,588 / 89.7 MiB and 13,387 / 69.2 MiB for `Response.json()`, and 6,281 /
+63.2 MiB and 6,427 / 42.5 MiB for Next route generation. Node remained 3.2–
+10.7x faster on the reliable rows; Bun route and constructor samples were
+under 50 ms. Paired `iteration` RSS is diagnostic, and production RSS is
+sampled Linux data. Reports with `*-noop-*` names retain the runs.
