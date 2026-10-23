@@ -2,8 +2,8 @@
 
 Goal (TOD-182): quench-node at least 1.2x every other runtime, no JIT and JIT.
 
-* Host: cloud VM, 4 vCPU, x86_64 (`/proc/cpuinfo` model on the run host:
-  see the commit message), 15 GB RAM.
+* Host: cloud VM, Intel Xeon Processor @ 2.10GHz, 4 vCPU, 15 GB RAM, no
+  hardware performance counters.
 * Binary: static production `quench-node` at `v2-cloud-wasm` `61b0cce31`
   (= `v2-merged`), bolted with the standard training list.
 * Script: `evidence/wasm-esm-runner-linux-2026-10-19/run-coremark-esm.sh`,
