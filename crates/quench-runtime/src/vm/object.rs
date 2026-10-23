@@ -598,6 +598,26 @@ impl<H: Host> Vm<H> {
     /// its storage (a proxy, typed array, module namespace, arguments object or boxed
     /// primitive): HasProperty of the index, where `object` holds none, is then false.
     pub(super) fn inherited_index_absent(&self, object: Value, index: usize) -> bool {
+        self.prototypes_lack_indices(object, |holder, _| self.lacks_own_index(holder, index))
+    }
+
+    /// Whether no prototype of `object` holds any array index or could answer one outside its
+    /// storage: HasProperty of every index `object` does not hold is then false, and
+    /// OrdinarySet of it a plain data definition on `object` (`inherited_index_absent` and
+    /// `inherited_index_unclaimed`, for all indices in one walk).
+    pub(super) fn prototypes_claim_no_index(&self, object: Value) -> bool {
+        self.prototypes_lack_indices(object, |holder, data| {
+            !data.has_indexed_descriptors()
+                && !self.shape_has_index_key(data.shape())
+                && self.heap.array_elements(holder).is_none_or(|elements| elements.len() == 0)
+                && self.heap.sparse_length(holder).is_none()
+        })
+    }
+
+    /// Whether every prototype of `object` is an ordinary holder of its own storage (no
+    /// proxy, typed array, module namespace, arguments object or boxed primitive, which
+    /// answer indices outside it) and `lacks` the indices in question.
+    fn prototypes_lack_indices(&self, object: Value, lacks: impl Fn(Value, &Object) -> bool) -> bool {
         let mut current = self.object_data(object).map(|data| data.proto());
         while let Some(holder) = current.filter(|value| !value.is_null()) {
             if matches!(self.heap.get(holder), Some(Cell::Proxy { .. } | Cell::TypedArray { .. })) {
@@ -609,7 +629,7 @@ impl<H: Host> Vm<H> {
             if data.is_module_namespace()
                 || data.is_arguments_object()
                 || data.boxed_primitive().is_some()
-                || !self.lacks_own_index(holder, index)
+                || !lacks(holder, data)
             {
                 return false;
             }
