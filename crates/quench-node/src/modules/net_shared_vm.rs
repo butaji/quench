@@ -1,7 +1,8 @@
 use super::net_connect_error::TcpConnectFailure;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
-use std::collections::{HashMap, VecDeque};
+use rustc_hash::FxHashMap;
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 #[cfg(unix)]
@@ -317,12 +318,12 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
 /// endpoint IDs and parsed state; this is the one owner of socket bytes and
 /// OS handles for that execution path.
 pub(crate) struct Transport {
-    native_tcp_connecting: HashMap<u64, NativeConnecting>,
-    native_tcp_unbound: HashMap<u64, super::tcp_owned::TcpOwned>,
+    native_tcp_connecting: FxHashMap<u64, NativeConnecting>,
+    native_tcp_unbound: FxHashMap<u64, super::tcp_owned::TcpOwned>,
     next_id: u64,
-    listeners: HashMap<u64, Listener>,
-    sockets: HashMap<u64, SharedSocket>,
-    connecting: HashMap<u64, ConnectingSocket>,
+    listeners: FxHashMap<u64, Listener>,
+    sockets: FxHashMap<u64, SharedSocket>,
+    connecting: FxHashMap<u64, ConnectingSocket>,
     closing_sockets: VecDeque<(CloseTarget, ClosingSocket)>,
     /// Where socket reads land before their bytes are copied out (`poll_sockets`), zeroed
     /// once: a fresh one zeroed its `TCP_READ_CHUNK` bytes at every poll.
@@ -603,12 +604,12 @@ pub(crate) enum TransportEvent {
 impl Transport {
     pub(crate) fn new() -> Self {
         Self {
-            native_tcp_connecting: HashMap::new(),
-            native_tcp_unbound: HashMap::new(),
+            native_tcp_connecting: FxHashMap::default(),
+            native_tcp_unbound: FxHashMap::default(),
             next_id: FIRST_TRANSPORT_ID,
-            listeners: HashMap::new(),
-            sockets: HashMap::new(),
-            connecting: HashMap::new(),
+            listeners: FxHashMap::default(),
+            sockets: FxHashMap::default(),
+            connecting: FxHashMap::default(),
             closing_sockets: VecDeque::new(),
             read_buffer: vec![0; TCP_READ_CHUNK].into_boxed_slice(),
         }
