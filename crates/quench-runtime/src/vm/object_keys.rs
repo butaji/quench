@@ -217,6 +217,7 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
+
     pub(super) fn object_names(
         &mut self,
         p: &ResidualProgram,

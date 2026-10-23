@@ -183,7 +183,7 @@ impl<H: Host> Vm<H> {
                 )?;
                 if !extensible
                     || (!descriptor.is_undefined()
-                        && !self.descriptor_flag(descriptor, "configurable"))
+                        && !self.descriptor_flag(descriptor, self.runtime_atoms.configurable))
                 {
                     required.push(*key);
                 }

@@ -9,6 +9,36 @@ use std::sync::atomic::{AtomicU64, Ordering};
 // table is dead, amortizing the rebuild and cache invalidation across GCs.
 const SHAPE_COMPACTION_MIN_RECLAIM_DENOMINATOR: usize = 2;
 
+/// The closure reads of the VM's programs, which a full collection traces closure
+/// environments through (`heap::EnvironmentTrace`).
+struct ProgramClosureReads<'a> {
+    programs: &'a ProgramStore,
+    lexical_this: Atom,
+}
+
+impl crate::heap::ClosureReadSource for ProgramClosureReads<'_> {
+    fn closure_reads(&self, program: u32) -> Option<&crate::bytecode::ClosureReads> {
+        self.programs
+            .residual(ProgramId::from_raw(program))?
+            .closure_reads
+            .as_deref()
+    }
+
+    fn lexical_this(&self) -> Atom {
+        self.lexical_this
+    }
+
+    fn may_hold_projections(&self, function: u32) -> bool {
+        function == ROOT_FUNCTION_ID
+    }
+
+    fn slot_is_projection(&self, program: u32, function: u32, slot: u16) -> bool {
+        // Global lexical slots count as bindings, whatever script is being evaluated.
+        self.may_hold_projections(function)
+            && !self.programs.root_slot_is_binding(ProgramId::from_raw(program), slot, true)
+    }
+}
+
 fn shape_reclaim_threshold_met(shape_count: usize, unreachable: usize) -> bool {
     unreachable >= shape_count.div_ceil(SHAPE_COMPACTION_MIN_RECLAIM_DENOMINATOR)
 }
@@ -796,12 +826,17 @@ impl<H: Host> Vm<H> {
             };
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(2, phase_started);
+        let closure_reads = ProgramClosureReads {
+            programs: &self.programs,
+            lexical_this: self.runtime_atoms.lexical_this,
+        };
         let finalization_jobs = self.heap.collect_with_object_roots(
             roots,
             |trace_kind, owner, shape, prototype, roots| {
                 shape_trace.append(trace_kind, owner, shape, prototype, roots);
             },
             Some(&parallel_object_roots),
+            Some(&closure_reads),
             full,
         );
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
