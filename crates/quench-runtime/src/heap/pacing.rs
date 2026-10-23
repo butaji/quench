@@ -45,6 +45,8 @@ pub(super) struct GenerationalPacing {
     /// The smallest allocation weight between collections, whatever survived.
     pub(super) minimum_young: usize,
     pub(super) maximum_young: usize,
+    /// Allocation weight before the process's first collection.
+    pub(super) first_young: usize,
     /// Growth of the old generation since the last full collection, as a share of what that
     /// collection kept, that makes the next collection full.
     pub(super) old_growth: Ratio,
@@ -231,6 +233,7 @@ impl GenerationalPacing {
             young: ratio("QUENCH_GC_YOUNG", self.young),
             minimum_young: read("QUENCH_GC_MIN_YOUNG", self.minimum_young),
             maximum_young: read("QUENCH_GC_MAX_YOUNG", self.maximum_young),
+            first_young: read("QUENCH_GC_FIRST_YOUNG", self.first_young),
             old_growth: ratio("QUENCH_GC_OLD_GROWTH", self.old_growth),
             minimum_old_growth: read("QUENCH_GC_MIN_OLD_GROWTH", self.minimum_old_growth),
             allocation_cap: ratio("QUENCH_GC_ALLOCATION_CAP", self.allocation_cap),
@@ -334,6 +337,7 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 8),
     minimum_young: THROUGHPUT_MINIMUM_YOUNG,
     maximum_young: MAXIMUM_YOUNG,
+    first_young: THROUGHPUT_MINIMUM_YOUNG,
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: THROUGHPUT_MINIMUM_FULL_INTERVAL,
     allocation_cap: Ratio::new(1, 1),
@@ -368,6 +372,7 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 64),
     minimum_young: YOUNG_MINIMUM_ALLOCATION,
     maximum_young: MAXIMUM_YOUNG,
+    first_young: YOUNG_MINIMUM_ALLOCATION,
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
     allocation_cap: Ratio::new(1, 1),

@@ -773,7 +773,7 @@ impl Heap {
             free_by_slab: Vec::with_capacity(12),
             free_slabs: Vec::with_capacity(12),
             free_slots: 0,
-            threshold: MemoryPolicy::default().pacing().minimum_young,
+            threshold: MemoryPolicy::default().pacing().first_young,
             max_threshold: MemoryPolicy::default().pacing().minimum_young,
             external_collection_budget: MINIMUM_EXTERNAL_COLLECTION_BUDGET,
             ..Self::default()
@@ -784,7 +784,7 @@ impl Heap {
     pub(crate) fn set_memory_policy(&mut self, policy: MemoryPolicy) {
         debug_assert_eq!(self.collections, 0, "the memory policy is chosen at startup");
         self.memory_policy = policy;
-        self.threshold = self.pacing().minimum_young;
+        self.threshold = self.pacing().first_young;
         self.max_threshold = self.threshold;
     }
     pub(crate) fn memory_policy(&self) -> MemoryPolicy {
