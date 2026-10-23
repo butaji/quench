@@ -12805,3 +12805,28 @@ fn array_fill_stores_plainly_only_where_no_prototype_claims_the_index() {
         Vm::new(TestHost::default()).execute(&program).unwrap();
     }
 }
+
+#[test]
+fn define_property_keeps_its_values_through_collections_its_conversions_run() {
+    let source = r#"
+      const churn = () => { let keep = []; for (let i = 0; i < 8000; i++) keep.push({ i, s: 'x' + i }); return keep.length; };
+      const results = [];
+      for (let round = 0; round < 6; round++) {
+        const key = { toString() { churn(); return 'k' + round; } };
+        const descriptor = {
+          get enumerable() { churn(); return true; },
+          get get() { churn(); const marker = { round }; return () => marker.round; },
+        };
+        const target = Object.defineProperty({}, key, descriptor);
+        results.push(target['k' + round]);
+        if (!Object.getOwnPropertyDescriptor(target, 'k' + round).enumerable) throw Error('enumerable lost');
+        const reflected = {};
+        if (!Reflect.defineProperty(reflected, key, { get value() { churn(); return [round]; }, writable: true })) throw Error('reflect');
+        if (reflected['k' + round][0] !== round) throw Error('value lost');
+      }
+      if (results.join() !== Array.from({ length: 6 }, (_, i) => i).join()) throw Error('getter results ' + results);
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "define-roots.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "define-roots.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
