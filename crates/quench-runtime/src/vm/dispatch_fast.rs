@@ -2929,9 +2929,7 @@ script_handler! {
             && !vm.try_append_dense_element(object, key, value)
             && !vm.try_fill_dense_hole(object, key, value)
             && !vm.try_site_symbol_set(ip.addr(), object, key, value)
-            && !vm
-                .array_index_key(key)
-                .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value))
+            && !lane_typed_array_store(ip, vm, object, key, value)
             && !vm.try_plain_string_key_set(object, key, value)
             && !key
                 .as_int()
@@ -2942,6 +2940,35 @@ script_handler! {
         }
         // Appending an element or adding a property can allocate.
         note_allocation(vm);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+/// A store of a number at an index of a typed array, which none of the array and symbol
+/// paths before it serve: the site then tries it first (`lane_set_index_typed`).
+fn lane_typed_array_store<H: Host>(ip: Ip, vm: &mut Vm<H>, object: Value, key: Value, value: Value) -> bool {
+    let stored = vm
+        .array_index_key(key)
+        .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value));
+    if stored {
+        requicken(ip, lane_set_index_typed::<H>);
+    }
+    stored
+}
+
+script_handler! {
+    /// `lane_set_index_slot` at a site that stored into a typed array: a number stored at an
+    /// index of one is the whole store, as the generic order reaches it once every array and
+    /// symbol path declines a typed array; any other store takes the generic order.
+    fn lane_set_index_typed<>(cx, r, ip, i, view) {
+        let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
+        let vm = unsafe { vm(cx) };
+        let stored = vm
+            .array_index_key(key)
+            .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value));
+        if !stored {
+            sibling!(lane_set_index_slot::<H>, r, ip, view)
+        }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -8855,10 +8882,17 @@ script_handler! {
                         Err(next) => next,
                     };
                 }
-                // A global object no cache records (a dictionary shape) still answers a present
-                // data property through its shape walk. An absent name is `undefined` to
-                // `typeof` and raises on the general path otherwise.
-                match vm.plain_global_lookup(atom) {
+                // A present data property records the site's entry as the general path's read
+                // does (`Vm::field_miss_data_value`): the global object changes shape as Node's
+                // lazy globals materialize, and a site that only walked would miss from then
+                // on. A global object no cache records (a dictionary shape) still answers a
+                // present data property through its shape walk. An absent name is `undefined`
+                // to `typeof` and raises on the general path otherwise.
+                match vm
+                    .field_miss_data_value(globals, atom, vm.field_cache_index(i.c))
+                    .map(Some)
+                    .or_else(|| vm.plain_global_lookup(atom))
+                {
                     Some(Some(value)) => value,
                     Some(None) if KIND == LOAD_NAME_TYPEOF => Value::UNDEFINED,
                     _ => return exit(ip),
@@ -9128,7 +9162,6 @@ fn lane_apply_activation<H: Host>(
     i: &LaneInstruction,
     native: Native,
 ) -> Option<Result<(Registers, Ip), Ip>> {
-    let vm = unsafe { vm(cx) };
     // SAFETY: the call's window is registers of the running function.
     let args = unsafe { lane_call_window(r, i) };
     let argument = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
@@ -9137,6 +9170,25 @@ fn lane_apply_activation<H: Host>(
         _ => (argument(0), argument(1), *args.get(2)?),
     };
     let listed = !(native == Native::FunctionApply && (list.is_undefined() || list.is_null()));
+    lane_list_activation(cx, r, ip, i, callee, receiver, list, listed)
+}
+
+/// `callee`'s activation with `receiver` and the elements of `list`, a dense array without
+/// holes (none when not `listed`), for an applied call or a spread call (`CallArray`), whose
+/// argument array the call's spread evaluation built; `None` for any other list.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn lane_list_activation<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    callee: Value,
+    receiver: Value,
+    list: Value,
+    listed: bool,
+) -> Option<Result<(Registers, Ip), Ip>> {
+    let vm = unsafe { vm(cx) };
     let dense = |vm: &Vm<H>| {
         vm.heap.array(list).is_some_and(|array| {
             !array.is_arguments_object()
@@ -9172,6 +9224,21 @@ fn lane_apply_activation<H: Host>(
     let elements: &[Value] = if listed { vm.heap.array_elements(list)?.as_slice() } else { &[] };
     let arguments = ActivationArguments::Kept(elements.as_ptr(), elements.len());
     Some(lane_activate_keeping::<H, true>(cx, r, ip, target, arguments, this, false, None))
+}
+
+script_handler! {
+    /// A spread call (`CallArray`), whose window holds the argument array the spread built:
+    /// the callee's activation with its elements, as an applied call's
+    /// (`lane_list_activation`); any other call takes the general path.
+    #[inline(never)]
+    fn lane_call_array<>(cx, r, ip, i, view) {
+        let list = r.get(ImmediateLayout::call_window_base(i.imm()));
+        match lane_list_activation(cx, r, ip, i, r.get(i.b), r.get(i.c), list, true) {
+            Some(Ok((registers, base))) => next!(cx, registers, base, Carried::script(cx)),
+            Some(Err(next)) => next,
+            None => exit(ip),
+        }
+    }
 }
 
 /// Values an applied frame call copies out without allocating their list.
@@ -12509,6 +12576,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::WasmFillRegisters => Some(lane_fill_registers::<H>),
         Op::CallKnown => Some(lane_call_known::<H>),
         Op::Call => Some(lane_script_call::<H>),
+        Op::CallArray => Some(lane_call_array::<H>),
         Op::Construct => Some(lane_script_construct::<H>),
         Op::LoadName => Some(lane_load_name_first::<H, LOAD_NAME>),
         Op::LoadNameCall => Some(lane_load_name_first::<H, LOAD_NAME_CALL>),
@@ -12708,7 +12776,7 @@ fn lane_operand(
 /// other result flag.
 fn lane_call_fits(instruction: WideInstruction) -> bool {
     match instruction.op() {
-        Op::Call => {
+        Op::Call | Op::CallArray => {
             lane_returns(instruction)
                 && !instruction.direct_eval()
                 && !instruction.parameter_eval()

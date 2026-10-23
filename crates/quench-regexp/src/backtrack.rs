@@ -168,6 +168,19 @@ enum Beyond {
     },
 }
 
+/// `ranges` as sorted, disjoint inclusive ranges: overlapping and adjacent ones joined.
+fn coalesced_ranges(mut ranges: Vec<(u32, u32)>) -> Box<[(u32, u32)]> {
+    ranges.sort_unstable();
+    let mut merged: Vec<(u32, u32)> = Vec::with_capacity(ranges.len());
+    for (min, max) in ranges {
+        match merged.last_mut() {
+            Some(last) if min <= last.1.saturating_add(1) => last.1 = last.1.max(max),
+            _ => merged.push((min, max)),
+        }
+    }
+    merged.into_boxed_slice()
+}
+
 impl UnitSet {
     /// The set of the ASCII units in `ascii` and the units past ASCII `beyond` admits.
     fn of(ascii: u128, beyond: Beyond) -> Self {
@@ -179,6 +192,15 @@ impl UnitSet {
     fn union(self, other: Self) -> Self {
         let beyond = match (self.beyond, other.beyond) {
             (Beyond::Never, beyond) | (beyond, Beyond::Never) => beyond,
+            // Two sets of exact member ranges are one: a fold over an alternation of classes
+            // tests one sorted range list rather than every branch's.
+            (
+                Beyond::Ranges { ranges: left, negative: false },
+                Beyond::Ranges { ranges: right, negative: false },
+            ) => Beyond::Ranges {
+                ranges: coalesced_ranges(left.iter().chain(right.iter()).copied().collect()),
+                negative: false,
+            },
             (left, right) => Beyond::Either(Box::new([left, right])),
         };
         Self::of(self.ascii | other.ascii, beyond)
@@ -219,16 +241,8 @@ impl Beyond {
                 unicode,
             };
         }
-        ranges.sort_unstable();
-        let mut merged: Vec<(u32, u32)> = Vec::with_capacity(ranges.len());
-        for (min, max) in ranges {
-            match merged.last_mut() {
-                Some(last) if min <= last.1.saturating_add(1) => last.1 = last.1.max(max),
-                _ => merged.push((min, max)),
-            }
-        }
         Self::Ranges {
-            ranges: merged.into_boxed_slice(),
+            ranges: coalesced_ranges(ranges),
             negative: class.negative,
         }
     }
