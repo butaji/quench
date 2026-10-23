@@ -883,6 +883,14 @@ struct Fact {
     bound: Bound,
 }
 
+/// An element index as an access uses it: a 64-bit index scaled by the element size, plus a
+/// constant byte displacement.
+#[derive(Clone, Copy)]
+struct ElementIndex {
+    wide: ir::Value,
+    displacement: i32,
+}
+
 /// A counted loop of a region: a loop whose body, header to backward jump, is one path but
 /// for the test that leaves it, and whose test compares an induction variable with a bound
 /// the body leaves unchanged. Every arrival at its header from outside it runs the proof of
@@ -2043,33 +2051,63 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// The element index `key` names in an array of `length` elements, exiting at `pc`
     /// unless it is an integral Number below the length; an `i32` key a proof covers is.
-    fn index(&mut self, pc: u32, key: Typed, length: ir::Value) -> ir::Value {
-        let index = match key.representation {
-            // A negative index zero-extends past every length (`MAX_INDEXED_LENGTH`).
-            Representation::Int32 => self.builder.ins().uextend(types::I64, key.value),
+    fn index(&mut self, pc: u32, key: Typed, length: ir::Value) -> ElementIndex {
+        let (index, element) = match key.representation {
+            // Every `i32` sum the region computes is exact (guarded or proved), so a key that
+            // is a root plus constants is the root's sign extension plus their total, which
+            // an access folds into its displacement. A negative key extends below zero,
+            // which compares unsigned past every length (`MAX_INDEXED_LENGTH`).
+            Representation::Int32 => {
+                let (root, offset) = self.int32_root(key.value);
+                let wide = self.builder.ins().sextend(types::I64, root);
+                let index = self.builder.ins().iadd_imm_s(wide, offset);
+                match i32::try_from(offset * i64::from(WORD_BYTES)) {
+                    Ok(displacement) => (index, ElementIndex { wide, displacement }),
+                    Err(_) => (index, ElementIndex { wide: index, displacement: 0 }),
+                }
+            }
             Representation::Float64 => {
                 let index = self.builder.ins().fcvt_to_sint_sat(types::I64, key.value);
                 let back = self.builder.ins().fcvt_from_sint(types::F64, index);
                 let fractional = self.builder.ins().fcmp(FloatCC::NotEqual, back, key.value);
                 self.guard(pc, fractional);
-                index
+                (index, ElementIndex { wide: index, displacement: 0 })
             }
         };
         if !self.proved(pc) {
             let beyond = self.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, length);
             self.guard(pc, beyond);
         }
-        index
+        element
     }
 
-    fn element_address(&mut self, elements: ir::Value, index: ir::Value) -> ir::Value {
-        let offset = self.builder.ins().imul_imm_u(index, i64::from(WORD_BYTES));
+    /// The value an `i32` is a constant sum from, and that sum: the chain of constant
+    /// additions ending at `value`.
+    fn int32_root(&self, value: ir::Value) -> (ir::Value, i64) {
+        let dfg = &self.builder.func.dfg;
+        let (mut value, mut offset) = (dfg.resolve_aliases(value), 0i64);
+        loop {
+            let ir::ValueDef::Result(instruction, 0) = dfg.value_def(value) else { break };
+            let ir::InstructionData::Binary { opcode: ir::Opcode::Iadd, args } = dfg.insts[instruction] else { break };
+            let (left, right) = (dfg.resolve_aliases(args[0]), dfg.resolve_aliases(args[1]));
+            match (self.int32_constant(left), self.int32_constant(right)) {
+                (_, Some(constant)) => (value, offset) = (left, offset + constant),
+                (Some(constant), None) => (value, offset) = (right, offset + constant),
+                (None, None) => break,
+            }
+        }
+        (value, offset)
+    }
+
+    /// The address of an element with the byte displacement its access carries.
+    fn element_address(&mut self, elements: ir::Value, index: ElementIndex) -> (ir::Value, i32) {
+        let offset = self.builder.ins().imul_imm_u(index.wide, i64::from(WORD_BYTES));
         let offset = if self.pointer == types::I64 {
             offset
         } else {
             self.builder.ins().ireduce(self.pointer, offset)
         };
-        self.builder.ins().iadd(elements, offset)
+        (self.builder.ins().iadd(elements, offset), index.displacement)
     }
 
     /// ToInt32 of `value`. A Float converts saturating, which is ToInt32 for NaN (zero) and
@@ -2169,6 +2207,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
     ) -> ir::Value {
         if let Some(result) = self.int32_offset(pc, operator, register, left, right) {
             return result;
+        }
+        // A proof covers a sum's exactness, so it needs no overflow flag.
+        match operator {
+            FloatOperator::Add if self.proved(pc) => return self.builder.ins().iadd(left, right),
+            FloatOperator::Subtract if self.proved(pc) => return self.builder.ins().isub(left, right),
+            _ => {}
         }
         let (result, overflow) = match operator {
             FloatOperator::Add => self.builder.ins().sadd_overflow(left, right),
@@ -2356,18 +2400,18 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let (elements, length) = self.arrays[&base];
                 let key = self.operand(instruction.operand_c())?;
                 let index = self.index(pc, key, length);
-                let address = self.element_address(elements, index);
+                let (address, displacement) = self.element_address(elements, index);
                 // A hole is tagged, so unboxing sends it to the general path too. A Float64
                 // element loads straight into a float register.
                 let representation = element_representation(&instruction, self.observation);
                 let value = match representation {
                     Representation::Int32 => {
-                        let bits = self.builder.ins().load(types::I64, flags(), address, 0);
+                        let bits = self.builder.ins().load(types::I64, flags(), address, displacement);
                         let widen = self.widen_block(pc, Widening::Elements(base));
                         self.unbox(bits, representation, widen)
                     }
                     Representation::Float64 => {
-                        let double = self.builder.ins().load(types::F64, flags(), address, 0);
+                        let double = self.builder.ins().load(types::F64, flags(), address, displacement);
                         let exit = self.exit_block(pc);
                         self.unbox_float64(double, exit)
                     }
@@ -2379,14 +2423,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let (elements, length) = self.arrays[&instruction.register_b()];
                 let key = self.register(instruction.register_c());
                 let index = self.index(pc, key, length);
-                let address = self.element_address(elements, index);
-                let old = self.builder.ins().load(types::I64, flags(), address, 0);
+                let (address, displacement) = self.element_address(elements, index);
+                let old = self.builder.ins().load(types::I64, flags(), address, displacement);
                 let tag = self.builder.ins().band_imm_u(old, ValueLayout::TAG_MASK as i64);
                 let hole = self.builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::DELETED_TAG as i64);
                 self.guard(pc, hole);
                 let value = self.register(instruction.register_a());
                 let bits = self.encoding(value);
-                self.builder.ins().store(flags(), bits, address, 0);
+                self.builder.ins().store(flags(), bits, address, displacement);
                 self.fall_through(pc)
             }
             Op::Jump => self.jump(pc, instruction.jump_target()),

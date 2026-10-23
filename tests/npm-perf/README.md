@@ -524,3 +524,88 @@ PGO training profile reversed the result: 307.8 / 26.26 MB versus 313.9 /
 change was reverted. Reports:
 `work/react-perf/react-jumpbinary-loadlocal-screen-3.json` and
 `work/react-perf/react-jumpbinary-loadlocal-freshpgo-screen-3.json`.
+
+The PGO build can optionally include React SSR samples by setting
+`QUENCH_PGO_REACT_ROUNDS` after installing `tests/npm-perf` dependencies. With
+1,000 training rounds, the three-round screen measured 394.6 renders/s /
+25.31 MB versus the generic-PGO control at 362.8 / 26.33. The 11-round paired
+run measured 346.3 / 25.62 versus 309.4 / 26.39 (+11.9% throughput, -2.9%
+RSS), with matching 24,980,000 output bytes and checksum 414318. Node `--jitless`
+measured 1,604.6 / 36.22 MB and Bun no-JIT 1,580.3 / 37.52 MB. Quench remains
+4.6x slower than both, so this profile-directed build is a substantial local
+improvement, not a package win. Linux RSS is diagnostic. Reports:
+`work/react-perf/react-profile-guided-build-screen-3.json` and
+`work/react-perf/react-profile-guided-build-nojit-11.json`.
+
+Increasing the optional React training sample to 5,000 rounds passed an
+11-round paired no-JIT screen at 5,000 measured renders per round: 345.6
+renders/s / 24.50 MB sampled max RSS versus the generic-profile control at
+330.6 / 26.43 (+4.5% throughput, -7.3% RSS). Output matched at 24,980,000
+bytes and checksum 414318. Node `--jitless` measured 1,649.6 renders/s /
+36.19 MB, and Bun no-JIT 1,479.7 / 37.39 MB. The larger training weight
+improves the paired Quench result but remains 4.8x slower than Node and 4.3x
+slower than Bun. The candidate clears the RSS margin but is not a package win.
+Linux RSS remains diagnostic. The 5,000-round instrumented run took longer
+than the default per-fixture timeout, so `tools/pgo-build.sh` now gives this
+optional training workload its own 120-second limit. Report:
+`work/react-perf/react-profile-guided-build-5000-screen-3.json` and
+`work/react-perf/react-profile-guided-build-5000-nojit-11.json`.
+
+After merging `origin/v2-merged`, the latest 11-round no-JIT baseline uses the
+new PGO corpus (38 curriculum programs, 100 diagnostic micros, Node-compat
+fixtures, and 5,000 React rounds). It measures 365.1 renders/s / 21.07 MB
+sampled max RSS. Node `--jitless` is 1,638.3 / 36.18 MB and Bun no-JIT is
+1,484.6 / 37.40 MB. Outputs still match at 24,980,000 bytes/checksum 414318.
+Quench remains 4.5x slower than Node and 4.1x slower than Bun, despite 42–44%
+lower sampled RSS; this is the fresh merged-source baseline, not a package win.
+Report: `work/react-perf/react-ssr-postmerge-pgo-5000-nojit-11.json`.
+
+The post-merge `profile-memory` diagnostic run (500 React SSR rounds, 50 warmups;
+unoptimized diagnostic binary, so its elapsed time is not comparable with the
+production score) found 16,525 live out-of-line object properties, 16,482
+narrowable (99.7%), plus 5,321/5,321 narrowable dense-array elements. These
+counts suggest compact storage is feasible, but their total backing capacity is
+small compared with process RSS. The same snapshot attributed 1,017,728 bytes
+to field-cache side tables, 917,504 bytes to shape records, and 198,198 bytes to
+shape lookup indexes. Profile output also included 39.6 MB of diagnostic
+instrumentation, which is excluded from runtime memory totals. Next, measure
+field-cache occupancy and target high-capacity tables before prototyping a
+representation change. Diagnostic log: `work/react-perf/react-memory-counters.stderr`.
+
+The follow-up occupancy probe found 1,288 active mono field-cache entries out
+of 22,831 sites (5.64%). The 1,017,728-byte field-cache total includes the
+monomorphic table, per-site indexes, and field-add cache sets; it is not all
+recoverable by making the mono table sparse. A sparse mono table could save
+roughly 259 KB at this occupancy, but adds an indexed indirection to a hot read.
+Before changing that path, split the aggregate and inspect the unusually large
+fixed-depth prototype storage in `FieldAddCacheSet`. Diagnostic log:
+`work/react-perf/react-memory-sites.stderr`.
+
+The split profile measured 369,792 B for mono entries, 123,264 B each for
+megamorphic and field-add indexes, and 401,408 B for field-add sets. Of 343
+sets, 340 use one way, two use two ways, and one uses three; none uses the
+fourth. Across 347 entries, 266 have prototype depth 0, 57 depth 1–2, six
+depth 4, and 18 depth 7. This points to two compact-layout experiments: a
+three-way set (no evictions in this sample) and a short inline prototype prefix
+with an overflow path, preserving deep-chain behavior. Both still require
+paired production throughput/RSS checks across package workloads before they
+can be accepted. Diagnostic log:
+`work/react-perf/react-memory-field-add-occupancy.stderr`.
+
+The fresh post-merge JIT baseline (three rounds, 1,000 renders each) matched
+output and measured 537.6 renders/s / 28.90 MB for Quench, 15,625 / 46.87 MB
+for Node, and 8,621 / 98.58 MB for Bun. This is a diagnostic sample; Quench is
+still far behind on speed.
+
+I tested removing a duplicate string-concat cache probe on the string+string
+miss path, then retrained PGO against that change. In 11-round paired screens
+at 1,000 renders, no-JIT measured 516.8 / 37.39 MB versus control at 513.6 /
+36.40 MB (+0.6% throughput, +2.7% RSS); JIT measured 514.1 / 29.40 MB versus
+509.7 / 29.04 MB (+0.9% throughput, +1.2% RSS). All outputs matched. These
+results show no useful performance win, so I reverted the cache-probe change.
+The aggregate profiler did miss early cache hits; its counter now records those
+hits in `binary()` so future string-cache decisions use complete counts. This
+report change is profile-only. Reports:
+`work/react-perf/react-ssr-concat-dedup-nojit-1000-3.json` and
+`work/react-perf/react-ssr-concat-dedup-jit-1000-3.json`, plus the 11-round
+paired reports with the same names and `-11` suffix.

@@ -10047,6 +10047,63 @@ fn string_repeat_limits_preserve_lazy_utf16_length_and_fractional_counts() {
 }
 
 #[test]
+fn empty_string_repeat_keeps_coercion_order_without_allocating_a_copy() {
+    let source = r#"
+      let conversions = 0;
+      const empty = '';
+      const repeated = empty.repeat({
+        valueOf() { conversions++; return Number.MAX_SAFE_INTEGER; }
+      });
+      print(repeated === '');
+      print(conversions);
+      print(new String('').repeat(Number.MAX_SAFE_INTEGER) === '');
+      for (const invalid of [Infinity, -1]) {
+        try { empty.repeat(invalid); print('missing error'); }
+        catch (error) { print(error.name); }
+      }
+      try { empty.repeat(Symbol()); print('missing error'); }
+      catch (error) { print(error.name); }
+    "#;
+    let program = Engine::specialize(source, "empty-repeat-fast-path.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["true", "1", "true", "RangeError", "RangeError", "TypeError"]
+    );
+}
+
+#[test]
+fn decode_uri_reuses_unescaped_input_and_preserves_uri_semantics() {
+    let source = r#"
+      const input = 'plain café / text';
+      print(decodeURI(input) === input);
+      print(decodeURI('%E2%82%AC%3F') + '|' + decodeURIComponent('%E2%82%AC%3F'));
+      for (const malformed of ['%', '%2', '%C0%AF', '%E0%80%AF', '%ED%A0%80']) {
+        try { decodeURI(malformed); print('missing error'); }
+        catch (error) { print(error.name + ':' + error.message); }
+      }
+    "#;
+    let program = Engine::specialize(source, "decode-uri-fast-path.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        [
+            "true",
+            "€%3F|€?",
+            "URIError:URI malformed",
+            "URIError:URI malformed",
+            "URIError:URI malformed",
+            "URIError:URI malformed",
+            "URIError:URI malformed",
+        ]
+    );
+}
+
+#[test]
 fn string_constructor_and_template_coercion_preserve_wtf16_and_original_hooks() {
     let source = r#"
       for (const text of ["\ud800", "\ud801", "\udfff", "a\ud800b", "\ud83d\ude00"]) {

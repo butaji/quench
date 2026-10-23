@@ -1305,13 +1305,15 @@ pub(crate) fn response_write(
         net_shared_vm::write(&mut host.tcp, socket, &head).map_err(RootedError::host)?;
     } else {
         let mut write = |body: &[u8]| {
-            net_shared_vm::write_with(&mut host.tcp, socket, |pending| {
-                if chunked {
-                    crate::modules::http_protocol::append_chunk_frame(pending, body);
-                } else {
-                    pending.extend_from_slice(body);
-                }
-            })
+            use crate::modules::http_protocol::{CHUNK_FRAME_END, ChunkFrameHead};
+            if chunked && !body.is_empty() {
+                let head = ChunkFrameHead::new(body.len());
+                net_shared_vm::write_parts(&mut host.tcp, socket, [head.bytes(), body, CHUNK_FRAME_END])
+            } else if chunked {
+                Ok(())
+            } else {
+                net_shared_vm::write_parts(&mut host.tcp, socket, [body])
+            }
         };
         let written = if streamed_view {
             context.with_view_bytes_rooted(chunk_root, &mut write).unwrap_or_else(|| write(&[]))
