@@ -705,6 +705,16 @@ impl JsStringBuilder {
 }
 
 impl JsString {
+    /// Non-materializing shape for aggregate diagnostics: inline flat, shared flat, or rope.
+    #[cfg(feature = "profile-aggregate")]
+    pub(crate) fn profile_shape(&self) -> usize {
+        match &self.repr {
+            Repr::Flat(_) => 0,
+            Repr::Shared(inner) if inner.flat.get().is_some() => 1,
+            Repr::Shared(_) => 2,
+        }
+    }
+
     fn from_flat(units: FlatUnits) -> Self {
         let repr = match units {
             FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) => {
