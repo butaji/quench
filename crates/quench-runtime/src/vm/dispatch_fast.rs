@@ -8746,11 +8746,13 @@ script_handler! {
 script_handler! {
     /// A `LoadName` where names resolve statically to global bindings (`lane_load_name_first`):
     /// an initialized global lexical binding of the name, which the general path's search
-    /// finds first there, else the global object's cached field (`Vm::cached_field_hit`).
-    /// Any other read, including an uninitialized binding or a cache miss, takes the general
-    /// path, which raises or caches it. A `LoadNameCall` (`LOAD_NAME_CALL`) also writes the
-    /// call's receiver, `undefined` for a global binding, and `typeof` (`LOAD_NAME_TYPEOF`)
-    /// reads an absent name as `undefined`.
+    /// finds first there, else the global object's cached field (`Vm::cached_field_hit`), or
+    /// the getter of the accessor its site cached (`Vm::cached_field_getter`), as Node defines
+    /// `Buffer`, activated with the global object as receiver as a field read's is
+    /// (`lane_activate_getter`). Any other read, including an uninitialized binding or a cache
+    /// miss, takes the general path, which raises or caches it. A `LoadNameCall`
+    /// (`LOAD_NAME_CALL`) also writes the call's receiver, `undefined` for a global binding,
+    /// and `typeof` (`LOAD_NAME_TYPEOF`) reads an absent name as `undefined`.
     fn lane_load_global_name<KIND: u8>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
@@ -8767,16 +8769,33 @@ script_handler! {
             }
             next!(cx, r, following(ip), Carried::script(cx))
         }
-        let value = match vm.cached_field_hit(code, vm.realm.globals, i.c) {
+        let globals = vm.realm.globals;
+        let value = match vm.cached_field_hit(code, globals, i.c) {
             super::object::FieldCacheProbe::Hit(value) => value,
-            // A global object no cache records (a dictionary shape) still answers a present
-            // data property through its shape walk. An absent name is `undefined` to `typeof`
-            // and raises on the general path otherwise.
-            _ => match vm.plain_global_lookup(atom) {
-                Some(Some(value)) => value,
-                Some(None) if KIND == LOAD_NAME_TYPEOF => Value::UNDEFINED,
-                _ => return exit(ip),
-            },
+            _ => {
+                if let Some(getter) = vm.cached_field_getter(globals, atom, vm.field_cache_index(i.c)) {
+                    if !unsafe { (*cx).script_calls } {
+                        return exit(ip);
+                    }
+                    // A binding of the global object's environment calls with an `undefined`
+                    // receiver.
+                    if KIND == LOAD_NAME_CALL {
+                        r.set(i.b, Value::UNDEFINED);
+                    }
+                    return match lane_activate_getter(cx, r, ip, getter, globals) {
+                        Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+                        Err(next) => next,
+                    };
+                }
+                // A global object no cache records (a dictionary shape) still answers a present
+                // data property through its shape walk. An absent name is `undefined` to
+                // `typeof` and raises on the general path otherwise.
+                match vm.plain_global_lookup(atom) {
+                    Some(Some(value)) => value,
+                    Some(None) if KIND == LOAD_NAME_TYPEOF => Value::UNDEFINED,
+                    _ => return exit(ip),
+                }
+            }
         };
         r.set(i.a, value);
         if KIND == LOAD_NAME_CALL {
@@ -11790,7 +11809,18 @@ script_handler! {
                     };
                     Some(value)
                 }
-                RETURNING_FIELD => lane_field_value(cx, r, i),
+                // A read that meets its site's getter activates it, as `lane_get_field`
+                // does: the record returns from the frame, so the getter's completion
+                // completes this activation too (`lane_complete_activation`).
+                RETURNING_FIELD => match lane_field_value(cx, r, i) {
+                    Some(value) => Some(value),
+                    None => {
+                        return match lane_getter_activation(cx, r, ip, i) {
+                            Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+                            Err(next) => next,
+                        };
+                    }
+                },
                 RETURNING_UNARY => lane_unary_value(cx, r, i),
                 RETURNING_BINARY => lane_returning_binary_value(cx, r, i),
                 RETURNING_OBJECT => Some(lane_object_pair(cx, r, i)),
