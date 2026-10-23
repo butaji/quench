@@ -2772,7 +2772,7 @@ impl CompiledJsFunction {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn uses_leaf_entry(&self) -> bool {
         self.native_entry_mode() == NativeEntryMode::Leaf
     }
@@ -2963,12 +2963,12 @@ impl CompiledJsFunction {
             .find_map(|(pc, constant)| (*pc == return_pc).then_some(*constant))
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn has_string_returns(&self) -> bool {
         !self.return_constants.is_empty()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn native_entries(&self) -> u64 {
         self.native_entries.get()
     }
@@ -6958,12 +6958,7 @@ impl<H: Host> Vm<H> {
     /// Whether the per-function JavaScript tier runs: compiled execution, in a build whose
     /// profiles do not count interpreted work exactly.
     pub(super) fn js_tier_runs(&self) -> bool {
-        !cfg!(any(
-            feature = "profile-aggregate",
-            feature = "profile-trace",
-            feature = "profile-memory",
-            feature = "profile-gc-time"
-        )) && self.execution_mode == ExecutionMode::Compiled
+        !cfg!(quench_profiled) && self.execution_mode == ExecutionMode::Compiled
     }
 
     /// Whether the JavaScript tier may still claim `function` of `program`: it runs, the
