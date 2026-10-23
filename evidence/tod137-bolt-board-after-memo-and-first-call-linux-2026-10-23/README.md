@@ -47,3 +47,42 @@ The board script stopped before writing its JSON (EEXIST on a stale file), but i
 holds every sample. Quench's worst no-JIT samples were 3828 KiB (Richards) and 5228 KiB
 (NavierStokes); the same fixtures' medians were 3492 and 4396. Three runs are too few to
 read the worst sample.
+
+## With a retrained BOLT profile (`qb7`)
+
+The same static build (`qb6.static`) was profiled again:
+
+- Training: `train3.sh`, which is `train2.sh` on this binary. It took callgrind profiles of the
+  start-up and run phases of the order scripts, without and with `--jit`.
+- Conversion: `bolt-profile --order crates/quench-node/link/x86_64-linux-static.order --dense
+  13dispatch_fast --dense run_frame_general_until`.
+- Bolting: as `mkbolt.sh` does. The old profile had matched 359 KB of hot code; the new one
+  matches 1.98 MB.
+
+`qb5` → `qb7`, 7 evicted runs (`ab-qb5-qb7-retrained-7-runs.txt`), max RSS change in KiB:
+
+| Fixture | No JIT | `--jit` |
+| -- | --: | --: |
+| NavierStokes | −612 | −316 |
+| RegExp | −472 | −140 |
+| RayTrace | −468 | +120 |
+| DeltaBlue | −296 | +96 |
+| Crypto | −96 | −288 |
+| Splay | −76 | −84 |
+| Richards | +4 | +16 |
+| EarleyBoyer | +100 | +28 |
+
+Scores were equal or 5–15% higher.
+
+Median factors against 0.8 × QuickJS's lowest sample. These use medians; the board's own rule
+uses the worst sample.
+
+| Mode | Richards | DeltaBlue | Crypto | RayTrace | RegExp | NavierStokes |
+| -- | --: | --: | --: | --: | --: | --: |
+| No JIT | 1.09 | 1.03 | 1.21 | 1.16 | 1.15 | 1.01 |
+| `--jit` | 1.14 | 1.11 | 1.23 | 1.19 | 1.17 | 1.78 |
+
+The earlier board (`qb5`, worst sample) read 1.16 / 1.13 / 1.28 / 1.32 / 1.22 / 1.15 without
+JIT.
+
+The 92 MB `profile.fdata` stays out of git. Retraining for trunk is the RSS lane's job.
