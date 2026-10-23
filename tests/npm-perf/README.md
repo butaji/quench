@@ -502,6 +502,16 @@ dynamic transitions in the React profile. It preserved output but measured
 compiler change was reverted without a full run. The build reused PGO data from
 before the rewrite-function change and reported a function hash mismatch; this
 limits attribution but does not provide a positive signal. Report:
-`work/react-perf/react-wide-capture-move-screen-3.json`. Next, rank fresh
-interpreter hotspots from the dynamic profile and avoid further Move fusion
-until a candidate demonstrates measurable throughput improvement.
+`work/react-perf/react-wide-capture-move-screen-3.json`. It was reverted.
+
+The next profile-ranked no-JIT candidate coalesces an exact plain local load
+with the following register/register integer-comparison branch. It keeps the
+branch record independently callable and sends non-integer operands to the
+existing generic relation handler. The full 11-round React SSR run measured
+331.1 renders/s / 26.90 MB versus the paired generic PGO control at 323.4 /
+27.14 (+2.4% throughput, -0.9% RSS), with matching 24,980,000 output bytes and
+checksum 414318. Node `--jitless` measured 1,696.1 / 36.18 MB and Bun no-JIT
+1,512.9 / 37.51 MB. Quench's RSS is over 20% below both, but throughput is
+still 5.1x behind Node and 4.6x behind Bun; this is a retained local
+improvement, not a package win. Report:
+`work/react-perf/react-loadlocal-jumpbinary-nojit-11.json`.
