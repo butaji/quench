@@ -793,6 +793,24 @@ This explains why enabling JIT barely changes Zod throughput: the hot call path
 does not enter native code. Extending native execution across these dynamic
 operations is the primary JIT direction, with exact semantic side exits.
 
+A same-build 11-round no-JIT comparison tested the existing `memory-first`
+policy at 5,000 rounds and 250 warmups. It lowered Quench's sampled RSS from
+27.9 MB to 16.3 MB (-41.6%), but also lowered throughput from 37,594 to
+31,201 operations/s (-17.0%). The shared checksum was 120,000. Node measured
+91,743 operations/s / 50.2 MB and Bun 79,051 / 38.2 MB in this run, so the
+policy still loses throughput to both competitors and fails the joint target.
+This is an allocator/GC tradeoff screen, not a win; reports are local at
+`target/perf-reports/zod-memory-policy-{throughput,memory-first}-nojit-11.json`.
+
+A feature-only call-cache census found that Zod's general-dispatch in-loop
+cache (64 entries) hit 56.9% of lookups; the lane's per-call-site links missed
+12.6%. Increasing the general cache to 256 entries was screened in five paired
+no-JIT rounds. Output matched, but paired throughput moved only +3.1% at the
+median with round deltas from -13.7% to +13.4%; sampled RSS changed by less
+than 1%. The capacity change and temporary counters were reverted because the
+gain was not reliable. Diagnostic report:
+`target/perf-reports/zod-callcache-256-screen-5-retest.json`.
+
 The Pino workload uses pinned `pino@10.4.0` with structured JSON, a request
 serializer, and redaction into a synchronous in-memory sink. Timestamp and base
 fields are disabled so output checksums are stable between processes. The
@@ -816,14 +834,23 @@ call-capable execution remains necessary.
 
 `ws-echo.cjs` uses pinned `ws@8.18.3` for a local WebSocket client/server
 upgrade and sequential binary echo workload. It validates every echoed frame
-and reports bytes and checksum. A Node smoke run completed with matching
-output. Quench currently cannot run this workload: its HTTP server responds
-with status 426 instead of delivering the WebSocket `upgrade` event and raw
-socket to `ws`. The client also exposed that Quench's HTTP request option
-parser must accept the string port returned by `URL.port`; that compatibility
-gap is fixed. The remaining upgrade failure happens before timing, so `ws`
-must not be counted as a performance comparison until the HTTP server exposes
-the upgrade socket and the client can consume a 101 response.
+and reports bytes and checksum. Quench now transfers upgraded HTTP transports
+to `net.Socket` on both client and server, emits the server `upgrade` event,
+and delivers status 101 through `ClientRequest.upgrade`. The client also
+accepts the string port returned by `URL.port`.
+
+A three-round Linux diagnostic used 300 echo messages and 20 warmups per
+process. All engines produced the same 12,490 bytes and checksum 25,143. Quench
+still loses throughput and RSS against both runtimes:
+
+| Mode | Quench | Node | Bun |
+| --- | ---: | ---: | ---: |
+| No-JIT | 1,277 ops/s, 38.7 MB | 7,692 ops/s, 33.1 MB | 42,857 ops/s, 7.1 MB |
+| JIT | 1,068 ops/s, 33.8 MB | 12,500 ops/s, 36.2 MB | 42,857 ops/s, 3.1 MB |
+
+These short screens establish compatibility only, not a performance win.
+Their Linux process-tree RSS samples are diagnostic; reports are in
+`target/perf-reports/ws-echo-upgrade-{nojit,jit}-3.json`.
 
 ## Fresh `v2-merged` production screen
 

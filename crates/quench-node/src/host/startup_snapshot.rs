@@ -289,7 +289,7 @@ pub(crate) fn preload(
     kind: SnapshotKind,
 ) -> Result<(), quench_runtime::RootedError> {
     let global = context.global_root()?;
-    let key = context.string_rooted("\0quench:require");
+    let key = context.string_rooted(crate::host::shared_vm::commonjs::BOOTSTRAP_REQUIRE);
     let require = context.get_property_rooted(global, key)?;
     let undefined = context.undefined();
     for name in kind.builtins() {
