@@ -2640,7 +2640,7 @@ impl Heap {
                     self.gc_profile.marked_kinds[CellKind::AwaitState as usize] += 1;
                 }
                 // SAFETY: a direct await Value names an initialized record.
-                work.extend(unsafe { self.await_records.get_live(record_id) }.roots());
+                unsafe { self.await_records.get_live(record_id) }.extend_roots(work);
             } else if let Some(record_id) = value.direct_promise_index() {
                 if !self.promise_records.mark(record_id) {
                     continue;
@@ -3237,7 +3237,7 @@ impl Heap {
                 object(&iterator.object);
                 Self::iterator_edges(iterator, work);
             }
-            Cell::AwaitState(state) => work.extend(state.roots()),
+            Cell::AwaitState(state) => state.extend_roots(work),
             Cell::ArrayFromAsyncState(state) => {
                 work.extend([state.output, state.result, state.this_arg]);
                 work.extend(state.iterator);
@@ -3426,7 +3426,7 @@ impl Heap {
             }
         }
         if let Some(record) = generator {
-            work.extend(record.roots());
+            record.extend_roots(work);
         }
     }
     /// A function's edges: its object, closure environment and realm.
