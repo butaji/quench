@@ -13059,16 +13059,19 @@ fn derive_lane_view<H: Host>(
         }
     }
     // A constant whose next instruction returns that same register completes directly.
-    // No branch may enter the Return separately; branch-table entries are tracked too.
-    for pc in 0..records.len().saturating_sub(1) {
-        let returned = decoded[pc + 1];
-        if records[pc].handler == lane_load_const::<H> as Handler as *const ()
-            && returned.op() == Op::Return
-            && decoded[pc].a() == returned.a()
-            && !jump_targets[pc + 1]
-            && !entry_jumps[pc + 1]
-        {
-            records[pc].handler = lane_load_const_return::<H> as Handler as *const ();
+    // No branch may enter the Return separately; branch-table entries are tracked too. The
+    // fused handler returns through a JavaScript activation, which a Wasm body has none of.
+    if !wasm {
+        for pc in 0..records.len().saturating_sub(1) {
+            let returned = decoded[pc + 1];
+            if records[pc].handler == lane_load_const::<H> as Handler as *const ()
+                && returned.op() == Op::Return
+                && decoded[pc].a() == returned.a()
+                && !jump_targets[pc + 1]
+                && !entry_jumps[pc + 1]
+            {
+                records[pc].handler = lane_load_const_return::<H> as Handler as *const ();
+            }
         }
     }
     // A plain move or add of a constant whose next record jumps runs with
