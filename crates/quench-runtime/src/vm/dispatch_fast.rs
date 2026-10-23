@@ -5178,6 +5178,7 @@ script_handler! {
             LoopContinuation::Jump => next!(cx, r, header, Carried::script(cx)),
             LoopContinuation::Resume(pc) => next!(cx, r, at(pc), Carried::script(cx)),
             LoopContinuation::Exit(pc) => exit(at(pc)),
+            LoopContinuation::Safepoint => lane_safepoint::<H>(ip, header),
         }
     }
 }
@@ -5189,6 +5190,8 @@ enum LoopContinuation {
     Resume(u32),
     /// The general path executes the instruction at this PC.
     Exit(u32),
+    /// The backward jump's safepoint ends the execution termination stopped.
+    Safepoint,
 }
 
 /// Compiles `site`'s region if it has no current code, then runs it on `r` with `entry`. A
@@ -5227,7 +5230,8 @@ fn lane_loop_run<H: Host>(
             captures: &captures,
             widened: &tier.widened,
         };
-        tier.code = super::compiled::compile_osr_region(&site.region, &observation);
+        tier.code =
+            super::compiled::compile_osr_region(&site.region, &observation, &unsafe { vm(cx) }.execution_interrupt);
         // SAFETY: as above; the observation's borrow of the heap has ended.
         unsafe { vm(cx) }.host.after_native_compilation();
         if site.diagnostics && tier.code.is_some() {
@@ -5242,7 +5246,7 @@ fn lane_loop_run<H: Host>(
     let code = tier.code.as_ref().expect("compiled above");
     // SAFETY: `r` is the running activation's register file; the entry was read from it
     // and the context just now, and native code runs no guest code.
-    let outcome = unsafe { code.run(r.0, entry) };
+    let outcome = unsafe { code.run(r.0, entry, &vm(cx).execution_interrupt) };
     if site.diagnostics {
         site.native_entry_attempts
             .set(site.native_entry_attempts.get().saturating_add(1));
@@ -5265,6 +5269,7 @@ fn lane_loop_run<H: Host>(
                     .set(site.native_region_runs.get().saturating_add(1));
                 site.widenings.set(site.widenings.get().saturating_add(1));
             }
+            LoopOutcome::Terminated => {}
         }
     }
     match outcome {
@@ -5287,6 +5292,7 @@ fn lane_loop_run<H: Host>(
             tier.code = None;
             LoopContinuation::Exit(pc)
         }
+        LoopOutcome::Terminated => LoopContinuation::Safepoint,
     }
 }
 
@@ -5303,7 +5309,7 @@ fn lane_loop_entry<H: Host>(
 ) -> Option<super::compiled::LoopEntry> {
     let vm = unsafe { vm(cx) };
     let region = &site.region;
-    let mut entry = super::compiled::LoopEntry::new(vm.execution_interrupt.atomic_flag());
+    let mut entry = super::compiled::LoopEntry::new();
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
         if slots.is_null() {
@@ -5495,6 +5501,28 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// A Wasm effective address: the index operand in the memory's index type plus the
+    /// record's constant offset, as an i64. An overflow, which traps, or an operand of another
+    /// representation takes the general path.
+    fn lane_wasm_memory_address<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let (Ok(address), Some(offset)) = (
+            vm.wasm_memory_index(r.get(i.c), r.get(i.b)),
+            vm.decode_bits64(i.constant()),
+        ) else {
+            return exit(ip);
+        };
+        let Some(effective) = address.checked_add(offset) else {
+            return exit(ip);
+        };
+        let value = vm.encode_bits64(effective);
+        note_allocation(vm);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     /// A generic Wasm memory load (`crate::wasm::memory::MemoryLoad`), as vectors and the
     /// accesses no direct op names take: in place when it reads in bounds; a trap, or an
     /// operand of another representation, takes the general path, which raises it.
@@ -5539,6 +5567,17 @@ lane_handler! {
     }
 }
 
+/// A SIMD operand of static type `ty`: a vector or an i32 read from its slot directly, any
+/// other scalar as `Vm::decode_wasm_value` reads it. `None` for another representation.
+#[inline(always)]
+fn lane_simd_operand<H: Host>(vm: &Vm<H>, value: Value, ty: crate::WasmType) -> Option<crate::WasmValue> {
+    match ty {
+        crate::WasmType::V128 => Some(crate::WasmValue::V128(u128::from_le_bytes(vm.heap.v128(value)?))),
+        crate::WasmType::I32 => Some(crate::WasmValue::I32(value.as_int()?)),
+        _ => vm.decode_wasm_value(value, ty).ok(),
+    }
+}
+
 lane_handler! {
     /// A Wasm SIMD operator (`crate::wasm::simd::SimdOperator`), which neither traps nor runs
     /// guest code: its operands decoded by their static types and its result encoded, a
@@ -5549,13 +5588,15 @@ lane_handler! {
         let Some((operator, lane)) = crate::wasm::simd::SimdOperator::from_selector(i.imm()) else {
             return exit(ip);
         };
-        let Ok(left) = vm.decode_wasm_value(r.get(i.b), operator.left_type()) else {
+        let Some(left) = lane_simd_operand(vm, r.get(i.b), operator.left_type()) else {
             return exit(ip);
         };
-        let right = match operator.right_type().map(|ty| vm.decode_wasm_value(r.get(i.c), ty)) {
+        let right = match operator.right_type() {
             None => None,
-            Some(Ok(right)) => Some(right),
-            Some(Err(_)) => return exit(ip),
+            Some(ty) => match lane_simd_operand(vm, r.get(i.c), ty) {
+                Some(right) => Some(right),
+                None => return exit(ip),
+            },
         };
         let value = vm.encode_wasm_value(operator.apply(left, right, lane));
         note_allocation(vm);
@@ -5572,12 +5613,10 @@ lane_handler! {
         let Some(indices) = vm.heap.v128(i.constant()) else {
             return exit(ip);
         };
-        let (Ok(crate::WasmValue::V128(left)), Ok(crate::WasmValue::V128(right))) = (
-            vm.decode_wasm_value(r.get(i.b), crate::WasmType::V128),
-            vm.decode_wasm_value(r.get(i.c), crate::WasmType::V128),
-        ) else {
+        let (Some(left), Some(right)) = (vm.heap.v128(r.get(i.b)), vm.heap.v128(r.get(i.c))) else {
             return exit(ip);
         };
+        let (left, right) = (u128::from_le_bytes(left), u128::from_le_bytes(right));
         let value = vm.encode_wasm_value(crate::WasmValue::V128(crate::wasm::simd::shuffle(left, right, indices)));
         note_allocation(vm);
         r.set(i.a, value);
@@ -12407,6 +12446,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::WasmGlobalGet => Some(lane_global_get::<H>),
         Op::WasmSimd => Some(lane_wasm_simd::<H>),
         Op::WasmMemoryLoad => Some(lane_wasm_memory_load::<H>),
+        Op::WasmMemoryAddress => Some(lane_wasm_memory_address::<H>),
         Op::WasmMemoryStore => Some(lane_wasm_memory_store::<H>),
         Op::WasmSimdShuffle => Some(lane_wasm_simd_shuffle::<H>),
         Op::WasmGlobalSet => Some(lane_global_set::<H>),

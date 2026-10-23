@@ -1,0 +1,34 @@
+== memory-first
+richards.js            rss med A 3140 B 3024 d -116  score A 1475 B 1464
+richards.js     --jit  rss med A 3176 B 3240 d +64  score A 1413 B 1353
+deltablue.js           rss med A 3132 B 3152 d +20  score A 1307 B 1262
+deltablue.js    --jit  rss med A 3396 B 3408 d +12  score A 1156 B 1186
+crypto.js              rss med A 3432 B 3484 d +52  score A 2358 B 2456
+crypto.js       --jit  rss med A 3676 B 3700 d +24  score A 4487 B 4438
+raytrace.js            rss med A 3220 B 3224 d +4  score A 2251 B 2314
+raytrace.js     --jit  rss med A 3292 B 3280 d -12  score A 2200 B 2212
+regexp.js              rss med A 6452 B 6552 d +100  score A 2420 B 2283
+regexp.js       --jit  rss med A 6476 B 6528 d +52  score A 2154 B 2179
+earley-boyer.js        rss med A 6744 B 6724 d -20  score A 3111 B 3235
+earley-boyer.js --jit  rss med A 6784 B 6788 d +4  score A 3395 B 3296
+splay.js               rss med A 31476 B 31456 d -20  score A 3633 B 3851
+splay.js        --jit  rss med A 31520 B 31492 d -28  score A 3795 B 3910
+navier-stokes.js       rss med A 4212 B 4316 d +104  score A 2729 B 2709
+navier-stokes.js--jit  rss med A 7436 B 7536 d +100  score A 18806 B 19763
+== throughput
+richards.js            rss med A 4676 B 4920 d +244  score A 1508 B 1550
+richards.js     --jit  rss med A 4388 B 4436 d +48  score A 1520 B 1440
+deltablue.js           rss med A 7112 B 7080 d -32  score A 1389 B 1321
+deltablue.js    --jit  rss med A 6512 B 6384 d -128  score A 1360 B 1238
+crypto.js              rss med A 8548 B 8816 d +268  score A 2489 B 2419
+crypto.js       --jit  rss med A 8164 B 8508 d +344  score A 5247 B 5055
+raytrace.js            rss med A 7112 B 7208 d +96  score A 2711 B 2601
+raytrace.js     --jit  rss med A 6396 B 6460 d +64  score A 2549 B 2478
+regexp.js              rss med A 12024 B 10948 d -1076  score A 2469 B 2861
+regexp.js       --jit  rss med A 11212 B 11348 d +136  score A 2408 B 2634
+earley-boyer.js        rss med A 10668 B 10956 d +288  score A 4272 B 4611
+earley-boyer.js --jit  rss med A 10820 B 10916 d +96  score A 4145 B 4531
+splay.js               rss med A 32908 B 32840 d -68  score A 3974 B 4021
+splay.js        --jit  rss med A 32780 B 32576 d -204  score A 3886 B 4028
+navier-stokes.js       rss med A 4804 B 4900 d +96  score A 2689 B 2589
+navier-stokes.js--jit  rss med A 7732 B 8204 d +472  score A 19030 B 19380

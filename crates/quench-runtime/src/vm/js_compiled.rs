@@ -561,7 +561,8 @@ pub(super) fn has_int32_bitwise_candidate(program: &ResidualProgram, function: &
             branch_seen = true;
             continue;
         }
-        let destination = usize::from(instruction.result_register());
+        // Read only by the arms below, whose ops each write a result register.
+        let destination = || usize::from(instruction.result_register());
         if op == Op::Binary
             && matches!(
                 instruction.binary_operator(),
@@ -597,7 +598,7 @@ pub(super) fn has_int32_bitwise_candidate(program: &ResidualProgram, function: &
             if !operands_are_i32 {
                 return false;
             }
-            if let Some(slot) = registers.get_mut(destination) {
+            if let Some(slot) = registers.get_mut(destination()) {
                 *slot = true;
             }
             continue;
@@ -609,12 +610,12 @@ pub(super) fn has_int32_bitwise_candidate(program: &ResidualProgram, function: &
                     program.constants.get(instruction.constant_index()),
                     Some(Constant::Number(value)) if is_i32_number(*value)
                 );
-                if let Some(slot) = registers.get_mut(destination) {
+                if let Some(slot) = registers.get_mut(destination()) {
                     *slot = is_i32;
                 }
             }
             Op::LoadCapture | Op::GetField => {
-                if let Some(slot) = registers.get_mut(destination) {
+                if let Some(slot) = registers.get_mut(destination()) {
                     *slot = true;
                 }
             }
@@ -623,12 +624,12 @@ pub(super) fn has_int32_bitwise_candidate(program: &ResidualProgram, function: &
                     .get(usize::from(instruction.register_b()))
                     .copied()
                     .unwrap_or(false);
-                if let Some(slot) = registers.get_mut(destination) {
+                if let Some(slot) = registers.get_mut(destination()) {
                     *slot = value;
                 }
             }
             Op::Unary | Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-                if let Some(slot) = registers.get_mut(destination) {
+                if let Some(slot) = registers.get_mut(destination()) {
                     *slot = false;
                 }
             }
