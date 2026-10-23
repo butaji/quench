@@ -42,7 +42,8 @@ const MAX_REGION_CAPTURES: usize = 16;
 /// The largest native body a region may produce.
 const MAX_CODE_BYTES: usize = 64 * 1024;
 
-/// What native code returns: the outcome in the high word, a bytecode PC in the low one.
+/// What native code writes to its result word: the outcome in the high word, a bytecode PC
+/// in the low one.
 const OUTCOME_SHIFT: u32 = u32::BITS;
 const PC_MASK: u64 = u32::MAX as u64;
 
@@ -59,6 +60,10 @@ pub(crate) enum LoopOutcome {
     /// As `Exit`, because a value the code held as an `i32` is none; the next compilation
     /// widens what the code names for the PC (`CompiledLoop::widening`).
     Widen(u32),
+    /// Termination was requested while the code ran: its poll faulted, so registers may
+    /// hold values of an unfinished iteration, which nothing reads before the request ends
+    /// the execution.
+    Terminated,
 }
 
 /// A value a compilation held as an `i32` that turned out not to be one; the next
@@ -113,7 +118,7 @@ impl Widening {
 }
 
 impl LoopOutcome {
-    fn decode(word: u64) -> Self {
+    pub(super) fn decode(word: u64) -> Self {
         let low = word & PC_MASK;
         match word >> OUTCOME_SHIFT {
             OUTCOME_RESUME => Self::Resume(low as u32),
@@ -162,8 +167,8 @@ impl LoopRegion {
     }
 }
 
-/// The entry record native code reads: the termination flag, then each capture's value,
-/// then each array's element pointer and length.
+/// The entry record native code reads: each capture's value, then each array's element
+/// pointer and length.
 pub(crate) struct LoopEntry {
     words: [u64; ENTRY_WORDS],
     length: usize,
@@ -172,18 +177,21 @@ pub(crate) struct LoopEntry {
 /// The longest array a region indexes: a negative `i32` index zero-extends past it, so one
 /// unsigned comparison bounds every `i32` index.
 const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
-const ENTRY_INTERRUPT: usize = 0;
-const ENTRY_CAPTURES: usize = 1;
+const ENTRY_CAPTURES: usize = 0;
 const WORD_BYTES: i32 = 8;
 /// An array's two entry words: its element pointer, then its length.
 const ARRAY_WORDS: usize = 2;
 const ENTRY_WORDS: usize = ENTRY_CAPTURES + MAX_REGION_CAPTURES + ARRAY_WORDS * MAX_REGION_ARRAYS;
 
 impl LoopEntry {
-    pub(crate) fn new(interrupt: &std::sync::atomic::AtomicBool) -> Self {
-        let mut words = [0; ENTRY_WORDS];
-        words[ENTRY_INTERRUPT] = std::ptr::from_ref(interrupt).addr() as u64;
-        Self { words, length: ENTRY_CAPTURES }
+    pub(crate) fn new() -> Self {
+        Self { words: [0; ENTRY_WORDS], length: ENTRY_CAPTURES }
+    }
+
+    /// The record's words, as native code reads them.
+    pub(super) fn words(&self) -> *const u64 {
+        debug_assert!(self.length <= ENTRY_WORDS);
+        self.words.as_ptr()
     }
 
     fn push(&mut self, word: u64) {
@@ -1171,41 +1179,42 @@ fn counted_loop(
     })
 }
 
-/// A compiled region: one W^X mapping, its entry, and what each `LoopOutcome::Widen` PC
-/// found was no `i32`.
+/// A compiled region: one W^X mapping, its native entry, and what each `LoopOutcome::Widen`
+/// PC found was no `i32`.
+///
+/// The entry has the compiled functions' ABI (`super::Entry`): the call context, the
+/// register file as the base, an unused length, the entry record as the arguments, and the
+/// result word, which receives the outcome; it returns a zero status, or the terminated one
+/// through the trampoline when its poll faults.
 pub(super) struct CompiledLoop {
-    _code: super::compiled::CodeMemory,
-    entry: unsafe extern "C" fn(*mut Value, *const u64) -> u64,
+    _code: super::CodeMemory,
+    pub(super) entry: super::Entry,
     widenings: std::collections::BTreeMap<u32, Widening>,
 }
 
 impl CompiledLoop {
-    /// Runs the region on `registers` with `entry`'s record.
-    ///
-    /// # Safety
-    /// `registers` is the running activation's register file, at least `Function::registers`
-    /// long; `entry` was built for this region from the current values of its arrays and
-    /// captures, which nothing changes while the call runs.
-    pub(super) unsafe fn run(&self, registers: *mut Value, entry: &LoopEntry) -> LoopOutcome {
-        debug_assert!(entry.length <= ENTRY_WORDS);
-        // SAFETY: as the caller promises; the code reads and writes only those.
-        LoopOutcome::decode(unsafe { (self.entry)(registers, entry.words.as_ptr()) })
-    }
-
     /// What a `LoopOutcome::Widen` at `pc` found was no `i32`.
     pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
         self.widenings.get(&pc).copied()
     }
 }
 
-/// Native code for `region` under `observation`, or `None` when Cranelift declines it.
-pub(super) fn compile(region: &LoopRegion, observation: &Observation<'_>) -> Option<CompiledLoop> {
+/// Native code for `region` under `observation`, or `None` when Cranelift declines it. Its
+/// backward jumps read `poll`, the VM's poll page, where every run enters through the
+/// trampoline (`super::poll_address`), and check the call context's interrupt flag
+/// otherwise.
+pub(super) fn compile(
+    region: &LoopRegion,
+    observation: &Observation<'_>,
+    poll: Option<i64>,
+) -> Option<CompiledLoop> {
     let isa = super::jit_backend::target_isa("speed", false)?;
     let pointer = isa.pointer_type();
     let mut signature = ir::Signature::new(isa.default_call_conv());
-    signature.params.push(AbiParam::new(pointer));
-    signature.params.push(AbiParam::new(pointer));
-    signature.returns.push(AbiParam::new(types::I64));
+    for parameter in [pointer, types::I64, types::I64, pointer, pointer] {
+        signature.params.push(AbiParam::new(parameter));
+    }
+    signature.returns.push(AbiParam::new(types::I32));
     let mut native = ir::Function::with_name_signature(
         UserFuncName::user(LOOP_NAMESPACE, region.header),
         signature,
@@ -1215,7 +1224,7 @@ pub(super) fn compile(region: &LoopRegion, observation: &Observation<'_>) -> Opt
     let counted = counted_loops(region, &webs, &representations, &captures);
     let mut context = FunctionBuilderContext::new();
     let builder = FunctionBuilder::new(&mut native, &mut context);
-    let widenings = Lowering::new(builder, region, observation, pointer, webs, representations, captures, counted)
+    let widenings = Lowering::new(builder, region, observation, pointer, webs, representations, captures, counted, poll)
         .lower(isa.frontend_config())?;
     let mut context = cranelift_codegen::Context::for_function(native);
     let compiled = context
@@ -1228,13 +1237,9 @@ pub(super) fn compile(region: &LoopRegion, observation: &Observation<'_>) -> Opt
     if code.is_empty() || code.len() > MAX_CODE_BYTES {
         return None;
     }
-    let memory = super::compiled::CodeMemory::new(code)?;
-    // SAFETY: the lowering emits `extern "C" fn(*mut Value, *const u64) -> u64`.
-    let entry = unsafe {
-        std::mem::transmute::<*mut u8, unsafe extern "C" fn(*mut Value, *const u64) -> u64>(
-            memory.pointer(),
-        )
-    };
+    let memory = super::CodeMemory::new(code)?;
+    // SAFETY: the lowering emits the `super::Entry` signature.
+    let entry = unsafe { std::mem::transmute::<*mut u8, super::Entry>(memory.pointer()) };
     Some(CompiledLoop { _code: memory, entry, widenings })
 }
 
@@ -1279,9 +1284,14 @@ struct Lowering<'a, 'b> {
     /// Per PC the code leaves at, the block that writes back the Number registers live
     /// there and returns its parameter, the outcome word.
     leaves: std::collections::BTreeMap<u32, ir::Block>,
+    context: ir::Value,
     registers: ir::Value,
     entry: ir::Value,
-    /// The host termination flag's address, loaded at entry.
+    /// The result word the outcome is written to.
+    result: ir::Value,
+    /// The VM's poll page, which backward jumps read (`compile`).
+    poll: Option<i64>,
+    /// Without a poll page, the host termination flag's address, loaded at entry.
     interrupt: Option<ir::Value>,
     /// Each array's element pointer and length, by register.
     arrays: std::collections::BTreeMap<Register, (ir::Value, ir::Value)>,
@@ -1346,11 +1356,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
         representations: Vec<Representation>,
         capture_representations: Vec<Representation>,
         counted: Vec<CountedLoop>,
+        poll: Option<i64>,
     ) -> Self {
         let start = builder.create_block();
         builder.append_block_params_for_function_params(start);
         builder.switch_to_block(start);
-        let (registers, entry) = (builder.block_params(start)[0], builder.block_params(start)[1]);
+        let &[context, registers, _, entry, result] = builder.block_params(start) else {
+            unreachable!("the entry signature has five parameters")
+        };
         let blocks = (region.header..=region.backedge).map(|_| builder.create_block()).collect();
         let straight = straight_pcs(region, &counted);
         let preheaders = counted.iter().map(|_| builder.create_block()).collect();
@@ -1392,8 +1405,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
             exact: std::collections::BTreeMap::new(),
             encodings: std::collections::HashMap::new(),
             straight,
+            context,
             registers,
             entry,
+            result,
+            poll,
             interrupt: None,
             arrays: std::collections::BTreeMap::new(),
             widenings: std::collections::BTreeMap::new(),
@@ -1593,6 +1609,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
         holds
     }
 
+    /// Writes the outcome `word` to the result word and returns the status of a run that
+    /// finished.
+    fn finish(&mut self, word: ir::Value) {
+        self.builder.ins().store(flags(), word, self.result, 0);
+        let status = self.builder.ins().iconst(types::I32, 0);
+        self.builder.ins().return_(&[status]);
+    }
+
     fn outcome(&mut self, outcome: u64, low: u64) -> ir::Value {
         self.builder
             .ins()
@@ -1619,7 +1643,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let block = self.cold_block();
         self.builder.switch_to_block(block);
         let word = self.outcome(OUTCOME_NOT_ENTERED, widening.map_or(0, Widening::code));
-        self.builder.ins().return_(&[word]);
+        self.finish(word);
         self.builder.switch_to_block(current);
         block
     }
@@ -1627,7 +1651,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// Unboxes every Number register and capture in its representation, entering only when
     /// all hold such values.
     fn enter(&mut self) -> Option<()> {
-        self.interrupt = Some(self.word(ENTRY_INTERRUPT));
+        if self.poll.is_none() {
+            self.interrupt =
+                Some(self.builder.ins().load(self.pointer, flags(), self.context, super::CONTEXT_INTERRUPT));
+        }
         for (index, array) in self.region.arrays.iter().enumerate() {
             let base = ENTRY_CAPTURES + self.region.captures.len() + ARRAY_WORDS * index;
             let elements = self.word(base);
@@ -1816,7 +1843,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 })
                 .collect();
             self.store_registers(&registers);
-            self.builder.ins().return_(&[word]);
+            self.finish(word);
         }
     }
 
@@ -1980,12 +2007,20 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     /// Continues at `target`: its block within the region, else the lane resumes there. A
-    /// backward jump polls termination first.
+    /// backward jump polls termination first: a read of the poll page, which faults once
+    /// termination is requested (`LoopOutcome::Terminated`), else a check of the flag, which
+    /// exits at `pc`.
     fn jump(&mut self, pc: u32, target: u32) -> Option<()> {
         if target <= pc {
-            let flag = self.interrupt?;
-            let requested = self.builder.ins().atomic_load(types::I8, flags(), flag);
-            self.guard(pc, requested);
+            if let Some(poll) = self.poll {
+                // Atomic, so it is neither merged nor dropped.
+                let page = self.builder.ins().iconst(types::I64, poll);
+                self.builder.ins().atomic_load(types::I8, flags(), page);
+            } else {
+                let flag = self.interrupt?;
+                let requested = self.builder.ins().atomic_load(types::I8, flags(), flag);
+                self.guard(pc, requested);
+            }
         }
         match self.target_block(Some(pc), target) {
             Some(block) => {
