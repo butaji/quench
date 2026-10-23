@@ -2499,6 +2499,11 @@ pub(super) enum CompiledJsResult {
     StringTransform(super::js_compiled::JsJitStringTransform, bool),
 }
 
+enum CompiledJsCallResult {
+    Value(Value),
+    ReturnConstant(u32),
+}
+
 #[derive(Clone, Copy)]
 enum JsNativeCallInput<'a> {
     Arguments {
@@ -7781,54 +7786,68 @@ impl<H: Host> Vm<H> {
         let poll_page = self.compiled_poll_page();
         let (programs, interrupt) = (&mut self.programs, self.execution_interrupt.atomic_flag());
         let function = program.function_get(function_id as usize)?;
-        let compiled = match programs.js_tier(program_id, function_id)? {
-            super::program_store::JsTierState::Compiled(compiled) => compiled,
-            _ => return None,
+        let diagnostics = programs.js_jit_diagnostics_enabled();
+        let native_result = {
+            let compiled = match programs.js_tier_ref(program_id, function_id)? {
+                super::program_store::JsTierState::Compiled(compiled) => compiled.as_ref(),
+                _ => return None,
+            };
+            // Direct calls have no callee frame from which to reload lexical
+            // captures. Those artifacts must use the ordinary frame-entry path,
+            // where the capture guards and ABI values are assembled together.
+            if compiled.field_argument().is_some()
+                || !compiled.numeric_field_inputs().is_empty()
+                || compiled.is_capture_number()
+                || !compiled.capture_arguments().is_empty()
+                || compiled.is_string_transform()
+                || compiled.is_string_hash_loop()
+                || compiled.is_field_reject()
+            {
+                return None;
+            }
+            let params = usize::from(function.params);
+            if compiled.params() != params || arguments.len() < params {
+                return None;
+            }
+            let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
+            for argument in arguments.iter().take(params) {
+                numeric_arguments.push(argument.as_number()?);
+            }
+            if compiled.is_int32_identity()
+                && !numeric_arguments
+                    .first()
+                    .is_some_and(|value| super::js_compiled::is_i32_number(*value))
+            {
+                return None;
+            }
+            compiled
+                .call(&numeric_arguments, interrupt, poll_page)
+                .and_then(|result| match result {
+                    CompiledJsResult::Number(value) => {
+                        Some(CompiledJsCallResult::Value(Value::number(value)))
+                    }
+                    CompiledJsResult::Int32Identity { value, .. } => {
+                        Some(CompiledJsCallResult::Value(Value::number(value)))
+                    }
+                    CompiledJsResult::Boolean(value) => Some(CompiledJsCallResult::Value(
+                        if value { Value::TRUE } else { Value::FALSE },
+                    )),
+                    CompiledJsResult::StringReturnPc(return_pc) => compiled
+                        .string_constant_for_return(return_pc)
+                        .map(CompiledJsCallResult::ReturnConstant),
+                    CompiledJsResult::StringTransform(_, _)
+                    | CompiledJsResult::FieldReject { .. } => None,
+                })
         };
-        // Direct calls have no callee frame from which to reload lexical
-        // captures. Those artifacts must use the ordinary frame-entry path,
-        // where the capture guards and ABI values are assembled together.
-        if compiled.field_argument().is_some()
-            || !compiled.numeric_field_inputs().is_empty()
-            || compiled.is_capture_number()
-            || !compiled.capture_arguments().is_empty()
-            || compiled.is_string_transform()
-            || compiled.is_string_hash_loop()
-            || compiled.is_field_reject()
-        {
-            return None;
-        }
-        let params = usize::from(function.params);
-        if compiled.params() != params || arguments.len() < params {
-            return None;
-        }
-        let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
-        for argument in arguments.iter().take(params) {
-            numeric_arguments.push(argument.as_number()?);
-        }
-        if compiled.is_int32_identity()
-            && !numeric_arguments
-                .first()
-                .is_some_and(|value| super::js_compiled::is_i32_number(*value))
-        {
-            return None;
-        }
-        if programs.js_jit_diagnostics_enabled() {
+        if diagnostics {
             programs.record_js_jit_entry(program_id, function_id, true, function.params);
             programs.record_js_jit_native_entry(program_id, function_id);
         }
-        match compiled.call(&numeric_arguments, interrupt, poll_page)? {
-            CompiledJsResult::Number(value) => Some(Value::number(value)),
-            CompiledJsResult::Int32Identity { value, .. } => Some(Value::number(value)),
-            CompiledJsResult::Boolean(value) => {
-                Some(if value { Value::TRUE } else { Value::FALSE })
-            }
-            CompiledJsResult::StringReturnPc(return_pc) => {
-                let constant = compiled.string_constant_for_return(return_pc)?;
+        match native_result? {
+            CompiledJsCallResult::Value(value) => Some(value),
+            CompiledJsCallResult::ReturnConstant(constant) => {
                 programs.constant(program_id, constant as usize)
             }
-            CompiledJsResult::StringTransform(_, _) => return None,
-            CompiledJsResult::FieldReject { .. } => return None,
         }
     }
 
