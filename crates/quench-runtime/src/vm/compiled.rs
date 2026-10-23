@@ -100,20 +100,7 @@ pub(super) fn emit_number_relation(
     )
 }
 
-/// Emit one of the shared IEEE Number arithmetic operations.
-pub(super) fn emit_number_arithmetic(
-    builder: &mut FunctionBuilder<'_>,
-    operator: u32,
-    left: ir::Value,
-    right: ir::Value,
-) -> Option<ir::Value> {
-    let operation = super::operations::NumberArithmetic::from_operator(operator)?;
-    Some(emit_number_arithmetic_operation(
-        builder, operation, left, right,
-    ))
-}
-
-fn emit_number_arithmetic_operation(
+pub(super) fn emit_number_arithmetic_operation(
     builder: &mut FunctionBuilder<'_>,
     operation: super::operations::NumberArithmetic,
     left: ir::Value,
@@ -143,23 +130,7 @@ fn emit_number_arithmetic_operation(
     operation.apply(&mut Emit { builder }, left, right)
 }
 
-/// Emit one JavaScript int32 bitwise operation from already-converted ToInt32
-/// operands, using the same operator selection as `operations`' interpreter
-/// stage. The unsigned shift keeps its bits in `i32` until the final unsigned
-/// conversion back to Number.
-pub(super) fn emit_number_bitwise_i32(
-    builder: &mut FunctionBuilder<'_>,
-    operator: u32,
-    left: ir::Value,
-    right: ir::Value,
-) -> Option<ir::Value> {
-    let operation = crate::vm::operations::NumberBitwise::from_operator(operator)?;
-    Some(emit_number_bitwise_operation(
-        builder, operation, left, right,
-    ))
-}
-
-fn emit_number_bitwise_operation(
+pub(super) fn emit_number_bitwise_operation(
     builder: &mut FunctionBuilder<'_>,
     operation: crate::vm::operations::NumberBitwise,
     left: ir::Value,

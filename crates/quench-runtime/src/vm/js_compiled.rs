@@ -3033,57 +3033,28 @@ fn compile_numeric_loop(
                     numeric_flow_operand(program, &state, registers, instruction.operand_b())?;
                 let right =
                     numeric_flow_operand(program, &state, registers, instruction.operand_c())?;
-                let kind = match (instruction.op(), instruction.binary_operator()) {
-                    (Op::Binary, operator)
-                        if matches!(
-                            operator,
-                            value if value == BinaryOperator::Addition as u32
-                                || value == BinaryOperator::Subtraction as u32
-                                || value == BinaryOperator::Multiplication as u32
-                                || value == BinaryOperator::Division as u32
-                        ) && left == NumericFlowKind::Number
-                            && right == NumericFlowKind::Number =>
-                    {
-                        NumericFlowKind::Number
-                    }
-                    (Op::Binary, operator)
-                        if left == NumericFlowKind::Number
-                            && right == NumericFlowKind::Number
-                            && matches!(
-                                operator,
-                                value if value == BinaryOperator::BitwiseOR as u32
-                                    || value == BinaryOperator::BitwiseXOR as u32
-                                    || value == BinaryOperator::BitwiseAnd as u32
-                                    || value == BinaryOperator::ShiftLeft as u32
-                                    || value == BinaryOperator::ShiftRight as u32
-                                    || value == BinaryOperator::ShiftRightZeroFill as u32
-                            ) =>
-                    {
-                        NumericFlowKind::Number
-                    }
-                    (Op::NumericAdd, operator)
-                        if operator == BinaryOperator::Addition as u32
-                            && left == NumericFlowKind::Number
-                            && right == NumericFlowKind::Number =>
-                    {
-                        NumericFlowKind::Number
-                    }
-                    (Op::NumericMultiply, operator)
-                        if operator == BinaryOperator::Multiplication as u32
-                            && left == NumericFlowKind::Number
-                            && right == NumericFlowKind::Number =>
-                    {
-                        NumericFlowKind::Number
-                    }
-                    (Op::Binary, operator)
-                        if left == NumericFlowKind::Number
-                            && right == NumericFlowKind::Number
-                            && super::operations::NumberRelation::from_operator(operator)
-                                .is_some() =>
-                    {
-                        NumericFlowKind::Boolean
-                    }
-                    _ => return None,
+                let number_inputs = left == NumericFlowKind::Number
+                    && right == NumericFlowKind::Number;
+                let operator = instruction.binary_operator();
+                let arithmetic = super::operations::NumberArithmetic::from_js_instruction(
+                    instruction.op(),
+                    operator,
+                );
+                let bitwise = super::operations::NumberBitwise::from_js_instruction(
+                    instruction.op(),
+                    operator,
+                );
+                let relation = (instruction.op() == Op::Binary)
+                    .then(|| super::operations::NumberRelation::from_operator(operator))
+                    .flatten();
+                let kind = if number_inputs && arithmetic.is_some() {
+                    NumericFlowKind::Number
+                } else if number_inputs && bitwise.is_some() {
+                    NumericFlowKind::Number
+                } else if number_inputs && relation.is_some() {
+                    NumericFlowKind::Boolean
+                } else {
+                    return None;
                 };
                 let destination = match instruction.numeric_local_target() {
                     Some(local) => registers.checked_add(usize::from(local))?,
@@ -3321,52 +3292,36 @@ fn compile_numeric_loop(
                 )?;
                 let operator = instruction.binary_operator();
                 let value = match (instruction.op(), operator) {
-                    (Op::Binary, value)
-                        if super::operations::NumberArithmetic::from_operator(value).is_some() =>
+                    (instruction, operator)
+                        if let Some(operation) =
+                            super::operations::NumberArithmetic::from_js_instruction(
+                                instruction,
+                                operator,
+                            ) =>
                     {
-                        let result = super::compiled::emit_number_arithmetic(
+                        let result = super::compiled::emit_number_arithmetic_operation(
                             &mut builder,
-                            value,
+                            operation,
                             left,
                             right,
-                        )?;
+                        );
                         Some((NumericFlowKind::Number, result))
                     }
-                    (Op::Binary, value)
-                        if super::operations::NumberBitwise::from_operator(value).is_some() =>
+                    (instruction, operator)
+                        if let Some(operation) =
+                            super::operations::NumberBitwise::from_js_instruction(
+                                instruction,
+                                operator,
+                            ) =>
                     {
                         let left = numeric_to_i32(&mut builder, left);
                         let right = numeric_to_i32(&mut builder, right);
-                        let result = super::compiled::emit_number_bitwise_i32(
+                        let result = super::compiled::emit_number_bitwise_operation(
                             &mut builder,
-                            value,
+                            operation,
                             left,
                             right,
-                        )?;
-                        Some((NumericFlowKind::Number, result))
-                    }
-                    (Op::NumericAdd, value)
-                        if super::operations::NumberArithmetic::from_operator(value)
-                            == Some(super::operations::NumberArithmetic::Add) =>
-                    {
-                        let result = super::compiled::emit_number_arithmetic(
-                            &mut builder,
-                            value,
-                            left,
-                            right,
-                        )?;
-                        Some((NumericFlowKind::Number, result))
-                    }
-                    (Op::NumericMultiply, value)
-                        if super::operations::NumberArithmetic::from_operator(value)
-                            == Some(super::operations::NumberArithmetic::Multiply) =>
-                    {
-                        let result = super::compiled::emit_number_arithmetic(
-                            &mut builder,
-                            value,
-                            left,
-                            right,
-                        )?;
+                        );
                         Some((NumericFlowKind::Number, result))
                     }
                     (Op::Binary, value)
