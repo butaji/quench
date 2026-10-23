@@ -1119,6 +1119,11 @@ impl<H: Host> Vm<H> {
         self.root(value)
     }
 
+    pub(crate) fn decoded_string_rooted(&mut self, text: &str) -> RootId {
+        let value = self.heap.alloc_string(JsString::from_str(text));
+        self.root(value)
+    }
+
     pub(crate) fn bigint_rooted(&mut self, integer: i128) -> RootId {
         let value = self.heap.alloc(Cell::bigint(integer.into()));
         self.root(value)
