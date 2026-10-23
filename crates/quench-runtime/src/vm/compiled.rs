@@ -100,20 +100,7 @@ pub(super) fn emit_number_relation(
     )
 }
 
-/// Emit one of the shared IEEE Number arithmetic operations.
-pub(super) fn emit_number_arithmetic(
-    builder: &mut FunctionBuilder<'_>,
-    operator: u32,
-    left: ir::Value,
-    right: ir::Value,
-) -> Option<ir::Value> {
-    let operation = super::operations::NumberArithmetic::from_operator(operator)?;
-    Some(emit_number_arithmetic_operation(
-        builder, operation, left, right,
-    ))
-}
-
-fn emit_number_arithmetic_operation(
+pub(super) fn emit_number_arithmetic_operation(
     builder: &mut FunctionBuilder<'_>,
     operation: super::operations::NumberArithmetic,
     left: ir::Value,
@@ -143,16 +130,48 @@ fn emit_number_arithmetic_operation(
     operation.apply(&mut Emit { builder }, left, right)
 }
 
-/// Emit one JavaScript int32 bitwise operation from already-converted ToInt32
-/// operands, using the same operator selection as `operations`' interpreter
-/// stage. The unsigned shift keeps its bits in `i32` until the final unsigned
-/// conversion back to Number.
-pub(super) fn emit_number_bitwise_i32(
+pub(super) fn emit_number_unary_operation(
     builder: &mut FunctionBuilder<'_>,
-    operator: u32,
+    operation: super::operations::NumberUnary,
+    value: ir::Value,
+) -> ir::Value {
+    struct Emit<'a, 'f> {
+        builder: &'a mut FunctionBuilder<'f>,
+    }
+
+    impl crate::vm::operations::NumberUnaryStage<ir::Value> for Emit<'_, '_> {
+        type Output = ir::Value;
+
+        fn plus(&mut self, value: ir::Value) -> Self::Output {
+            value
+        }
+
+        fn negate(&mut self, value: ir::Value) -> Self::Output {
+            self.builder.ins().fneg(value)
+        }
+    }
+
+    operation.apply(&mut Emit { builder }, value)
+}
+
+fn emit_f64_entry_return(
+    builder: &mut FunctionBuilder<'_>,
+    result_pointer: ir::Value,
+    value: ir::Value,
+) {
+    builder
+        .ins()
+        .store(MemFlagsData::trusted(), value, result_pointer, 0);
+    let status = builder.ins().iconst(types::I32, 0);
+    builder.ins().return_(&[status]);
+}
+
+pub(super) fn emit_number_bitwise_operation(
+    builder: &mut FunctionBuilder<'_>,
+    operation: crate::vm::operations::NumberBitwise,
     left: ir::Value,
     right: ir::Value,
-) -> Option<ir::Value> {
+) -> ir::Value {
     struct Emit<'a, 'f> {
         builder: &'a mut FunctionBuilder<'f>,
     }
@@ -183,13 +202,12 @@ pub(super) fn emit_number_bitwise_i32(
         }
     }
 
-    let operation = crate::vm::operations::NumberBitwise::from_operator(operator)?;
     let bits = operation.apply(&mut Emit { builder }, left, right);
     if operation == crate::vm::operations::NumberBitwise::ShiftRightUnsigned {
         let unsigned = builder.ins().uextend(types::I64, bits);
-        Some(builder.ins().fcvt_from_uint(types::F64, unsigned))
+        builder.ins().fcvt_from_uint(types::F64, unsigned)
     } else {
-        Some(builder.ins().fcvt_from_sint(types::F64, bits))
+        builder.ins().fcvt_from_sint(types::F64, bits)
     }
 }
 
@@ -208,9 +226,7 @@ pub(super) fn compile_js_numeric_region(
     let params = usize::from(function.params);
     let isa = super::jit_backend::target_isa("speed", true)?;
 
-    let mut signature = ir::Signature::new(isa.default_call_conv());
-    signature.params.push(AbiParam::new(isa.pointer_type()));
-    signature.returns.push(AbiParam::new(types::F64));
+    let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
     let name = UserFuncName::user(0x5155_454e, function_id);
     let mut native = ir::Function::with_name_signature(name, signature);
     let mut builder_context = FunctionBuilderContext::new();
@@ -220,8 +236,11 @@ pub(super) fn compile_js_numeric_region(
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     builder.seal_block(entry);
-    let arguments = builder.block_params(entry)[0];
-    let mut body = Body::new(builder, arguments, None);
+    let parameters = builder.block_params(entry).to_vec();
+    let context = parameters[0];
+    let arguments = parameters[3];
+    let result_pointer = parameters[4];
+    let mut body = Body::new(builder, context, None);
     let mut registers = vec![false; usize::from(function.registers)];
     let mut locals = vec![None; usize::from(function.locals)];
 
@@ -380,6 +399,30 @@ pub(super) fn compile_js_numeric_region(
                     ))
                 }
             }
+            JsDenotation::NumericUnary => {
+                if instruction.numeric_local_target().is_some()
+                    || (instruction.result_flags() != 0
+                        && instruction.result_flags() != RETURN_REGISTER)
+                {
+                    return None;
+                }
+                let operation = super::operations::NumberUnary::from_js_instruction(
+                    instruction.op(),
+                    instruction.unary_operator(),
+                )?;
+                let source = usize::from(instruction.register_b());
+                if !*registers.get(source)? {
+                    return None;
+                }
+                let value = body.read(source as u16, crate::WasmType::F64);
+                let value = emit_number_unary_operation(&mut body.builder, operation, value);
+                if instruction.returns_from_frame() {
+                    emit_f64_entry_return(&mut body.builder, result_pointer, value);
+                    returned = true;
+                    break;
+                }
+                Some(value)
+            }
             JsDenotation::NumericBinary => {
                 if instruction.numeric_local_target().is_some()
                     || (instruction.result_flags() != 0
@@ -422,20 +465,24 @@ pub(super) fn compile_js_numeric_region(
                 );
                 let value = if let Some(operation) = arithmetic {
                     emit_number_arithmetic_operation(&mut body.builder, operation, left, right)
-                } else if instruction.op() == Op::Binary
-                    && int32_bitwise
-                    && super::operations::NumberBitwise::from_operator(op).is_some_and(
-                        super::operations::NumberBitwise::in_signed_int32_domain,
+                } else if let Some(operation) =
+                    super::operations::NumberBitwise::from_js_instruction(
+                        instruction.op(),
+                        op,
                     )
+                    .filter(|operation| {
+                        int32_bitwise
+                            && operation.in_signed_int32_domain()
+                    })
                 {
                     let left = body.builder.ins().fcvt_to_sint(types::I32, left);
                     let right = body.builder.ins().fcvt_to_sint(types::I32, right);
-                    emit_number_bitwise_i32(&mut body.builder, op, left, right)?
+                    emit_number_bitwise_operation(&mut body.builder, operation, left, right)
                 } else {
                     return None;
                 };
                 if instruction.returns_from_frame() {
-                    body.builder.ins().return_(&[value]);
+                    emit_f64_entry_return(&mut body.builder, result_pointer, value);
                     returned = true;
                     break;
                 }
@@ -450,7 +497,7 @@ pub(super) fn compile_js_numeric_region(
                     return None;
                 }
                 let value = body.read(register, crate::WasmType::F64);
-                body.builder.ins().return_(&[value]);
+                emit_f64_entry_return(&mut body.builder, result_pointer, value);
                 returned = true;
                 None
             }
@@ -468,25 +515,17 @@ pub(super) fn compile_js_numeric_region(
 
     let Body { builder, .. } = body;
     builder.finalize(isa.frontend_config());
-    let mut context = cranelift_codegen::Context::for_function(native);
-    let compiled = context
-        .compile(
-            &*isa,
-            &mut cranelift_codegen::control::ControlPlane::default(),
-        )
-        .ok()?;
-    if !compiled.buffer.relocs().is_empty() {
-        return None;
-    }
-    let code = compiled.code_buffer().to_vec();
-    if code.is_empty() || code.len() > super::js_compiled::MAX_CODE_BYTES {
-        return None;
-    }
+    let code = compile_native_function(
+        native,
+        &*isa,
+        super::js_compiled::MAX_CODE_BYTES,
+        |code| Some(code.to_vec()),
+    )?;
     Some(super::js_compiled::JsJitArtifact {
         code,
         params,
         requires_signed_int32_arguments: int32_bitwise,
-        result: super::js_compiled::JsJitResultKind::Number,
+        result: super::js_compiled::JsJitResultKind::SharedNumberEntry,
         field_argument,
         numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.to_vec()),
         capture_arguments: captures.to_vec(),
@@ -2043,6 +2082,20 @@ unsafe extern "C" fn import_callout<H: Host>(
 /// arguments, result) -> status.
 type Entry = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64, *mut u64) -> u32;
 
+/// The shared native-entry ABI used by compiled Wasm functions and JS OSR regions:
+/// (context, memory base, memory length, arguments or region inputs, result word) -> status.
+fn native_entry_signature(
+    pointer: ir::Type,
+    call_conv: cranelift_codegen::isa::CallConv,
+) -> Signature {
+    let mut signature = Signature::new(call_conv);
+    for parameter in [pointer, types::I64, types::I64, pointer, pointer] {
+        signature.params.push(AbiParam::new(parameter));
+    }
+    signature.returns.push(AbiParam::new(types::I32));
+    signature
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum NativeEntryMode {
     /// Use the signal-resuming entry, required by guarded memory and poll-page faults.
@@ -2811,7 +2864,11 @@ impl Drop for CodeMemory {
 
 /// A native OSR region published by the shared compiler. Its lowerer is private to this
 /// module; lanes only ask the region to run and inspect its exact-PC widening result.
-pub(super) struct CompiledOsrRegion(osr_loop::CompiledLoop);
+pub(super) struct CompiledOsrRegion {
+    _code: CodeMemory,
+    entry: Entry,
+    widenings: std::collections::BTreeMap<u32, Widening>,
+}
 
 impl CompiledOsrRegion {
     /// Runs the region on `registers` with `entry`'s record, through the native entry every
@@ -2840,7 +2897,7 @@ impl CompiledOsrRegion {
                 entry.words(),
                 &mut word,
                 NativeEntryMode::Resumable,
-                self.0.entry,
+                self.entry,
             )
         };
         if i64::from(status) == TERMINATED_STATUS {
@@ -2851,7 +2908,7 @@ impl CompiledOsrRegion {
     }
 
     pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
-        self.0.widening(pc)
+        self.widenings.get(&pc).copied()
     }
 }
 
@@ -2873,7 +2930,58 @@ pub(super) fn compile_osr_region(
     observation: &Observation<'_>,
     interrupt: &crate::execution_interrupt::ExecutionInterrupt,
 ) -> Option<CompiledOsrRegion> {
-    osr_loop::compile(region, observation, poll_address(interrupt)).map(CompiledOsrRegion)
+    let isa = super::jit_backend::target_isa("speed", false)?;
+    let (function, widenings) = osr_loop::lower(
+        region,
+        observation,
+        &*isa,
+        poll_address(interrupt),
+    )?;
+    let (_code, entry) = compile_and_publish_entry(function, &*isa, osr_loop::MAX_CODE_BYTES)?;
+    Some(CompiledOsrRegion {
+        _code,
+        entry,
+        widenings,
+    })
+}
+
+/// Compile and publish a fully lowered native entry that has no relocations.
+///
+/// JS scalar regions and OSR regions both use this entry contract. Wasm functions
+/// with internal calls have a separate linking phase before publication.
+fn compile_and_publish_entry(
+    function: ir::Function,
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    max_code_bytes: usize,
+) -> Option<(CodeMemory, Entry)> {
+    compile_native_function(function, isa, max_code_bytes, |code| {
+        let memory = CodeMemory::new(code)?;
+        // SAFETY: callers lower the function with `native_entry_signature`.
+        let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
+        Some((memory, entry))
+    })
+}
+
+/// Compile a relocation-free native function under the shared code-size policy, then
+/// consume its machine-code view through the frontend's artifact representation.
+fn compile_native_function<T>(
+    function: ir::Function,
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    max_code_bytes: usize,
+    publish: impl FnOnce(&[u8]) -> Option<T>,
+) -> Option<T> {
+    let mut context = cranelift_codegen::Context::for_function(function);
+    let compiled = context
+        .compile(isa, &mut cranelift_codegen::control::ControlPlane::default())
+        .ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    let code = compiled.code_buffer();
+    if code.is_empty() || code.len() > max_code_bytes {
+        return None;
+    }
+    publish(code)
 }
 
 /// A guarded JavaScript numeric function compiled from a narrow residual
@@ -2895,7 +3003,7 @@ pub(super) struct CompiledJsFunction {
 
 #[derive(Clone, Copy)]
 enum CompiledJsEntry {
-    Number(unsafe extern "C" fn(*const f64) -> f64),
+    SharedNumber(Entry),
     Int32Identity {
         entry: unsafe extern "C" fn(*const f64) -> f64,
         return_pc: u32,
@@ -2999,14 +3107,10 @@ impl CompiledJsFunction {
         let numeric_field_inputs = artifact.numeric_field_inputs;
         let capture_arguments = artifact.capture_arguments;
         let (entry, return_constants, capture_argument) = match artifact.result {
-            super::js_compiled::JsJitResultKind::Number => {
-                // SAFETY: the numeric JS compiler emits `fn(*const f64) -> f64`.
-                let entry = unsafe {
-                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> f64>(
-                        code.pointer,
-                    )
-                };
-                (CompiledJsEntry::Number(entry), Vec::new(), None)
+            super::js_compiled::JsJitResultKind::SharedNumberEntry => {
+                // SAFETY: the bytecode numeric-region compiler uses `native_entry_signature`.
+                let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer) };
+                (CompiledJsEntry::SharedNumber(entry), Vec::new(), None)
             }
             super::js_compiled::JsJitResultKind::Int32Identity(return_pc) => {
                 // SAFETY: the guarded integer identity compiler emits the Number ABI.
@@ -3172,7 +3276,7 @@ impl CompiledJsFunction {
     }
 
     fn uses_numeric_field_argument(&self) -> bool {
-        self.field_argument.is_some() && matches!(self.entry, CompiledJsEntry::Number(_))
+        self.field_argument.is_some() && matches!(self.entry, CompiledJsEntry::SharedNumber(_))
     }
 
     fn capture_argument(&self) -> Option<super::js_compiled::JsJitCaptureArgument> {
@@ -3189,6 +3293,20 @@ impl CompiledJsFunction {
         interrupt: &std::sync::atomic::AtomicBool,
         poll_page: Option<(usize, usize)>,
     ) -> Option<CompiledJsResult> {
+        if let CompiledJsEntry::SharedNumber(entry) = self.entry {
+            let (status, result) = run_native_entry(
+                entry,
+                arguments,
+                interrupt,
+                poll_page,
+                self.native_entry_mode(),
+            );
+            (status == 0).then_some(())?;
+            #[cfg(test)]
+            self.native_entries
+                .set(self.native_entries.get().saturating_add(1));
+            return Some(CompiledJsResult::Number(f64::from_bits(result)));
+        }
         self.call_through_shared_entry(JsNativeCallInput::Arguments {
             values: arguments,
             interrupt,
@@ -3212,7 +3330,7 @@ impl CompiledJsFunction {
             CompiledJsEntry::NumberInterruptible(_) | CompiledJsEntry::StringHashLoop(_) => {
                 NativeEntryMode::Resumable
             }
-            CompiledJsEntry::Number(_)
+            CompiledJsEntry::SharedNumber(_)
             | CompiledJsEntry::Int32Identity { .. }
             | CompiledJsEntry::CaptureNumber(_)
             | CompiledJsEntry::StringTransform { .. }
@@ -3284,11 +3402,6 @@ impl CompiledJsFunction {
         poll_page: Option<(usize, usize)>,
     ) -> Option<CompiledJsResult> {
         match (self.entry, input) {
-            (CompiledJsEntry::Number(entry), JsNativeCallInput::Arguments { values, .. }) => {
-                // SAFETY: the artifact result kind selects this ABI and `values`
-                // contains the formal count recorded at compilation.
-                Some(CompiledJsResult::Number(unsafe { entry(values.as_ptr()) }))
-            }
             (
                 CompiledJsEntry::Int32Identity { entry, return_pc },
                 JsNativeCallInput::Arguments { values, .. },
@@ -3421,6 +3534,11 @@ impl CompiledJsFunction {
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn native_entries(&self) -> u64 {
         self.native_entries.get()
+    }
+
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn uses_shared_entry(&self) -> bool {
+        matches!(self.entry, CompiledJsEntry::SharedNumber(_))
     }
 
     pub(super) fn mapped_bytes(&self) -> usize {
@@ -6977,11 +7095,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         memory: MemoryArguments,
     ) -> Option<Vec<u8>> {
         let call_conv = isa.default_call_conv();
-        let mut signature = Signature::new(call_conv);
-        for _ in 0..5 {
-            signature.params.push(AbiParam::new(types::I64));
-        }
-        signature.returns.push(AbiParam::new(types::I32));
+        let signature = native_entry_signature(isa.pointer_type(), call_conv);
         let mut func = ir::Function::with_name_signature(
             UserFuncName::user(ENTRY_NAMESPACE, index as u32),
             signature,
@@ -7000,6 +7114,11 @@ impl<'a, H: Host> Analysis<'a, H> {
             parameters[3],
             parameters[4],
         );
+        let context = if builder.func.dfg.value_type(context) == types::I64 {
+            context
+        } else {
+            builder.ins().uextend(types::I64, context)
+        };
         let mut call_args = vec![context];
         call_args.extend(memory.select(base, length));
         for (offset, ty) in plan.params.iter().enumerate() {
@@ -7324,6 +7443,37 @@ fn run_native_adapter(
             0,
             0,
             std::ptr::null(),
+            &mut result,
+            mode,
+            entry,
+        )
+    };
+    (status, result)
+}
+
+/// Runs a JS scalar artifact whose machine code already implements the common `Entry` ABI.
+/// Its Number arguments are raw f64 words and its result is written to the shared result word.
+fn run_native_entry(
+    entry: Entry,
+    arguments: &[f64],
+    interrupt: &std::sync::atomic::AtomicBool,
+    poll_page: Option<(usize, usize)>,
+    mode: NativeEntryMode,
+) -> (u32, u64) {
+    let interrupt = poll_page.map_or_else(
+        || std::ptr::from_ref(interrupt),
+        |(start, _)| start as *const std::sync::atomic::AtomicBool,
+    );
+    let mut context = CallContext::native_adapter(std::ptr::null_mut(), interrupt, poll_page);
+    let mut result = 0u64;
+    // SAFETY: the scalar region is guarded before entry, reads only `arguments`, writes one
+    // result word, and its common ABI does not inspect the adapter payload.
+    let status = unsafe {
+        enter_native(
+            &mut context,
+            0,
+            0,
+            arguments.as_ptr().cast::<u64>(),
             &mut result,
             mode,
             entry,

@@ -123,3 +123,72 @@ only a few MiB; both Bun numbers are below the reliable timing and RSS windows.
 This confirms the response stream implementation is still a major cost apart
 from Next's wrapper, but it does not produce a valid package win. Reports:
 `next-response-json-no-jit-5.json` and `next-response-json-jit-5.json`.
+
+## Next response fast-path experiment
+
+Added `next-response-components.cjs` to split JSON serialization from string,
+byte-backed, and JSON `Response` construction. A narrow Undici source override
+in Quench's build step specializes the private byte array created by
+`Response.json()` and the common status-only initialization case. It preserves
+generic construction for custom headers/status text and checks the final
+response body byte-for-byte. The direct-state allocation variant was rejected:
+its no-JIT change did not repeat in JIT.
+
+The final five-run reports measured the response constructor at 13,405 / 107.7
+MiB no-JIT and 13,012 / 87.4 MiB JIT for Quench; Node measured 53,050 / 145.7
+and 96,154 / 161.7. Bun's measured times were below 50 ms, so its throughput
+and RSS are timer/sampling limited. Next route generation measured Quench at
+6,098 / 69.1 MiB no-JIT and 5,974 / 48.6 MiB JIT, versus Node at 27,027 / 78.9
+and 66,667 / 94.4. Bun's no-JIT generation sample also ran under 50 ms; JIT
+measured 263,158 / 5.1 MiB but RSS was undersampled. These are diagnostics, not
+a package win. The latest paired same-source control was within run noise, so
+the small response fast-path gains are not treated as established.
+
+Reports: `response-components-no-jit.json`, `response-components-jit.json`,
+`next-generate-no-jit.json`, and `next-generate-jit.json` in
+`evidence/tod173-next-response-2026-10-23/`.
+
+After merging the current `origin/v2-merged` checkpoint, a fresh five-run screen
+measured `Response.json()` at 13,812 / 108.0 MiB no-JIT and 12,240 / 87.4 MiB
+JIT. Node measured 54,054 / 145.6 and 109,890 / 163.2. Next route generation
+measured 6,061 / 69.2 and 5,848 / 48.7 for Quench, versus Node at 28,902 / 79.6
+and 57,471 / 88.5. Same-source Quench control rows were within measurement
+noise; Bun's samples remain under 50 ms. The merge did not change the conclusion.
+Post-merge reports use the `*-post-merge-*` names in the same evidence folder.
+
+The private JSON-byte stream then dropped its explicit no-op `pull` and
+`cancel` callbacks, using the stream's built-in no-op algorithms. Seven-run
+paired `iteration` binaries (same merged code and compiler settings) measured
+`Response.json()` at 7,342 versus 6,564 ops/s no-JIT and 7,215 versus 6,560
+JIT. Next route generation measured 3,181 versus 2,982 ops/s no-JIT and 3,083
+versus 3,075 JIT. The response-constructor gain repeated; the end-to-end JIT
+route difference is within noise. This is a component improvement, not a
+package win. Production screens with the callback-free implementation measured
+15,588 / 89.7 MiB and 13,387 / 69.2 MiB for `Response.json()`, and 6,281 /
+63.2 MiB and 6,427 / 42.5 MiB for Next route generation. Node remained 3.2–
+10.7x faster on the reliable rows; Bun route and constructor samples were
+under 50 ms. Paired `iteration` RSS is diagnostic, and production RSS is
+sampled Linux data. Reports with `*-noop-*` names retain the runs.
+
+A following production candidate moves plain JSON serialization directly into
+UTF-8 bytes for `Response.json()`, bypassing the intermediate JavaScript string
+and TextEncoder. Undici retains its normal path when serialization needs guest
+code or special-value handling. Five-run paired production results against the
+previous direct-state binary improved constructor throughput by 25.8% no-JIT
+and 23.8% JIT, while sampled RSS fell 2.4% and 4.2%. Next route generation
+improved 5.6% and 1.0%, with RSS down 3.1% and 4.3%. Quench remains slower than
+Node and Bun, and its RSS remains higher than Bun's; these are component gains,
+not package wins. The `*utf8-production-paired-*` reports in
+`evidence/tod173-next-response-2026-10-23/` preserve all four paired runs.
+
+A guarded `Object.entries()` path next targeted Next's repeated route-group
+enumeration. It reads shape slots directly for ordinary objects with
+enumerable data fields, while accessors, side descriptors, proxies, and other
+unusual objects keep the generic path. Paired production route-generation
+runs measured 7,924 versus 7,112 ops/s no-JIT and 7,813 versus 7,645 JIT;
+sampled RSS fell from 63.38 to 60.73 MiB and 41.67 to 40.23 MiB. Eleven-run
+route-matcher comparisons measured 82,645 versus 76,336 ops/s no-JIT and
+75,758 versus 70,423 JIT; RSS fell from 27.39 to 25.66 MiB and 19.41 to
+17.86 MiB. Node and Bun remain faster in every case, so this is a component
+gain, not a Next win. Reports use `*entries-production-paired-*` in
+`evidence/tod173-next-response-2026-10-23/`; Linux RSS is sampled diagnostics.

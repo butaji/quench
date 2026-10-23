@@ -1,0 +1,16 @@
+richards             trim 2628  notrim 2628  d +0
+richards      --jit  trim 2960  notrim 2960  d +0
+deltablue            trim 2932  notrim 2908  d -24
+deltablue     --jit  trim 3044  notrim 3044  d +0
+crypto               trim 3340  notrim 3340  d +0
+crypto        --jit  trim 4256  notrim 4256  d +0
+raytrace             trim 3040  notrim 2932  d -108
+raytrace      --jit  trim 3096  notrim 3096  d +0
+regexp               trim 6088  notrim 6004  d -84
+regexp        --jit  trim 6188  notrim 6172  d -16
+earley-boyer         trim 6448  notrim 6436  d -12
+earley-boyer  --jit  trim 6564  notrim 6568  d +4
+navier-stokes        trim 4160  notrim 4160  d +0
+navier-stokes --jit  trim 7740  notrim 7652  d -88
+
+[exited with code 0]

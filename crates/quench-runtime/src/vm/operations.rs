@@ -1,5 +1,5 @@
 use super::*;
-use oxc_ast::ast::BinaryOperator;
+use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
 /// Shared Number/BigInt content mismatch diagnostic.
 pub(super) const MIXED_BIGINT_TYPES: &str = "Cannot mix BigInt and other types, use explicit conversions";
@@ -150,6 +150,55 @@ number_arithmetic! {
     Divide => Division, divide, None;
 }
 
+pub(super) trait NumberUnaryStage<T> {
+    type Output;
+
+    fn plus(&mut self, value: T) -> Self::Output;
+    fn negate(&mut self, value: T) -> Self::Output;
+}
+
+macro_rules! number_unary {
+    ($($operation:ident => $operator:ident, $stage_method:ident;)+) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub(super) enum NumberUnary { $($operation),+ }
+
+        impl NumberUnary {
+            pub(super) fn from_operator(operator: u32) -> Option<Self> {
+                $(
+                    if operator == UnaryOperator::$operator as u32 {
+                        return Some(Self::$operation);
+                    }
+                )+
+                None
+            }
+
+            /// The side-effect-free Number unary operation denoted by JavaScript bytecode.
+            /// Other unary operators still require their normal coercion and effect paths.
+            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
+                (instruction == Op::Unary)
+                    .then(|| Self::from_operator(operator))
+                    .flatten()
+            }
+
+            #[inline(always)]
+            pub(super) fn apply<T, S: NumberUnaryStage<T>>(
+                self,
+                stage: &mut S,
+                value: T,
+            ) -> S::Output {
+                match self {
+                    $(Self::$operation => stage.$stage_method(value)),+
+                }
+            }
+        }
+    };
+}
+
+number_unary! {
+    Plus => UnaryPlus, plus;
+    Negate => UnaryNegation, negate;
+}
+
 /// The int32 operations used by JavaScript bitwise expressions. Keeping their
 /// operator mapping and operation selection in one stage lets the interpreter
 /// and native emitters share the same signed/unsigned shift decisions.
@@ -177,6 +226,16 @@ macro_rules! number_bitwise {
                     }
                 )+
                 None
+            }
+
+            /// The signed int32 operation denoted by an eligible JavaScript
+            /// bytecode and operator. Bitwise operands may be narrowed only
+            /// for the general `Binary` instruction; entry guards are checked
+            /// separately by the caller.
+            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
+                (instruction == Op::Binary)
+                    .then(|| Self::from_operator(operator))
+                    .flatten()
             }
 
             /// Whether this operation produces a signed Int32 from signed Int32
@@ -276,6 +335,25 @@ impl NumberArithmeticStage<f64> for NumberF64Stage {
     fn divide(&mut self, left: f64, right: f64) -> Self::Output {
         left / right
     }
+}
+
+impl NumberUnaryStage<f64> for NumberF64Stage {
+    type Output = f64;
+
+    #[inline(always)]
+    fn plus(&mut self, value: f64) -> Self::Output {
+        value
+    }
+
+    #[inline(always)]
+    fn negate(&mut self, value: f64) -> Self::Output {
+        -value
+    }
+}
+
+#[inline(always)]
+pub(super) fn number_unary_result(operator: u32, value: f64) -> Option<f64> {
+    Some(NumberUnary::from_operator(operator)?.apply(&mut NumberF64Stage, value))
 }
 
 #[inline(always)]
@@ -415,8 +493,8 @@ fn numeric_number_result(operator: BinaryOperator, left: f64, right: f64) -> f64
 
 #[cfg(test)]
 mod numeric_instruction_tests {
-    use super::{NumberArithmetic, Op};
-    use oxc_ast::ast::BinaryOperator;
+    use super::{NumberArithmetic, NumberBitwise, NumberUnary, Op};
+    use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
     #[test]
     fn arithmetic_bytecode_denotations_come_from_the_operation_table() {
@@ -447,6 +525,62 @@ mod numeric_instruction_tests {
                 Op::NumericMultiply,
                 BinaryOperator::Addition as u32
             ),
+            None
+        );
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(Op::Binary, BinaryOperator::Subtraction as u32),
+            Some(NumberArithmetic::Subtract)
+        );
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(Op::Binary, BinaryOperator::Division as u32),
+            Some(NumberArithmetic::Divide)
+        );
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(Op::Return, BinaryOperator::Addition as u32),
+            None
+        );
+    }
+
+    #[test]
+    fn int32_bitwise_bytecodes_are_selected_only_from_general_binary() {
+        for (operator, operation) in [
+            (BinaryOperator::BitwiseAnd, NumberBitwise::And),
+            (BinaryOperator::BitwiseOR, NumberBitwise::Or),
+            (BinaryOperator::BitwiseXOR, NumberBitwise::Xor),
+            (BinaryOperator::ShiftLeft, NumberBitwise::ShiftLeft),
+            (BinaryOperator::ShiftRight, NumberBitwise::ShiftRight),
+            (
+                BinaryOperator::ShiftRightZeroFill,
+                NumberBitwise::ShiftRightUnsigned,
+            ),
+        ] {
+            assert_eq!(
+                NumberBitwise::from_js_instruction(Op::Binary, operator as u32),
+                Some(operation)
+            );
+        }
+        assert_eq!(
+            NumberBitwise::from_js_instruction(Op::NumericAdd, BinaryOperator::BitwiseXOR as u32),
+            None
+        );
+    }
+
+    #[test]
+    fn number_unary_denotations_select_only_plus_and_negation() {
+        assert_eq!(
+            NumberUnary::from_js_instruction(Op::Unary, UnaryOperator::UnaryPlus as u32),
+            Some(NumberUnary::Plus)
+        );
+        assert_eq!(
+            NumberUnary::from_js_instruction(Op::Unary, UnaryOperator::UnaryNegation as u32),
+            Some(NumberUnary::Negate)
+        );
+        assert_eq!(
+            NumberUnary::from_js_instruction(Op::Unary, UnaryOperator::BitwiseNot as u32),
+            None
+        );
+        assert_eq!(
+            NumberUnary::from_js_instruction(Op::Binary, UnaryOperator::UnaryNegation as u32),
             None
         );
     }
