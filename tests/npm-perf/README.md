@@ -491,6 +491,11 @@ noise margin, so the implementation was reverted. Reports:
 `work/react-perf/react-exact-small-fill-screen-3.json` and
 `work/react-perf/react-exact-small-fill-11.json`,
 `work/react-perf/react-adjacent-field-pair-screen-3.json`, and
-`work/react-perf/react-adjacent-field-pair-11.json`. Next, investigate a narrow
-`Move → Call` argument-window specialization from the 5.57M dynamic transitions;
-the current profile shows the moved value most often supplies argument 0.
+`work/react-perf/react-adjacent-field-pair-11.json`. The next `Move → Call`
+argument-window attempt used compiler forward-substitution for the one-argument
+form. It preserved output but failed the three-round screen: 285.1 renders/s /
+24.5 MB versus 308.3 / 24.7 MB for the paired control. It was reverted without
+a full run. Report: `work/react-perf/react-call-window-forward-screen-3.json`.
+Next, investigate a wide-aware `LoadCapture → Move` compiler rewrite from the
+2.73M dynamic transitions in the React profile; first measure what fraction
+survives the existing liveness and control-flow constraints.
