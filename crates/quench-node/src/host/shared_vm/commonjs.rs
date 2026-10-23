@@ -4,6 +4,10 @@ use crate::host::{EntryGoal, NodeHost};
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
 
+/// The global key of the host's builtin `require`, which host code and bootstrap scripts
+/// reach builtins and Node library modules through.
+pub(crate) const BOOTSTRAP_REQUIRE: &str = "\0quench:require";
+
 type Context<'a> = NativeContext<'a, NodeHost>;
 
 // Node's public CommonJS wrapper; this is guest compilation input, not an API shim.
@@ -312,7 +316,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let bootstrap_filename =
         inline_directory(context)?.join(context.host_mut().inline_source.label());
     let bootstrap_require = create_require(context, &bootstrap_filename)?;
-    set(context, global, "\0quench:require", bootstrap_require)?;
+    set(context, global, BOOTSTRAP_REQUIRE, bootstrap_require)?;
     context.release_root(bootstrap_require);
     let export_values = context.host_function(crate::host::shared_vm::operation("builtinExportValues"))?;
     let key = context.string_rooted(BUILTIN_EXPORT_VALUES);
@@ -423,7 +427,7 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
 fn preload_modules(context: &mut Context<'_>) -> Result<(), RootedError> {
     let arguments = context.host_mut().shared_state().borrow().exec_argv.clone();
     let global = context.global_root()?;
-    let require = get(context, global, "\0quench:require")?;
+    let require = get(context, global, BOOTSTRAP_REQUIRE)?;
     let undefined = context.undefined();
     let mut index = 0;
     while let Some(argument) = arguments.get(index) {
