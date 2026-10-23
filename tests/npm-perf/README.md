@@ -764,4 +764,11 @@ meet the 20% threshold on no-JIT RSS against Bun (18.5% lower), and it misses
 the throughput threshold by a wide margin in both modes. Linux RSS is
 diagnostic; these results are a screen, not platform qualification. The local
 reports are `target/perf-reports/zod-parse-nojit-11.json` and
-`target/perf-reports/zod-parse-jit-11.json`.
+`target/perf-reports/zod-parse-jit-11.json`. A separate JIT diagnostic run
+recorded 210 function records and zero native compiles. The wrapper's
+`operations` function alone fell back 1,050 times with
+`unsupported-lowering-shape-or-codegen-failure`; its bytecode includes 34
+`GetField`, 13 `Binary`, four dynamic `Call`, and nine `JumpTrue` operations.
+This explains why enabling JIT barely changes Zod throughput: the hot call path
+does not enter native code. Extending native execution across these dynamic
+operations is the primary JIT direction, with exact semantic side exits.
