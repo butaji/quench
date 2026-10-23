@@ -197,6 +197,7 @@ impl FunctionCompiler<'_, '_> {
                 FunctionOptions {
                     class_initializer: true,
                     non_constructible: true,
+                    prototype_unobservable: false,
                     super_home: true,
                     super_home_atom: Some(if class_field_static(*field) {
                         class_home_atom
@@ -255,6 +256,7 @@ impl FunctionCompiler<'_, '_> {
                         class_constructor: true,
                         derived_constructor: implicit_super,
                         non_constructible: false,
+                        prototype_unobservable: false,
                         class_initializer: false,
                         instance_fields: Some(&instance_fields),
                         instance_private_methods: Some(&instance_private_methods),
@@ -282,6 +284,7 @@ impl FunctionCompiler<'_, '_> {
                     instance_private_methods: Some(&instance_private_methods),
                     class_initializer: true,
                     non_constructible: true,
+                    prototype_unobservable: false,
                     super_home: true,
                     super_home_atom: Some(constructor_home_atom),
                     strict: true,
@@ -1127,6 +1130,7 @@ impl Compiler<'_> {
                 derived_constructor: method.kind == MethodDefinitionKind::Constructor
                     && derived_constructor,
                 non_constructible: method.kind != MethodDefinitionKind::Constructor,
+                prototype_unobservable: false,
                 class_initializer: false,
                 instance_fields,
                 instance_private_methods,
@@ -1165,6 +1169,7 @@ impl Compiler<'_> {
                 class_constructor: false,
                 derived_constructor: false,
                 non_constructible: false,
+                prototype_unobservable: false,
                 class_initializer: true,
                 instance_fields: None,
                 instance_private_methods: None,

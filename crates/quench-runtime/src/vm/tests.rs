@@ -1608,6 +1608,41 @@ fn moved_shape_lookup_index_matches_the_derived_index() {
 }
 
 #[test]
+fn a_deletion_keeps_a_shared_shape_until_vacated_slots_outnumber_properties() {
+    let source = r#"
+      var first = { a: 1, b: 2, c: 3 };
+      var second = { a: 4, b: 5, c: 6 };
+      delete first.b;
+      delete second.b;
+      var emptied = { a: 1, b: 2 };
+      delete emptied.a;
+      delete emptied.b;
+      print([first.a + first.c + second.a + second.c, "b" in first, Object.keys(second)].join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "deletion-shapes.js").unwrap();
+    vm.execute(&program).unwrap();
+    let global = vm.realm.globals;
+    let shape_of = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        let object = vm.own_property(global, atom).expect("global binding exists");
+        vm.object_data(object).expect("object value").shape()
+    };
+    let (first, second, emptied) =
+        (shape_of(&mut vm, "first"), shape_of(&mut vm, "second"), shape_of(&mut vm, "emptied"));
+    // One vacated slot beside two properties: both objects share the deletion's shape.
+    assert!(!vm.shape_is_dictionary(first));
+    assert_eq!(first, second);
+    // Two vacated slots and no property: the object's storage is all holes.
+    assert_eq!(
+        vm.shapes[emptied as usize].dictionary_trigger,
+        Some(super::DictionaryTrigger::DeletionPattern)
+    );
+    assert_eq!(output.borrow().as_slice(), ["14 false a,c"]);
+}
+
+#[test]
 fn dictionary_shape_starts_when_property_slots_exceed_cache_encoding() {
     let mut vm = Vm::new(TestHost::default());
     vm.shapes[0].storage_len = super::object::FIELD_CACHE_SLOT_CAPACITY as u32;
@@ -12536,4 +12571,70 @@ fn promoted_move_coalescing_reads_liveness_of_the_code_it_rewrites() {
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.execute(&Engine::specialize(source, "promoted-move-rounds.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), ["SIGA,SIGC"]);
+}
+
+/// A call-only closure makes no `prototype` until a callee's legacy `caller` reaches it, and
+/// then has the one its creation would have made (Node v22 oracle). Closures whose value
+/// escapes, is named by `arguments` or by a direct `eval` keep theirs from creation.
+#[test]
+fn call_only_closures_make_their_prototype_when_caller_reaches_them() {
+    let source = r#"
+      var seen = [];
+      function probe() {
+        var f = probe.caller;
+        var d = Object.getOwnPropertyDescriptor(f, 'prototype');
+        var names = Object.getOwnPropertyNames(f).filter(function (n) { return n !== 'arguments' && n !== 'caller'; });
+        seen.push([names.join(','), typeof d.value, d.writable, d.enumerable, d.configurable,
+          f.prototype.constructor === f, Object.getOwnPropertyNames(f.prototype).join(','),
+          Object.getPrototypeOf(f.prototype) === Object.prototype].join('|'));
+        var o = new f(true);
+        seen.push(o instanceof f);
+        return 1;
+      }
+      function callOnly(n) {
+        var loop;
+        var total = 0;
+        loop = function (stop) { if (stop) return 0; total += n; return probe(); };
+        (loop(false)), (total += 1);
+        return total;
+      }
+      function escapes() {
+        var g;
+        g = function () { return 1; };
+        var k;
+        k = function () { return arguments.callee === k; };
+        var e;
+        e = function () { return 4; };
+        e();
+        return [typeof g.prototype, k(), eval('typeof e.prototype')].join('|');
+      }
+      function returned() { var r; r = function () { return 3; }; return r; }
+      print(JSON.stringify([callOnly(5), escapes(), typeof returned().prototype, seen]));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "call-only-prototype.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        [r#"[6,"object|true|object","object",["length,name,prototype|object|true|false|false|true|constructor|true",true]]"#]
+    );
+}
+
+/// A hoisted `var` whose `.length` is read before its assignment runs reads `undefined`
+/// (Node v22 oracle): the fused field read of a promoted local counts as a read, so the
+/// local's register starts `undefined`.
+#[test]
+fn fused_field_reads_of_promoted_locals_see_undefined_before_assignment() {
+    let source = r#"
+      function beforeDecl() { try { return b.length; } catch (e) { return e.constructor.name; } var b = arguments; }
+      var out = [];
+      for (var r = 0; r < 3; r++) out.push(String(beforeDecl(1, 2)));
+      print(out.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "fused-read-before-assignment.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["TypeError,TypeError,TypeError"]);
 }
