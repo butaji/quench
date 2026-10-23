@@ -4,6 +4,14 @@ use super::*;
 fn generated_js_denotations_cover_the_native_numeric_lowerings() {
     assert_eq!(Op::LoadConst.js_denotation(), JsDenotation::LoadConst);
     assert_eq!(Op::Move.js_denotation(), JsDenotation::Move);
+    assert_eq!(
+        Op::LoadLocalPlain.js_denotation(),
+        JsDenotation::PlainLocalLoad
+    );
+    assert_eq!(
+        Op::StoreLocalPlain.js_denotation(),
+        JsDenotation::PlainLocalStore
+    );
     assert_eq!(Op::GetField.js_denotation(), JsDenotation::GetField);
     assert_eq!(Op::LoadCapture.js_denotation(), JsDenotation::CapturedValue);
     assert_eq!(Op::Binary.js_denotation(), JsDenotation::NumericBinary);
@@ -155,6 +163,7 @@ fn decoder_rejects_out_of_range_local_load() {
             class_initializer: false,
             parameter_eval_arguments_error: false,
             unaliased_arguments: false,
+            prototype_unobservable: false,
             arguments_slot: None,
             simple_parameters: true,
             strict: false,
@@ -241,6 +250,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             class_initializer: false,
             parameter_eval_arguments_error: false,
             unaliased_arguments: false,
+            prototype_unobservable: false,
             arguments_slot: None,
             simple_parameters: true,
             strict: false,

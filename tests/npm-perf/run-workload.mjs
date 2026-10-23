@@ -64,10 +64,10 @@ function engineSpecs() {
       }
       specs.push({ name: "quench-control", binary: binaries.quenchControl, args: [workload], env: controlEnv });
     }
-    specs.push(
-      { name: "node-jitless", binary: binaries.node, args: ["--jitless", workload], env: {} },
-      { name: "bun-no-jit", binary: binaries.bun, args: [workload], env: { BUN_JSC_useJIT: "0" } },
-    );
+    if (process.env.QUENCH_NPM_PERF_SKIP_NODE_NO_JIT !== "1") {
+      specs.push({ name: "node-jitless", binary: binaries.node, args: ["--jitless", workload], env: {} });
+    }
+    specs.push({ name: "bun-no-jit", binary: binaries.bun, args: [workload], env: { BUN_JSC_useJIT: "0" } });
     return specs;
   }
   const specs = [
@@ -202,6 +202,7 @@ async function runOne(spec, round) {
         "QUENCH_GC_ALLOCATION_CAP_NUM",
         "QUENCH_GC_ALLOCATION_CAP_DEN",
         "QUENCH_GC_MIN_ALLOCATION_CAP",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT",
       ].flatMap((name) => env[name] === undefined ? [] : [[name, env[name]]])),
     },
   };
@@ -241,6 +242,11 @@ const report = {
   phase,
   runs,
   qualificationReady: false,
+  ...(phase === "no-jit" && process.env.QUENCH_NPM_PERF_SKIP_NODE_NO_JIT === "1" ? {
+    omittedEngines: {
+      "node-jitless": process.env.QUENCH_NODE_NO_JIT_SKIP_REASON ?? "Skipped by QUENCH_NPM_PERF_SKIP_NODE_NO_JIT.",
+    },
+  } : {}),
   host: { platform: process.platform, arch: process.arch, cpus: os.cpus().length },
   rssMeasurement: process.platform === "linux"
     ? "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)"

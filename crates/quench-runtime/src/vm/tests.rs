@@ -10438,14 +10438,35 @@ if(fn().getFunctionName()!=='anonymous')throw Error('deleted length layout');
 }
 
 #[test]
+fn shared_number_arithmetic_maps_all_four_numeric_operators() {
+    use oxc_ast::ast::BinaryOperator;
+    use super::operations::NumberArithmetic;
+
+    for (operator, expected) in [
+        (BinaryOperator::Addition, NumberArithmetic::Add),
+        (BinaryOperator::Subtraction, NumberArithmetic::Subtract),
+        (BinaryOperator::Multiplication, NumberArithmetic::Multiply),
+        (BinaryOperator::Division, NumberArithmetic::Divide),
+    ] {
+        assert_eq!(NumberArithmetic::from_operator(operator as u32), Some(expected));
+    }
+    assert_eq!(
+        NumberArithmetic::from_operator(BinaryOperator::Equality as u32),
+        None
+    );
+}
+
+#[test]
 #[cfg(not(quench_profiled))]
 fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     let source = r#"
       function add(left, right) { return left + right; }
+      function subtract(left, right) { return left - right; }
       function divide(left, right) { return left / right; }
       function plusOne(value) { return value + 1; }
       for (let index = 0; index < 40; index++) {
         if (add(index, 2) !== index + 2) throw new Error('numeric result');
+        if (subtract(index + 2, 2) !== index) throw new Error('numeric subtraction result');
         if (divide(index + 1, 2) !== (index + 1) / 2) throw new Error('division result');
         if (plusOne(index) !== index + 1) throw new Error('numeric constant result');
       }
@@ -10474,13 +10495,59 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
 
-    for function in [1, 2, 3] {
+    for function in [1, 2, 3, 4] {
         assert!(matches!(
             vm.programs
                 .js_tier(super::program_store::ProgramId::MAIN, function),
             Some(super::program_store::JsTierState::Compiled(_))
         ));
     }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_compiles_straight_line_plain_local_temporaries() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function scaled(value) {
+            let temporary = value + 1;
+            return temporary * 2;
+          }
+          for (let index = 0; index < 40; index++) {
+            if (scaled(index) !== (index + 1) * 2) throw Error('local temporary result');
+          }
+          if (!Number.isNaN(scaled('x'))) throw Error('local temporary fallback');
+          let coercions = 0;
+          const boxed = { valueOf() { coercions++; return 5; } };
+          if (scaled(boxed) !== 12 || coercions !== 1) throw Error('effectful fallback');
+        "#,
+        "js-jit-plain-local.js",
+    ))
+    .unwrap();
+    let scaled = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "scaled")
+        })
+        .unwrap() as u32;
+    assert!(
+        super::js_compiled::compile(&program, scaled).is_some(),
+        "the generic numeric lowering should accept a straight-line plain local"
+    );
+
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, scaled),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
 }
 
 #[test]
@@ -10620,13 +10687,15 @@ fn js_jit_compiles_numeric_capture_arithmetic_and_guards_mutation() {
 fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
-          function mask(value) { return value & 7; }
+          function mask(value) { return value ^ 7; }
           for (let index = -20; index < 20; index++) {
-            if (mask(index) !== (index & 7)) throw Error('int32 bitwise');
+            if (mask(index) !== (index ^ 7)) throw Error('int32 bitwise');
           }
-          if (mask(2.5) !== 2) throw Error('fraction fallback');
-          if (mask(4294967296) !== 0) throw Error('range fallback');
-          if (mask('13') !== 5) throw Error('coercion fallback');
+          if (mask(2.5) !== (2 ^ 7)) throw Error('fraction fallback');
+          if (mask(4294967296) !== 7) throw Error('range fallback');
+          if (mask(4294967295) !== (-1 ^ 7)) throw Error('unsigned range fallback');
+          if (mask(NaN) !== 7) throw Error('non-finite fallback');
+          if (mask('13') !== 10) throw Error('coercion fallback');
           let bigintThrew = false;
           try { mask(13n); } catch (error) { bigintThrew = error instanceof TypeError; }
           if (!bigintThrew) throw Error('bigint fallback');
@@ -11132,6 +11201,60 @@ fn js_jit_lowers_guarded_numeric_field_reads_from_nonzero_formal() {
         compiled.numeric_field_inputs()[0].receiver,
         super::js_compiled::JsJitFieldReceiver::Parameter(1)
     );
+    assert!(compiled.native_entries() >= 9);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_lowers_guarded_numeric_field_reads_from_captured_objects() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function makeReader() {
+            const state = {value: 7};
+            function read() { return state.value * 2; }
+            return {read, state};
+          }
+          const reader = makeReader();
+          for (let index = 0; index < 40; index++) {
+            if (reader.read() !== 14) throw Error('captured numeric field');
+          }
+          reader.state.value = '8';
+          if (reader.read() !== 16) throw Error('captured field type guard');
+          let reads = 0;
+          Object.defineProperty(reader.state, 'value', {
+            configurable: true,
+            get() { reads++; return 9; }
+          });
+          if (reader.read() !== 18 || reads !== 1) throw Error('captured accessor fallback');
+        "#,
+        "js-jit-captured-object-field.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "read")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function_id)
+    else {
+        panic!("captured-object numeric field region should compile");
+    };
+    assert_eq!(compiled.numeric_field_inputs().len(), 1);
+    assert!(matches!(
+        compiled.numeric_field_inputs()[0].receiver,
+        super::js_compiled::JsJitFieldReceiver::Capture { .. }
+    ));
     assert!(compiled.native_entries() >= 9);
 }
 
@@ -12584,4 +12707,132 @@ fn promoted_move_coalescing_reads_liveness_of_the_code_it_rewrites() {
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.execute(&Engine::specialize(source, "promoted-move-rounds.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), ["SIGA,SIGC"]);
+}
+
+/// A call-only closure makes no `prototype` until a callee's legacy `caller` reaches it, and
+/// then has the one its creation would have made (Node v22 oracle). Closures whose value
+/// escapes, is named by `arguments` or by a direct `eval` keep theirs from creation.
+#[test]
+fn call_only_closures_make_their_prototype_when_caller_reaches_them() {
+    let source = r#"
+      var seen = [];
+      function probe() {
+        var f = probe.caller;
+        var d = Object.getOwnPropertyDescriptor(f, 'prototype');
+        var names = Object.getOwnPropertyNames(f).filter(function (n) { return n !== 'arguments' && n !== 'caller'; });
+        seen.push([names.join(','), typeof d.value, d.writable, d.enumerable, d.configurable,
+          f.prototype.constructor === f, Object.getOwnPropertyNames(f.prototype).join(','),
+          Object.getPrototypeOf(f.prototype) === Object.prototype].join('|'));
+        var o = new f(true);
+        seen.push(o instanceof f);
+        return 1;
+      }
+      function callOnly(n) {
+        var loop;
+        var total = 0;
+        loop = function (stop) { if (stop) return 0; total += n; return probe(); };
+        (loop(false)), (total += 1);
+        return total;
+      }
+      function escapes() {
+        var g;
+        g = function () { return 1; };
+        var k;
+        k = function () { return arguments.callee === k; };
+        var e;
+        e = function () { return 4; };
+        e();
+        return [typeof g.prototype, k(), eval('typeof e.prototype')].join('|');
+      }
+      function returned() { var r; r = function () { return 3; }; return r; }
+      print(JSON.stringify([callOnly(5), escapes(), typeof returned().prototype, seen]));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "call-only-prototype.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        [r#"[6,"object|true|object","object",["length,name,prototype|object|true|false|false|true|constructor|true",true]]"#]
+    );
+}
+
+/// A hoisted `var` whose `.length` is read before its assignment runs reads `undefined`
+/// (Node v22 oracle): the fused field read of a promoted local counts as a read, so the
+/// local's register starts `undefined`.
+#[test]
+fn fused_field_reads_of_promoted_locals_see_undefined_before_assignment() {
+    let source = r#"
+      function beforeDecl() { try { return b.length; } catch (e) { return e.constructor.name; } var b = arguments; }
+      var out = [];
+      for (var r = 0; r < 3; r++) out.push(String(beforeDecl(1, 2)));
+      print(out.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "fused-read-before-assignment.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["TypeError,TypeError,TypeError"]);
+}
+
+#[test]
+fn absent_index_reads_of_ordinary_objects_still_see_every_holder_on_the_chain() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      const plain = { length: 3 };
+      for (let i = 0; i < 3; i++) check(plain[i], undefined, 'plain miss');
+      check(Array.from(plain, (_, i) => i * 2).join(), '0,2,4', 'array-like from');
+      check(Object.create({ 7: 'p' })[7], 'p', 'prototype property');
+      check(Object.create(['a', 'b'])[1], 'b', 'array prototype');
+      check(Object.create(new String('xy'))[1], 'y', 'string wrapper prototype');
+      check(Object.create(new Uint8Array([4, 5]))[1], 5, 'typed array prototype');
+      const getter = {}; Object.defineProperty(getter, 9, { get() { return 'g'; } });
+      check(Object.create(getter)[9], 'g', 'inherited getter');
+      check((function () { return Object.create(arguments)[0]; })('arg'), 'arg', 'arguments prototype');
+      const proxied = Object.create(new Proxy({}, { get: (_, key) => 'proxy ' + key }));
+      check(proxied[3], 'proxy 3', 'proxy prototype');
+      Object.prototype[11] = 'shared';
+      check({}[11], 'shared', 'Object.prototype index');
+      delete Object.prototype[11];
+      check({}[11], undefined, 'deleted Object.prototype index');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "absent-index.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "absent-index.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn array_fill_stores_plainly_only_where_no_prototype_claims_the_index() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      check(Array(5).fill(7).join(), '7,7,7,7,7', 'holes');
+      check([1, 2, 3, 4].fill(0, 1, -1).join(), '1,0,0,4', 'range');
+      const seen = [];
+      const proto = Object.create(Array.prototype);
+      Object.defineProperty(proto, 2, { set(value) { seen.push(value); }, configurable: true });
+      const holed = Object.setPrototypeOf([1, , , 4], proto);
+      holed.fill(9);
+      check(seen.join(), '9', 'inherited setter');
+      check(Object.keys(holed).join(), '0,1,3', 'setter index stays a hole');
+      Object.prototype[1] = 'shared';
+      Object.defineProperty(Object.prototype, 1, { value: 'readonly', writable: false, configurable: true });
+      const blocked = Array(3);
+      let blockedThrew = false;
+      try { blocked.fill(5); } catch (e) { blockedThrew = e instanceof TypeError; }
+      check(blockedThrew, true, 'read-only inherited index throws');
+      check(blocked.hasOwnProperty(1), false, 'read-only inherited index stays a hole');
+      check(blocked[0], 5, 'indices before it store');
+      delete Object.prototype[1];
+      let threw = false;
+      try { Object.freeze([1, 2]).fill(0); } catch (e) { threw = e instanceof TypeError; }
+      check(threw, true, 'frozen');
+      threw = false;
+      try { Object.seal(Array(2)).fill(0); } catch (e) { threw = e instanceof TypeError; }
+      check(threw, true, 'sealed holes');
+      check(Object.seal([1, 2]).fill(3).join(), '3,3', 'sealed present');
+      check(Array.prototype.fill.call({ length: 2 }, 1)[1], 1, 'array-like');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "array-fill.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "array-fill.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
 }

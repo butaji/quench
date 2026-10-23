@@ -51,6 +51,26 @@ console.log('strict-assert-aliases: ok');
     assert_eq!(quench.stdout, node.stdout);
 }
 
+/// A lane read of a global name whose site cached the binding must raise once the global
+/// object's property is deleted, as the binding's [[Get]] on an absent name does
+/// (7c042285b): Node's global object reaches the miss path the runtime CLI's does not.
+#[test]
+fn deleted_global_read_in_a_warmed_function_raises_reference_error() {
+    let source = r#"
+globalThis.LateGlobal = 1;
+function read() { try { return LateGlobal; } catch (error) { return error.name; } }
+for (let i = 0; i < 20; i++) read();
+delete globalThis.LateGlobal;
+console.log(String(read()));
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    assert_eq!(String::from_utf8_lossy(&node.stdout).trim(), "ReferenceError");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
 #[test]
 fn strict_call_followed_by_return_of_another_register_matches_node() {
     let source = r#"
