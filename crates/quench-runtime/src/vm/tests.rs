@@ -10784,6 +10784,56 @@ fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn shared_osr_compiles_a_guarded_numeric_field_loop() {
+    let source = r#"
+      function sum(item) {
+        let total = 0;
+        for (let index = 0; index < item.limit; index++) total += index;
+        return total;
+      }
+      const item = { limit: 10000 };
+      let answer = 0;
+      for (let call = 0; call < 100; call++) answer += sum(item);
+      print(answer);
+    "#;
+    let program = Engine::specialize(source, "osr-numeric-field.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "sum")
+        })
+        .unwrap();
+
+    let compiled_output = Rc::new(RefCell::new(Vec::new()));
+    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    assert_eq!(compiled_output.borrow().as_slice(), ["4999500000"]);
+    let views = compiled
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot sum loop lane view");
+    let osr = view.osr_diagnostics();
+    assert_eq!(osr.admitted_sites, 1, "OSR analysis rejected the field loop");
+    assert_eq!(osr.currently_compiled_sites, 1, "field loop did not compile natively");
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_compiles_guarded_string_hash_loop_and_falls_back_after_intrinsic_change() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"

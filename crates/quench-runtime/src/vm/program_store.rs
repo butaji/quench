@@ -2073,6 +2073,29 @@ impl Drop for ProgramStore {
                 let _ = write_json_string(&mut stderr, name);
                 let _ = write!(stderr, ",{count}]");
             }
+            let _ = write!(stderr, "],\"osr_analysis_rejections\":[");
+            for (index, (reason, count)) in osr.analysis_rejections.iter().enumerate() {
+                if index != 0 {
+                    let _ = write!(stderr, ",");
+                }
+                let name = match reason {
+                    super::compiled::RegionRejection::RegionTooLarge => "region-too-large",
+                    super::compiled::RegionRejection::UnsupportedInstruction(op) => {
+                        crate::bytecode::Op::NAMES
+                            .get(*op as usize)
+                            .copied()
+                            .unwrap_or("unknown-opcode")
+                    }
+                    super::compiled::RegionRejection::RegisterLimit => "register-limit",
+                    super::compiled::RegionRejection::CaptureLimit => "capture-limit",
+                    super::compiled::RegionRejection::ArrayLimit => "array-limit",
+                    super::compiled::RegionRejection::FieldLimit => "field-limit",
+                    super::compiled::RegionRejection::FieldMutation => "field-mutation",
+                };
+                let _ = write!(stderr, "[");
+                let _ = write_json_string(&mut stderr, name);
+                let _ = write!(stderr, ",{count}]");
+            }
             let _ = writeln!(
                 stderr,
                 "],\"code_bytes\":{},\"guard_census_kind\":\"bytecode-sites-not-proven-redundancies\",\"dynamic_opcode_count_scope\":\"general-dispatch-only; fast-lane-and-native-instructions-excluded\"}}",
