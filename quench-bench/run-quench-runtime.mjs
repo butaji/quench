@@ -12,7 +12,7 @@ import { spawnSync } from "node:child_process";
 
 const root = resolve(import.meta.dirname, "..");
 const suite = resolve(import.meta.dirname, "js-engine-benchmark", "v8-v7");
-const runtime = resolve(root, "target", "bench-throughput", "quench-node");
+const runtime = resolve(root, "target", "production", "quench-node");
 const fixtures = [
   "richards.js",
   "deltablue.js",

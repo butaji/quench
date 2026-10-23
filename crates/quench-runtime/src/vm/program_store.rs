@@ -106,7 +106,9 @@ struct ProgramEntry {
     root_slots: std::cell::OnceCell<Box<[crate::bytecode::RootSlotRule]>>,
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
-    lane_views: Vec<std::cell::OnceCell<super::dispatch_fast::LaneView>>,
+    lane_views: LaneViews,
+    /// Per function: what the JavaScript tier found at its entries (`js_entry_facts`).
+    js_entry_facts: JsEntryFactsTable,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
     /// `lane_call_may_derive`), up to `LANE_VIEW_DEFERRED_RUNS`.
     lane_deferred: Vec<std::cell::Cell<u8>>,
@@ -226,9 +228,6 @@ pub(crate) struct ProgramStore {
     js_jit_dataview_float64_enabled: bool,
     js_jit_dataview_float64_get_entries: u64,
     js_jit_dataview_float64_set_entries: u64,
-    /// Last matched numeric loop shape; hot entries keep reusing the same artifact.
-    js_jit_numeric_find_candidate:
-        Option<(ProgramId, u32, super::js_compiled::JsJitNumericFind)>,
 }
 
 impl Default for ProgramStore {
@@ -255,27 +254,22 @@ impl Default for ProgramStore {
                     .is_none_or(|value| value != "0"),
             js_jit_dataview_float64_get_entries: 0,
             js_jit_dataview_float64_set_entries: 0,
-            js_jit_numeric_find_candidate: None,
         }
     }
 }
 
 impl ProgramStore {
-    pub(super) fn js_jit_numeric_find_candidate(
-        &mut self,
-        id: ProgramId,
-        function_id: u32,
-        function: &crate::bytecode::Function,
-    ) -> Option<super::js_compiled::JsJitNumericFind> {
-        if let Some((cached_id, cached_function, candidate)) = self.js_jit_numeric_find_candidate
-            && cached_id == id
-            && cached_function == function_id
-        {
-            return Some(candidate);
-        }
-        let candidate = super::js_compiled::numeric_find_candidate(function)?;
-        self.js_jit_numeric_find_candidate = Some((id, function_id, candidate));
-        Some(candidate)
+    /// What the JavaScript tier finds at the entries of `function` (`JsEntryFacts`), derived on
+    /// its first entry.
+    pub(super) fn js_entry_facts(&self, id: ProgramId, function: u32) -> Option<Rc<super::js_compiled::JsEntryFacts>> {
+        let entry = self.entry(id)?;
+        let body = entry.residual.function_get(function as usize)?;
+        let cells = entry.js_entry_facts.0.get_or_init(|| {
+            entry.residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect()
+        });
+        Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
+            Rc::new(super::js_compiled::JsEntryFacts::of(&entry.residual, body))
+        })))
     }
 
     pub(super) fn cached_global_eval(&self, source: &JsString) -> Option<ProgramId> {
@@ -618,16 +612,16 @@ impl ProgramStore {
         let id = ProgramId::from_index(self.programs.len())?;
         // A function compiles again on its first call; until then it keeps only its header.
         // A program other owners share keeps its records.
-        if let Some(program) = Rc::get_mut(&mut program) {
+        #[cfg(feature = "profile-aggregate")]
+        let retain_profile_records = std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some();
+        #[cfg(not(feature = "profile-aggregate"))]
+        let retain_profile_records = false;
+        if !retain_profile_records && let Some(program) = Rc::get_mut(&mut program) {
             program.release_replayable_records();
         }
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
         let function_sources = vec![None; program.functions.len()];
-        let lane_views = program
-            .functions
-            .iter()
-            .map(|_| std::cell::OnceCell::new())
-            .collect();
+        let lane_views = LaneViews::default();
         let lane_deferred = vec![std::cell::Cell::new(0); program.functions.len()];
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.programs.push(Some(ProgramEntry {
@@ -643,6 +637,7 @@ impl ProgramStore {
             root_slots: std::cell::OnceCell::new(),
             module: false,
             lane_views,
+            js_entry_facts: JsEntryFactsTable::default(),
             lane_deferred,
             compiled: None,
             js_tiers: FxHashMap::default(),
@@ -920,10 +915,7 @@ impl ProgramStore {
             entry.const_arrays = vec![None; constants.len()];
             entry.constants = constants;
             // Lane views carry constants, so they derive from the new set.
-            entry
-                .lane_views
-                .iter_mut()
-                .for_each(|view| *view = Default::default());
+            entry.lane_views = LaneViews::default();
         }
     }
 
@@ -1733,7 +1725,8 @@ impl ProgramStore {
         &self,
         id: ProgramId,
     ) -> Option<&[std::cell::OnceCell<super::dispatch_fast::LaneView>]> {
-        Some(&self.entry(id)?.lane_views)
+        let entry = self.entry(id)?;
+        Some(entry.lane_views.of(&entry.residual))
     }
 
     /// The lane view a general-loop entry of `function` runs with. A function that may loop
@@ -1754,7 +1747,7 @@ impl ProgramStore {
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
-        let view = entry.lane_views.get(function as usize)?;
+        let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         if let Some(view) = view.get() {
             return Some(view);
         }
@@ -1768,7 +1761,7 @@ impl ProgramStore {
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();
-                super::lane_exits::register_view(start, end, census_label(entry, function));
+                super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
             }
             view
         }))
@@ -1782,10 +1775,7 @@ impl ProgramStore {
         let Some(entry) = self.entry(id) else {
             return false;
         };
-        let derived = entry
-            .lane_views
-            .get(function as usize)
-            .is_some_and(|view| view.get().is_some());
+        let derived = entry.lane_views.derived(function).is_some();
         derived
             || entry
                 .lane_deferred
@@ -1806,14 +1796,14 @@ impl ProgramStore {
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
         let code = entry.residual.function_get(function as usize)?;
-        let view = entry.lane_views.get(function as usize)?;
+        let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         Some(view.get_or_init(|| {
             let live = entry.residual.register_root_masks(function);
             let view = derive(code, &entry.constants, entry.residual.kind, live);
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();
-                super::lane_exits::register_view(start, end, census_label(entry, function));
+                super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
             }
             view
         }))
@@ -1986,8 +1976,7 @@ impl Drop for ProgramStore {
                 .min(1_000_000) as u64
             };
             let osr = entry
-                .and_then(|entry| entry.lane_views.get(*function as usize))
-                .and_then(std::cell::OnceCell::get)
+                .and_then(|entry| entry.lane_views.derived(*function))
                 .map(super::dispatch_fast::LaneView::osr_diagnostics)
                 .unwrap_or_default();
             let _ = write!(
@@ -2142,3 +2131,29 @@ fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
     runs.set(done + 1);
     false
 }
+
+/// A program's lane views by function, derived on first use (`ProgramStore::entry_lane_view`).
+/// The table itself is made on the program's first lane use: most programs a process restores
+/// or loads never enter the lane, and a table zeroed for each of their functions cost a
+/// restored process about 54 fresh pages (2,493 functions at 88 bytes).
+#[derive(Default)]
+pub(super) struct LaneViews(std::cell::OnceCell<Box<[std::cell::OnceCell<super::dispatch_fast::LaneView>]>>);
+
+impl LaneViews {
+    /// The table, one cell per function of `residual`. Its address is fixed once made, as
+    /// the lane context's pointer to it requires.
+    fn of(&self, residual: &ResidualProgram) -> &[std::cell::OnceCell<super::dispatch_fast::LaneView>] {
+        self.0.get_or_init(|| residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect())
+    }
+
+    /// `function`'s view if it has one, without making the table.
+    fn derived(&self, function: u32) -> Option<&super::dispatch_fast::LaneView> {
+        self.0.get()?.get(function as usize)?.get()
+    }
+}
+
+/// A program's `JsEntryFacts` by function, the table made on the tier's first entry of one.
+#[derive(Default)]
+pub(super) struct JsEntryFactsTable(
+    std::cell::OnceCell<Box<[std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>]>>,
+);

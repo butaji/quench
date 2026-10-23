@@ -55,7 +55,7 @@ const _: fn() = || {
 mod api;
 pub use api::{
     BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostFunction, HostFunctionId, HostWeakRoot,
-    PreparedScript, NativeArithmetic, NativeContext, PromiseRejectionEvent, RootedError, RootedIterator, Runtime,
+    PreparedScript, NativeArithmetic, NativeContext, PromiseRejectionEvent, RootScopeMark, RootedError, RootedIterator, Runtime,
     CompiledScript, RuntimeError, SourceKind, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
     DeserializerDelegate, SerializerDelegate,
     wrapper_origin,
@@ -63,6 +63,10 @@ pub use api::{
 
 #[cfg(test)]
 mod host_stack_tests;
+#[cfg(test)]
+mod test_host;
+#[cfg(test)]
+mod subset_tests;
 
 pub mod owned_clone;
 

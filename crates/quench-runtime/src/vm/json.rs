@@ -94,6 +94,60 @@ enum JsonKey {
     Name(Atom),
 }
 
+/// The nesting the plain writer (`Vm::json_write_plain`) recurses through without counting
+/// stack; deeper data takes the general steps, which do. Request and response bodies nest a
+/// few levels.
+const JSON_PLAIN_DEPTH: usize = 64;
+
+/// The containers being written, inline up to this nesting.
+const JSON_PLAIN_INLINE_ANCESTORS: usize = 16;
+
+/// The state of one plain stringification: no guest code runs during it, so the shape and
+/// prototype last found to lack `toJSON` (for an ordinary object, and for an array) holds
+/// for its whole run.
+struct JsonPlainWrite {
+    to_json: Atom,
+    ancestors: smallvec::SmallVec<[Value; JSON_PLAIN_INLINE_ANCESTORS]>,
+    object_lacks_to_json: Option<(u32, Value)>,
+    array_lacks_to_json: Option<(u32, Value)>,
+    output: JsonText,
+}
+
+impl JsonPlainWrite {
+    fn new(to_json: Atom) -> Self {
+        Self {
+            to_json,
+            ancestors: Default::default(),
+            object_lacks_to_json: None,
+            array_lacks_to_json: None,
+            output: JsonText::new(),
+        }
+    }
+}
+
+/// An integer's decimal digits, as Number::toString writes them.
+fn write_json_integer(value: i32, output: &mut JsonText) {
+    let mut digits = [0u8; I32_DECIMAL_WIDTH];
+    let mut start = digits.len();
+    let mut magnitude = value.unsigned_abs();
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (magnitude % DECIMAL_RADIX) as u8;
+        magnitude /= DECIMAL_RADIX;
+        if magnitude == 0 {
+            break;
+        }
+    }
+    if value < 0 {
+        output.push(b'-');
+    }
+    output.extend_from_slice(&digits[start..]);
+}
+
+const DECIMAL_RADIX: u32 = 10;
+/// The decimal digits of the largest `i32` magnitude, 2^31.
+const I32_DECIMAL_WIDTH: usize = 10;
+
 /// The JSON text a stringification writes: UTF-8 bytes, decoded once when it completes.
 type JsonText = Vec<u8>;
 
@@ -231,6 +285,60 @@ impl From<&str> for JsonParseError {
 
 /// Number literals at most this long parse from a stack buffer.
 const JSON_INLINE_NUMBER_LENGTH: usize = 64;
+/// Integer literals of at most this many digits are below 2^53, so accumulating their
+/// digits gives the exact value the decimal conversion would.
+const JSON_EXACT_INTEGER_DIGITS: usize = 15;
+
+/// A code unit a JSON text is scanned in: a byte of an ASCII string, which is its UTF-16
+/// unit, or a UTF-16 unit.
+trait JsonUnit: Copy {
+    fn unit(self) -> u16;
+    /// `units` as a run of string units.
+    fn run(units: &[Self]) -> Units<'_>;
+}
+
+impl JsonUnit for u8 {
+    fn unit(self) -> u16 {
+        u16::from(self)
+    }
+    fn run(units: &[u8]) -> Units<'_> {
+        Units::Ascii(units)
+    }
+}
+
+impl JsonUnit for u16 {
+    fn unit(self) -> u16 {
+        self
+    }
+    fn run(units: &[u16]) -> Units<'_> {
+        Units::Wide(units)
+    }
+}
+
+/// A JSON string's units: a run of the text when it has no escapes, else what its escapes
+/// make.
+enum JsonStringUnits<'a> {
+    Run(Units<'a>),
+    Escaped(Vec<u16>),
+}
+
+impl JsonStringUnits<'_> {
+    fn units(&self) -> Units<'_> {
+        match self {
+            Self::Run(units) => *units,
+            Self::Escaped(units) => Units::Wide(units),
+        }
+    }
+}
+
+/// Parses `text` with `builder`, in the units the string holds: an ASCII string's bytes
+/// need no widening.
+fn parse_json_text<B: JsonBuilder>(text: Units<'_>, builder: &mut B) -> Result<B::Value, JsonParseError> {
+    match text {
+        Units::Ascii(bytes) => JsonParser::new(bytes).parse(builder),
+        Units::Wide(units) => JsonParser::new(units).parse(builder),
+    }
+}
 
 /// What a parse makes of each JSON value: the source-bearing `JsonValue` tree a reviver
 /// walks, or heap values directly when nothing reads the source afterwards.
@@ -239,12 +347,12 @@ trait JsonBuilder {
     type Key;
     fn literal(&mut self, value: JsonLiteral) -> Self::Value;
     fn number(&mut self, value: f64) -> Self::Value;
-    fn string(&mut self, units: &[u16]) -> Self::Value;
-    fn key(&mut self, units: &[u16]) -> Self::Key;
+    fn string(&mut self, units: Units<'_>) -> Self::Value;
+    fn key(&mut self, units: Units<'_>) -> Self::Key;
     fn array(&mut self, values: Vec<Self::Value>) -> Self::Value;
     fn object(&mut self, entries: Vec<(Self::Key, Self::Value)>) -> Self::Value;
     /// A primitive parsed from `source`, the text a reviver's context exposes.
-    fn primitive(&mut self, value: Self::Value, source: &[u16]) -> Self::Value;
+    fn primitive(&mut self, value: Self::Value, source: Units<'_>) -> Self::Value;
 }
 
 #[derive(Clone, Copy)]
@@ -270,11 +378,11 @@ impl JsonBuilder for JsonTreeBuilder {
     fn number(&mut self, value: f64) -> JsonValue {
         JsonValue::Number(value)
     }
-    fn string(&mut self, units: &[u16]) -> JsonValue {
-        JsonValue::String(JsString::from_units(units))
+    fn string(&mut self, units: Units<'_>) -> JsonValue {
+        JsonValue::String(JsString::from_unit_run(units))
     }
-    fn key(&mut self, units: &[u16]) -> JsString {
-        JsString::from_units(units)
+    fn key(&mut self, units: Units<'_>) -> JsString {
+        JsString::from_unit_run(units)
     }
     fn array(&mut self, values: Vec<JsonValue>) -> JsonValue {
         JsonValue::Array(values)
@@ -282,8 +390,8 @@ impl JsonBuilder for JsonTreeBuilder {
     fn object(&mut self, entries: Vec<(JsString, JsonValue)>) -> JsonValue {
         JsonValue::Object(entries)
     }
-    fn primitive(&mut self, value: JsonValue, source: &[u16]) -> JsonValue {
-        JsonValue::Source(Box::new(value), JsString::from_units(source))
+    fn primitive(&mut self, value: JsonValue, source: Units<'_>) -> JsonValue {
+        JsonValue::Source(Box::new(value), JsString::from_unit_run(source))
     }
 }
 
@@ -300,6 +408,12 @@ struct JsonHeapBuilder<'v, H: Host> {
     /// epoch, since a full collection may renumber shapes.
     transitions: rustc_hash::FxHashMap<(u32, Atom), u32>,
     transitions_epoch: u64,
+    /// The shape an object starts from, whose `transitions` an object's keys follow.
+    empty_shape: u32,
+    /// The atom of each ASCII key the parse met: a JSON text repeats a few keys, which this
+    /// hashes a word at a time instead of interning unit by unit (`intern_unit_run_atom`).
+    /// Atoms outlive every collection.
+    ascii_keys: rustc_hash::FxHashMap<Box<[u8]>, Atom>,
 }
 
 enum JsonBuildError {
@@ -310,13 +424,16 @@ enum JsonBuildError {
 impl<'v, H: Host> JsonHeapBuilder<'v, H> {
     fn new(vm: &'v mut Vm<H>) -> Self {
         let globals = vm.realm.globals;
+        let object_prototype = vm.realm_object_prototype(globals);
         Self {
             array_prototype: vm.array_prototype_for_realm(globals),
-            object_prototype: vm.realm_object_prototype(globals),
+            empty_shape: Vm::<H>::empty_object(object_prototype).shape(),
+            object_prototype,
             transitions_epoch: vm.heap.collection_epoch(),
             vm,
             error: None,
             transitions: Default::default(),
+            ascii_keys: Default::default(),
         }
     }
 
@@ -371,13 +488,19 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
     fn number(&mut self, value: f64) -> Value {
         Value::number(value)
     }
-    fn string(&mut self, units: &[u16]) -> Value {
-        self.vm
-            .heap
-            .alloc_string(JsString::from_units(units))
+    fn string(&mut self, units: Units<'_>) -> Value {
+        self.vm.heap.alloc_string(JsString::from_unit_run(units))
     }
-    fn key(&mut self, units: &[u16]) -> Atom {
-        self.vm.intern_unit_run_atom(Units::Wide(units))
+    fn key(&mut self, units: Units<'_>) -> Atom {
+        let Units::Ascii(bytes) = units else {
+            return self.vm.intern_unit_run_atom(units);
+        };
+        if let Some(&atom) = self.ascii_keys.get(bytes) {
+            return atom;
+        }
+        let atom = self.vm.intern_unit_run_atom(units);
+        self.ascii_keys.insert(bytes.into(), atom);
+        atom
     }
     fn array(&mut self, values: Vec<Value>) -> Value {
         self.vm.heap.alloc(Cell::Array {
@@ -388,6 +511,20 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
         })
     }
     fn object(&mut self, entries: Vec<(Atom, Value)>) -> Value {
+        let epoch = self.vm.heap.collection_epoch();
+        if epoch != self.transitions_epoch {
+            self.transitions.clear();
+            self.transitions_epoch = epoch;
+        }
+        // Keys whose adds this parse made before end at a known shape, each a one-slot
+        // append (`shape_appends_one_slot`): the object is made at once with its values.
+        let shape = entries.iter().try_fold(self.empty_shape, |shape, (atom, _)| {
+            self.transitions.get(&(shape, *atom)).copied()
+        });
+        if let Some(shape) = shape {
+            let values = entries.iter().map(|(_, value)| *value).collect::<smallvec::SmallVec<[Value; 16]>>();
+            return self.vm.heap.alloc_object_with_properties(self.object_prototype, shape, &values);
+        }
         let object = self
             .vm
             .heap
@@ -421,18 +558,18 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
         }
         object
     }
-    fn primitive(&mut self, value: Value, _source: &[u16]) -> Value {
+    fn primitive(&mut self, value: Value, _source: Units<'_>) -> Value {
         value
     }
 }
 
-struct JsonParser<'a> {
-    units: &'a [u16],
+struct JsonParser<'a, T> {
+    units: &'a [T],
     index: usize,
 }
 
-impl<'a> JsonParser<'a> {
-    fn new(units: &'a [u16]) -> Self {
+impl<'a, T: JsonUnit> JsonParser<'a, T> {
+    fn new(units: &'a [T]) -> Self {
         Self { units, index: 0 }
     }
 
@@ -454,8 +591,8 @@ impl<'a> JsonParser<'a> {
             Some(JSON_TRUE_INITIAL) => self.literal(b"true", JsonLiteral::True, builder)?,
             Some(JSON_FALSE_INITIAL) => self.literal(b"false", JsonLiteral::False, builder)?,
             Some(JSON_QUOTE) => {
-                let units = self.string()?;
-                builder.string(&units)
+                let text = self.string()?;
+                builder.string(text.units())
             }
             Some(JSON_ARRAY_START) => return self.array(builder),
             Some(JSON_OBJECT_START) => return self.object(builder),
@@ -465,7 +602,7 @@ impl<'a> JsonParser<'a> {
             }
             _ => return Err("expected JSON value".into()),
         };
-        Ok(builder.primitive(primitive, &self.units[start..self.index]))
+        Ok(builder.primitive(primitive, T::run(&self.units[start..self.index])))
     }
 
     fn literal<B: JsonBuilder>(
@@ -485,24 +622,25 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    /// A string's code units: borrowed from the source when it has no escapes.
-    fn string(&mut self) -> Result<std::borrow::Cow<'a, [u16]>, JsonParseError> {
+    /// A string's code units: a run of the source when it has no escapes.
+    fn string(&mut self) -> Result<JsonStringUnits<'a>, JsonParseError> {
         self.expect(JSON_QUOTE as u8)?;
         let units = self.units;
         let start = self.index;
         let run = units[start..].iter().position(|unit| {
-            *unit == JSON_QUOTE || *unit == JSON_ESCAPE || *unit < JSON_UNESCAPED_START
+            let unit = unit.unit();
+            unit == JSON_QUOTE || unit == JSON_ESCAPE || unit < JSON_UNESCAPED_START
         });
         if let Some(length) = run
-            && units[start + length] == JSON_QUOTE
+            && units[start + length].unit() == JSON_QUOTE
         {
             self.index = start + length + 1;
-            return Ok(std::borrow::Cow::Borrowed(&units[start..start + length]));
+            return Ok(JsonStringUnits::Run(T::run(&units[start..start + length])));
         }
         let mut output = Vec::new();
         loop {
             match self.take() {
-                Some(JSON_QUOTE) => return Ok(std::borrow::Cow::Owned(output)),
+                Some(JSON_QUOTE) => return Ok(JsonStringUnits::Escaped(output)),
                 Some(JSON_ESCAPE) => self.escape(&mut output)?,
                 Some(unit) if unit >= JSON_UNESCAPED_START => output.push(unit),
                 _ => return Err("unterminated JSON string".into()),
@@ -568,7 +706,7 @@ impl<'a> JsonParser<'a> {
         loop {
             self.whitespace();
             let key = self.string()?;
-            let key = builder.key(&key);
+            let key = builder.key(key.units());
             self.whitespace();
             self.expect(b':')?;
             entries.push((key, self.value(builder)?));
@@ -582,11 +720,22 @@ impl<'a> JsonParser<'a> {
 
     fn number(&mut self) -> Result<f64, JsonParseError> {
         let start = self.index;
-        self.take_if(b'-');
+        let negative = self.take_if(b'-');
+        let integer_start = self.index;
         match self.take() {
             Some(48) => {}
             Some(49..=57) => self.digits(),
             _ => return Err("invalid number".into()),
+        }
+        let integer = &self.units[integer_start..self.index];
+        if integer.len() <= JSON_EXACT_INTEGER_DIGITS
+            && !self.peek().is_some_and(|unit| unit == u16::from(b'.') || unit == 69 || unit == 101)
+        {
+            let magnitude = integer
+                .iter()
+                .fold(0_u64, |value, digit| value * 10 + u64::from(digit.unit() - JSON_DIGIT_START));
+            let magnitude = magnitude as f64;
+            return Ok(if negative { -magnitude } else { magnitude });
         }
         if self.take_if(b'.') {
             if !self.digit() {
@@ -610,11 +759,11 @@ impl<'a> JsonParser<'a> {
         let long;
         let bytes: &[u8] = if literal.len() <= JSON_INLINE_NUMBER_LENGTH {
             for (byte, unit) in inline.iter_mut().zip(literal) {
-                *byte = *unit as u8;
+                *byte = unit.unit() as u8;
             }
             &inline[..literal.len()]
         } else {
-            long = literal.iter().map(|unit| *unit as u8).collect::<Vec<_>>();
+            long = literal.iter().map(|unit| unit.unit() as u8).collect::<Vec<_>>();
             &long
         };
         std::str::from_utf8(bytes)
@@ -670,7 +819,7 @@ impl<'a> JsonParser<'a> {
     }
 
     fn peek(&self) -> Option<u16> {
-        self.units.get(self.index).copied()
+        self.units.get(self.index).map(|unit| unit.unit())
     }
 }
 
@@ -767,11 +916,11 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let text = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         let reviver = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let units = text.units().wide();
+        let units = text.units();
         if !self.is_function(reviver) {
             // Nothing revisits the parse, so values go straight to the heap.
             let mut builder = JsonHeapBuilder::new(self);
-            let parsed = JsonParser::new(&units).parse(&mut builder);
+            let parsed = parse_json_text(units, &mut builder);
             let built = builder.finish(parsed);
             return match built {
                 Ok(value) => Ok(value),
@@ -784,7 +933,7 @@ impl<H: Host> Vm<H> {
                 Err(JsonBuildError::Runtime(error)) => Err(error),
             };
         }
-        let parsed = match JsonParser::new(&units).parse(&mut JsonTreeBuilder) {
+        let parsed = match parse_json_text(units, &mut JsonTreeBuilder) {
             Ok(parsed) => parsed,
             Err(JsonParseError::Syntax(error)) => return self.syntax_error_result(p, &error),
             Err(JsonParseError::StackExhausted) => return Err(self.stack_exhaustion_error()),
@@ -960,6 +1109,16 @@ impl<H: Host> Vm<H> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let replacer = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let space = args.get(2).copied().unwrap_or(Value::UNDEFINED);
+        if replacer.is_undefined() && space.is_undefined() {
+            let mut plain = JsonPlainWrite::new(self.intern_atom("toJSON"));
+            if let Some(written) = self.json_write_plain(value, &mut plain) {
+                if !written {
+                    return Ok(Value::UNDEFINED);
+                }
+                let text = String::from_utf8(plain.output).expect("JSON text is written as UTF-8");
+                return Ok(self.heap.alloc_string(text.into()));
+            }
+        }
         let (replacer, property_list) = self.json_replacer(p, replacer)?;
         let space_root = self.heap.root(space);
         let gap = self.json_gap(p, space);
@@ -988,6 +1147,134 @@ impl<H: Host> Vm<H> {
         }
         let text = String::from_utf8(state.output).expect("JSON text is written as UTF-8");
         Ok(self.heap.alloc_string(text.into()))
+    }
+
+    /// SerializeJSONProperty of `value` with no replacer and no gap, for plain data whose
+    /// serialization runs no guest code: primitives, dense hole-free arrays and ordinary
+    /// objects of non-dictionary shapes with only data members, none of which a `toJSON`
+    /// reaches. `Some(false)` is an omitted value. `None` leaves the whole stringification to
+    /// the general steps, having observed nothing: a cycle, getter, `toJSON`, function,
+    /// BigInt, boxed primitive, index key, exotic object or nesting beyond
+    /// `JSON_PLAIN_DEPTH`.
+    fn json_write_plain(&self, value: Value, plain: &mut JsonPlainWrite) -> Option<bool> {
+        if value.is_undefined() {
+            return Some(false);
+        }
+        if value.is_null() {
+            plain.output.extend_from_slice(b"null");
+            return Some(true);
+        }
+        if let Some(value) = value.as_bool() {
+            plain.output.extend_from_slice(if value { b"true" } else { b"false" });
+            return Some(true);
+        }
+        if let Some(integer) = value.as_int() {
+            write_json_integer(integer, &mut plain.output);
+            return Some(true);
+        }
+        if let Some(number) = value.as_number() {
+            if number.is_finite() {
+                plain.output.extend_from_slice(crate::number_to_string::format(number).as_bytes());
+            } else {
+                plain.output.extend_from_slice(b"null");
+            }
+            return Some(true);
+        }
+        if let Some(text) = self.heap.string(value) {
+            write_json_string(text, &mut plain.output);
+            return Some(true);
+        }
+        if matches!(self.heap.get(value), Some(Cell::Symbol(_))) {
+            return Some(false);
+        }
+        if plain.ancestors.len() == JSON_PLAIN_DEPTH || plain.ancestors.contains(&value) {
+            return None;
+        }
+        plain.ancestors.push(value);
+        let written = if let Some(array) = self.heap.array(value) {
+            self.json_write_plain_array(value, array, plain)
+        } else {
+            self.json_write_plain_object(value, plain)
+        };
+        plain.ancestors.pop();
+        written.then_some(true)
+    }
+
+    fn json_write_plain_array(&self, value: Value, array: &crate::heap::ArrayObject, plain: &mut JsonPlainWrite) -> bool {
+        if array.has_side_descriptors() {
+            return false;
+        }
+        let key = (array.shape(), array.proto());
+        if plain.array_lacks_to_json != Some(key) {
+            if !self.json_lacks_to_json(value, plain.to_json) {
+                return false;
+            }
+            plain.array_lacks_to_json = Some(key);
+        }
+        let Some(elements) = self.present_dense_elements(value, 0..array.elements().len()) else {
+            return false;
+        };
+        plain.output.push(b'[');
+        for (index, element) in elements.iter().enumerate() {
+            if index != 0 {
+                plain.output.push(b',');
+            }
+            match self.json_write_plain(*element, plain) {
+                Some(true) => {}
+                Some(false) => plain.output.extend_from_slice(b"null"),
+                None => return false,
+            }
+        }
+        plain.output.push(b']');
+        true
+    }
+
+    fn json_write_plain_object(&self, value: Value, plain: &mut JsonPlainWrite) -> bool {
+        let Some(data) = self.heap.object_record(value) else {
+            return false;
+        };
+        // Shape facts decide the memo; these per-object facts do not.
+        if data.is_raw_json() || data.has_side_descriptors() || self.boxed_primitive_data(value).is_some() {
+            return false;
+        }
+        let key = (data.shape(), data.proto());
+        if plain.object_lacks_to_json != Some(key) {
+            if !self.json_lacks_to_json(value, plain.to_json) {
+                return false;
+            }
+            plain.object_lacks_to_json = Some(key);
+        }
+        let Some(slots) = self.shape_enumerable_slots(value) else {
+            return false;
+        };
+        let accessors = self.shape_may_have_accessors(data.shape());
+        plain.output.push(b'{');
+        let mut written = 0;
+        for &(atom, slot) in slots.iter() {
+            let slot = slot as usize;
+            if !self.plain_named_key(atom)
+                || (accessors && self.slot_attributes(data, slot).is_none_or(|attributes| attributes.accessor))
+            {
+                return false;
+            }
+            let Some(member) = self.heap.property_get(data, slot) else {
+                return false;
+            };
+            // The member is written before its value is known; an omitted value takes it back.
+            let start = plain.output.len();
+            if written != 0 {
+                plain.output.push(b',');
+            }
+            self.write_json_key(atom, &mut plain.output);
+            plain.output.push(b':');
+            match self.json_write_plain(member, plain) {
+                Some(true) => written += 1,
+                Some(false) => plain.output.truncate(start),
+                None => return false,
+            }
+        }
+        plain.output.push(b'}');
+        true
     }
 
     fn json_replacer(

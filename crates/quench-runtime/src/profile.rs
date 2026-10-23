@@ -630,6 +630,13 @@ impl Profile {
         program_id: u32,
         program: &crate::bytecode::ResidualProgram,
     ) {
+        // A program releases bytecode records after compiling them. The full
+        // function/site report needs those records, but physical opcode and
+        // pair counters remain available and can still be reported safely.
+        if program.functions.iter().any(|function| function.record().is_none()) {
+            self.report_released_program(program_id);
+            return;
+        }
         let heap_stats = heap.stats();
         let gc = heap.gc_profile();
         self.allocations = heap_stats.0;
@@ -814,6 +821,42 @@ impl Profile {
                 eprintln!("Quench: cannot write trace: {error}");
             }
         }
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    fn report_released_program(&self, program_id: u32) {
+        let opcodes = self
+            .dispatched_opcodes
+            .get(program_id as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let pairs = self
+            .pairs
+            .get(program_id as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        eprint!("{{\"kind\":\"quench-profile-released-program\",\"program_id\":{program_id},\"opcodes\":{{");
+        for (index, count) in opcodes.iter().enumerate() {
+            if index != 0 {
+                eprint!(",");
+            }
+            eprint!("\"{}\":{}", crate::bytecode::Op::NAMES[index], count);
+        }
+        eprint!("}},\"pairs\":[");
+        let mut first = true;
+        for (index, count) in pairs.iter().copied().enumerate().filter(|(_, count)| *count != 0) {
+            if !first {
+                eprint!(",");
+            }
+            first = false;
+            eprint!(
+                "[\"{}\",\"{}\",{}]",
+                crate::bytecode::Op::NAMES[index / crate::bytecode::Op::COUNT],
+                crate::bytecode::Op::NAMES[index % crate::bytecode::Op::COUNT],
+                count,
+            );
+        }
+        eprintln!("]}}");
     }
 
     #[cfg(not(feature = "profile-aggregate"))]
