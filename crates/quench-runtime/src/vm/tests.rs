@@ -11144,6 +11144,65 @@ fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_float_unary_uses_shared_number_denotation() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function negate(value) {
+            let index = 0;
+            while (index < 9999) {
+              value = -value;
+              index++;
+            }
+            return value;
+          }
+          for (let call = 0; call < 100; call++) negate(0.5);
+          if (negate(0.5) !== -0.5) throw Error('float negation');
+          if (!Object.is(negate(0), -0)) throw Error('negative zero');
+          if (negate(-2147483648) !== 2147483648) throw Error('int32 minimum');
+          print('ok');
+        "#,
+        "osr-shared-number-unary.js",
+    ))
+    .unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    assert_eq!(output.borrow().as_slice(), ["ok"]);
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "negate")
+        })
+        .unwrap();
+    let views = vm
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot negate loop lane view");
+    let osr = view.osr_diagnostics();
+    assert_eq!(
+        osr.admitted_sites, 1,
+        "OSR analysis rejected the unary loop ({} rejection sites)",
+        osr.analysis_rejections.len()
+    );
+    assert_eq!(
+        osr.currently_compiled_sites, 1,
+        "unary loop did not compile natively (admitted: {})",
+        osr.admitted_sites
+    );
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_guarded_string_hash_loop_and_falls_back_after_intrinsic_change() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
