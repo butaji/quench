@@ -12731,3 +12731,39 @@ fn absent_index_reads_of_ordinary_objects_still_see_every_holder_on_the_chain() 
         Vm::new(TestHost::default()).execute(&program).unwrap();
     }
 }
+
+#[test]
+fn array_fill_stores_plainly_only_where_no_prototype_claims_the_index() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      check(Array(5).fill(7).join(), '7,7,7,7,7', 'holes');
+      check([1, 2, 3, 4].fill(0, 1, -1).join(), '1,0,0,4', 'range');
+      const seen = [];
+      const proto = Object.create(Array.prototype);
+      Object.defineProperty(proto, 2, { set(value) { seen.push(value); }, configurable: true });
+      const holed = Object.setPrototypeOf([1, , , 4], proto);
+      holed.fill(9);
+      check(seen.join(), '9', 'inherited setter');
+      check(Object.keys(holed).join(), '0,1,3', 'setter index stays a hole');
+      Object.prototype[1] = 'shared';
+      Object.defineProperty(Object.prototype, 1, { value: 'readonly', writable: false, configurable: true });
+      const blocked = Array(3);
+      let blockedThrew = false;
+      try { blocked.fill(5); } catch (e) { blockedThrew = e instanceof TypeError; }
+      check(blockedThrew, true, 'read-only inherited index throws');
+      check(blocked.hasOwnProperty(1), false, 'read-only inherited index stays a hole');
+      check(blocked[0], 5, 'indices before it store');
+      delete Object.prototype[1];
+      let threw = false;
+      try { Object.freeze([1, 2]).fill(0); } catch (e) { threw = e instanceof TypeError; }
+      check(threw, true, 'frozen');
+      threw = false;
+      try { Object.seal(Array(2)).fill(0); } catch (e) { threw = e instanceof TypeError; }
+      check(threw, true, 'sealed holes');
+      check(Object.seal([1, 2]).fill(3).join(), '3,3', 'sealed present');
+      check(Array.prototype.fill.call({ length: 2 }, 1)[1], 1, 'array-like');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "array-fill.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "array-fill.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
