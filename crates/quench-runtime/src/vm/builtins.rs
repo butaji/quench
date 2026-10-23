@@ -990,6 +990,13 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_realm_builtin_named(program, json, name, native, realm)?;
         }
+        self.set_realm_builtin_named(
+            program,
+            global,
+            "__quenchJSONStringifyUtf8",
+            Native::JsonStringifyUtf8,
+            realm,
+        )?;
         self.set_builtin_value_named(global, "JSON", json)
     }
 

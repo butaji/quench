@@ -701,6 +701,8 @@ pub(crate) enum JsDenotation {
     GetField,
     NumericBinary,
     CapturedValue,
+    PlainLocalLoad,
+    PlainLocalStore,
     Return,
 }
 const READ_THROW: Effect = Effect::READS_HEAP.union(Effect::THROWS);
@@ -796,8 +798,8 @@ opcodes!(
     SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     // The general loop's fast arms dispatch on these with the opcodes above, so they share
     // one dense range of opcode numbers.
-    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
-    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
+    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalLoad, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalStore, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
     JumpTrue => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
     // `Call` whose last window argument the instruction before it loaded from the activation's
     // `arguments` binding (`CallPlan::forwards_arguments`).
@@ -1223,6 +1225,10 @@ pub struct Function {
     /// Lexical HomeObject captured by methods and arrows containing `super`.
     pub super_home_atom: Option<Atom>,
     pub constructible: bool,
+    /// An ordinary function expression whose `prototype` no program text observes until a
+    /// callee's legacy `caller` reaches it (`compile::call_only`): its closures make none
+    /// at creation.
+    pub prototype_unobservable: bool,
     pub class_initializer: bool,
     pub parameter_eval_arguments_error: bool,
     /// A mapped `arguments` binding whose mapping nothing can observe: the body only reads
@@ -1308,6 +1314,7 @@ pub(crate) struct FunctionHeader {
     pub(crate) is_generator: bool,
     pub(crate) is_class_constructor: bool,
     pub(crate) constructible: bool,
+    pub(crate) prototype_unobservable: bool,
     pub(crate) inherited_with_scope: bool,
 }
 
@@ -1325,6 +1332,7 @@ impl FunctionHeader {
             is_generator: function.is_generator,
             is_class_constructor: function.is_class_constructor,
             constructible: function.constructible,
+            prototype_unobservable: function.prototype_unobservable,
             inherited_with_scope: function.inherited_with_scope,
         }
     }
@@ -2036,10 +2044,18 @@ impl Function {
     /// nothing else.
     /// `name` spells an atom of the function's table (the program's, or the compiler's while
     /// it lays the function out).
-    pub(crate) fn parameters_bind_directly<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
+    fn parameters_bind_directly<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
         self.local_atoms[..usize::from(self.params).min(self.local_atoms.len())]
             .iter()
             .all(|atom| usize::try_from(*atom).ok().and_then(&name).is_some_and(|name| !name.starts_with('\0')))
+    }
+
+    /// Whether each parameter lives in its own named slot: a simple list, or a rest list that
+    /// binds directly (`parameters_bind_directly`). Selective capture layouts, environment
+    /// activations and promoted locals all require it, and the compiler and the validator
+    /// read this one rule.
+    pub(crate) fn parameters_own_their_slots<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
+        self.simple_parameters || self.rest && self.parameters_bind_directly(name)
     }
 
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
@@ -2109,8 +2125,7 @@ impl Function {
                 && !self.is_class_constructor
                 // A rest list binding directly fills its slot with the gathered array
                 // (`lane_activate_environment`).
-                && (self.simple_parameters
-                    || self.rest && self.parameters_bind_directly(|atom| (atom < atoms.len()).then(|| &atoms[atom])))
+                && self.parameters_own_their_slots(|atom| atoms.get(atom))
                 && self.self_binding_slot.is_none()
                 && !self.inherited_with_scope
                 && self.local_registers.is_empty()
@@ -3268,7 +3283,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 103;
+    pub const FORMAT_VERSION: u8 = 104;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

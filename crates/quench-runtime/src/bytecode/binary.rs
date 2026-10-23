@@ -655,6 +655,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         out.option_atom(function.super_home_atom);
         out.u8(u8::from(function.constructible));
         out.u8(u8::from(function.class_initializer));
+        out.u8(u8::from(function.prototype_unobservable));
         out.u8(u8::from(function.parameter_eval_arguments_error));
         out.u8(u8::from(function.unaliased_arguments));
         out.u8(u8::from(function.simple_parameters));
@@ -795,6 +796,7 @@ fn write_function_header(out: &mut BinaryWriter, header: &super::FunctionHeader)
         header.is_generator,
         header.is_class_constructor,
         header.constructible,
+        header.prototype_unobservable,
         header.inherited_with_scope,
     ] {
         out.u8(u8::from(flag));
@@ -862,6 +864,11 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             0 => false,
             1 => true,
             _ => return Err("invalid class field initializer flag".into()),
+        };
+        let prototype_unobservable = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid prototype observability flag".into()),
         };
         let parameter_eval_arguments_error = match input.u8()? {
             0 => false,
@@ -1044,6 +1051,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             instance_initializer,
             super_home_atom,
             constructible,
+            prototype_unobservable,
             class_initializer,
             parameter_eval_arguments_error,
             unaliased_arguments,
@@ -1117,6 +1125,7 @@ fn read_function_header(input: &mut BinaryReader<'_>) -> Result<super::FunctionH
         is_generator: input.flag("generator function")?,
         is_class_constructor: input.flag("class constructor")?,
         constructible: input.flag("constructible function")?,
+        prototype_unobservable: input.flag("prototype observability")?,
         inherited_with_scope: input.flag("inherited with-scope")?,
     })
 }

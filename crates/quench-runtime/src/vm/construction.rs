@@ -323,6 +323,14 @@ impl<H: Host> Vm<H> {
         self.closure_in_realm(p, id, env, self.realm.globals)
     }
 
+    /// The template recorded for closures of the active program's function `id` in `realm`.
+    #[inline(always)]
+    fn recorded_closure_template(&self, id: u32, realm: Value) -> Option<ClosureTemplate> {
+        self.closure_templates[closure_template_index(self.active_program, id)].filter(|template| {
+            template.function == id && template.program == self.active_program && template.realm == realm
+        })
+    }
+
     /// A closure's object allocated finished: its own `length`, `name` and `prototype` under
     /// `shape`, as the recorded adds would leave them, inline where they fit, else in the
     /// property arena.
@@ -378,6 +386,13 @@ impl<H: Host> Vm<H> {
         mut env: Value,
         realm: Value,
     ) -> Result<Value, JsError> {
+        // No `with` was ever entered, so no closure captures a `with` object
+        // (`Vm::with_scope_entered`): a recorded closure needs none of the scope work below.
+        if !self.with_scope_entered
+            && let Some(template) = self.recorded_closure_template(id, realm)
+        {
+            return Ok(self.closure_of_template(template, env));
+        }
         let function_plan = p.functions[id as usize].header();
         let with_objects = if env.is_null() {
             Vec::new()
@@ -393,11 +408,7 @@ impl<H: Host> Vm<H> {
         };
         let template_index = closure_template_index(self.active_program, id);
         let plain_scope = with_objects.is_empty();
-        if plain_scope
-            && let Some(template) = self.closure_templates[template_index].filter(|template| {
-                template.function == id && template.program == self.active_program && template.realm == realm
-            })
-        {
+        if plain_scope && let Some(template) = self.recorded_closure_template(id, realm) {
             return Ok(self.closure_of_template(template, env));
         }
         if !with_objects.is_empty() {
@@ -414,7 +425,8 @@ impl<H: Host> Vm<H> {
                 }),
             });
         }
-        let has_instance_prototype = function_plan.constructible || function_plan.is_generator;
+        let has_instance_prototype = (function_plan.constructible || function_plan.is_generator)
+            && !function_plan.prototype_unobservable;
         let prototype = if has_instance_prototype {
             let generator_prototype_parent = if function_plan.is_generator {
                 let prototypes = &self.realm.intrinsics.iterator_prototypes[&realm];
@@ -559,24 +571,20 @@ impl<H: Host> Vm<H> {
         if let Some(prototype) = prototype
             && let Some(atom) = prototype_atom
         {
-            self.set_property_with_attributes(
+            self.define_instance_prototype(
                 function,
                 atom,
                 prototype,
-                PropertyAttributes {
-                    writable: !function_plan.is_class_constructor,
-                    enumerable: false,
-                    configurable: false,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
+                function_plan.is_class_constructor,
+                function_plan.is_generator,
             )?;
         }
         if !function_plan.is_generator
             && let Some(prototype) = prototype
         {
-            self.set_builtin_value_named(prototype, "constructor", function)?;
+            if prototype_atom.is_none() {
+                self.set_builtin_value_named(prototype, "constructor", function)?;
+            }
             recorded.prototype =
                 Some((self.closure_shape(function), self.closure_shape(prototype)));
         }
@@ -593,6 +601,36 @@ impl<H: Host> Vm<H> {
         }
         self.capture_fresh_closure_name(function, plan_name);
         Ok(function)
+    }
+
+    /// `function`'s own `prototype` property holding `prototype`, as a function's creation
+    /// defines it: read-only for a class constructor. A non-generator's `prototype` gets
+    /// `constructor` naming `function` back.
+    pub(super) fn define_instance_prototype(
+        &mut self,
+        function: Value,
+        atom: Atom,
+        prototype: Value,
+        class_constructor: bool,
+        generator: bool,
+    ) -> Result<(), JsError> {
+        self.set_property_with_attributes(
+            function,
+            atom,
+            prototype,
+            PropertyAttributes {
+                writable: !class_constructor,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        )?;
+        if !generator {
+            self.set_builtin_value_named(prototype, "constructor", function)?;
+        }
+        Ok(())
     }
 
     /// The shape of an object `closure_in_realm` just made.
