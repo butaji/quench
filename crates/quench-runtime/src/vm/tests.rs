@@ -10784,6 +10784,44 @@ fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_interrupt_exits_through_the_shared_native_entry() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function sumTo(limit) {
+            let sum = 0;
+            let index = 0;
+            while (index < limit) {
+              sum = sum + index;
+              index = index + 1;
+            }
+            return sum;
+          }
+        "#,
+        "js-jit-interrupt-adapter.js",
+    ))
+    .unwrap();
+    let artifact = super::js_compiled::compile(&program, 1).expect("numeric loop artifact");
+    assert!(matches!(
+        artifact.result,
+        super::js_compiled::JsJitResultKind::NumberInterruptible
+    ));
+    let compiled = super::compiled::CompiledJsFunction::from_artifact(artifact)
+        .expect("shared executable mapping");
+    let interrupt = std::sync::atomic::AtomicBool::new(true);
+
+    let result = compiled.call(&[1_000_000.0], &interrupt, None);
+
+    assert!(result.is_none(), "interrupted native execution must not return a guest result");
+    assert_eq!(compiled.native_entries(), 1, "the shared adapter must enter once");
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn shared_osr_compiles_a_guarded_numeric_field_loop() {
     let source = r#"
       function sum(item) {
