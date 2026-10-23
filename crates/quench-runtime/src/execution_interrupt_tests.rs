@@ -103,3 +103,36 @@ fn termination_wakers_are_weak_and_late_registration_wakes() {
     drop(wake);
     dormant.request_termination();
 }
+
+/// A loop the loop tier compiled stops at its next backward jump, through the poll page
+/// where the host has one: the request ends the execution, and no guest handler runs.
+#[test]
+fn termination_stops_a_natively_compiled_loop() {
+    let (tx, rx) = mpsc::channel();
+    let (ready, wait) = mpsc::channel();
+    let dropped = Arc::new(AtomicBool::new(false));
+    let d = dropped.clone();
+    let join = thread::Builder::new()
+        .stack_size(crate::WORKER_STACK_SIZE)
+        .spawn(move || {
+            let mut runtime = Runtime::new(interrupt_host(ready, d));
+            runtime.set_execution_mode(crate::ExecutionMode::Compiled);
+            tx.send(runtime.execution_interrupt_handle()).unwrap();
+            // Once entered, the loop runs to its end in native code: only the poll stops it.
+            let source = "var finalized=false;function ring(x,size,n){var i=0;for(var k=0;k<n;k++){x[i]+=1;i++;if(i>=size)i=0}}function spin(){started();try{ring(new Array(1024).fill(0),1024,1/0)}finally{finalized=true}}spin();";
+            let program = Engine::specialize(source, "native-loop.js").unwrap();
+            let error = runtime.execute(&program).unwrap_err();
+            assert!(error.is_execution_terminated());
+            let global = runtime.global_root().unwrap();
+            let key = runtime.string_rooted("finalized");
+            let value = runtime.get_property_rooted(global, key).unwrap();
+            assert_eq!(runtime.rooted_value(value), Some(crate::Value::FALSE));
+        })
+        .unwrap();
+    let handle = rx.recv().unwrap();
+    wait.recv_timeout(Duration::from_secs(5)).unwrap();
+    // Long enough for the loop to tier up and run natively.
+    thread::sleep(Duration::from_millis(200));
+    handle.request_termination();
+    join.join().unwrap();
+}

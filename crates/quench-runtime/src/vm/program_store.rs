@@ -62,11 +62,91 @@ const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
 pub(super) const WASM_JIT_PROMOTION_ENTRIES: u8 = 32;
 const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
 const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
-/// One process-local admission ceiling shared by JS and Wasm tiers. The
-/// language-specific limits above are additional policy caps, not separate
-/// executable-memory pools.
+/// One VM-local admission ceiling shared by JS and Wasm artifacts.
 const JIT_MAX_ARTIFACTS: usize = JS_JIT_MAX_FUNCTIONS + WASM_JIT_MAX_TIER_ROOTS;
 const JIT_MAX_MAPPED_BYTES: usize = WASM_JIT_MAX_TIER_MAPPED_BYTES;
+
+#[derive(Clone, Copy)]
+enum JitArtifactKind {
+    BaselineWasm,
+    JsFunction,
+    WasmTierRoot,
+}
+
+/// One VM-local executable-code budget shared by the JavaScript, Wasm and
+/// eager compiled-program tiers. Tier-kind limits and aggregate capacity are
+/// admitted and accounted together here.
+#[derive(Default)]
+struct JitCodeCacheBudget {
+    artifacts: usize,
+    mapped_bytes: usize,
+    js_functions: usize,
+    js_mapped_bytes: usize,
+    wasm_tier_roots: usize,
+    wasm_tier_mapped_bytes: usize,
+}
+
+impl JitCodeCacheBudget {
+    fn can_retain(&self, kind: JitArtifactKind, mapped_bytes: usize) -> bool {
+        let (count, bytes, max_count, max_bytes) = match kind {
+            JitArtifactKind::BaselineWasm => (0, 0, usize::MAX, usize::MAX),
+            JitArtifactKind::JsFunction => (
+                self.js_functions,
+                self.js_mapped_bytes,
+                JS_JIT_MAX_FUNCTIONS,
+                JS_JIT_MAX_MAPPED_BYTES,
+            ),
+            JitArtifactKind::WasmTierRoot => (
+                self.wasm_tier_roots,
+                self.wasm_tier_mapped_bytes,
+                WASM_JIT_MAX_TIER_ROOTS,
+                WASM_JIT_MAX_TIER_MAPPED_BYTES,
+            ),
+        };
+        count < max_count
+            && bytes.saturating_add(mapped_bytes) <= max_bytes
+            && self.artifacts < JIT_MAX_ARTIFACTS
+            && self.mapped_bytes.saturating_add(mapped_bytes) <= JIT_MAX_MAPPED_BYTES
+    }
+
+    fn retain(&mut self, kind: JitArtifactKind, mapped_bytes: usize) -> bool {
+        if !self.can_retain(kind, mapped_bytes) {
+            return false;
+        }
+        self.artifacts += 1;
+        self.mapped_bytes += mapped_bytes;
+        match kind {
+            JitArtifactKind::BaselineWasm => {}
+            JitArtifactKind::JsFunction => {
+                self.js_functions += 1;
+                self.js_mapped_bytes += mapped_bytes;
+            }
+            JitArtifactKind::WasmTierRoot => {
+                self.wasm_tier_roots += 1;
+                self.wasm_tier_mapped_bytes += mapped_bytes;
+            }
+        }
+        true
+    }
+
+    fn release(&mut self, kind: JitArtifactKind, artifacts: usize, mapped_bytes: usize) {
+        self.artifacts = self.artifacts.saturating_sub(artifacts);
+        self.mapped_bytes = self.mapped_bytes.saturating_sub(mapped_bytes);
+        match kind {
+            JitArtifactKind::BaselineWasm => {}
+            JitArtifactKind::JsFunction => {
+                self.js_functions = self.js_functions.saturating_sub(artifacts);
+                self.js_mapped_bytes = self.js_mapped_bytes.saturating_sub(mapped_bytes);
+            }
+            JitArtifactKind::WasmTierRoot => {
+                self.wasm_tier_roots = self.wasm_tier_roots.saturating_sub(artifacts);
+                self.wasm_tier_mapped_bytes = self
+                    .wasm_tier_mapped_bytes
+                    .saturating_sub(mapped_bytes);
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(super) enum JsTierState {
@@ -216,13 +296,8 @@ pub(crate) struct ProgramStore {
     /// VM-local bounds for the optional JavaScript tier cache.
     js_jit_tracked_functions: usize,
     js_jit_rejected_functions: usize,
-    js_jit_compiled_functions: usize,
-    js_jit_mapped_bytes: usize,
-    wasm_jit_tier_roots: usize,
-    wasm_jit_tier_mapped_bytes: usize,
-    /// Shared JS/Wasm code-cache budget counters.
-    jit_compiled_artifacts: usize,
-    jit_mapped_bytes: usize,
+    /// Shared JS/Wasm executable-code cache admission and accounting.
+    jit_code_cache: JitCodeCacheBudget,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
     js_jit_dataview_float64_enabled: bool,
@@ -240,12 +315,7 @@ impl Default for ProgramStore {
             unchecked_reclaimable: 0,
             js_jit_tracked_functions: 0,
             js_jit_rejected_functions: 0,
-            js_jit_compiled_functions: 0,
-            js_jit_mapped_bytes: 0,
-            wasm_jit_tier_roots: 0,
-            wasm_jit_tier_mapped_bytes: 0,
-            jit_compiled_artifacts: 0,
-            jit_mapped_bytes: 0,
+            jit_code_cache: JitCodeCacheBudget::default(),
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
@@ -393,28 +463,21 @@ impl ProgramStore {
         self.js_jit_rejected_functions = self
             .js_jit_rejected_functions
             .saturating_sub(reclaimed_rejected);
-        self.js_jit_compiled_functions = self
-            .js_jit_compiled_functions
-            .saturating_sub(reclaimed_tiers.1);
-        self.js_jit_mapped_bytes = self.js_jit_mapped_bytes.saturating_sub(reclaimed_tiers.2);
-        self.wasm_jit_tier_roots = self
-            .wasm_jit_tier_roots
-            .saturating_sub(reclaimed_wasm_tiers.0);
-        self.wasm_jit_tier_mapped_bytes = self
-            .wasm_jit_tier_mapped_bytes
-            .saturating_sub(reclaimed_wasm_tiers.1);
-        let reclaimed_artifacts = reclaimed_tiers
-            .1
-            .saturating_add(reclaimed_wasm_tiers.0)
-            .saturating_add(reclaimed_wasm_baselines.0);
-        let reclaimed_bytes = reclaimed_tiers
-            .2
-            .saturating_add(reclaimed_wasm_tiers.1)
-            .saturating_add(reclaimed_wasm_baselines.1);
-        self.jit_compiled_artifacts = self
-            .jit_compiled_artifacts
-            .saturating_sub(reclaimed_artifacts);
-        self.jit_mapped_bytes = self.jit_mapped_bytes.saturating_sub(reclaimed_bytes);
+        self.jit_code_cache.release(
+            JitArtifactKind::JsFunction,
+            reclaimed_tiers.1,
+            reclaimed_tiers.2,
+        );
+        self.jit_code_cache.release(
+            JitArtifactKind::WasmTierRoot,
+            reclaimed_wasm_tiers.0,
+            reclaimed_wasm_tiers.1,
+        );
+        self.jit_code_cache.release(
+            JitArtifactKind::BaselineWasm,
+            reclaimed_wasm_baselines.0,
+            reclaimed_wasm_baselines.1,
+        );
         self.unchecked_reclaimable = pending;
         if !reclaimed.is_empty() {
             let programs = &self.programs;
@@ -431,12 +494,7 @@ impl ProgramStore {
         self.unchecked_reclaimable = 0;
         self.js_jit_tracked_functions = 0;
         self.js_jit_rejected_functions = 0;
-        self.js_jit_compiled_functions = 0;
-        self.js_jit_mapped_bytes = 0;
-        self.wasm_jit_tier_roots = 0;
-        self.wasm_jit_tier_mapped_bytes = 0;
-        self.jit_compiled_artifacts = 0;
-        self.jit_mapped_bytes = 0;
+        self.jit_code_cache = JitCodeCacheBudget::default();
         if let Some(diagnostics) = &mut self.js_jit_diagnostics {
             diagnostics.clear();
         }
@@ -967,22 +1025,13 @@ impl ProgramStore {
             .and_then(Option::as_ref)
             .map(|previous| previous.mapped_bytes())
         {
-            self.jit_compiled_artifacts = self.jit_compiled_artifacts.saturating_sub(1);
-            self.jit_mapped_bytes = self
-                .jit_mapped_bytes
-                .saturating_sub(previous_bytes);
+            self.jit_code_cache
+                .release(JitArtifactKind::BaselineWasm, 1, previous_bytes);
         }
         let compiled = compiled.filter(|compiled| {
-            self.jit_compiled_artifacts < JIT_MAX_ARTIFACTS
-                && self
-                    .jit_mapped_bytes
-                    .saturating_add(compiled.mapped_bytes())
-                    <= JIT_MAX_MAPPED_BYTES
+            self.jit_code_cache
+                .retain(JitArtifactKind::BaselineWasm, compiled.mapped_bytes())
         });
-        if let Some(compiled) = &compiled {
-            self.jit_compiled_artifacts += 1;
-            self.jit_mapped_bytes += compiled.mapped_bytes();
-        }
         if let Some(entry) = self.entry_mut(id) {
             entry.compiled = Some(compiled);
         }
@@ -1110,24 +1159,21 @@ impl ProgramStore {
             return true;
         }
         let bytes = compiled.mapped_bytes();
-        if self.wasm_jit_tier_roots >= WASM_JIT_MAX_TIER_ROOTS
-            || self
-                .wasm_jit_tier_mapped_bytes
-                .saturating_add(bytes)
-                > WASM_JIT_MAX_TIER_MAPPED_BYTES
-            || self.jit_compiled_artifacts >= JIT_MAX_ARTIFACTS
-            || self.jit_mapped_bytes.saturating_add(bytes) > JIT_MAX_MAPPED_BYTES
+        if !self
+            .jit_code_cache
+            .can_retain(JitArtifactKind::WasmTierRoot, bytes)
         {
             return false;
         }
-        let Some(entry) = self.entry_mut(id) else {
+        if self.entry(id).is_none() {
             return false;
-        };
+        }
+        let retained = self
+            .jit_code_cache
+            .retain(JitArtifactKind::WasmTierRoot, bytes);
+        debug_assert!(retained, "shared JIT budget changed during Wasm admission");
+        let entry = self.entry_mut(id).expect("entry checked above");
         entry.wasm_tiers.entry(root).or_default().compiled = Some(compiled);
-        self.wasm_jit_tier_roots += 1;
-        self.wasm_jit_tier_mapped_bytes += bytes;
-        self.jit_compiled_artifacts += 1;
-        self.jit_mapped_bytes += bytes;
         true
     }
 
@@ -1147,6 +1193,10 @@ impl ProgramStore {
 
     pub(super) fn js_tier(&self, id: ProgramId, function: u32) -> Option<JsTierState> {
         self.entry(id)?.js_tiers.get(&function).cloned()
+    }
+
+    pub(super) fn js_tier_ref(&self, id: ProgramId, function: u32) -> Option<&JsTierState> {
+        self.entry(id)?.js_tiers.get(&function)
     }
 
     /// Whether the JavaScript tier settled on not compiling `function`.
@@ -1186,7 +1236,7 @@ impl ProgramStore {
         numeric: bool,
         first_entry_candidate: bool,
     ) -> bool {
-        let compiled_functions = self.js_jit_compiled_functions;
+        let compiled_functions = self.jit_code_cache.js_functions;
         let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
         let mut inserted = false;
         let mut promoted = false;
@@ -1685,23 +1735,9 @@ impl ProgramStore {
             return false;
         }
         let compiled = compiled.filter(|compiled| {
-            self.js_jit_compiled_functions < JS_JIT_MAX_FUNCTIONS
-                && self
-                    .js_jit_mapped_bytes
-                    .saturating_add(compiled.mapped_bytes())
-                    <= JS_JIT_MAX_MAPPED_BYTES
-                && self.jit_compiled_artifacts < JIT_MAX_ARTIFACTS
-                && self
-                    .jit_mapped_bytes
-                    .saturating_add(compiled.mapped_bytes())
-                    <= JIT_MAX_MAPPED_BYTES
+            self.jit_code_cache
+                .retain(JitArtifactKind::JsFunction, compiled.mapped_bytes())
         });
-        if let Some(compiled) = &compiled {
-            self.js_jit_compiled_functions += 1;
-            self.js_jit_mapped_bytes += compiled.mapped_bytes();
-            self.jit_compiled_artifacts += 1;
-            self.jit_mapped_bytes += compiled.mapped_bytes();
-        }
         if let Some(entry) = self.entry_mut(id) {
             entry.js_tiers.insert(
                 function,
@@ -1719,7 +1755,7 @@ impl ProgramStore {
 
     #[cfg(test)]
     pub(super) fn jit_mapped_bytes(&self) -> usize {
-        self.jit_mapped_bytes
+        self.jit_code_cache.mapped_bytes
     }
 
     /// A program's lane views by function, derived on first use.
@@ -2063,6 +2099,29 @@ impl Drop for ProgramStore {
                 let _ = write_json_string(&mut stderr, name);
                 let _ = write!(stderr, ",{count}]");
             }
+            let _ = write!(stderr, "],\"osr_analysis_rejections\":[");
+            for (index, (reason, count)) in osr.analysis_rejections.iter().enumerate() {
+                if index != 0 {
+                    let _ = write!(stderr, ",");
+                }
+                let name = match reason {
+                    super::compiled::RegionRejection::RegionTooLarge => "region-too-large",
+                    super::compiled::RegionRejection::UnsupportedInstruction(op) => {
+                        crate::bytecode::Op::NAMES
+                            .get(*op as usize)
+                            .copied()
+                            .unwrap_or("unknown-opcode")
+                    }
+                    super::compiled::RegionRejection::RegisterLimit => "register-limit",
+                    super::compiled::RegionRejection::CaptureLimit => "capture-limit",
+                    super::compiled::RegionRejection::ArrayLimit => "array-limit",
+                    super::compiled::RegionRejection::FieldLimit => "field-limit",
+                    super::compiled::RegionRejection::FieldMutation => "field-mutation",
+                };
+                let _ = write!(stderr, "[");
+                let _ = write_json_string(&mut stderr, name);
+                let _ = write!(stderr, ",{count}]");
+            }
             let _ = writeln!(
                 stderr,
                 "],\"code_bytes\":{},\"guard_census_kind\":\"bytecode-sites-not-proven-redundancies\",\"dynamic_opcode_count_scope\":\"general-dispatch-only; fast-lane-and-native-instructions-excluded\"}}",
@@ -2151,6 +2210,59 @@ impl LaneViews {
     /// `function`'s view if it has one, without making the table.
     fn derived(&self, function: u32) -> Option<&super::dispatch_fast::LaneView> {
         self.0.get()?.get(function as usize)?.get()
+    }
+}
+
+#[cfg(test)]
+mod jit_code_cache_tests {
+    use super::{
+        JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS,
+        JS_JIT_MAX_MAPPED_BYTES, JitArtifactKind, JitCodeCacheBudget,
+        WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS,
+    };
+
+    #[test]
+    fn shared_jit_cache_budget_tracks_mixed_artifacts() {
+        let mut cache = JitCodeCacheBudget::default();
+        assert!(cache.retain(JitArtifactKind::JsFunction, 128 * 1024));
+        assert!(cache.retain(JitArtifactKind::WasmTierRoot, 256 * 1024));
+        assert_eq!(cache.artifacts, 2);
+        assert_eq!(cache.mapped_bytes, 384 * 1024);
+
+        assert!(!cache.can_retain(JitArtifactKind::BaselineWasm, JIT_MAX_MAPPED_BYTES));
+        cache.release(JitArtifactKind::WasmTierRoot, 1, 256 * 1024);
+        assert_eq!(cache.artifacts, 1);
+        assert_eq!(cache.mapped_bytes, 128 * 1024);
+        assert!(cache.can_retain(
+            JitArtifactKind::BaselineWasm,
+            JIT_MAX_MAPPED_BYTES - 128 * 1024
+        ));
+
+        for _ in 1..JIT_MAX_ARTIFACTS {
+            assert!(cache.retain(JitArtifactKind::BaselineWasm, 0));
+        }
+        assert!(!cache.can_retain(JitArtifactKind::BaselineWasm, 0));
+    }
+
+    #[test]
+    fn shared_jit_cache_enforces_each_tier_limit() {
+        let mut cache = JitCodeCacheBudget::default();
+        for _ in 0..JS_JIT_MAX_FUNCTIONS {
+            assert!(cache.retain(JitArtifactKind::JsFunction, 0));
+        }
+        assert!(!cache.can_retain(JitArtifactKind::JsFunction, 0));
+        assert!(!cache.can_retain(JitArtifactKind::JsFunction, JS_JIT_MAX_MAPPED_BYTES + 1));
+
+        for _ in 0..WASM_JIT_MAX_TIER_ROOTS {
+            assert!(cache.retain(JitArtifactKind::WasmTierRoot, 0));
+        }
+        assert!(!cache.can_retain(JitArtifactKind::WasmTierRoot, 0));
+        assert!(!cache.can_retain(
+            JitArtifactKind::WasmTierRoot,
+            WASM_JIT_MAX_TIER_MAPPED_BYTES + 1
+        ));
+        assert_eq!(cache.artifacts, JIT_MAX_ARTIFACTS);
+        assert!(!cache.can_retain(JitArtifactKind::BaselineWasm, 0));
     }
 }
 
