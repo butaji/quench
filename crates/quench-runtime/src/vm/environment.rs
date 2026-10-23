@@ -1591,7 +1591,7 @@ impl<H: Host> Vm<H> {
             if remaining == 0 {
                 return Some((
                     slots,
-                    (*function == super::ROOT_FUNCTION_ID).then_some(scope.program()),
+                    (*function == super::ROOT_FUNCTION_ID).then(|| scope.program()),
                 ));
             }
             remaining -= 1;
