@@ -21,6 +21,25 @@ const JSON_HEX_LETTER_VALUE_START: u16 = 10;
 const JSON_BACKSPACE: u16 = b'\x08' as u16;
 const JSON_FORM_FEED: u16 = b'\x0C' as u16;
 const JSON_WHITESPACE: [u16; 4] = [b' ' as u16, b'\t' as u16, b'\n' as u16, b'\r' as u16];
+/// The greatest unit of `JSON_WHITESPACE`: a unit above it is no whitespace, as nearly every
+/// unit a parse reads is.
+const JSON_WHITESPACE_MAX: u16 = {
+    let mut max = 0;
+    let mut index = 0;
+    while index < JSON_WHITESPACE.len() {
+        if JSON_WHITESPACE[index] > max {
+            max = JSON_WHITESPACE[index];
+        }
+        index += 1;
+    }
+    max
+};
+
+/// Whether `unit` is JSON whitespace (`JSON_WHITESPACE`).
+#[inline(always)]
+fn is_json_whitespace(unit: u16) -> bool {
+    unit <= JSON_WHITESPACE_MAX && JSON_WHITESPACE.contains(&unit)
+}
 
 enum JsonValue {
     Null,
@@ -102,19 +121,27 @@ const JSON_PLAIN_DEPTH: usize = 64;
 /// The containers being written, inline up to this nesting.
 const JSON_PLAIN_INLINE_ANCESTORS: usize = 16;
 
-/// The state of one plain stringification: no guest code runs during it, so the shape and
-/// prototype last found to lack `toJSON` (for an ordinary object, and for an array) holds
-/// for its whole run.
+/// The state of one plain stringification: no guest code runs during it, so what a shape
+/// and prototype decide (lacking `toJSON`, an object's members) holds for its whole run.
 struct JsonPlainWrite {
     to_json: Atom,
     ancestors: smallvec::SmallVec<[Value; JSON_PLAIN_INLINE_ANCESTORS]>,
-    object_lacks_to_json: Option<(u32, Value)>,
     array_lacks_to_json: Option<(u32, Value)>,
     output: JsonText,
-    /// Each key written so far, as its quoted bytes' range in `key_text`: an object's keys
-    /// recur across the objects of a payload, so each is quoted once.
-    quoted_keys: rustc_hash::FxHashMap<Atom, (u32, u32)>,
+    /// The members of each ordinary object's (shape, prototype) written so far, or `None`
+    /// when objects of it take the general serializer.
+    object_plans: rustc_hash::FxHashMap<(u32, Value), Option<std::rc::Rc<[JsonMember]>>>,
+    /// The `"key":` text of every planned member: an object's keys recur across the objects
+    /// of a payload, so each shape's are quoted once.
     key_text: JsonText,
+}
+
+/// One enumerable data member of a planned object: its slot and its `"key":` text's range in
+/// `JsonPlainWrite::key_text`.
+#[derive(Clone, Copy)]
+struct JsonMember {
+    slot: u32,
+    key: (u32, u32),
 }
 
 impl JsonPlainWrite {
@@ -122,10 +149,9 @@ impl JsonPlainWrite {
         Self {
             to_json,
             ancestors: Default::default(),
-            object_lacks_to_json: None,
             array_lacks_to_json: None,
             output: JsonText::new(),
-            quoted_keys: Default::default(),
+            object_plans: Default::default(),
             key_text: JsonText::new(),
         }
     }
@@ -788,7 +814,7 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
     fn whitespace(&mut self) {
         while self
             .peek()
-            .is_some_and(|unit| JSON_WHITESPACE.contains(&unit))
+            .is_some_and(is_json_whitespace)
         {
             self.index += 1;
         }
@@ -849,10 +875,10 @@ impl<H: Host> Vm<H> {
         let units: &[u16] = &wide;
         if units
             .first()
-            .is_some_and(|unit| JSON_WHITESPACE.contains(unit))
+            .is_some_and(|unit| is_json_whitespace(*unit))
             || units
                 .last()
-                .is_some_and(|unit| JSON_WHITESPACE.contains(unit))
+                .is_some_and(|unit| is_json_whitespace(*unit))
         {
             return self.syntax_error_result(p, "Invalid raw JSON text");
         }
@@ -1230,48 +1256,68 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.heap.object_record(value) else {
             return false;
         };
-        // Shape facts decide the memo; these per-object facts do not.
+        // Shape facts decide the plan; these per-object facts do not.
         if data.is_raw_json() || data.has_side_descriptors() || self.boxed_primitive_data(value).is_some() {
             return false;
         }
-        let key = (data.shape(), data.proto());
-        if plain.object_lacks_to_json != Some(key) {
-            if !self.json_lacks_to_json(value, plain.to_json) {
-                return false;
-            }
-            plain.object_lacks_to_json = Some(key);
-        }
-        let Some(slots) = self.shape_enumerable_slots(value) else {
+        let Some(members) = self.json_plain_members(value, data, plain) else {
             return false;
         };
-        let accessors = self.shape_may_have_accessors(data.shape());
         plain.output.push(b'{');
-        let mut written = 0;
-        for &(atom, slot) in slots.iter() {
-            let slot = slot as usize;
-            if !self.plain_named_key(atom)
-                || (accessors && self.slot_attributes(data, slot).is_none_or(|attributes| attributes.accessor))
-            {
-                return false;
-            }
-            let Some(member) = self.heap.property_get(data, slot) else {
+        let mut written = false;
+        for member in members.iter() {
+            let Some(member_value) = self.heap.property_get(data, member.slot as usize) else {
                 return false;
             };
             // The member is written before its value is known; an omitted value takes it back.
             let start = plain.output.len();
-            if written != 0 {
+            if written {
                 plain.output.push(b',');
             }
-            self.write_plain_json_key(atom, plain);
-            plain.output.push(b':');
-            match self.json_write_plain(member, plain) {
-                Some(true) => written += 1,
+            let (key_start, key_end) = member.key;
+            plain.output.extend_from_slice(&plain.key_text[key_start as usize..key_end as usize]);
+            match self.json_write_plain(member_value, plain) {
+                Some(true) => written = true,
                 Some(false) => plain.output.truncate(start),
                 None => return false,
             }
         }
         plain.output.push(b'}');
         true
+    }
+
+    /// The members of `value`'s (shape, prototype), derived on the first object of it: its
+    /// enumerable string-keyed data properties in order, when it lacks `toJSON` and no
+    /// property may be an accessor (whose kind a shape alone does not decide).
+    fn json_plain_members(
+        &self,
+        value: Value,
+        data: &crate::heap::Object,
+        plain: &mut JsonPlainWrite,
+    ) -> Option<std::rc::Rc<[JsonMember]>> {
+        let key = (data.shape(), data.proto());
+        if let Some(plan) = plain.object_plans.get(&key) {
+            return plan.clone();
+        }
+        let plan = (!self.shape_may_have_accessors(data.shape())
+            && self.json_lacks_to_json(value, plain.to_json))
+        .then(|| self.shape_enumerable_slots(value))
+        .flatten()
+        .and_then(|slots| {
+            slots
+                .iter()
+                .map(|&(atom, slot)| {
+                    self.plain_named_key(atom).then(|| {
+                        let start = plain.key_text.len() as u32;
+                        self.write_json_key(atom, &mut plain.key_text);
+                        plain.key_text.push(b':');
+                        JsonMember { slot, key: (start, plain.key_text.len() as u32) }
+                    })
+                })
+                .collect::<Option<std::rc::Rc<[JsonMember]>>>()
+        });
+        plain.object_plans.insert(key, plan.clone());
+        plan
     }
 
     fn json_replacer(
@@ -1767,15 +1813,6 @@ impl<H: Host> Vm<H> {
 
     /// QuoteJSONString of the property name `atom`, written from the atom's own text.
     /// `write_json_key` through the stringification's quoted keys (`JsonPlainWrite`).
-    fn write_plain_json_key(&self, atom: Atom, plain: &mut JsonPlainWrite) {
-        let (start, end) = *plain.quoted_keys.entry(atom).or_insert_with(|| {
-            let start = plain.key_text.len();
-            self.write_json_key(atom, &mut plain.key_text);
-            (start as u32, plain.key_text.len() as u32)
-        });
-        plain.output.extend_from_slice(&plain.key_text[start as usize..end as usize]);
-    }
-
     fn write_json_key(&self, atom: Atom, output: &mut JsonText) {
         match self.atom_text(atom) {
             AtomText::Host(text) => write_json_utf8(text.as_bytes(), output),
@@ -1833,7 +1870,7 @@ impl<H: Host> Vm<H> {
                     let key = self.heap.root_value(key_root).unwrap();
                     let object = self.heap.root_value(object_root).unwrap();
                     let descriptor = self.object_get_own_property_descriptor(p, &[object, key])?;
-                    if self.descriptor_flag(descriptor, "enumerable") {
+                    if self.descriptor_flag(descriptor, self.runtime_atoms.enumerable) {
                         let key = self.heap.root_value(key_root).unwrap();
                         if let Some(name) = self.heap.string(key).cloned() {
                             names.push(self.intern_js_atom(&name));

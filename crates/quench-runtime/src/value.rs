@@ -64,6 +64,94 @@ const HEAP_REFERENCE_BITS: u64 = HEAP_FAMILY_BITS | DIRECT_V128_HANDLE_BIT;
 /// The bits that name a heap value's reference family.
 const HEAP_FAMILY_MASK: u64 = TAG_MASK | HEAP_REFERENCE_BITS;
 
+/// A narrow value: a `Value` packed into 32 bits for an object's inline property slot. Bit 0
+/// set holds a `NARROW_INTEGER_BITS` integer above it. Bit 0 clear holds a `NARROW_CODE_BITS` code above it,
+/// naming the value's upper word in `NARROW_UPPER_WORDS`, and the lower word above that, at
+/// most `NARROW_INDEX_BITS` wide. Decoding rebuilds the exact bits, so a value is narrow
+/// exactly when it round-trips. The top two bits of a narrow value are equal, so a payload word
+/// whose upper half is a narrow value never carries an extras tag.
+pub(crate) const NARROW_INTEGER_FLAG: u32 = 1;
+const NARROW_CODE_BITS: u32 = 4;
+const NARROW_CODE_SHIFT: u32 = NARROW_INTEGER_FLAG.trailing_ones();
+const NARROW_INDEX_SHIFT: u32 = NARROW_CODE_SHIFT + NARROW_CODE_BITS;
+/// Lower-word width of a narrow non-integer: it leaves the top two bits clear.
+const NARROW_INDEX_BITS: u32 = u32::BITS - NARROW_INDEX_SHIFT - 2;
+/// Integer width of a narrow integer: its top two bits copy the sign.
+const NARROW_INTEGER_BITS: u32 = u32::BITS - NARROW_CODE_SHIFT - 1;
+const LOWER_WORD: u64 = u32::MAX as u64;
+/// Upper words of narrow non-integers by code: the eight heap reference families in
+/// `HEAP_FAMILY_BITS` order, then the tagged constants. Unused codes hold zero, the upper word
+/// of a number, which `to_narrow` never looks up.
+const NARROW_UPPER_WORDS: [u64; NARROW_LOOKUP_CODES] = {
+    let mut words = [0; NARROW_LOOKUP_CODES];
+    let mut family = 0;
+    while family < NARROW_HEAP_FAMILIES {
+        words[family] = TAG_HEAP | (family as u64) << HEAP_FAMILY_SHIFT;
+        family += 1;
+    }
+    words[NARROW_HEAP_FAMILIES] = TAG_UNDEFINED;
+    words[NARROW_HEAP_FAMILIES + 1] = TAG_NULL;
+    words[NARROW_HEAP_FAMILIES + 2] = TAG_BOOL;
+    words[NARROW_HEAP_FAMILIES + 3] = TAG_DELETED;
+    words
+};
+const HEAP_FAMILY_SHIFT: u32 = HEAP_FAMILY_BITS.trailing_zeros();
+/// The position of `tag` in tag order from `FIRST_TAG`.
+const fn tag_index(tag: u64) -> usize {
+    ((tag - FIRST_TAG) >> TAG_SHIFT) as usize
+}
+/// First narrow code of each tag, in tag order from `FIRST_TAG`; a value's code adds its
+/// family bits. The integer tag's entry is unused: integers pack apart.
+const NARROW_TAG_CODES: [usize; ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as usize + 1] = {
+    let mut codes = [0; ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as usize + 1];
+    codes[tag_index(TAG_UNDEFINED)] = NARROW_HEAP_FAMILIES;
+    codes[tag_index(TAG_NULL)] = NARROW_HEAP_FAMILIES + 1;
+    codes[tag_index(TAG_BOOL)] = NARROW_HEAP_FAMILIES + 2;
+    codes[tag_index(TAG_HEAP)] = 0;
+    codes[tag_index(TAG_DELETED)] = NARROW_HEAP_FAMILIES + 3;
+    codes
+};
+/// Codes `to_narrow` can compute: a constant's base plus stray family bits. Codes past the
+/// packed field name no upper word any value has.
+const NARROW_LOOKUP_CODES: usize = 2 * (1 << NARROW_CODE_BITS);
+const NARROW_HEAP_FAMILIES: usize = 1 << HEAP_FAMILY_BITS.count_ones();
+const _: () = assert!(HEAP_FAMILY_BITS >> HEAP_FAMILY_SHIFT == NARROW_HEAP_FAMILIES as u64 - 1);
+const _: () = assert!(NARROW_HEAP_FAMILIES + 4 <= 1 << NARROW_CODE_BITS);
+const _: () = assert!(NARROW_HEAP_FAMILIES + 3 + NARROW_HEAP_FAMILIES <= NARROW_LOOKUP_CODES);
+
+impl Value {
+    /// This value as a narrow value, when it has one.
+    #[inline(always)]
+    pub(crate) fn to_narrow(self) -> Option<u32> {
+        let upper = self.0 & !LOWER_WORD;
+        let lower = self.0 as u32;
+        if upper == TAG_INT {
+            let integer = lower as i32;
+            let limit = 1i32 << (NARROW_INTEGER_BITS - 1);
+            return (-limit..limit)
+                .contains(&integer)
+                .then_some(((integer as u32) << NARROW_CODE_SHIFT) | NARROW_INTEGER_FLAG);
+        }
+        // The code of the value's tag plus its family bits; only an upper word the code names
+        // exactly is narrow, which also rejects numbers and family bits on a constant.
+        let tag = (self.0 >> TAG_SHIFT).wrapping_sub(FIRST_TAG >> TAG_SHIFT) as usize;
+        let base = *NARROW_TAG_CODES.get(tag)?;
+        let code = base + ((self.0 & HEAP_FAMILY_BITS) >> HEAP_FAMILY_SHIFT) as usize;
+        (NARROW_UPPER_WORDS[code] == upper && lower >> NARROW_INDEX_BITS == 0)
+            .then_some(lower << NARROW_INDEX_SHIFT | (code as u32) << NARROW_CODE_SHIFT)
+    }
+
+    /// The value `narrow` packs (`to_narrow`).
+    #[inline(always)]
+    pub(crate) fn from_narrow(narrow: u32) -> Self {
+        if narrow & NARROW_INTEGER_FLAG != 0 {
+            return Self::integer((narrow as i32) >> NARROW_CODE_SHIFT);
+        }
+        let code = (narrow >> NARROW_CODE_SHIFT) as usize & ((1 << NARROW_CODE_BITS) - 1);
+        Self(NARROW_UPPER_WORDS[code] | u64::from(narrow >> NARROW_INDEX_SHIFT))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HeapReference {
     LegacySlot(u32),
@@ -565,8 +653,6 @@ impl Value {
     }
 }
 
-/// ToUint32's modulus, 2^32.
-const UINT32_MODULUS: f64 = 4_294_967_296.0;
 /// Magnitudes below 2^63 truncate exactly into an `i64`, whose low 32 bits are the value
 /// modulo 2^32.
 const EXACT_I64_TRUNCATION_LIMIT: f64 = 9_223_372_036_854_775_808.0;
@@ -581,8 +667,23 @@ pub(crate) fn number_to_u32(value: f64) -> u32 {
     if !value.is_finite() {
         return 0;
     }
-    value.trunc().rem_euclid(UINT32_MODULUS) as u32
+    // At or above 2^63 the value is an integer: its significand times a power of two of
+    // at least 2^11, whose low 32 bits are the significand's shifted, or none past 2^32.
+    let bits = value.to_bits();
+    let exponent = ((bits >> F64_FRACTION_BITS) & F64_EXPONENT_MASK) as i64
+        - i64::from(F64_EXPONENT_BIAS)
+        - i64::from(F64_FRACTION_BITS);
+    let significand = (bits & F64_FRACTION_MASK) | (1 << F64_FRACTION_BITS);
+    let low = if exponent >= i64::from(u32::BITS) { 0 } else { (significand << exponent) as u32 };
+    if value.is_sign_negative() { low.wrapping_neg() } else { low }
 }
+
+/// The explicit fraction bits of a binary64.
+const F64_FRACTION_BITS: u32 = f64::MANTISSA_DIGITS - 1;
+const F64_FRACTION_MASK: u64 = (1 << F64_FRACTION_BITS) - 1;
+/// The biased exponent field above the fraction, below the sign bit.
+const F64_EXPONENT_MASK: u64 = (1 << (u64::BITS - 1 - F64_FRACTION_BITS)) - 1;
+const F64_EXPONENT_BIAS: i32 = f64::MAX_EXP - 1;
 
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -604,6 +705,63 @@ impl fmt::Debug for Value {
 mod tests {
     use super::Value;
     use std::mem::size_of;
+
+    #[test]
+    fn to_uint32_of_large_magnitudes_is_the_value_modulo_two_to_the_32() {
+        const MODULUS: f64 = 4_294_967_296.0;
+        let reference = |value: f64| value.trunc().rem_euclid(MODULUS) as u32;
+        let mut bits: u64 = 0x2545_F491_4F6C_DD1D;
+        for _ in 0..100_000 {
+            bits ^= bits << 13;
+            bits ^= bits >> 7;
+            bits ^= bits << 17;
+            let value = f64::from_bits(bits);
+            if value.is_finite() && value.abs() >= 9_223_372_036_854_775_808.0 {
+                assert_eq!(super::number_to_u32(value), reference(value), "{value:e}");
+            }
+        }
+        for value in [9.223372036854776e18, -9.223372036854776e18, 1.8446744073709552e19, 3e19, -3e19, f64::MAX, -f64::MAX] {
+            assert_eq!(super::number_to_u32(value), reference(value), "{value:e}");
+        }
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(super::number_to_u32(value), 0);
+        }
+    }
+
+    #[test]
+    fn narrow_values_round_trip_exactly() {
+        let narrow = [
+            Value::integer(0),
+            Value::integer(-1),
+            Value::integer((1 << 29) - 1),
+            Value::integer(-(1 << 29)),
+            Value::UNDEFINED,
+            Value::NULL,
+            Value::TRUE,
+            Value::FALSE,
+            Value::DELETED,
+            Value::heap(7),
+            Value::direct_object(0),
+            Value::direct_object((1 << 25) - 1),
+            Value::direct_string(3),
+        ];
+        for value in narrow {
+            let packed = value.to_narrow().expect("narrow");
+            assert_eq!(Value::from_narrow(packed), value);
+            assert!(packed >> 30 == 0 || packed >> 30 == 3, "top bits copy each other");
+        }
+        let wide = [
+            Value::integer(1 << 30),
+            Value::integer(i32::MIN),
+            Value::number(1.5),
+            Value::number(-0.0),
+            Value::direct_object(1 << 25),
+            Value::heap(1 << 26),
+        ];
+        for value in wide {
+            assert_eq!(value.to_narrow(), None, "{value:?}");
+        }
+    }
 
     #[test]
     fn value_is_one_machine_word() {

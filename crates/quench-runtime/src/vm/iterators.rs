@@ -2050,7 +2050,7 @@ impl<H: Host> Vm<H> {
                     ) {
                     let descriptor =
                         self.object_get_own_property_descriptor(p, &[input, property_key])?;
-                    !descriptor.is_undefined() && self.descriptor_flag(descriptor, "enumerable")
+                    !descriptor.is_undefined() && self.descriptor_flag(descriptor, self.runtime_atoms.enumerable)
                 } else {
                     let key =
                         atom.map_or_else(|| PropertyKey::symbol(property_key), PropertyKey::string);

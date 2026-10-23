@@ -2535,6 +2535,35 @@ pub(super) fn route_callback_failure(
     result
 }
 
+/// The text Node prints for an uncaught `error`: its own fatal-exception enhancer
+/// (`internal/errors`' `fatalExceptionStackEnhancers.afterInspector`), which inspects the
+/// error with its own properties (an `ERR_DLOPEN_FAILED` error's `code`) and falls back to
+/// its `stack`. `None` when the enhancer cannot be reached or gives no string.
+fn fatal_error_text(runtime: &mut quench_runtime::Runtime<NodeHost>, error: RootId) -> Option<String> {
+    let mut roots = Vec::new();
+    let text = (|| {
+        let global = runtime.global_root().ok()?;
+        roots.push(global);
+        let require = runtime.get_named_property_rooted(global, crate::host::shared_vm::commonjs::BOOTSTRAP_REQUIRE).ok()?;
+        roots.push(require);
+        let specifier = runtime.string_rooted("internal/errors");
+        roots.push(specifier);
+        let errors = runtime.call_rooted(require, global, &[specifier]).ok()?;
+        roots.push(errors);
+        let enhancers = runtime.get_named_property_rooted(errors, "fatalExceptionStackEnhancers").ok()?;
+        roots.push(enhancers);
+        let after = runtime.get_named_property_rooted(enhancers, "afterInspector").ok()?;
+        roots.push(after);
+        let text = runtime.call_rooted(after, enhancers, &[error]).ok()?;
+        roots.push(text);
+        runtime.string_text_rooted(text).ok().flatten()
+    })();
+    for root in roots {
+        runtime.release_root(root);
+    }
+    text
+}
+
 /// Build fatal output only after exception handlers decline it. Source text is
 /// the compiler snapshot; a guest can rewrite or remove its file after loading.
 pub(crate) fn format_uncaught_error(
@@ -2547,6 +2576,9 @@ pub(crate) fn format_uncaught_error(
     let stack = error.exception.and_then(|exception| {
         if !runtime.is_error_rooted(exception).ok()? {
             return None;
+        }
+        if let Some(text) = fatal_error_text(runtime, exception) {
+            return Some(text);
         }
         let key = runtime.string_rooted("stack");
         let value = runtime.get_property_rooted(exception, key);

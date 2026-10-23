@@ -229,9 +229,12 @@ const KEPT_BUILDS: usize = 3;
 const STALE_BUILD: std::time::Duration = std::time::Duration::from_secs(60);
 /// The Node builtins a `Preloaded` snapshot loads, as Node's own startup snapshot does: the
 /// modules nearly every program that loads modules loads, whose loading is most of its run.
+/// `zlib` costs a restore that loads none of it 0.35 ms (11.61 -> 11.95 ms, 31 interleaved
+/// runs, x86_64 VM, 2026-10-23) and saves each package that loads it more: npm scenarios
+/// node-fetch 50.0 -> 44.1 ms, axios 108.2 -> 96.9, minizlib 34.0 -> 30.4.
 const PRELOADED_BUILTINS: &[&str] = &[
     "events", "buffer", "util", "path", "fs", "url", "timers", "querystring", "async_hooks",
-    "diagnostics_channel", "stream", "module", "child_process", "http",
+    "diagnostics_channel", "stream", "module", "child_process", "http", "zlib",
 ];
 
 /// What a snapshot holds beyond the bootstrap. A restore decodes everything a snapshot holds
@@ -289,7 +292,7 @@ pub(crate) fn preload(
     kind: SnapshotKind,
 ) -> Result<(), quench_runtime::RootedError> {
     let global = context.global_root()?;
-    let key = context.string_rooted("\0quench:require");
+    let key = context.string_rooted(crate::host::shared_vm::commonjs::BOOTSTRAP_REQUIRE);
     let require = context.get_property_rooted(global, key)?;
     let undefined = context.undefined();
     for name in kind.builtins() {

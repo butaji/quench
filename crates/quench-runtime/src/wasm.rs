@@ -992,6 +992,7 @@ impl Engine {
             replay: None,
             encoded_records: None,
             validated: Default::default(),
+            closure_reads: None,
         };
         program
             .validate()

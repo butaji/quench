@@ -7,7 +7,7 @@ fn plain_object() -> Object {
 }
 
 fn collect_minor(heap: &mut Heap, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
-    heap.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, false)
+    heap.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, None, false)
 }
 
 #[test]
@@ -258,11 +258,8 @@ fn scope_slot_owners_survive_collection_and_release() {
 #[test]
 fn ordinary_object_payloads_live_in_compact_records() {
     // The prototype reference packs beside the shape and integrity bits, so a record is a
-    // header the size of a property vector plus two inline values.
-    assert_eq!(
-        size_of::<Object>(),
-        size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
-    );
+    // header the size of a property vector plus one payload word of narrow inline values.
+    assert_eq!(size_of::<Object>(), size_of::<ValueVec>() + size_of::<u64>());
     assert_eq!(size_of::<Slot>(), size_of::<Option<Cell>>());
 }
 
@@ -1015,7 +1012,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     assert_eq!(heap.environment_slot_owner(second, 7), Some(owner));
     assert_eq!(heap.environment_slot(second, 3), Some(Value::number(30.0)));
     // The copies keep the original and its values alive.
-    heap.collect_with_object_roots([second], |_, _, _, _, _| {}, None, true);
+    heap.collect_with_object_roots([second], |_, _, _, _, _| {}, None, None, true);
     assert_eq!(heap.environment_slot(second, width - 1), Some(kept));
     assert!(matches!(heap.get(kept), Some(Cell::Error(_))));
     // A narrow environment's copy stays dense.

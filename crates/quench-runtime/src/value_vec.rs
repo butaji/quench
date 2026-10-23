@@ -12,7 +12,7 @@ const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
 /// Properties an object keeps in its record. The Score lane (`v2-cloud-c`, a2deff57a) runs
 /// three for RayTrace's vectors at the cost of max RSS (Splay 162 -> 204 MB); the integration
 /// branch keeps memory-first defaults (the owner's direction, 2026-10-17 and 2026-10-18).
-pub(crate) const INLINE_PROPERTY_COUNT: usize = 3;
+pub(crate) const INLINE_PROPERTY_COUNT: usize = 2;
 /// The smallest arena range. An object reaches the arena by outgrowing its inline slots, or
 /// by storing a value they cannot hold before that; a range for its first values would regrow
 /// as it grows past them.
@@ -632,6 +632,16 @@ impl ValueArena {
             (0, true) => MIN_CAPACITY,
             (length, _) => length.next_power_of_two().max(MIN_CAPACITY),
         }
+    }
+
+    /// Whether `vector` of `len` values still names its storage once its last value is
+    /// dropped by a shorter shape: inline values, or an ordered range whose capacity, which
+    /// derives from the length, is the same for one value fewer.
+    pub(crate) fn drops_last_in_place(vector: ValueVec, len: usize) -> bool {
+        vector.has_inline_property_storage()
+            || (!vector.is_dictionary()
+                && len > 0
+                && Self::ordered_capacity(vector, len - 1) == Self::ordered_capacity(vector, len))
     }
 
     /// Whether `vector`, an arena vector outside dictionary storage of `len` values, has room
