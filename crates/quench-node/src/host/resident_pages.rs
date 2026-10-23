@@ -99,6 +99,22 @@ pub fn release_read_only_pages() {
     }
 }
 
+/// Turns off readahead on the clean segments: a page fault then maps only pages already read,
+/// not the neighbors readahead brought into the page cache, so the resident code is the code
+/// that ran.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn advise_read_only_pages_random() {
+    for (start, end) in loaded_segments(ReleasedSegment::Clean) {
+        // SAFETY: advice only; the mapping and its contents are unchanged.
+        unsafe {
+            libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_RANDOM);
+        }
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn advise_read_only_pages_random() {}
+
 /// Read-only file mappings the host made after start-up (compile-cache entries), released with
 /// the segments above. They are mapped side by side in one reserved span (`Arena`), which a
 /// release discards with one call: a run that maps hundreds of entries otherwise made a call
