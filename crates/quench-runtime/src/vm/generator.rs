@@ -1095,7 +1095,8 @@ impl<H: Host> Vm<H> {
         };
         continuation.pc += 1;
         continuation.resume_register = None;
-        let roots = continuation.roots().chain([generator, reason]).collect::<Vec<_>>();
+        let mut roots = continuation.roots();
+        roots.extend([generator, reason]);
         let (rejected, promise) = self.with_call_roots(roots, |vm| {
             let rejected = vm.promise_object()?;
             vm.with_call_roots([rejected], |vm| {

@@ -35,6 +35,10 @@ pub(super) struct PendingGeneralCall {
     pub(super) destination: Register,
     /// Set for an in-loop `new`; see `StepResult::PushFrame`.
     pub(super) construct_this: Option<Value>,
+    /// The rooted promise of an async callee pushed in place (`CallPlan::settles_in_loop`):
+    /// its return resolves the promise, which is then the call's value, and an abrupt
+    /// completion rejects it and resumes the caller after the call.
+    pub(super) settles: Option<crate::heap::RootId>,
     /// The call falls into a return of its result: the caller completes with the callee's
     /// value instead of storing it. Sloppy callers keep their frame (it stays visible to
     /// legacy `caller` reflection), so this chains returns rather than replacing frames.
@@ -1358,6 +1362,32 @@ impl<H: Host> Vm<H> {
                 error,
             )?;
         }
+        // An error thrown at `throwing_pc` of the running frame: the loop resumes at the
+        // handler `unwind_general_loop` finds, popping in-loop activations without one.
+        macro_rules! unwind_at {
+            ($throwing_pc:expr, $error:expr) => {{
+                let mut executing = ExecutingProgram {
+                    id: executing_program,
+                    retained: current_program.take(),
+                };
+                let unwound = self.unwind_general_loop(
+                    entry_program,
+                    frame,
+                    pc,
+                    $throwing_pc,
+                    $error,
+                    &mut pending_calls,
+                    &mut cursor,
+                    &mut executing,
+                    fast_lane,
+                );
+                executing_program = executing.id;
+                current_program = executing.retained;
+                executing_residual = current_program.as_deref().unwrap_or(entry_program);
+                (frame, pc) = unwound?;
+                published_pc = &mut self.frames[frame].pc;
+            }};
+        }
         loop {
             // SAFETY: `executing_residual` points at `entry_program`, borrowed for the whole
             // call, or at the residual `current_program` keeps alive until it is replaced,
@@ -1628,6 +1658,7 @@ impl<H: Host> Vm<H> {
                     )
                 },
                 (cursor.program.raw(), cursor.function),
+                ins.op(),
             );
             pc += 1;
             #[cfg(feature = "profile-aggregate")]
@@ -1920,6 +1951,7 @@ impl<H: Host> Vm<H> {
                         self.programs
                             .record_js_jit_interpreter_completion(program, function, elapsed_ns);
                     }
+                    let mut settle_error = None;
                     loop {
                     if let Some(mut pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);
@@ -1952,6 +1984,15 @@ impl<H: Host> Vm<H> {
                             Some(this) if !self.is_object_like(value) => this,
                             _ => value,
                         };
+                        if let Some(root) = pending.settles {
+                            let promise = self.release_settled_call_root(root);
+                            // SAFETY: as for `p` at the top of the loop.
+                            let caller_code = unsafe { &*executing_residual };
+                            if let Err(error) = self.promise_resolve_value(caller_code, promise, value) {
+                                settle_error = Some((pending.call_pc, error));
+                            }
+                            value = promise;
+                        }
                         pc = self.frames[frame].pc;
                         cursor = pending.caller_cursor.unwrap_or_else(|| {
                             self.general_cursor(
@@ -1964,6 +2005,10 @@ impl<H: Host> Vm<H> {
                         });
                         published_pc = &mut self.frames[frame].pc;
                         drop(pending.call_guard);
+                        if let Some((call_pc, error)) = settle_error.take() {
+                            unwind_at!(call_pc, error);
+                            break;
+                        }
                         if pending.returns {
                             continue;
                         }
@@ -1980,6 +2025,7 @@ impl<H: Host> Vm<H> {
                     destination,
                     call_guard,
                     construct_this,
+                    settles,
                 }) => {
                     // A callee of another program became active when its frame was pushed;
                     // the loop executes that program until the callee returns.
@@ -2004,6 +2050,7 @@ impl<H: Host> Vm<H> {
                         call_pc: instruction_pc as u32,
                         destination,
                         construct_this,
+                        settles,
                         returns: ins.returns_from_frame(),
                         call_guard: Some(call_guard),
                         caller_program,
@@ -2068,28 +2115,7 @@ impl<H: Host> Vm<H> {
                         frame: None,
                     });
                 }
-                Err(error) => {
-                    let mut executing = ExecutingProgram {
-                        id: executing_program,
-                        retained: current_program.take(),
-                    };
-                    let unwound = self.unwind_general_loop(
-                        entry_program,
-                        frame,
-                        pc,
-                        instruction_pc as u32,
-                        error,
-                        &mut pending_calls,
-                        &mut cursor,
-                        &mut executing,
-                        fast_lane,
-                    );
-                    executing_program = executing.id;
-                    current_program = executing.retained;
-                    executing_residual = current_program.as_deref().unwrap_or(entry_program);
-                    (frame, pc) = unwound?;
-                    published_pc = &mut self.frames[frame].pc;
-                }
+                Err(error) => unwind_at!(instruction_pc as u32, error),
             }
         }
     }
@@ -2152,6 +2178,20 @@ impl<H: Host> Vm<H> {
                         Err(error) => error,
                         Ok(_) => unreachable!(),
                     };
+                    // An async callee's abrupt completion rejects its promise, which the
+                    // call yields; the caller resumes after the call.
+                    if let Some(root) = pending.settles {
+                        let promise = self.release_settled_call_root(root);
+                        let caller_residual = executing.retained.clone();
+                        let caller_code = caller_residual.as_deref().unwrap_or(entry_program);
+                        match self.reject_settled_call(caller_code, promise, error) {
+                            Ok(()) => {
+                                self.write(frame, pending.destination, promise);
+                                return Ok((frame, pc));
+                            }
+                            Err(next) => error = next,
+                        }
+                    }
                 }
             }
         }
