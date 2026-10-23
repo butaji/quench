@@ -334,6 +334,7 @@ measured on the same binary and lost.
 | Lazy `process` / EventEmitter for V8-v7 | No payoff possible: `console.log` writes through `process.stdout` (an EventEmitter) in Node and Quench, and every fixture prints | TOD-21 comment |
 | MemoryFirst old growth 1/2–1/8; allocation cap 1/2–1/8 | Old growth: no consistent change. Cap 1/4: RegExp −260 KiB but Richards +128, Crypto `--jit` +140, EarleyBoyer Score −11% | `tod137-full-pacing-sweep-…` |
 | Trailing first-call release from a helper thread | Removes Richards' warm-up spike, but a later peak is as high; RayTrace +300 KiB | `tod137-trailing-release-rejected-…` |
+| Dense array growth 1.5× | Crypto −88/−100 KiB; DeltaBlue `--jit` +184, RayTrace `--jit` +128, RegExp +108 | `tod137-array-growth-rejected-…` |
 | Charge property-arena growth toward the next collection | Max RSS 0.619 → 0.617 of Throughput (RegExp −0.2 MB), Score −1.6% | branch `meas-gc-charge-arena`, TOD-137 comment |
 
 ### 8.3 Where the peak is now (MemoryFirst, no JIT)
