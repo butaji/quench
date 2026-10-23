@@ -37,6 +37,20 @@ const CODE_MAPPING: &str = "r-xp";
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const LOAD_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// The first-call release interval under a policy that returns pages at collections
+/// (memory-first). Before a run's first collections its first calls run code it runs only
+/// once, and that code stayed resident until the first collection while the heap built up:
+/// the max RSS of V8-v7 DeltaBlue and RayTrace without JIT, and of RegExp in both modes, fell
+/// at 18-100 ms, during that warm-up. A release costs the refaults that follow, about 0.35 ms
+/// (npm scenarios with 300-1800 first calls, x86_64 VM, 2026-10-22), so a release at every
+/// first call slowed TypeScript's transpile 313 -> 829 ms. At 5 ms (plain x86_64 build,
+/// MemoryFirst, 10 runs; `evidence/tod137-first-call-release-linux-2026-10-23`): V8-v7 max
+/// RSS without JIT -124 to -516 KiB on six fixtures, with JIT -144 to +48 KiB, scores within
+/// noise; npm scenarios run 7-21% longer for -3.4 to +0.1 MB. Memory-first is the opt-in
+/// policy that trades speed for memory; the throughput default keeps `LOAD_RELEASE_INTERVAL`.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const MEMORY_FIRST_FIRST_CALL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
+
 /// When the read-only pages were last released.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 static LAST_RELEASE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
@@ -55,28 +69,10 @@ pub fn release_read_only_pages_after_load() {
     }
 }
 
-/// Whether the process's memory policy returns resident pages at the release points
-/// (`MemoryPolicy::returns_resident_pages`), set once it is selected (`apply_policy`). Until
-/// then, and under the default throughput policy, the read-only releases do nothing.
-static RETURNS_RESIDENT_PAGES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Takes the process's memory policy for the releases below.
-pub fn apply_policy(policy: quench_runtime::MemoryPolicy) {
-    RETURNS_RESIDENT_PAGES.store(policy.returns_resident_pages(), std::sync::atomic::Ordering::Relaxed);
-}
-
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn returns_resident_pages() -> bool {
-    RETURNS_RESIDENT_PAGES.load(std::sync::atomic::Ordering::Relaxed)
-}
-
 /// Unmaps the read-only pages above from the resident set; the next touch of each refaults it
 /// from its file.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages() {
-    if !returns_resident_pages() {
-        return;
-    }
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
@@ -311,9 +307,6 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
 /// it can drop or swap.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_code_and_data() {
-    if !returns_resident_pages() {
-        return;
-    }
     release_read_only_pages();
     for (start, end) in loaded_segments(ReleasedSegment::LibraryData) {
         // SAFETY: paging out never changes a mapping's contents.
@@ -352,12 +345,23 @@ pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
 enum CompileRelease {
     CodeGeneration,
     FirstCall,
-    BeforeNativeCompilation,
-    AfterNativeCompilation,
 }
 
 impl CompileRelease {
-    const COUNT: usize = 4;
+    const COUNT: usize = 2;
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+impl CompileRelease {
+    /// How far apart this release's runs are kept.
+    fn interval(self) -> std::time::Duration {
+        let returns_pages = crate::shared_run::process_memory_policy()
+            .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
+        match self {
+            Self::FirstCall if returns_pages => MEMORY_FIRST_FIRST_CALL_INTERVAL,
+            Self::FirstCall | Self::CodeGeneration => LOAD_RELEASE_INTERVAL,
+        }
+    }
 }
 
 /// When each compile-phase release last ran, indexed by `CompileRelease`.
@@ -371,7 +375,7 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
         return;
     };
     let last = &mut releases[release as usize];
-    if last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL) {
+    if last.is_some_and(|last| last.elapsed() < release.interval()) {
         return;
     }
     *last = Some(std::time::Instant::now());
@@ -389,25 +393,6 @@ fn release_once_per_interval(_: CompileRelease, _: fn()) {}
 /// held that boundary (V8-v7 max RSS, entry compiled with the bootstrap cached, bolted static
 /// x86_64, 2026-10-22: Crypto 3100-3276 -> 2704-3052 KiB, RayTrace 2996 -> 2764, Richards
 /// 2812 -> 2484).
-/// Releases the read-only pages before a native compilation, at most once per
-/// `LOAD_RELEASE_INTERVAL`: each release made the interpreter's code fault in again, and a
-/// program the JavaScript tier compiles several functions of paid that at each (the
-/// @babel/helper-module-transforms npm scenario under --jit took 28,157 page faults against
-/// 23,194 without it, x86_64 VM, 2026-10-22). A program's first compilation still releases,
-/// which is what a short numeric program's peak needs.
-pub fn before_native_compilation() {
-    release_once_per_interval(CompileRelease::BeforeNativeCompilation, release_read_only_pages);
-}
-
-/// Releases the read-only pages and the allocator's free pages after a native compilation,
-/// at most once per `LOAD_RELEASE_INTERVAL`, as `before_native_compilation` does.
-pub fn after_native_compilation() {
-    release_once_per_interval(CompileRelease::AfterNativeCompilation, || {
-        release_read_only_pages();
-        release_free_heap_pages();
-    });
-}
-
 pub fn release_before_entry_compile() {
     release_read_only_code_and_data();
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]

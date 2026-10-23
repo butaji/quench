@@ -581,6 +581,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpClientResponseDestroy" (1) => crate::modules::http_shared_vm::client_response_destroy,
         method "httpResponseSetHeader" (4) => crate::modules::http_shared_vm::response_set_header,
         method "httpResponseGetHeader" (2) => crate::modules::http_shared_vm::response_get_header,
+        method "httpResponseGetHeaders" (1) => crate::modules::http_shared_vm::response_get_headers,
         method "httpResponseRemoveHeader" (2) => crate::modules::http_shared_vm::response_remove_header,
         method "httpResponseWrite" (7) => crate::modules::http_shared_vm::response_write,
         method "httpResponseFinish" (7) => crate::modules::http_shared_vm::response_finish,
@@ -806,7 +807,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "tlsLowercaseName" (1) => crate::modules::tls_shared_vm::identity::lowercase_name,
         method "tlsCollectAltName" (1) => crate::modules::tls_shared_vm::identity::collect_alt_name,
         method "tlsCheckServerIdentity" (2) => crate::modules::tls_shared_vm::identity::check_server_identity,
-        method "httpIncomingCreate" (5) => crate::modules::http_shared_vm::incoming::create,
+        method "httpIncomingBody" (1) => crate::modules::http_shared_vm::incoming::body,
         method "httpIncomingRead" (1) => crate::modules::http_shared_vm::incoming::read,
         method "httpIncomingDestroy" (2) => crate::modules::http_shared_vm::incoming::destroy,
         method "encodingUtf8" (0) => crate::modules::encoding_binding_shared_vm::encode,
@@ -1025,27 +1026,30 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
 
 /// The host function registered as `name`. Hosts resolve operations per request (an
 /// incoming message's stream methods, an accepted socket's handle), so the names are
-/// indexed once rather than searched among every binding. Each name registers exactly one
-/// function (`operation_names_are_unique`).
+/// indexed once, by a binary search, rather than scanned among every binding. Each name
+/// registers exactly one function (`operation_names_are_unique`).
 pub(crate) fn operation(name: &str) -> HostFunctionId {
-    static INDEX: std::sync::OnceLock<rustc_hash::FxHashMap<&'static str, u32>> =
-        std::sync::OnceLock::new();
-    // Built in every process: hashed by FxHash and sized for every binding, it is neither
-    // rehashed as it grows nor SipHashed (2% of an empty script's instructions).
+    /// The bindings' positions, ordered by name: the names are the bindings' own static
+    /// strings, so the index holds two bytes a binding. A hash map keyed by the names, sized
+    /// for every binding, was 50 KiB of every process's heap at start-up (massif, V8-v7
+    /// Richards, 2026-10-22); a binary search costs about eleven comparisons of short names.
+    static INDEX: std::sync::OnceLock<Box<[u16]>> = std::sync::OnceLock::new();
+    let bindings = bindings();
     let index = INDEX.get_or_init(|| {
-        let mut index = rustc_hash::FxHashMap::with_capacity_and_hasher(
-            bindings().len(),
-            Default::default(),
-        );
-        for (position, binding) in bindings().iter().enumerate() {
-            // A repeated name resolves to its first registration.
-            index
-                .entry(binding.name)
-                .or_insert(u32::try_from(position).expect("Node binding index fits u32"));
-        }
+        let mut index: Box<[u16]> = (0..bindings.len())
+            .map(|position| u16::try_from(position).expect("Node binding index fits u16"))
+            .collect();
+        // Stable, so a repeated name resolves to its first registration.
+        index.sort_by_key(|&position| bindings[usize::from(position)].name);
         index
     });
-    HostFunctionId(*index.get(name).expect("registered Node operation"))
+    let first = index.partition_point(|&position| bindings[usize::from(position)].name < name);
+    let position = index
+        .get(first)
+        .copied()
+        .filter(|&position| bindings[usize::from(position)].name == name)
+        .expect("registered Node operation");
+    HostFunctionId(u32::from(position))
 }
 
 /// The host operations that run beside a lane's frameless activations
@@ -1056,7 +1060,12 @@ const BESIDE_ACTIVATIONS: &[&str] = &[
     "bufferBindingByteLengthUtf8",
     "nextTick",
     "httpResponseGetHeader",
+    "httpResponseGetHeaders",
+    "httpResponseSetHeader",
     "httpResponseWrite",
+    "httpResponseWriteHead",
+    "httpResponseFinish",
+    "httpResponseInitialize",
     "stringDecoderDecode",
     "markAsUncloneable",
 ];
@@ -1085,7 +1094,7 @@ impl quench_runtime::Host for NodeHost {
     /// returns pages at collections (memory-first); every policy counts the collection for
     /// the release before output (`resident_pages::note_collection`).
     fn at_collection_boundary(&mut self, policy: quench_runtime::MemoryPolicy) {
-        if policy.returns_resident_pages() {
+        if policy.returns_pages_at_collections() {
             crate::host::resident_pages::release_read_only_pages();
             crate::host::resident_pages::release_free_heap_pages();
         }
@@ -1099,14 +1108,15 @@ impl quench_runtime::Host for NodeHost {
     /// NavierStokes `--jit` under MemoryFirst, plain x86_64 build, 2026-10-22: max RSS
     /// 10.84-10.94 -> 8.80-8.89 MB, Score within noise).
     fn before_native_compilation(&mut self) {
-        crate::host::resident_pages::before_native_compilation();
+        crate::host::resident_pages::release_read_only_pages();
     }
 
     /// The code generator's pages, and the allocator's pages its scratch memory freed, leave
     /// the resident set before the program runs on (V8-v7 Crypto `--jit` under MemoryFirst,
     /// plain x86_64 build, 2026-10-22: max RSS 6.82-6.84 -> 5.91 MB with the release before).
     fn after_native_compilation(&mut self) {
-        crate::host::resident_pages::after_native_compilation();
+        crate::host::resident_pages::release_read_only_pages();
+        crate::host::resident_pages::release_free_heap_pages();
     }
 
     /// The snapshot is a tracked read-only mapping (`startup_snapshot::load_or_schedule`).

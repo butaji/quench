@@ -609,6 +609,55 @@ const NATIVES: &[Native] = &[
     Native::WasmGlobal, Native::WasmGlobalValueGetter, Native::WasmGlobalValueSetter,
     Native::WasmGlobalValueOf,
     Native::WasmCompileError, Native::WasmLinkError, Native::WasmRuntimeError, ];
+/// The function objects every realm shares, one per `NATIVES` entry. Each is built on its
+/// first read (`Vm::native_value`): a realm's installation reads fewer than half of them,
+/// and a program reads the rest only through the builtins it uses.
+pub(super) struct NativeTable {
+    /// The realm that owns the table. Its function prototype is every entry's prototype,
+    /// whichever realm is active when the entry is first read.
+    realm: Value,
+    /// Each entry's function, indexed by `Native` discriminant; `NULL` until first read.
+    functions: Vec<Value>,
+}
+
+crate::snapshot::snap_struct!(NativeTable { realm, functions });
+
+impl Default for NativeTable {
+    fn default() -> Self {
+        Self { realm: Value::NULL, functions: Vec::new() }
+    }
+}
+
+impl NativeTable {
+    /// Empties the table for a realm whose entries are not yet built.
+    fn reset(&mut self, realm: Value) {
+        self.realm = realm;
+        self.functions.clear();
+    }
+
+    fn get(&self, kind: Native) -> Option<Value> {
+        self.functions
+            .get(kind as usize)
+            .copied()
+            .filter(|function| !function.is_null())
+    }
+
+    fn insert(&mut self, kind: Native, function: Value) {
+        let index = kind as usize;
+        if self.functions.len() <= index {
+            self.functions.resize(index + 1, Value::NULL);
+        }
+        self.functions[index] = function;
+    }
+
+    /// The values the table keeps alive: its realm and the entries built so far.
+    pub(super) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
+        std::iter::once(self.realm)
+            .chain(self.functions.iter().copied())
+            .filter(|value| !value.is_null())
+    }
+}
+
 /// How much of a realm a VM installs when it initializes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RealmScope {
@@ -630,11 +679,7 @@ impl<H: Host> Vm<H> {
         self.install_prototypes();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_prototypes");
-        for native in NATIVES {
-            let value = self.native(*native);
-            self.natives.push((*native, value));
-            self.shared_natives.insert(value);
-        }
+        self.natives.reset(self.realm.globals);
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_native_function_table");
         // Error intrinsics must exist before any guarded initialization step.
@@ -653,10 +698,11 @@ impl<H: Host> Vm<H> {
         self.install_collections(program)?;
         self.install_weak_collections(program)?;
         self.install_iterators(program)?;
+        let native_iterator_close = self.native_value(Native::IteratorClose);
         self.global(
             program,
-            "\0quench:iterator-close",
-            self.native_value(Native::IteratorClose),
+            crate::bytecode::ITERATOR_CLOSE_BINDING,
+            native_iterator_close,
         )?;
         self.global(program, "undefined", Value::UNDEFINED)?;
         self.global(program, "NaN", Value::number(f64::NAN))?;
@@ -676,17 +722,20 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        self.global(program, "print", self.native_value(Native::Print))?;
+        let native_print = self.native_value(Native::Print);
+        self.global(program, "print", native_print)?;
         self.set_builtin_named(program, self.realm.globals, "eval", Native::Eval)?;
+        let native_with_enter = self.native_value(Native::WithEnter);
         self.global(
             program,
             crate::bytecode::WITH_ENTER_BINDING,
-            self.native_value(Native::WithEnter),
+            native_with_enter,
         )?;
+        let native_with_exit = self.native_value(Native::WithExit);
         self.global(
             program,
-            "\0quench:with-exit",
-            self.native_value(Native::WithExit),
+            crate::bytecode::WITH_EXIT_BINDING,
+            native_with_exit,
         )?;
         self.install_date(program)?;
         self.install_host_globals(program)?;
@@ -740,17 +789,20 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        let native_map = self.native_value(Native::Map);
+        let native_set = self.native_value(Native::Set);
         self.install_collection_symbols(
-            self.native_value(Native::Map),
+            native_map,
             self.map_proto,
-            self.native_value(Native::Set),
+            native_set,
             self.set_proto,
             self.weak_map_proto,
             self.weak_set_proto,
         )?;
         self.install_shadow_realm_tag(self.shadow_realm_proto)?;
+        let native_reg_exp = self.native_value(Native::RegExp);
         self.install_regexp_symbol_properties(
-            self.native_value(Native::RegExp),
+            native_reg_exp,
             self.regexp_proto,
             self.realm.globals,
         )?;
@@ -803,8 +855,9 @@ impl<H: Host> Vm<H> {
         }
         self.install_builtin_to_string_tag(self.weak_ref_proto, "WeakRef")?;
         self.install_array_species()?;
+        let native_typed_array = self.native_value(Native::TypedArray);
         self.install_typed_array_species(
-            self.native_value(Native::TypedArray),
+            native_typed_array,
             self.typed_array_proto,
             self.realm.globals,
         )?;
@@ -812,12 +865,14 @@ impl<H: Host> Vm<H> {
         self.install_abstract_module_source(program)?;
         self.install_array_buffer_species()?;
         self.global(program, "Symbol", symbol)?;
+        let native_disposable_stack = self.native_value(Native::DisposableStack);
+        let native_async_disposable_stack = self.native_value(Native::AsyncDisposableStack);
         self.install_disposable_stacks(
             program,
             self.realm.globals,
             self.object_proto,
-            self.native_value(Native::DisposableStack),
-            self.native_value(Native::AsyncDisposableStack),
+            native_disposable_stack,
+            native_async_disposable_stack,
         )?;
         let string = self.native_value(Native::String);
         self.install_string(program, string)?;
@@ -914,7 +969,8 @@ impl<H: Host> Vm<H> {
     }
     fn install_console(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let console = self.object();
-        self.set_named(program, console, "log", self.native_value(Native::Print))?;
+        let native_print = self.native_value(Native::Print);
+        self.set_named(program, console, "log", native_print)?;
         self.global(program, "console", console)
     }
     pub(super) fn install_json_for_realm(
@@ -1012,23 +1068,37 @@ impl<H: Host> Vm<H> {
     pub(super) fn empty_object(proto: Value) -> Object {
         Object::new(proto)
     }
-    fn native(&mut self, kind: Native) -> Value {
-        self.native_with_env(kind, Value::NULL)
+    /// The shared function of a `NATIVES` entry, built in the table's realm on first read.
+    pub(super) fn native_value(&mut self, kind: Native) -> Value {
+        if let Some(function) = self.natives.get(kind) {
+            return function;
+        }
+        debug_assert!(NATIVES.contains(&kind), "{kind:?} has no shared function");
+        let function = self.native_with_realm(kind, Value::NULL, self.natives.realm);
+        self.natives.insert(kind, function);
+        function
     }
-    pub(super) fn native_value(&self, kind: Native) -> Value {
-        self.natives
-            .iter()
-            .find(|(item, _)| *item == kind)
-            .unwrap()
-            .1
+
+    /// Whether `value` is the function every realm shares for its native: one native serves
+    /// every realm, so it runs in the realm of its caller rather than switching to its own.
+    pub(super) fn is_shared_native(&self, value: Value) -> bool {
+        matches!(
+            self.heap.function(value),
+            Some(FunctionRecord { kind: FunctionKind::Native(kind), .. })
+                if self.natives.get(*kind) == Some(value)
+        )
     }
-    pub(super) fn throw_type_error_for_current_realm(&self) -> Value {
+    pub(super) fn throw_type_error_for_current_realm(&mut self) -> Value {
         self.throw_type_error_for_realm(self.realm.globals)
     }
-    pub(super) fn throw_type_error_for_realm(&self, global: Value) -> Value {
-        self.lookup_atom("\0quench:throw-type-error")
+    pub(super) fn throw_type_error_for_realm(&mut self, global: Value) -> Value {
+        match self
+            .lookup_atom("\0quench:throw-type-error")
             .and_then(|atom| self.own_property(global, atom))
-            .unwrap_or_else(|| self.native_value(Native::ThrowTypeError))
+        {
+            Some(thrower) => thrower,
+            None => self.native_value(Native::ThrowTypeError),
+        }
     }
     pub(super) fn install_throw_type_error_for_realm(
         &mut self,

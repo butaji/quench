@@ -296,3 +296,89 @@ slack tracking, pointer compression, snapshots; Hermes Hades; SpiderMonkey
 nursery and pretenuring; QuickJS; Lua 5.4 generational mode; Go GC guide
 and soft memory limit; Wingo on Nofl field-logging barriers, V8 MinorMS and
 pretenuring. Full notes with links: the Linear design document.
+
+## 8. State and evidence (2026-10-22)
+
+Linux x86_64, 4 vCPU, static + BOLT `quench-node` unless noted. Each line names its evidence
+directory under `evidence/`. A component counts as settled when its alternatives were
+measured on the same binary and lost.
+
+### 8.1 What is in force
+
+| Term of §1 | Mechanism | Evidence |
+|---|---|---|
+| headroom | `MemoryPolicy` selects one of two pacing tables; MemoryFirst's young minimum is 2^13 (768 cost ×0.80 Score for 0.63 → 0.64 max RSS) | `tod167-young-and-release-sweep-…`, `tod167-young-minimum-board-…` |
+| code (steady state) | MemoryFirst releases read-only pages and runs `malloc_trim` at every collection boundary | `tod137-collection-code-release-…` |
+| transients (compile) | Read-only pages released before every native compile (Wasm, JS function, OSR region); read-only and free malloc pages after every JS compile: `--jit` max RSS −1 to −3.5 MB on five fixtures | `tod137-jit-compile-release-…` (TOD-185) |
+| retention (strings) | Regexp replace reads a rope through one unkept flattening: RegExp −0.5 to −0.6 MB | `tod137-replace-unkept-…` (TOD-184) |
+| live × overhead | Record families with narrow inline slots, COW array elements, narrow arena vectors (TOD-147/148/162/166/168/170) | earlier evidence on those issues |
+| start-up state (VM) | Direct-mapped memos (shape, atom, symbol proof, private home, function name, enumerable keys) allocate on first record, out of line: V8-v7 max RSS −48 to −254 KiB, Score within the A/A floor | `tod137-lazy-memo-tables-…` |
+| start-up state (host) | Host operations found by a sorted name index | `tod21-operation-index-…` |
+| transients (warm-up) | Under MemoryFirst, first-call compile-phase releases may run 5 ms apart (not 100): V8-v7 no-JIT max RSS −124 to −516 KiB on six fixtures; npm under MemoryFirst +7 to +21% time | `tod137-first-call-release-…` |
+| start-up state (snapshot) | Startup intrinsic roots read from the sealed holders, not a copied list; `process.config` frozen natively | `tod21-startup-intrinsic-roots-…`, `tod21-native-config-freeze-…` |
+
+### 8.2 Measured and rejected (same-binary A/B)
+
+| Candidate | Result | Evidence |
+|---|---|---|
+| Release code only near the peak | Fires at almost every collection in steady state; Score ×0.87 | `tod137-collection-code-release-…` |
+| Release code at power-of-two boundaries | Score +5%, max RSS +4%: a fixed trade, since a steady cycle reaches the same peak each time and needs a release each cycle | same, TOD-183 |
+| Fault-around in the hot text only | Faults −30%, Score unchanged | same |
+| Root and frame skipping on minor collections (TOD-164 step 3) | Within noise; collector instructions are 5–7% of the run | `tod167-young-and-release-sweep-…` |
+| Weigh payload bytes more toward collections | RegExp and Crypto unchanged; Score −4 to −10% | `tod181-payload-unit-sweep-…` |
+| Trim array slack at full collections | No max RSS gain; the tails stay in malloc's arena | `tod137-array-slack-trim-…` |
+| Load and compile-phase release interval 0–20 ms under MemoryFirst | Max RSS unchanged (0.616–0.620 of Throughput) | session sweep, TOD-137 comment |
+| `single_pass` register allocation, `opt_level=none` for the JIT | −1.6 / −0.5 MB on NavierStokes, Score ÷3 / −20% | TOD-110 comment |
+| Allocate the memos on first record with the allocation inlined | DeltaBlue `--jit` −8% over 20 alternating runs; making it cold restored the speed | `tod137-lazy-memo-tables-…` |
+| First-call release at every first call / geometric back-off | Every call: npm 1.4–2.9× slower; back-off: V8-v7 `--jit` up to +312 KiB | `tod137-first-call-release-…` |
+| Lazy `process` / EventEmitter for V8-v7 | No payoff possible: `console.log` writes through `process.stdout` (an EventEmitter) in Node and Quench, and every fixture prints | TOD-21 comment |
+| MemoryFirst old growth 1/2–1/8; allocation cap 1/2–1/8 | Old growth: no consistent change. Cap 1/4: RegExp −260 KiB but Richards +128, Crypto `--jit` +140, EarleyBoyer Score −11% | `tod137-full-pacing-sweep-…` |
+| Trailing first-call release from a helper thread | Removes Richards' warm-up spike, but a later peak is as high; RayTrace +300 KiB | `tod137-trailing-release-rejected-…` |
+| Dense array growth 1.5× | Crypto −88/−100 KiB; DeltaBlue `--jit` +184, RayTrace `--jit` +128, RegExp +108 | `tod137-array-growth-rejected-…` |
+| Charge property-arena growth toward the next collection | Max RSS 0.619 → 0.617 of Throughput (RegExp −0.2 MB), Score −1.6% | branch `meas-gc-charge-arena`, TOD-137 comment |
+
+### 8.3 Where the peak is now (MemoryFirst, no JIT)
+
+At each peak, sampled from `/proc` with resident pages attributed by symbol size:
+- **Code:** 1.3–1.8 MB, of which the interpreter's own working set is 0.8–0.9 MB (`vm` and
+  `dispatch_fast`). Quench's code pages are fewer than QuickJS's 2.9 MB, which includes libc.
+- **Heap, besides start-up state:** the property arena is a 516 KiB malloc mapping after it
+  doubles on Richards (`mremap` 132 → 260 → 516 KiB; 288 KiB resident), set by the allocation
+  burst before the first collection. Charging its growth to pacing did not move the peaks.
+- **Heap:** 1.7–2.1 MB on the small fixtures. 1.58 MB of it is start-up state: about 1 MB for
+  the runtime's builtins, 958 native function objects among them, and about 0.6 MB for the
+  Node host (EventEmitter 164 KiB, `process` 168 KiB). QuickJS's whole heap is 0.55 MB.
+
+Against the target, max RSS ≤ 0.8 × the lowest other runtime
+(`tod137-board-after-replace-and-jit-release-…`):
+
+| Mode | Met | Within 1.2× of the target | Beyond |
+|---|---|---|---|
+| no JIT | EarleyBoyer, Splay | Richards 1.16, DeltaBlue 1.13, NavierStokes 1.15 | RegExp 1.22, Crypto 1.28, RayTrace 1.32 |
+| `--jit` | EarleyBoyer, Splay | DeltaBlue 1.08, RayTrace 1.11, Richards 1.13, RegExp 1.19 | Crypto 1.41, NavierStokes 1.84 |
+
+### 8.4 What remains, by owner
+
+- **Code layout** (RSS lane, TOD-171): bolting v2-gc `3d7dc0656a` with the old profile gave
+  anonymous memory −120 KiB but file pages +350 KiB on Richards. The board needs a retrained
+  link order and BOLT profile before it shows this lane's gains
+  (`tod137-bolt-board-after-memo-and-first-call-…`).
+- **Warm-up spike** (this lane, partly addressed): DeltaBlue, RayTrace and RegExp peaked in
+  their first 20–100 ms. Under MemoryFirst, first-call releases 5 ms apart lower those peaks.
+  Releasing at every first call would lower them further, but costs npm 1.4–2.9× in time,
+  because no unprivileged process can tell hot code pages from cold ones.
+- **Start-up anonymous memory:** about 1.47 MB at Richards' peak, against QuickJS's whole
+  heap of 0.55 MB. The host bootstrap adds about 363 KiB of malloc, and every scored run
+  needs `process` and EventEmitter (`console.log` writes through `process.stdout`). The
+  runtime realm is about 300 KiB (c2's lazy native table and intrinsic groups, TOD-21).
+  The shape table, LaneStack and compile-cache entries are already resident only as used.
+
+- **Start-up heap** (RSS lane, TOD-21 and TOD-104): lazy host modules and lazy builtin function
+  objects. The checkpoint census sizes each item; at about 1.6 MB it is larger than every
+  remaining gap.
+- **JIT compile scratch** (jit lane, TOD-110): OSR regions lower to about 64 IR instructions
+  and 11 blocks per bytecode, mostly exit write-back blocks. regalloc2 scratch scales with
+  blocks × values, and this sets NavierStokes `--jit`.
+- **Score** (Score and jit lanes): ×1.1–1.8 without JIT and ×1.8–63 with it, outside memory
+  management. MemoryFirst costs ×0.90–0.93 against Throughput, and the code release is a
+  known part of that.

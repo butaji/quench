@@ -147,21 +147,23 @@ pub(super) fn decode_uri(
     value: &super::wtf16::JsString,
     component: bool,
 ) -> Result<super::wtf16::JsString, &'static str> {
-    let wide = value.units().wide();
-    let units: &[u16] = &wide;
+    let units = value.units();
+    if !units.iter().any(|unit| unit == b'%' as u16) {
+        return Ok(value.clone());
+    }
     let mut output = Vec::with_capacity(units.len());
     let mut index = 0;
     while index < units.len() {
-        if units[index] != b'%' as u16 {
-            output.push(units[index]);
+        if units.at(index) != b'%' as u16 {
+            output.push(units.at(index));
             index += 1;
             continue;
         }
         if index + 2 >= units.len() {
             return Err(MALFORMED_URI_MESSAGE);
         }
-        let first = (hex_digit(units[index + 1]).ok_or(MALFORMED_URI_MESSAGE)? << 4)
-            | hex_digit(units[index + 2]).ok_or(MALFORMED_URI_MESSAGE)?;
+        let first = (hex_digit(units.at(index + 1)).ok_or(MALFORMED_URI_MESSAGE)? << 4)
+            | hex_digit(units.at(index + 2)).ok_or(MALFORMED_URI_MESSAGE)?;
         let (width, mut code_point, minimum) = match first {
             0x00..=0x7f => (1, u32::from(first), 0),
             0xc2..=0xdf => (2, u32::from(first & 0x1f), 0x80),
@@ -170,17 +172,17 @@ pub(super) fn decode_uri(
             _ => return Err(MALFORMED_URI_MESSAGE),
         };
         if width == 1 && !component && URI_RESERVED.contains(&(first as u8)) {
-            output.extend_from_slice(&units[index..index + 3]);
+            units.slice(index..index + 3).extend_into(&mut output);
             index += 3;
             continue;
         }
         for continuation in 1..width {
             let escape = index + continuation * 3;
-            if units.get(escape) != Some(&(b'%' as u16)) || escape + 2 >= units.len() {
+            if units.get(escape) != Some(b'%' as u16) || escape + 2 >= units.len() {
                 return Err(MALFORMED_URI_MESSAGE);
             }
-            let byte = (hex_digit(units[escape + 1]).ok_or(MALFORMED_URI_MESSAGE)? << 4)
-                | hex_digit(units[escape + 2]).ok_or(MALFORMED_URI_MESSAGE)?;
+            let byte = (hex_digit(units.at(escape + 1)).ok_or(MALFORMED_URI_MESSAGE)? << 4)
+                | hex_digit(units.at(escape + 2)).ok_or(MALFORMED_URI_MESSAGE)?;
             if byte & 0xc0 != 0x80 {
                 return Err(MALFORMED_URI_MESSAGE);
             }

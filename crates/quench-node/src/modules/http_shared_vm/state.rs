@@ -1,26 +1,27 @@
 use quench_runtime::RootId;
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 pub(crate) struct State {
     next_server: u64,
     next_agent: u64,
     next_request: u64,
     next_response: u64,
-    pub(crate) status_reasons: HashMap<u16, Vec<u8>>,
+    pub(crate) status_reasons: FxHashMap<u16, Vec<u8>>,
     pub(crate) response_factory: Option<RootId>,
     pub(crate) incoming_factory: Option<RootId>,
-    pub(crate) servers: HashMap<u64, Server>,
-    pub(crate) connections: HashMap<u64, ServerConnection>,
-    pub(crate) responses: HashMap<u64, Response>,
+    pub(crate) response_tracking: Option<ResponseTracking>,
+    pub(crate) servers: FxHashMap<u64, Server>,
+    pub(crate) connections: FxHashMap<u64, ServerConnection>,
+    pub(crate) responses: FxHashMap<u64, Response>,
     /// The collection epoch `responses` was last pruned at (`poll::prune_collected_responses`):
     /// an ended response's owner can only have died when a collection ran since.
     pub(crate) responses_pruned_epoch: u64,
     /// Responses whose write returned false, keyed by socket, until their
     /// queued bytes fall below the high-water mark and `drain` is due.
-    pub(crate) drain_waiters: HashMap<u64, RootId>,
-    pub(crate) requests: HashMap<u64, OutgoingRequest>,
-    pub(crate) clients: HashMap<u64, Client>,
-    pub(crate) agents: HashMap<u64, HashSet<u64>>,
+    pub(crate) drain_waiters: FxHashMap<u64, RootId>,
+    pub(crate) requests: FxHashMap<u64, OutgoingRequest>,
+    pub(crate) clients: FxHashMap<u64, Client>,
+    pub(crate) agents: FxHashMap<u64, FxHashSet<u64>>,
 }
 
 impl State {
@@ -35,12 +36,43 @@ impl State {
     }
 }
 
+/// The objects every response is registered with as it is made (`response_initialize`): a
+/// WeakMap from response to exchange id, which `_send` reads, and a FinalizationRegistry whose
+/// cleanup releases the host's entry, with the intrinsic methods that register a response.
+#[derive(Clone, Copy)]
+pub(crate) struct ResponseTracking {
+    pub(crate) responses: RootId,
+    pub(crate) map_set: RootId,
+    pub(crate) registry: RootId,
+    pub(crate) register: RootId,
+}
+
+impl ResponseTracking {
+    pub(crate) fn roots(self) -> [RootId; 4] {
+        [self.responses, self.map_set, self.registry, self.register]
+    }
+}
+
+impl crate::host::startup_snapshot::HostSnap for ResponseTracking {
+    fn write(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
+        self.roots().iter().try_for_each(|root| root.write(writer))
+    }
+    fn read(reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<Self, String> {
+        Ok(Self {
+            responses: RootId::read(reader)?,
+            map_set: RootId::read(reader)?,
+            registry: RootId::read(reader)?,
+            register: RootId::read(reader)?,
+        })
+    }
+}
+
 pub(crate) struct Server {
     pub(crate) root: RootId,
     pub(crate) listener: Option<u64>,
     pub(crate) listening_pending: bool,
     pub(crate) closing: bool,
-    pub(crate) connections: HashSet<u64>,
+    pub(crate) connections: FxHashSet<u64>,
 }
 
 pub(crate) struct ServerConnection {
@@ -51,6 +83,7 @@ pub(crate) struct ServerConnection {
 
 pub(crate) struct Response {
     pub(crate) socket: u64,
+    pub(crate) virtual_response: bool,
     pub(crate) async_id: u64,
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) body: Body,
@@ -168,17 +201,18 @@ impl State {
             next_agent: 1,
             next_request: 1,
             next_response: 1,
-            status_reasons: HashMap::new(),
+            status_reasons: FxHashMap::default(),
             response_factory: None,
             incoming_factory: None,
-            servers: HashMap::new(),
-            connections: HashMap::new(),
-            responses: HashMap::new(),
+            response_tracking: None,
+            servers: FxHashMap::default(),
+            connections: FxHashMap::default(),
+            responses: FxHashMap::default(),
             responses_pruned_epoch: 0,
-            drain_waiters: HashMap::new(),
-            requests: HashMap::new(),
-            clients: HashMap::new(),
-            agents: HashMap::new(),
+            drain_waiters: FxHashMap::default(),
+            requests: FxHashMap::default(),
+            clients: FxHashMap::default(),
+            agents: FxHashMap::default(),
         }
     }
 
@@ -195,7 +229,7 @@ impl State {
         self.next_agent = id
             .checked_add(1)
             .ok_or_else(|| "HTTP agent identifier space exhausted".to_owned())?;
-        self.agents.insert(id, HashSet::new());
+        self.agents.insert(id, FxHashSet::default());
         Ok(id)
     }
 
@@ -233,6 +267,7 @@ impl State {
             status_reasons,
             response_factory,
             incoming_factory,
+            response_tracking,
             servers,
             connections,
             responses,
@@ -263,6 +298,7 @@ impl State {
         }
         response_factory.write(writer)?;
         incoming_factory.write(writer)?;
+        response_tracking.write(writer)?;
         // The agents the bootstrap made, which hold no socket yet.
         writer.len(agents.len());
         agents.keys().try_for_each(|agent| agent.write(writer))
@@ -279,9 +315,10 @@ impl State {
         }
         self.response_factory = HostSnap::read(reader)?;
         self.incoming_factory = HostSnap::read(reader)?;
+        self.response_tracking = HostSnap::read(reader)?;
         self.agents.clear();
         for _ in 0..reader.len()? {
-            self.agents.insert(HostSnap::read(reader)?, HashSet::new());
+            self.agents.insert(HostSnap::read(reader)?, FxHashSet::default());
         }
         Ok(())
     }

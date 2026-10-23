@@ -76,17 +76,86 @@ fn binary_lane(left: u64, right: u64, width: u32, op: Binary) -> u64 {
         width,
     )
 }
+/// The lanes of one width, whose shape the compiler sees: each lanewise operator below is
+/// its scalar operator on every lane, exactly `binary_lane`'s result for the operators it
+/// admits, as one loop the width unrolls.
+#[derive(Clone, Copy)]
+struct Lanes<const WIDTH: u32>;
+
+impl<const WIDTH: u32> Lanes<WIDTH> {
+    const MASK: u64 = u64::MAX >> (u64::BITS - WIDTH);
+
+    #[inline(always)]
+    fn map(self, left: u128, right: u128, operation: impl Fn(u64, u64) -> u64) -> u128 {
+        let mut result = 0;
+        let mut index = 0;
+        while index < u128::BITS / WIDTH {
+            let shift = WIDTH * index;
+            let a = (left >> shift) as u64 & Self::MASK;
+            let b = (right >> shift) as u64 & Self::MASK;
+            result |= u128::from(operation(a, b) & Self::MASK) << shift;
+            index += 1;
+        }
+        result
+    }
+
+    #[inline(always)]
+    fn binary(self, left: u128, right: u128, op: Binary) -> Option<u128> {
+        Some(match op {
+            Binary::Add => self.map(left, right, u64::wrapping_add),
+            Binary::Subtract => self.map(left, right, u64::wrapping_sub),
+            Binary::Multiply => self.map(left, right, u64::wrapping_mul),
+            Binary::And => left & right,
+            Binary::Or => left | right,
+            Binary::Xor => left ^ right,
+            _ => return None,
+        })
+    }
+
+    /// A shift of every lane by `count`, below the lane width.
+    #[inline(always)]
+    fn shift(self, value: u128, count: u32, op: Binary) -> Option<u128> {
+        Some(match op {
+            Binary::ShiftLeft => self.map(value, 0, |a, _| a << count),
+            Binary::ShiftRightUnsigned => self.map(value, 0, |a, _| a >> count),
+            Binary::ShiftRightSigned => self.map(value, 0, |a, _| (signed(a, WIDTH) >> count) as u64),
+            _ => return None,
+        })
+    }
+}
+
+/// `$operation` on `Lanes` of `$width`, one of the integer lane widths, named `$lanes`:
+/// one arm per width, so each inlines its own loop.
+macro_rules! by_width {
+    ($width:expr, |$lanes:ident| $operation:expr) => {
+        match $width {
+            8 => { let $lanes = Lanes::<8>; $operation }
+            16 => { let $lanes = Lanes::<16>; $operation }
+            32 => { let $lanes = Lanes::<32>; $operation }
+            64 => { let $lanes = Lanes::<64>; $operation }
+            _ => None,
+        }
+    };
+}
+
 pub(super) fn binary(left: u128, right: u128, width: u32, op: Binary) -> WasmValue {
+    if let Some(bits) = by_width!(width, |lanes| lanes.binary(left, right, op)) {
+        return WasmValue::V128(bits);
+    }
     map_lanes(left, Some(right), width, |a, b| {
         binary_lane(a, b.unwrap(), width, op)
     })
 }
 pub(super) fn shift(value: u128, count: u32, width: u32, op: Binary) -> WasmValue {
+    if let Some(bits) = by_width!(width, |lanes| lanes.shift(value, count % width, op)) {
+        return WasmValue::V128(bits);
+    }
     let count = u64::from(count % width);
     map_lanes(value, None, width, |bits, _| {
         binary_lane(bits, count, width, op)
     })
 }
+
 pub(super) fn negate(value: u128, width: u32) -> WasmValue {
     map_lanes(value, None, width, |bits, _| {
         binary_lane(0, bits, width, Binary::Subtract)
@@ -281,4 +350,40 @@ pub(super) fn relaxed_dot(left: u128, right: u128) -> WasmValue {
         );
     }
     WasmValue::V128(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The lanewise fast paths (`Lanes`) agree with the per-lane scalar rule (`binary_lane`)
+    /// for every width and operator they admit.
+    #[test]
+    fn lanewise_operators_match_the_scalar_lane_rule() {
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let binaries = [Binary::Add, Binary::Subtract, Binary::Multiply, Binary::And, Binary::Or, Binary::Xor];
+        let shifts = [Binary::ShiftLeft, Binary::ShiftRightUnsigned, Binary::ShiftRightSigned];
+        for _ in 0..200 {
+            let left = u128::from(next()) << 64 | u128::from(next());
+            let right = u128::from(next()) << 64 | u128::from(next());
+            let count = (next() % 200) as u32;
+            for width in [8, 16, 32, 64] {
+                for op in binaries {
+                    let expected = map_lanes(left, Some(right), width, |a, b| binary_lane(a, b.unwrap(), width, op));
+                    assert_eq!(binary(left, right, width, op), expected, "{op:?} width {width}");
+                }
+                for op in shifts {
+                    let lane_count = u64::from(count % width);
+                    let expected = map_lanes(left, None, width, |bits, _| binary_lane(bits, lane_count, width, op));
+                    assert_eq!(shift(left, count, width, op), expected, "{op:?} width {width}");
+                }
+            }
+        }
+    }
 }
