@@ -11166,6 +11166,24 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
 }
 
 #[test]
+fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "function add(a, b) { return a + b; } add(1, 2);",
+        "js-jit-rejected-lane.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    let id = vm.programs.insert(program.clone()).unwrap();
+
+    assert!(vm.js_tier_may_claim(&program, id, 1));
+    vm.programs
+        .reject_js_function(id, 1, "unsupported-shape");
+    assert!(vm.programs.js_tier_declined(id, 1));
+    assert!(!vm.js_tier_may_claim(&program, id, 1));
+}
+
+#[test]
 fn js_jit_promotion_requires_a_confident_numeric_profile() {
     let program = Engine::compile(crate::ExecutionRequest::script("void 0", "js-jit-profile-gate.js"))
         .unwrap();
