@@ -2419,7 +2419,15 @@ impl<H: Host> Vm<H> {
         let cell_counts = self.heap.cell_counts();
         let live_payload_bytes = self.heap.live_payload_bytes();
         let (live_property_values, live_property_capacity) = self.heap.live_property_stats();
+        let (
+            inline_property_values,
+            narrowable_inline_property_values,
+            out_of_line_property_values,
+            narrowable_out_of_line_property_values,
+        ) = self.heap.live_property_narrow_stats();
         let (array_elements, array_capacity) = self.heap.array_element_stats();
+        let (dense_array_values, narrowable_dense_array_values) =
+            self.heap.dense_array_element_narrow_stats();
         let megamorphic_field_entries: usize =
             self.megamorphic_fields.iter().map(FieldCacheSet::len).sum();
         let max_megamorphic_field_entries = self
@@ -2428,6 +2436,23 @@ impl<H: Host> Vm<H> {
             .map(FieldCacheSet::len)
             .max()
             .unwrap_or(0);
+        let active_field_caches = self
+            .field_caches
+            .iter()
+            .filter(|cache| cache.receiver != NO_FIELD_RECEIVER)
+            .count();
+        let mut field_add_cache_entries = 0usize;
+        let mut field_add_cache_depth_counts = [0usize; FIELD_ADD_CACHE_MAX_PROTO_DEPTH + 1];
+        for set in &self.field_add_sets {
+            for cache in &set.entries[..usize::from(set.len)] {
+                field_add_cache_entries += 1;
+                field_add_cache_depth_counts[usize::from(cache.prototype_depth)] += 1;
+            }
+        }
+        let mut field_add_set_occupancy = [0usize; FIELD_ADD_CACHE_WAYS + 1];
+        for set in &self.field_add_sets {
+            field_add_set_occupancy[usize::from(set.len)] += 1;
+        }
         let frame_bytes: usize = self
             .frames
             .iter()
@@ -2440,7 +2465,7 @@ impl<H: Host> Vm<H> {
         let field_add_cache_bytes = self.field_add_indices.capacity() * size_of::<u32>()
             + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>();
         eprintln!(
-            "{{\"kind\":\"quench-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
+            "{{\"kind\":\"quench-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"inline_property_values\":{inline_property_values},\"narrowable_inline_property_values\":{narrowable_inline_property_values},\"out_of_line_property_values\":{out_of_line_property_values},\"narrowable_out_of_line_property_values\":{narrowable_out_of_line_property_values},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"dense_array_values\":{dense_array_values},\"narrowable_dense_array_values\":{narrowable_dense_array_values},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"field_cache_sites\":{},\"field_cache_site_capacity\":{},\"active_field_caches\":{active_field_caches},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"field_cache_data_bytes\":{},\"megamorphic_field_index_bytes\":{},\"field_add_index_bytes\":{},\"field_add_set_bytes\":{},\"field_add_sets\":{},\"field_add_cache_entries\":{field_add_cache_entries},\"field_add_cache_depth_counts\":{field_add_cache_depth_counts:?},\"field_add_set_occupancy\":{field_add_set_occupancy:?},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
             self.shapes.len(),
             self.shapes.capacity(),
             self.transitions.len(),
@@ -2448,7 +2473,14 @@ impl<H: Host> Vm<H> {
             self.field_caches.capacity() * size_of::<FieldCache>()
                 + self.megamorphic_field_indices.capacity() * size_of::<u32>()
                 + field_add_cache_bytes,
+            self.field_caches.len(),
+            self.field_caches.capacity(),
             self.megamorphic_fields.len(),
+            self.field_caches.capacity() * size_of::<FieldCache>(),
+            self.megamorphic_field_indices.capacity() * size_of::<u32>(),
+            self.field_add_indices.capacity() * size_of::<u32>(),
+            self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>(),
+            self.field_add_sets.len(),
             self.method_caches.capacity() * size_of::<[MethodCache; 2]>(),
             self.megamorphic_methods.len(),
         );
