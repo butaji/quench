@@ -46,6 +46,9 @@ oxc_diagnostics = { workspace = true }
 rustc-hash = "2.1"
 # Line terminators are found by a vectorized byte search (`bytecode::source_line_starts`).
 memchr = "2"
+# Number::toString takes the shortest round-trip digits from Ryu (`number_to_string`).
+ryu = "1"
+itoa = "1"
 # The shape transition index keeps only child ids (`vm::shape_transitions`).
 # Default features and `raw-entry` match what quench-node enables (feature pins below).
 hashbrown = { version = "0.16", features = ["raw-entry"] }
