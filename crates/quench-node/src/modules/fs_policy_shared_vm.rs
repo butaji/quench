@@ -173,6 +173,17 @@ pub(super) fn export(
     if let Some(value) = cached(context, name)? {
         return Ok(value);
     }
+    capture(context)?;
+    cached(context, name)?
+        .ok_or_else(|| RootedError::host("Node filesystem policy capture missing"))
+}
+
+/// Loads Node's `internal/fs/utils.js`, whose exports `adopt` captures. Node's `fs.js`
+/// requires it as it loads; Quench's `fs` captures it at its first policy call, and a startup
+/// snapshot that preloads `fs` captures it at the snapshot point (`startup_snapshot::preload`):
+/// the first call had loaded it and its dependencies in every process, 2.5-3.6 ms of a small
+/// npm package's run (`readFileSync(path, 'utf8')`, x86_64 VM, 2026-10-23).
+pub(crate) fn capture(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
     context.with_startup_intrinsics(|context| {
         crate::host::shared_vm::commonjs::node_library_export(
             context,
@@ -181,8 +192,7 @@ pub(super) fn export(
             "getOptions",
         )
     })?;
-    cached(context, name)?
-        .ok_or_else(|| RootedError::host("Node filesystem policy capture missing"))
+    Ok(())
 }
 
 pub(super) fn call(
