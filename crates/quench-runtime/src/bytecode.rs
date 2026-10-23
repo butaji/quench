@@ -2913,7 +2913,8 @@ pub(crate) struct ProgramSource {
     pub(crate) column_offset: u32,
     /// `source_line_starts(text)`, indexed on the first line read: error source positions
     /// read a line per throw, which a scan from the top would make linear in the source.
-    pub(crate) line_starts: std::cell::OnceCell<Box<[u32]>>,
+    /// Shared, so a copy of the source (an error's captured call sites) copies no index.
+    pub(crate) line_starts: std::cell::OnceCell<std::sync::Arc<[u32]>>,
 }
 
 /// A static item at a fixed place in the executable image, from which a snapshot measures the

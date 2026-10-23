@@ -332,14 +332,14 @@ impl<H: Host> Vm<H> {
                     self.heap.root_value(key).unwrap(),
                 ],
             )?;
-            if !descriptor.is_undefined() && !self.descriptor_flag(descriptor, "configurable") {
+            if !descriptor.is_undefined() && !self.descriptor_flag(descriptor, self.runtime_atoms.configurable) {
                 let value_atom = self.runtime_atoms.value;
-                let writable_atom = self.intern_atom("writable");
-                let setter_atom = self.intern_atom("set");
+                let writable_atom = self.runtime_atoms.writable;
+                let setter_atom = self.runtime_atoms.set;
                 let is_data = self.own_property(descriptor, value_atom).is_some()
                     || self.own_property(descriptor, writable_atom).is_some();
                 if is_data
-                    && !self.descriptor_flag(descriptor, "writable")
+                    && !self.descriptor_flag(descriptor, self.runtime_atoms.writable)
                     && self
                         .own_property(descriptor, value_atom)
                         .is_some_and(|target_value| {
