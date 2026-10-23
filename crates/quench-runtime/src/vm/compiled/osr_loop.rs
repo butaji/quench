@@ -25,7 +25,7 @@ use crate::bytecode::{
     FieldBase, FieldLookup, Function, Op, Operand, OperandKind, Register, WideInstruction,
 };
 use crate::value::{Value, ValueLayout};
-use super::super::operations::{NumberArithmetic, NumberUnary};
+use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
 use cranelift_codegen::ir::{
     self, InstBuilder, UserFuncName,
     condcodes::{FloatCC, IntCC},
@@ -266,37 +266,15 @@ enum Source {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Arithmetic {
     Float(NumberArithmetic),
-    Int32(Int32Operator),
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Int32Operator {
-    Or,
-    And,
-    Xor,
-    ShiftLeft,
-    ShiftRight,
-    ShiftRightUnsigned,
+    Int32(super::super::operations::NumberBitwise),
 }
 
 fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
     if let Some(operation) = NumberArithmetic::from_js_instruction(instruction, operator) {
         return Some(Arithmetic::Float(operation));
     }
-    let operation = super::super::operations::NumberBitwise::from_js_instruction(
-        instruction,
-        operator,
-    )?;
-    Some(Arithmetic::Int32(match operation {
-        super::super::operations::NumberBitwise::Or => Int32Operator::Or,
-        super::super::operations::NumberBitwise::And => Int32Operator::And,
-        super::super::operations::NumberBitwise::Xor => Int32Operator::Xor,
-        super::super::operations::NumberBitwise::ShiftLeft => Int32Operator::ShiftLeft,
-        super::super::operations::NumberBitwise::ShiftRight => Int32Operator::ShiftRight,
-        super::super::operations::NumberBitwise::ShiftRightUnsigned => {
-            Int32Operator::ShiftRightUnsigned
-        }
-    }))
+    super::super::operations::NumberBitwise::from_js_instruction(instruction, operator)
+        .map(Arithmetic::Int32)
 }
 
 /// A unary operator a region lowers on a Number.
@@ -845,7 +823,7 @@ fn definition(
                 Arithmetic::Float(_) => {
                     both(source(instruction.operand_b()), source(instruction.operand_c()))
                 }
-                Arithmetic::Int32(Int32Operator::ShiftRightUnsigned) => Representation::Float64,
+                Arithmetic::Int32(NumberBitwise::ShiftRightUnsigned) => Representation::Float64,
                 Arithmetic::Int32(_) => Representation::Int32,
             }
         }
@@ -2315,20 +2293,17 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Arithmetic::Int32(operator) => {
                 let left = self.int32(pc, left);
                 let right = self.int32(pc, right);
-                let ins = self.body.builder.ins();
-                // Shift counts are taken modulo 32, as Cranelift's shifts take them.
-                let value = match operator {
-                    Int32Operator::Or => ins.bor(left, right),
-                    Int32Operator::And => ins.band(left, right),
-                    Int32Operator::Xor => ins.bxor(left, right),
-                    Int32Operator::ShiftLeft => ins.ishl(left, right),
-                    Int32Operator::ShiftRight => ins.sshr(left, right),
-                    Int32Operator::ShiftRightUnsigned => {
-                        let shifted = ins.ushr(left, right);
-                        let value = self.body.builder.ins().fcvt_from_uint(types::F64, shifted);
-                        return Typed { value, representation: Representation::Float64 };
-                    }
-                };
+                let bits = super::emit_number_bitwise_bits(
+                    &mut self.body.builder,
+                    operator,
+                    left,
+                    right,
+                );
+                if operator == NumberBitwise::ShiftRightUnsigned {
+                    let value = self.body.builder.ins().fcvt_from_uint(types::F64, bits);
+                    return Typed { value, representation: Representation::Float64 };
+                }
+                let value = bits;
                 Typed { value, representation: Representation::Int32 }
             }
         }

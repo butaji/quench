@@ -305,7 +305,7 @@ fn js_numeric_control_flow(function: &Function) -> Option<(Vec<bool>, Vec<Vec<us
     Some((reachable, predecessors))
 }
 
-pub(super) fn emit_number_bitwise_operation(
+pub(super) fn emit_number_bitwise_bits(
     builder: &mut FunctionBuilder<'_>,
     operation: crate::vm::operations::NumberBitwise,
     left: ir::Value,
@@ -341,7 +341,16 @@ pub(super) fn emit_number_bitwise_operation(
         }
     }
 
-    let bits = operation.apply(&mut Emit { builder }, left, right);
+    operation.apply(&mut Emit { builder }, left, right)
+}
+
+pub(super) fn emit_number_bitwise_operation(
+    builder: &mut FunctionBuilder<'_>,
+    operation: crate::vm::operations::NumberBitwise,
+    left: ir::Value,
+    right: ir::Value,
+) -> ir::Value {
+    let bits = emit_number_bitwise_bits(builder, operation, left, right);
     if operation == crate::vm::operations::NumberBitwise::ShiftRightUnsigned {
         let unsigned = builder.ins().uextend(types::I64, bits);
         builder.ins().fcvt_from_uint(types::F64, unsigned)
