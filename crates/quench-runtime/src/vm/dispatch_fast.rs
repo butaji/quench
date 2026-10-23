@@ -3790,11 +3790,14 @@ script_handler! {
 
 script_handler! {
     /// `lane_get_length_other` of a receiver other than a string: an arguments object's own
-    /// data `length` in its creation layout (`Vm::arguments_object_length`). Any other
-    /// receiver takes `lane_get_field`.
+    /// data `length` in its creation layout (`Vm::arguments_object_length`), or a user
+    /// function's own data `length` (`Vm::plain_function_length`), as a middleware stack
+    /// reads a handler's arity. Any other receiver takes `lane_get_field`.
     #[inline(never)]
     fn lane_get_length_arguments<>(cx, r, ip, i, view) {
-        let Some(length) = (unsafe { vm(cx) }).arguments_object_length(r.get(i.b)) else {
+        let vm = unsafe { vm(cx) };
+        let receiver = r.get(i.b);
+        let Some(length) = vm.arguments_object_length(receiver).or_else(|| vm.plain_function_length(receiver)) else {
             sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, length);
