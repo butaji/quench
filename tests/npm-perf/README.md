@@ -609,3 +609,16 @@ report change is profile-only. Reports:
 `work/react-perf/react-ssr-concat-dedup-nojit-1000-3.json` and
 `work/react-perf/react-ssr-concat-dedup-jit-1000-3.json`, plus the 11-round
 paired reports with the same names and `-11` suffix.
+
+Two further React SSR candidates were rejected after paired 11-round screens
+at 1,000 renders per round. A liveness-checked `Move`→`Move` rewrite measured
+566.9 renders/s / 37.43 MB no-JIT versus control at 544.7 / 36.31 MB; JIT
+measured 533.6 / 29.35 MB versus 536.5 / 28.94 MB. The speed increase did not
+come with an RSS reduction. An occupied-only full sweep driven by the existing
+per-slab free bitmap measured 527.7 / 37.62 MB no-JIT versus 533.6 / 36.23 MB;
+JIT measured 539.1 / 29.48 MB versus 523.8 / 28.84 MB. It was slightly slower
+no-JIT and increased RSS in both modes. Both runtime changes were reverted.
+Linux RSS samples are diagnostic; output parity matched in all runs. Reports
+are in the local `work/react-perf` scratch directory as
+`react-movemove-{nojit,jit}-1000-11.json` and
+`react-occupied-sweep-{nojit,jit}-1000-11.json`.
