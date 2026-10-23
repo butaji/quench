@@ -701,3 +701,40 @@ control at 548.2 / 36.27 MB. Output matched. The allocation branch and
 long-lived root cost more than the saved empty records in this workload, so
 the runtime change was reverted. Report:
 `work/react-perf/react-empty-string-nojit-1000-11.json`.
+
+The aggregate string profiler was corrected after review found that its old
+`JsString::capacity()` probe flattened ropes while measuring them. The updated
+profile reads existing flat payload bytes and records non-flattening concat
+shapes. Across 1,000 React renders it counted 1,192,215 newly allocated
+string+string concats: 601,065 inline-flat plus 591,150 rope left operands,
+1,192,215 inline-flat right operands, and 600,015 flat plus 592,200 rope
+results. Early cache hits are counted separately and are not included in these
+shape totals. Output matched at 4,996,000 bytes/checksum 83793. This is
+instrumented diagnostic data, not a performance score. Summary:
+`target/perf-reports/react-aggregate-string-shapes.json`.
+
+A `Move`→`GetField` bytecode rewrite was screened with a production PGO build
+trained on 500 React renders. A correctness review added a guard for parameter
+registers, since `Function.arguments` can observe writes that ordinary
+liveness considers dead; the focused parameter/temp rewrite test passed. In
+three 500-render paired samples, no-JIT measured 427.4 renders/s / 36.34 MB
+for the candidate versus 469.9 / 32.15 MB for the PGO control (-9.1% speed,
++13.0% RSS). JIT measured 519.8 / 29.62 MB versus 508.6 / 30.47 MB (+2.2%
+speed, -2.8% RSS). Output matched in both modes. The no-JIT regression rules
+out this candidate for the dual-mode target, so the runtime rewrite and its
+test were reverted. Reports:
+`target/perf-reports/react-move-getfield-pgo-screen-no-jit.json` and
+`target/perf-reports/react-move-getfield-pgo-screen-jit.json`.
+
+A guarded `completeShell` entry prefix read the cached `trackedPostpones`
+property, tested it against null, staged the capture/literal/argument registers,
+and resumed immediately before the dynamic call. The call and all misses stayed
+on the interpreter path. Its 11-round, 1,000-render JIT screen measured 481.7
+renders/s / 29.41 MB sampled maximum RSS versus the control at 502.3 / 29.76
+MB (-4.1% throughput, -1.2% RSS); output matched at 4,996,000 bytes/checksum
+83793. Linux RSS is diagnostic, and the candidate/control PGO profiles were
+not identical, so this was a screen rather than qualification. The short prefix
+does not amortize its entry guard cost and was reverted. The next JIT direction
+is a multi-operation, generic-Value tracelet that can cover repeated
+field/load/branch regions in the hot React functions, with interpreter side
+exits for dynamic operations.
