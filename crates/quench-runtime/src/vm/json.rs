@@ -157,6 +157,15 @@ const I32_DECIMAL_WIDTH: usize = 10;
 /// The JSON text a stringification writes: UTF-8 bytes, decoded once when it completes.
 type JsonText = Vec<u8>;
 
+/// A completed JSON text as a string. Every writer appends UTF-8: ASCII punctuation,
+/// literals and numbers, host strings, and JavaScript strings whose lone surrogates it
+/// escapes (`write_json_string`).
+fn json_text_string(text: JsonText) -> String {
+    debug_assert!(std::str::from_utf8(&text).is_ok(), "JSON text is written as UTF-8");
+    // SAFETY: as above, every byte sequence written is UTF-8.
+    unsafe { String::from_utf8_unchecked(text) }
+}
+
 fn write_json_string(value: &JsString, output: &mut JsonText) {
     match value.units() {
         Units::Ascii(bytes) => write_json_utf8(bytes, output),
@@ -1121,7 +1130,7 @@ impl<H: Host> Vm<H> {
                 if !written {
                     return Ok(Value::UNDEFINED);
                 }
-                let text = String::from_utf8(plain.output).expect("JSON text is written as UTF-8");
+                let text = json_text_string(plain.output);
                 return Ok(self.heap.alloc_string(text.into()));
             }
         }
@@ -1151,7 +1160,7 @@ impl<H: Host> Vm<H> {
         if !serialized? {
             return Ok(Value::UNDEFINED);
         }
-        let text = String::from_utf8(state.output).expect("JSON text is written as UTF-8");
+        let text = json_text_string(state.output);
         Ok(self.heap.alloc_string(text.into()))
     }
 
