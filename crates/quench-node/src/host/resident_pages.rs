@@ -94,11 +94,19 @@ fn process_release_due() -> bool {
 }
 
 /// Unmaps the read-only pages above from the resident set when a release is due
-/// (`process_release_due`); the next touch of each refaults it from its file.
+/// (`process_release_due`); the next touch of each refaults it from its file. Between due
+/// releases it still unmaps the tracked mappings: the snapshot's and compile cache's records
+/// a run has decoded, which it reads again only for a function's first call, unlike the code
+/// a release refaults. Against keeping them until the next due release (plain x86_64 build,
+/// snapshot on, 9 runs, 2026-10-23), npm scenario peak RSS jsdom 82.8 -> 80.1 MB, lodash
+/// 19.1 -> 17.7, path-parse 16.8 -> 15.6, undici 32.0 -> 31.6, with as many page faults and
+/// wall time within noise.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages() {
     if process_release_due() {
         discard_read_only_pages();
+    } else {
+        discard_tracked_mappings();
     }
 }
 
@@ -143,6 +151,12 @@ fn discard_read_only_pages() {
             libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
         }
     }
+    discard_tracked_mappings();
+}
+
+/// Unmaps the tracked mappings' pages (`TRACKED_MAPPINGS`) from the resident set.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn discard_tracked_mappings() {
     // Held while releasing, so no tracked mapping is unmapped meanwhile.
     if let Ok(mut mappings) = TRACKED_MAPPINGS.lock() {
         // Every tracked mapping is released below, deferred ranges with it.
