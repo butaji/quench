@@ -24,7 +24,10 @@
 //! the VM makes the call exactly as the interpreter would (`import_callout`).
 
 use super::*;
-use crate::bytecode::{ControlFlowLayout, Function, WideInstruction};
+use crate::bytecode::{
+    ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, RETURN_REGISTER,
+    WideInstruction,
+};
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{
     F32BinaryOperator, F32UnaryOperator, F64BinaryOperator, F64UnaryOperator,
@@ -132,6 +135,303 @@ pub(super) fn emit_number_arithmetic(
             right,
         ),
     )
+}
+
+/// Compile a JS numeric function-entry region with the same register views used by Wasm and
+/// OSR regions. JS admission, cache probes and exact fallback remain VM responsibilities; this
+/// frontend only receives the already-validated scalar denotations and their entry inputs.
+pub(super) fn compile_js_numeric_region(
+    program: &ResidualProgram,
+    function_id: u32,
+    captures: &[super::js_compiled::JsJitCaptureArgument],
+    numeric_field_inputs: Option<&[super::js_compiled::JsJitNumericFieldInput]>,
+    field_argument: Option<super::js_compiled::JsJitFieldArgument>,
+    int32_bitwise: bool,
+) -> Option<super::js_compiled::JsJitArtifact> {
+    let function = program.function_get(function_id as usize)?;
+    let params = usize::from(function.params);
+    let isa = super::jit_backend::target_isa("speed", true)?;
+
+    let mut signature = ir::Signature::new(isa.default_call_conv());
+    signature.params.push(AbiParam::new(isa.pointer_type()));
+    signature.returns.push(AbiParam::new(types::F64));
+    let name = UserFuncName::user(0x5155_454e, function_id);
+    let mut native = ir::Function::with_name_signature(name, signature);
+    let mut builder_context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
+
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    let arguments = builder.block_params(entry)[0];
+    let mut body = Body::new(builder, arguments, None);
+    let mut registers = vec![false; usize::from(function.registers)];
+    let mut locals = vec![None; usize::from(function.locals)];
+
+    for (index, initialized) in registers.iter_mut().take(params).enumerate() {
+        if numeric_field_inputs.is_some_and(|inputs| {
+            inputs.iter().any(|input| {
+                input.receiver == super::js_compiled::JsJitFieldReceiver::Parameter(index as u16)
+            })
+        }) {
+            continue;
+        }
+        let offset = i32::try_from(index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
+        let value = body
+            .builder
+            .ins()
+            .load(types::F64, MemFlagsData::trusted(), arguments, offset);
+        body.write(index as u16, crate::WasmType::F64, value);
+        *initialized = true;
+    }
+
+    let mut returned = false;
+    for (pc, packed) in function.code.iter().copied().enumerate() {
+        if returned || packed.is_wide() {
+            return None;
+        }
+        let instruction = packed.as_wide();
+        let result = match instruction.op().js_denotation() {
+            JsDenotation::GetField => {
+                let inputs = numeric_field_inputs?;
+                let (field_index, candidate) = inputs
+                    .iter()
+                    .enumerate()
+                    .find(|(_, candidate)| candidate.pc == pc)?;
+                if instruction.returns_from_frame()
+                    || instruction.result_flags() != 0
+                    || instruction.writes_current_this()
+                {
+                    return None;
+                }
+                let expected_base = match candidate.receiver {
+                    super::js_compiled::JsJitFieldReceiver::This => FieldBase::THIS,
+                    super::js_compiled::JsJitFieldReceiver::Parameter(parameter) => {
+                        FieldBase(parameter)
+                    }
+                };
+                if !matches!(
+                    instruction.field_lookup(),
+                    Some(FieldLookup::Atom { base, cache_site, .. })
+                        if base == expected_base && cache_site == candidate.cache_site
+                ) {
+                    return None;
+                }
+                let argument_index = params
+                    .checked_add(captures.len())?
+                    .checked_add(field_index)?;
+                let offset =
+                    i32::try_from(argument_index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
+                Some(body.builder.ins().load(
+                    types::F64,
+                    MemFlagsData::trusted(),
+                    arguments,
+                    offset,
+                ))
+            }
+            JsDenotation::LoadConst => {
+                if instruction.returns_from_frame() || instruction.result_flags() != 0 {
+                    return None;
+                }
+                let Constant::Number(value) =
+                    program.constants.get(instruction.constant_index())?
+                else {
+                    return None;
+                };
+                Some(
+                    body.builder
+                        .ins()
+                        .f64const(Ieee64::with_bits(value.to_bits())),
+                )
+            }
+            JsDenotation::Move => {
+                if instruction.returns_from_frame() || instruction.result_flags() != 0 {
+                    return None;
+                }
+                let source = usize::from(instruction.register_b());
+                if !*registers.get(source)? {
+                    return None;
+                }
+                Some(body.read(source as u16, crate::WasmType::F64))
+            }
+            JsDenotation::PlainLocalStore => {
+                if instruction.returns_from_frame() || instruction.result_flags() != 0 {
+                    return None;
+                }
+                let source = usize::from(instruction.register_a());
+                if !*registers.get(source)? {
+                    return None;
+                }
+                let value = body.read(source as u16, crate::WasmType::F64);
+                *locals.get_mut(instruction.local_slot())? = Some(value);
+                if let Some(register) = instruction.optional_register_b() {
+                    body.write(register, crate::WasmType::F64, value);
+                    *registers.get_mut(usize::from(register))? = true;
+                }
+                None
+            }
+            JsDenotation::PlainLocalLoad => {
+                if instruction.returns_from_frame()
+                    || instruction.result_flags() != 0
+                    || instruction.numeric_local_target().is_some()
+                {
+                    return None;
+                }
+                Some(*locals.get(instruction.local_slot())?.as_ref()?)
+            }
+            JsDenotation::CapturedValue => {
+                if instruction.returns_from_frame() || instruction.result_flags() != 0 {
+                    return None;
+                }
+                let capture = captures.iter().position(|capture| {
+                    capture.depth == instruction.capture_depth()
+                        && capture.slot == instruction.capture_slot()
+                })?;
+                let argument_index = params.checked_add(capture)?;
+                let offset =
+                    i32::try_from(argument_index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
+                Some(body.builder.ins().load(
+                    types::F64,
+                    MemFlagsData::trusted(),
+                    arguments,
+                    offset,
+                ))
+            }
+            JsDenotation::NumericBinary => {
+                if instruction.numeric_local_target().is_some()
+                    || (instruction.result_flags() != 0
+                        && instruction.result_flags() != RETURN_REGISTER)
+                {
+                    return None;
+                }
+                let read_operand =
+                    |body: &mut Body<'_>, operand: Operand, registers: &[bool]| match operand
+                        .kind()?
+                    {
+                        OperandKind::Register => {
+                            let register = operand.register_index()?;
+                            if *registers.get(usize::from(register))? {
+                                Some(body.read(register, crate::WasmType::F64))
+                            } else {
+                                None
+                            }
+                        }
+                        OperandKind::Constant => {
+                            let Constant::Number(value) =
+                                program.constants.get(usize::from(operand.payload()))?
+                            else {
+                                return None;
+                            };
+                            Some(
+                                body.builder
+                                    .ins()
+                                    .f64const(Ieee64::with_bits(value.to_bits())),
+                            )
+                        }
+                        OperandKind::Field | OperandKind::Local => None,
+                    };
+                let left = read_operand(&mut body, instruction.operand_b(), &registers)?;
+                let right = read_operand(&mut body, instruction.operand_c(), &registers)?;
+                let op = instruction.binary_operator();
+                let value = match (instruction.op(), op) {
+                    (Op::Binary, op)
+                        if super::operations::NumberArithmetic::from_operator(op).is_some() =>
+                    {
+                        emit_number_arithmetic(&mut body.builder, op, left, right)?
+                    }
+                    (Op::Binary, op)
+                        if int32_bitwise
+                            && matches!(
+                                op,
+                                x if x == oxc_ast::ast::BinaryOperator::BitwiseAnd as u32
+                                    || x == oxc_ast::ast::BinaryOperator::BitwiseOR as u32
+                                    || x == oxc_ast::ast::BinaryOperator::BitwiseXOR as u32
+                            ) =>
+                    {
+                        let left = body.builder.ins().fcvt_to_sint(types::I32, left);
+                        let right = body.builder.ins().fcvt_to_sint(types::I32, right);
+                        let value = match op {
+                            x if x == oxc_ast::ast::BinaryOperator::BitwiseAnd as u32 => {
+                                body.builder.ins().band(left, right)
+                            }
+                            x if x == oxc_ast::ast::BinaryOperator::BitwiseOR as u32 => {
+                                body.builder.ins().bor(left, right)
+                            }
+                            _ => body.builder.ins().bxor(left, right),
+                        };
+                        body.builder.ins().fcvt_from_sint(types::F64, value)
+                    }
+                    (Op::NumericAdd, op)
+                        if super::operations::NumberArithmetic::from_operator(op)
+                            == Some(super::operations::NumberArithmetic::Add) =>
+                    {
+                        emit_number_arithmetic(&mut body.builder, op, left, right)?
+                    }
+                    (Op::NumericMultiply, op)
+                        if super::operations::NumberArithmetic::from_operator(op)
+                            == Some(super::operations::NumberArithmetic::Multiply) =>
+                    {
+                        emit_number_arithmetic(&mut body.builder, op, left, right)?
+                    }
+                    _ => return None,
+                };
+                if instruction.returns_from_frame() {
+                    body.builder.ins().return_(&[value]);
+                    returned = true;
+                    break;
+                }
+                Some(value)
+            }
+            JsDenotation::Return => {
+                if instruction.result_flags() != 0 || pc + 1 != function.code.len() {
+                    return None;
+                }
+                let register = instruction.register_a();
+                if !*registers.get(usize::from(register))? {
+                    return None;
+                }
+                let value = body.read(register, crate::WasmType::F64);
+                body.builder.ins().return_(&[value]);
+                returned = true;
+                None
+            }
+            JsDenotation::Unsupported => return None,
+        };
+        if let Some(value) = result {
+            let destination = usize::from(instruction.result_register());
+            body.write(destination as u16, crate::WasmType::F64, value);
+            *registers.get_mut(destination)? = true;
+        }
+    }
+    if !returned {
+        return None;
+    }
+
+    let Body { builder, .. } = body;
+    builder.finalize(isa.frontend_config());
+    let mut context = cranelift_codegen::Context::for_function(native);
+    let compiled = context
+        .compile(
+            &*isa,
+            &mut cranelift_codegen::control::ControlPlane::default(),
+        )
+        .ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    let code = compiled.code_buffer().to_vec();
+    if code.is_empty() || code.len() > super::js_compiled::MAX_CODE_BYTES {
+        return None;
+    }
+    Some(super::js_compiled::JsJitArtifact {
+        code,
+        params,
+        result: super::js_compiled::JsJitResultKind::Number,
+        field_argument,
+        numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.to_vec()),
+        capture_arguments: captures.to_vec(),
+    })
 }
 
 /// How the shared VM executes JavaScript and Wasm functions. Compiled code is
