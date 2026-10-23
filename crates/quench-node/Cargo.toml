@@ -58,7 +58,8 @@ libz-rs-sys = "0.6.8"
 cc = "1"
 pkg-config = "0.3"
 
-# The global allocator on Unix; the memory policy decides whether it serves small requests
-# (`shared_run::apply_allocator_policy`).
-[target.'cfg(unix)'.dependencies]
+# The global allocator on Linux; the memory policy decides whether it serves small requests
+# (`shared_run::apply_allocator_policy`). Other platforms keep the system allocator until the
+# reservation's commit behavior is measured there (macOS has no MAP_NORESERVE semantics).
+[target.'cfg(target_os = "linux")'.dependencies]
 quench-alloc = { path = "../quench-alloc" }
