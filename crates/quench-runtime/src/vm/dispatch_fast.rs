@@ -3893,12 +3893,18 @@ script_handler! {
 script_handler! {
     /// `lane_get_field` at a site whose reads met a getter (`FieldSiteTier::Getter`): the
     /// getter activation first, whose cache check fails without effect, so a data read the
-    /// cached probes answer stays `lane_get_field`'s.
+    /// cached probes answer stays `lane_get_field`'s. An activation without lane-stack room
+    /// makes the activations frames first (`lane_script_call_frame`), so the read goes on with
+    /// the running function's registers read again (the rollup npm scenario's
+    /// `childNodeKeys[this.type]` was written to the emptied lane stack, not its frame).
     #[inline(never)]
     fn lane_get_field_getter<>(cx, r, ip, i, view) {
         match lane_getter_activation(cx, r, ip, i) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
-            Err(_) => sibling!(lane_get_field::<H>, r, ip, Carried::script(cx)),
+            Err(_) => {
+                let r = unsafe { (*cx).registers };
+                sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
+            }
         }
     }
 }
