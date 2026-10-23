@@ -727,7 +727,7 @@ impl AwaitState {
     /// The program its suspended continuation resumes in, which stays alive with it.
     pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
         if let Some(continuation) = &self.continuation {
-            visit(continuation.program);
+            visit(continuation.program());
         }
     }
 
@@ -2943,7 +2943,7 @@ impl IteratorRecord {
             .as_ref()
             .and_then(|generator| generator.continuation.as_ref())
         {
-            visit(continuation.program);
+            visit(continuation.program());
         }
     }
 }
