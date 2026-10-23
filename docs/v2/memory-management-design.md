@@ -314,6 +314,8 @@ measured on the same binary and lost.
 | live × overhead | Record families with narrow inline slots, COW array elements, narrow arena vectors (TOD-147/148/162/166/168/170) | earlier evidence on those issues |
 | start-up state (VM) | Direct-mapped memos (shape, atom, symbol proof, private home, function name, enumerable keys) allocate on first record, out of line: V8-v7 max RSS −48 to −254 KiB, Score within the A/A floor | `tod137-lazy-memo-tables-…` |
 | start-up state (host) | Host operations found by a sorted name index | `tod21-operation-index-…` |
+| transients (warm-up) | Under MemoryFirst, first-call compile-phase releases may run 5 ms apart (not 100): V8-v7 no-JIT max RSS −124 to −516 KiB on six fixtures; npm under MemoryFirst +7 to +21% time | `tod137-first-call-release-…` |
+| start-up state (snapshot) | Startup intrinsic roots read from the sealed holders, not a copied list; `process.config` frozen natively | `tod21-startup-intrinsic-roots-…`, `tod21-native-config-freeze-…` |
 
 ### 8.2 Measured and rejected (same-binary A/B)
 
@@ -328,6 +330,8 @@ measured on the same binary and lost.
 | Load and compile-phase release interval 0–20 ms under MemoryFirst | Max RSS unchanged (0.616–0.620 of Throughput) | session sweep, TOD-137 comment |
 | `single_pass` register allocation, `opt_level=none` for the JIT | −1.6 / −0.5 MB on NavierStokes, Score ÷3 / −20% | TOD-110 comment |
 | Allocate the memos on first record with the allocation inlined | DeltaBlue `--jit` −8% over 20 alternating runs; making it cold restored the speed | `tod137-lazy-memo-tables-…` |
+| First-call release at every first call / geometric back-off | Every call: npm 1.4–2.9× slower; back-off: V8-v7 `--jit` up to +312 KiB | `tod137-first-call-release-…` |
+| Lazy `process` / EventEmitter for V8-v7 | No payoff possible: `console.log` writes through `process.stdout` (an EventEmitter) in Node and Quench, and every fixture prints | TOD-21 comment |
 | Charge property-arena growth toward the next collection | Max RSS 0.619 → 0.617 of Throughput (RegExp −0.2 MB), Score −1.6% | branch `meas-gc-charge-arena`, TOD-137 comment |
 
 ### 8.3 Where the peak is now (MemoryFirst, no JIT)
