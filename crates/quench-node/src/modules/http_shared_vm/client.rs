@@ -474,16 +474,16 @@ fn read_headers(
     let Some(headers) = headers else {
         return Ok(Vec::new());
     };
-    let length = numeric_property(context, headers, "length")?
-        .filter(|length| length.is_finite() && *length >= 0.0)
-        .unwrap_or(0.0) as usize;
-    if length % 2 != 0 {
+    let items = context.array_like_values_rooted(headers)?;
+    let pairs = items.chunks_exact(HEADER_PAIR_FIELDS);
+    if !pairs.remainder().is_empty() {
         return Err(RootedError::host("HTTP header pair list is malformed"));
     }
-    let mut result = Vec::with_capacity(length / 2);
-    for index in (0..length).step_by(2) {
-        let name = array_item(context, headers, index)?;
-        let value = array_item(context, headers, index + 1)?;
+    let mut result = Vec::with_capacity(pairs.len());
+    for pair in pairs {
+        let &[name, value] = pair else {
+            unreachable!("chunks_exact yields name and value pairs");
+        };
         let name = context.to_string(name)?;
         let value = context.to_string(value)?;
         if name.is_empty()
@@ -503,14 +503,8 @@ fn read_headers(
     Ok(result)
 }
 
-fn array_item(
-    context: &mut Context<'_>,
-    array: RootId,
-    index: usize,
-) -> Result<RootId, RootedError> {
-    let key = context.string_rooted(&index.to_string());
-    context.get_property_rooted(array, key)
-}
+/// A header pair list's values per header: its name and its value.
+const HEADER_PAIR_FIELDS: usize = 2;
 
 fn argument_id(context: &mut Context<'_>, root: Option<RootId>) -> Result<u64, RootedError> {
     root.and_then(|root| context.rooted_value(root))

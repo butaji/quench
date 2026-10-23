@@ -355,7 +355,7 @@ impl<H: Host> Vm<H> {
             megamorphic_fields: _,
             length_atom,
             prototype_atom,
-            instanceof_constructor_layout: _,
+            instanceof_constructor_layouts: _,
             closure_shapes: _,
             iterator_result_shape: _,
             reused_iterator_result: _,
@@ -395,6 +395,8 @@ impl<H: Host> Vm<H> {
             // Each process keeps its own budget.
             dynamic_functions_to_keep: _,
             lane_deferred: _,
+            // Resolutions are the process's (its files), not the snapshot's.
+            resolved_module_requests: _,
             host_beside_activations: _,
         } = self;
         let Realm {

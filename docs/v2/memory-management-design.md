@@ -314,6 +314,7 @@ measured on the same binary and lost.
 | live × overhead | Record families with narrow inline slots, COW array elements, narrow arena vectors (TOD-147/148/162/166/168/170) | earlier evidence on those issues |
 | start-up state (VM) | Direct-mapped memos (shape, atom, symbol proof, private home, function name, enumerable keys) allocate on first record, out of line: V8-v7 max RSS −48 to −254 KiB, Score within the A/A floor | `tod137-lazy-memo-tables-…` |
 | start-up state (host) | Host operations found by a sorted name index | `tod21-operation-index-…` |
+| allocator | The global allocator follows the policy: quench-alloc's size classes under Throughput, glibc under MemoryFirst; one reservation makes ownership an address compare, so frees route to the allocator that made the block | `tod167-policy-allocator-…` |
 | transients (warm-up) | Under MemoryFirst, first-call compile-phase releases may run 5 ms apart (not 100): V8-v7 no-JIT max RSS −124 to −516 KiB on six fixtures; npm under MemoryFirst +7 to +21% time | `tod137-first-call-release-…` |
 | start-up state (snapshot) | Startup intrinsic roots read from the sealed holders, not a copied list; `process.config` frozen natively | `tod21-startup-intrinsic-roots-…`, `tod21-native-config-freeze-…` |
 
@@ -332,6 +333,9 @@ measured on the same binary and lost.
 | Allocate the memos on first record with the allocation inlined | DeltaBlue `--jit` −8% over 20 alternating runs; making it cold restored the speed | `tod137-lazy-memo-tables-…` |
 | First-call release at every first call / geometric back-off | Every call: npm 1.4–2.9× slower; back-off: V8-v7 `--jit` up to +312 KiB | `tod137-first-call-release-…` |
 | Lazy `process` / EventEmitter for V8-v7 | No payoff possible: `console.log` writes through `process.stdout` (an EventEmitter) in Node and Quench, and every fixture prints | TOD-21 comment |
+| MemoryFirst old growth 1/2–1/8; allocation cap 1/2–1/8 | Old growth: no consistent change. Cap 1/4: RegExp −260 KiB but Richards +128, Crypto `--jit` +140, EarleyBoyer Score −11% | `tod137-full-pacing-sweep-…` |
+| Trailing first-call release from a helper thread | Removes Richards' warm-up spike, but a later peak is as high; RayTrace +300 KiB | `tod137-trailing-release-rejected-…` |
+| Dense array growth 1.5× | Crypto −88/−100 KiB; DeltaBlue `--jit` +184, RayTrace `--jit` +128, RegExp +108 | `tod137-array-growth-rejected-…` |
 | Charge property-arena growth toward the next collection | Max RSS 0.619 → 0.617 of Throughput (RegExp −0.2 MB), Score −1.6% | branch `meas-gc-charge-arena`, TOD-137 comment |
 
 ### 8.3 Where the peak is now (MemoryFirst, no JIT)
@@ -355,6 +359,20 @@ Against the target, max RSS ≤ 0.8 × the lowest other runtime
 | `--jit` | EarleyBoyer, Splay | DeltaBlue 1.08, RayTrace 1.11, Richards 1.13, RegExp 1.19 | Crypto 1.41, NavierStokes 1.84 |
 
 ### 8.4 What remains, by owner
+
+- **Code layout** (RSS lane, TOD-171): bolting v2-gc `3d7dc0656a` with the old profile gave
+  anonymous memory −120 KiB but file pages +350 KiB on Richards. The board needs a retrained
+  link order and BOLT profile before it shows this lane's gains
+  (`tod137-bolt-board-after-memo-and-first-call-…`).
+- **Warm-up spike** (this lane, partly addressed): DeltaBlue, RayTrace and RegExp peaked in
+  their first 20–100 ms. Under MemoryFirst, first-call releases 5 ms apart lower those peaks.
+  Releasing at every first call would lower them further, but costs npm 1.4–2.9× in time,
+  because no unprivileged process can tell hot code pages from cold ones.
+- **Start-up anonymous memory:** about 1.47 MB at Richards' peak, against QuickJS's whole
+  heap of 0.55 MB. The host bootstrap adds about 363 KiB of malloc, and every scored run
+  needs `process` and EventEmitter (`console.log` writes through `process.stdout`). The
+  runtime realm is about 300 KiB (c2's lazy native table and intrinsic groups, TOD-21).
+  The shape table, LaneStack and compile-cache entries are already resident only as used.
 
 - **Start-up heap** (RSS lane, TOD-21 and TOD-104): lazy host modules and lazy builtin function
   objects. The checkpoint census sizes each item; at about 1.6 MB it is larger than every

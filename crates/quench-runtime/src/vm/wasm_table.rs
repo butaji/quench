@@ -323,11 +323,20 @@ impl<H: Host> Vm<H> {
             };
             elements.copy_within(input, output.start);
         } else {
-            let values = self.wasm_table_elements(source)?[input].to_vec();
-            let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(destination) else {
+            let Some((
+                Cell::WasmTable {
+                    elements: destination_elements,
+                    ..
+                },
+                Cell::WasmTable {
+                    elements: source_elements,
+                    ..
+                },
+            )) = self.heap.get_mut_and_ref(destination, source)
+            else {
                 unreachable!()
             };
-            elements[output].copy_from_slice(&values);
+            destination_elements[output].copy_from_slice(&source_elements[input]);
         }
         self.invalidate_wasm_reference_caches();
         Ok(())
@@ -339,6 +348,45 @@ mod tests {
     use super::*;
     use crate::{Engine, WasmFunctionBody, WasmGlobal, WasmSignature, WasmType, WasmValue};
     use wasmparser::Operator;
+
+    #[test]
+    fn table_copy_between_tables_uses_exact_ranges_without_changing_overlap() {
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        let declarations = crate::WasmTypes::default();
+        let table_type = wasmparser::TableType {
+            element_type: wasmparser::RefType::EXTERNREF,
+            table64: false,
+            initial: 4,
+            maximum: Some(4),
+            shared: false,
+        };
+        let source = vm
+            .alloc_wasm_table(table_type, declarations.clone(), Value::NULL)
+            .unwrap();
+        let destination = vm
+            .alloc_wasm_table(table_type, declarations, Value::NULL)
+            .unwrap();
+        let values = ["a", "b", "c", "d"].map(|text| {
+            vm.heap
+                .alloc_string(text.into())
+        });
+        let Some(Cell::WasmTable { elements, .. }) = vm.heap.get_mut(source) else {
+            unreachable!()
+        };
+        elements.copy_from_slice(&values);
+
+        vm.wasm_table_copy(destination, source, 1, 1, 2).unwrap();
+        assert_eq!(
+            &vm.wasm_table_elements(destination).unwrap()[1..3],
+            &values[1..3]
+        );
+
+        vm.wasm_table_copy(source, source, 1, 0, 3).unwrap();
+        assert_eq!(
+            vm.wasm_table_elements(source).unwrap(),
+            &[values[0], values[0], values[1], values[2]]
+        );
+    }
 
     #[test]
     fn table_import_root_transfer_keeps_foreign_capture_then_reclaims_owner_cycle() {

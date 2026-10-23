@@ -80,7 +80,7 @@ table.
 Follow-ups, each compile-time and in need of its own matched measurement under
 both policies:
 
-- the allocator, the `quench-node` `quench-alloc` Cargo feature (off by default);
+- the allocator: Quench's size-classed allocator under Throughput, the system allocator under MemoryFirst (`shared_run::apply_allocator_policy`);
 - the object layout: `INLINE_PROPERTY_COUNT` (2 inline slots) and the 16-byte
   narrow records (TOD-166).
 
