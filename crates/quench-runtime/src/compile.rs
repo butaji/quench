@@ -23,6 +23,7 @@ mod binding_time;
 mod capture_layout;
 #[cfg(feature = "profile-memory")]
 mod capture_profile;
+mod call_only;
 mod capture_scope;
 mod class;
 mod early;
@@ -1006,6 +1007,7 @@ impl Engine {
         }
         let private_name_ids = private_name_ids(&semantic.semantic);
         let private_name_labels = private_name_labels(&semantic.semantic);
+        let prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program);
         let inherited_private_ids = if wrapped_eval
         {
             let mut ids = FxHashSet::default();
@@ -1075,6 +1077,7 @@ impl Engine {
             None
         };
         let mut compiler = Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids);
+        compiler.prototype_unobservable = prototype_unobservable;
         compiler.source_type = source_type;
         // Eval code and dynamic functions are compiled from a wrapper, or a tree changed after
         // parsing, that their source text alone does not give back. A released function
@@ -1584,6 +1587,9 @@ struct Compiler<'a> {
     /// through name bindings, so functions resolving one keep theirs.
     private_name_references: u64,
     private_name_ids: FxHashMap<(u32, u32), u32>,
+    /// The source starts of the function expressions whose `prototype` no program text
+    /// observes (`call_only`); empty where the source was not analyzed.
+    prototype_unobservable: FxHashSet<u32>,
     private_name_labels: FxHashMap<(u32, u32), String>,
     private_name_overrides: FxHashMap<u32, String>,
     constants: SiteTable<'a, Constant>,
@@ -1746,6 +1752,8 @@ struct FunctionOptions<'a> {
     class_constructor: bool,
     derived_constructor: bool,
     non_constructible: bool,
+    /// `Function::prototype_unobservable`.
+    prototype_unobservable: bool,
     class_initializer: bool,
     instance_fields: Option<&'a [ClassField<'a>]>,
     instance_private_methods: Option<&'a [Atom]>,
@@ -1976,6 +1984,7 @@ impl<'a> Compiler<'a> {
             capture_markers: FxHashMap::default(),
             private_name_references: 0,
             private_name_ids,
+            prototype_unobservable: FxHashSet::default(),
             private_name_labels: FxHashMap::default(),
             private_name_overrides: FxHashMap::default(),
             constants: SiteTable::default(),
@@ -2250,6 +2259,7 @@ impl<'a> Compiler<'a> {
                 generator: function.generator,
                 with_depth: context.with_depth,
                 strict,
+                prototype_unobservable: context.prototype_unobservable,
                 ..FunctionOptions::default()
             },
         );
@@ -2293,6 +2303,7 @@ impl<'a> Compiler<'a> {
                 generator: function.generator,
                 with_depth: context.with_depth,
                 non_constructible: true,
+                prototype_unobservable: false,
                 super_home: true,
                 super_home_atom: Some(context.home_atom),
                 strict,
@@ -2467,6 +2478,7 @@ impl<'a> Compiler<'a> {
                 class_constructor: false,
                 derived_constructor: false,
                 non_constructible: false,
+                prototype_unobservable: false,
                 class_initializer: self
                     .eval_context
                     .is_some_and(|context| context.class_initializer),
@@ -3503,6 +3515,7 @@ impl<'a> Compiler<'a> {
             constructible: !options.non_constructible
                 && !options.async_function
                 && !options.generator,
+            prototype_unobservable: options.prototype_unobservable,
             class_initializer: options.class_initializer,
             parameter_eval_arguments_error: function.parameter_eval_arguments_error,
             unaliased_arguments,

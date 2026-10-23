@@ -928,6 +928,7 @@ impl Engine {
                 class_initializer: false,
                 parameter_eval_arguments_error: false,
                 unaliased_arguments: false,
+            prototype_unobservable: false,
                 arguments_slot: None,
                 simple_parameters: true,
                 strict: true,
