@@ -239,12 +239,12 @@ trait JsonBuilder {
     type Key;
     fn literal(&mut self, value: JsonLiteral) -> Self::Value;
     fn number(&mut self, value: f64) -> Self::Value;
-    fn string(&mut self, units: &[u16]) -> Self::Value;
-    fn key(&mut self, units: &[u16]) -> Self::Key;
+    fn string(&mut self, units: Units<'_>) -> Self::Value;
+    fn key(&mut self, units: Units<'_>) -> Self::Key;
     fn array(&mut self, values: Vec<Self::Value>) -> Self::Value;
     fn object(&mut self, entries: Vec<(Self::Key, Self::Value)>) -> Self::Value;
     /// A primitive parsed from `source`, the text a reviver's context exposes.
-    fn primitive(&mut self, value: Self::Value, source: &[u16]) -> Self::Value;
+    fn primitive(&mut self, value: Self::Value, source: Units<'_>) -> Self::Value;
 }
 
 #[derive(Clone, Copy)]
@@ -270,11 +270,11 @@ impl JsonBuilder for JsonTreeBuilder {
     fn number(&mut self, value: f64) -> JsonValue {
         JsonValue::Number(value)
     }
-    fn string(&mut self, units: &[u16]) -> JsonValue {
-        JsonValue::String(JsString::from_units(units))
+    fn string(&mut self, units: Units<'_>) -> JsonValue {
+        JsonValue::String(JsString::from_unit_run(units))
     }
-    fn key(&mut self, units: &[u16]) -> JsString {
-        JsString::from_units(units)
+    fn key(&mut self, units: Units<'_>) -> JsString {
+        JsString::from_unit_run(units)
     }
     fn array(&mut self, values: Vec<JsonValue>) -> JsonValue {
         JsonValue::Array(values)
@@ -282,8 +282,8 @@ impl JsonBuilder for JsonTreeBuilder {
     fn object(&mut self, entries: Vec<(JsString, JsonValue)>) -> JsonValue {
         JsonValue::Object(entries)
     }
-    fn primitive(&mut self, value: JsonValue, source: &[u16]) -> JsonValue {
-        JsonValue::Source(Box::new(value), JsString::from_units(source))
+    fn primitive(&mut self, value: JsonValue, source: Units<'_>) -> JsonValue {
+        JsonValue::Source(Box::new(value), JsString::from_unit_run(source))
     }
 }
 
@@ -371,13 +371,11 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
     fn number(&mut self, value: f64) -> Value {
         Value::number(value)
     }
-    fn string(&mut self, units: &[u16]) -> Value {
-        self.vm
-            .heap
-            .alloc_string(JsString::from_units(units))
+    fn string(&mut self, units: Units<'_>) -> Value {
+        self.vm.heap.alloc_string(JsString::from_unit_run(units))
     }
-    fn key(&mut self, units: &[u16]) -> Atom {
-        self.vm.intern_unit_run_atom(Units::Wide(units))
+    fn key(&mut self, units: Units<'_>) -> Atom {
+        self.vm.intern_unit_run_atom(units)
     }
     fn array(&mut self, values: Vec<Value>) -> Value {
         self.vm.heap.alloc(Cell::Array {
@@ -421,18 +419,68 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
         }
         object
     }
-    fn primitive(&mut self, value: Value, _source: &[u16]) -> Value {
+    fn primitive(&mut self, value: Value, _source: Units<'_>) -> Value {
         value
     }
 }
 
-struct JsonParser<'a> {
-    units: &'a [u16],
+/// A code unit of a JSON text: a byte of an ASCII string, which the parser reads in place, or
+/// a UTF-16 unit of any other. Widening an ASCII text first had copied it whole and every
+/// string of it narrowed back (a 176 KB inventory in each npm scenario).
+trait JsonUnit: Copy {
+    fn unit(self) -> u16;
+    /// `units` as a string's units.
+    fn run(units: &[Self]) -> Units<'_>;
+}
+
+impl JsonUnit for u8 {
+    fn unit(self) -> u16 {
+        u16::from(self)
+    }
+    fn run(units: &[u8]) -> Units<'_> {
+        Units::Ascii(units)
+    }
+}
+
+impl JsonUnit for u16 {
+    fn unit(self) -> u16 {
+        self
+    }
+    fn run(units: &[u16]) -> Units<'_> {
+        Units::Wide(units)
+    }
+}
+
+/// A JSON string's code units: the source's own run when it has no escapes, else decoded.
+enum JsonStringUnits<'a, T> {
+    Source(&'a [T]),
+    Decoded(Vec<u16>),
+}
+
+impl<T: JsonUnit> JsonStringUnits<'_, T> {
+    fn units(&self) -> Units<'_> {
+        match self {
+            Self::Source(units) => T::run(units),
+            Self::Decoded(units) => Units::Wide(units),
+        }
+    }
+}
+
+/// Parses the JSON text `units` with `builder`, in the text's own representation.
+fn parse_json_units<B: JsonBuilder>(units: Units<'_>, builder: &mut B) -> Result<B::Value, JsonParseError> {
+    match units {
+        Units::Ascii(bytes) => JsonParser::new(bytes).parse(builder),
+        Units::Wide(units) => JsonParser::new(units).parse(builder),
+    }
+}
+
+struct JsonParser<'a, T> {
+    units: &'a [T],
     index: usize,
 }
 
-impl<'a> JsonParser<'a> {
-    fn new(units: &'a [u16]) -> Self {
+impl<'a, T: JsonUnit> JsonParser<'a, T> {
+    fn new(units: &'a [T]) -> Self {
         Self { units, index: 0 }
     }
 
@@ -455,7 +503,7 @@ impl<'a> JsonParser<'a> {
             Some(JSON_FALSE_INITIAL) => self.literal(b"false", JsonLiteral::False, builder)?,
             Some(JSON_QUOTE) => {
                 let units = self.string()?;
-                builder.string(&units)
+                builder.string(units.units())
             }
             Some(JSON_ARRAY_START) => return self.array(builder),
             Some(JSON_OBJECT_START) => return self.object(builder),
@@ -465,7 +513,7 @@ impl<'a> JsonParser<'a> {
             }
             _ => return Err("expected JSON value".into()),
         };
-        Ok(builder.primitive(primitive, &self.units[start..self.index]))
+        Ok(builder.primitive(primitive, T::run(&self.units[start..self.index])))
     }
 
     fn literal<B: JsonBuilder>(
@@ -486,23 +534,24 @@ impl<'a> JsonParser<'a> {
     }
 
     /// A string's code units: borrowed from the source when it has no escapes.
-    fn string(&mut self) -> Result<std::borrow::Cow<'a, [u16]>, JsonParseError> {
+    fn string(&mut self) -> Result<JsonStringUnits<'a, T>, JsonParseError> {
         self.expect(JSON_QUOTE as u8)?;
         let units = self.units;
         let start = self.index;
         let run = units[start..].iter().position(|unit| {
-            *unit == JSON_QUOTE || *unit == JSON_ESCAPE || *unit < JSON_UNESCAPED_START
+            let unit = unit.unit();
+            unit == JSON_QUOTE || unit == JSON_ESCAPE || unit < JSON_UNESCAPED_START
         });
         if let Some(length) = run
-            && units[start + length] == JSON_QUOTE
+            && units[start + length].unit() == JSON_QUOTE
         {
             self.index = start + length + 1;
-            return Ok(std::borrow::Cow::Borrowed(&units[start..start + length]));
+            return Ok(JsonStringUnits::Source(&units[start..start + length]));
         }
         let mut output = Vec::new();
         loop {
             match self.take() {
-                Some(JSON_QUOTE) => return Ok(std::borrow::Cow::Owned(output)),
+                Some(JSON_QUOTE) => return Ok(JsonStringUnits::Decoded(output)),
                 Some(JSON_ESCAPE) => self.escape(&mut output)?,
                 Some(unit) if unit >= JSON_UNESCAPED_START => output.push(unit),
                 _ => return Err("unterminated JSON string".into()),
@@ -568,7 +617,7 @@ impl<'a> JsonParser<'a> {
         loop {
             self.whitespace();
             let key = self.string()?;
-            let key = builder.key(&key);
+            let key = builder.key(key.units());
             self.whitespace();
             self.expect(b':')?;
             entries.push((key, self.value(builder)?));
@@ -610,11 +659,11 @@ impl<'a> JsonParser<'a> {
         let long;
         let bytes: &[u8] = if literal.len() <= JSON_INLINE_NUMBER_LENGTH {
             for (byte, unit) in inline.iter_mut().zip(literal) {
-                *byte = *unit as u8;
+                *byte = unit.unit() as u8;
             }
             &inline[..literal.len()]
         } else {
-            long = literal.iter().map(|unit| *unit as u8).collect::<Vec<_>>();
+            long = literal.iter().map(|unit| unit.unit() as u8).collect::<Vec<_>>();
             &long
         };
         std::str::from_utf8(bytes)
@@ -670,7 +719,7 @@ impl<'a> JsonParser<'a> {
     }
 
     fn peek(&self) -> Option<u16> {
-        self.units.get(self.index).copied()
+        self.units.get(self.index).map(|unit| unit.unit())
     }
 }
 
@@ -767,11 +816,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let text = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         let reviver = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let units = text.units().wide();
         if !self.is_function(reviver) {
             // Nothing revisits the parse, so values go straight to the heap.
             let mut builder = JsonHeapBuilder::new(self);
-            let parsed = JsonParser::new(&units).parse(&mut builder);
+            let parsed = parse_json_units(text.units(), &mut builder);
             let built = builder.finish(parsed);
             return match built {
                 Ok(value) => Ok(value),
@@ -784,7 +832,7 @@ impl<H: Host> Vm<H> {
                 Err(JsonBuildError::Runtime(error)) => Err(error),
             };
         }
-        let parsed = match JsonParser::new(&units).parse(&mut JsonTreeBuilder) {
+        let parsed = match parse_json_units(text.units(), &mut JsonTreeBuilder) {
             Ok(parsed) => parsed,
             Err(JsonParseError::Syntax(error)) => return self.syntax_error_result(p, &error),
             Err(JsonParseError::StackExhausted) => return Err(self.stack_exhaustion_error()),
