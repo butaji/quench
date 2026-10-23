@@ -229,7 +229,7 @@ impl<H: Host> Vm<H> {
         if matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) {
             return None;
         }
-        let (shape, slot) = self.instanceof_constructor_layout?;
+        let (shape, slot) = self.instanceof_constructor_layouts[instanceof_layout_index(object.shape())]?;
         if shape != object.shape() || object.proto_link() != self.instanceof_has_instance_link {
             return None;
         }
@@ -275,7 +275,7 @@ impl<H: Host> Vm<H> {
         }
         let (shape, holder) = (object.shape(), object.proto());
         // The layout memo answers the `prototype` read from the cell already in hand.
-        let remembered = match self.instanceof_constructor_layout {
+        let remembered = match self.instanceof_constructor_layouts[instanceof_layout_index(shape)] {
             Some((cached, slot)) if cached == shape => Some(self.heap.property_get(object, slot)),
             _ => None,
         };
@@ -284,7 +284,7 @@ impl<H: Host> Vm<H> {
             None => {
                 let slot = self.instanceof_constructor_slot(constructor)?;
                 if !self.shape_is_dictionary(shape) {
-                    self.instanceof_constructor_layout = Some((shape, slot));
+                    self.instanceof_constructor_layouts[instanceof_layout_index(shape)] = Some((shape, slot));
                 }
                 self.heap.property_get(self.object_data(constructor)?, slot)?
             }
@@ -583,4 +583,10 @@ fn compare_positive_bigint_number(integer: BigInt, number: f64) -> Ordering {
     } else {
         (integer << (-exponent) as usize).cmp(&significand)
     }
+}
+
+/// The `Vm::instanceof_constructor_layouts` entry a constructor of `shape` takes.
+#[inline(always)]
+fn instanceof_layout_index(shape: u32) -> usize {
+    shape as usize % INSTANCEOF_CONSTRUCTOR_LAYOUTS
 }

@@ -6,6 +6,9 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 
 const NODE_ERROR_BRAND: &str = "\0node/errors/privateBrand";
 pub(crate) const DEFAULT_STACK_FORMATTER: &str = "\0node/errors/defaultStackFormatter";
+/// Node's `prepareStackTraceCallback`, which the formatter finds once in the loaded
+/// `internal/errors.js`: an internal module's binding no script reaches or changes.
+const PREPARE_STACK_TRACE_CALLBACK: &str = "\0node/errors/prepareStackTraceCallback";
 /// Node's stack policy, without loading it: `internal/errors.js` and what it requires cost
 /// about as much as the rest of the bootstrap together, and a script that never reads a
 /// stack or `Error.prepareStackTrace` needs none of it. The formatter is a native trampoline
@@ -74,7 +77,17 @@ pub(crate) fn format_stack(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let callback = errors_export(context, "prepareStackTraceCallback")?;
+    let state = context.host_mut().shared_state();
+    let cached = state.borrow().builtin_cache.get(PREPARE_STACK_TRACE_CALLBACK).copied();
+    let callback = match cached {
+        Some(callback) => callback,
+        None => {
+            let callback = errors_export(context, "prepareStackTraceCallback")?;
+            let callback = context.retain(callback)?;
+            state.borrow_mut().builtin_cache.insert(PREPARE_STACK_TRACE_CALLBACK.into(), callback);
+            callback
+        }
+    };
     let undefined = context.undefined();
     context.call_rooted(callback, undefined, args)
 }

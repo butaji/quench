@@ -33,6 +33,10 @@ curriculum_repeats=20
 # Training with only the single load-time call left the PGO build slower than a plain build
 # on NavierStokes, Crypto, Richards and Splay.
 curriculum_budget_ms=6000
+# Optional representative React SSR samples can be added to the general profile with
+# QUENCH_PGO_REACT_ROUNDS=N. Keep this off by default so production builds stay independent
+# of npm fixture installation; the npm performance workflow can opt in when measuring React.
+react_training_rounds="${QUENCH_PGO_REACT_ROUNDS:-0}"
 # The curriculum stages interpreter mechanisms and runs no regular expression, string
 # search or typed-memory work; the numbered diagnostic micros (quench-bench/micros, one
 # operation family each, the same `microRun` protocol) cover those families, so a library
@@ -50,6 +54,15 @@ run_limited() {
         timeout "$per_program_timeout" "$@"
     elif command -v gtimeout >/dev/null 2>&1; then
         gtimeout "$per_program_timeout" "$@"
+    else
+        "$@"
+    fi
+}
+run_training_limited() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 120 "$@"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        gtimeout 120 "$@"
     else
         "$@"
     fi
@@ -98,6 +111,16 @@ while IFS= read -r fixture; do
     (cd "$(dirname "$fixture")" && run_limited "$instrumented" "$(basename "$fixture")" \
         >/dev/null 2>&1) || true
 done < <(find tests/node-compat -name '*.js' | sort)
+if (( react_training_rounds > 0 )); then
+    if [[ ! -f tests/npm-perf/node_modules/react/package.json ]]; then
+        printf 'React PGO training requested; install tests/npm-perf dependencies with npm ci first\n' >&2
+        exit 1
+    fi
+    NODE_ENV=production \
+        QUENCH_BENCH_ROUNDS="$react_training_rounds" \
+        QUENCH_BENCH_WARMUPS=250 \
+        run_training_limited "$instrumented" tests/npm-perf/workloads/react-ssr.cjs >/dev/null
+fi
 unset LLVM_PROFILE_FILE
 
 "$llvm_profdata" merge -o "$profdata" "$data_dir"/*.profraw

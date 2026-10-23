@@ -102,7 +102,7 @@ impl FunctionCompiler<'_, '_> {
         let object_atom = self.hidden_local("\0quench:for-in:source");
         self.store_atom(object_atom, object);
         let object = self.load_atom(object_atom);
-        let keys = self.load_name("\0quench:for-in-keys");
+        let keys = self.load_name(crate::bytecode::FOR_IN_KEYS_BINDING);
         let this = self.literal(Constant::Undefined);
         let base = self.next_reg;
         let argument = self.reg();
@@ -202,7 +202,7 @@ impl FunctionCompiler<'_, '_> {
             value_atom,
         );
         let invalid_for_in_key = for_in_source.map(|object_atom| {
-            let validate = self.load_name("\0quench:for-in-key-is-enumerable");
+            let validate = self.load_name(crate::bytecode::FOR_IN_KEY_IS_ENUMERABLE_BINDING);
             let object = self.load_atom(object_atom);
             let base = self.next_reg;
             let object_arg = self.reg();
@@ -302,7 +302,7 @@ impl FunctionCompiler<'_, '_> {
         let close = self.code.len() as u32;
         self.patch_instruction(break_close, close);
         let iterator = self.load_atom(iterator_atom);
-        let close_fn = self.load_name("\0quench:iterator-close");
+        let close_fn = self.load_name(crate::bytecode::ITERATOR_CLOSE_BINDING);
         let ignored = self.reg();
         self.emit(Op::Call, ignored, close_fn, iterator, 0);
         if await_values {

@@ -301,8 +301,7 @@ impl FunctionCompiler<'_, '_> {
             let dst = self.reg();
             self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
             Some(dst)
-        } else if self.with_depth == 0
-            && (!self.dynamic_eval || compiler_binding)
+        } else if (compiler_binding || (self.with_depth == 0 && !self.dynamic_eval))
             && let Some((depth, slot)) = self.scopes.find(atom)
         {
             let dst = self.reg();

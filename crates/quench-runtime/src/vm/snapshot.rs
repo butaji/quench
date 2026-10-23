@@ -287,7 +287,6 @@ impl<H: Host> Vm<H> {
             temporal_plain_year_month_proto: _,
             natives,
             atom_strings,
-            shared_natives,
             frames,
             native_stack_frames,
             native_root_lists: _,
@@ -319,6 +318,8 @@ impl<H: Host> Vm<H> {
             transitions,
             shape_slot_memo: _,
             plain_copy_shapes: _,
+            embedding_record_shapes: _,
+            typed_array_geometry: _,
             symbol_write_proofs: _,
             symbol_load_proofs: _,
             private_site_homes: _,
@@ -354,7 +355,7 @@ impl<H: Host> Vm<H> {
             megamorphic_fields: _,
             length_atom,
             prototype_atom,
-            instanceof_constructor_layout: _,
+            instanceof_constructor_layouts: _,
             closure_shapes: _,
             iterator_result_shape: _,
             reused_iterator_result: _,
@@ -455,7 +456,6 @@ impl<H: Host> Vm<H> {
         builtin_prototypes!(write_prototypes);
         natives.snap(&mut writer)?;
         atom_strings.snap(&mut writer)?;
-        shared_natives.snap(&mut writer)?;
         startup_intrinsics.write_snapshot(&mut writer)?;
         writer.bool(*with_scope_entered);
         programs.write_snapshot(&mut writer)?;
@@ -519,7 +519,6 @@ impl<H: Host> Vm<H> {
         builtin_prototypes!(read_prototypes);
         self.natives = Snap::unsnap(&mut reader)?;
         self.atom_strings = Snap::unsnap(&mut reader)?;
-        self.shared_natives = Snap::unsnap(&mut reader)?;
         self.startup_intrinsics = startup_intrinsics::StartupIntrinsics::read_snapshot(&mut reader)?;
         self.with_scope_entered = reader.bool()?;
         self.programs = ProgramStore::read_snapshot(&mut reader, &bytes, &self.atom_sequence)?;

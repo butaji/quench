@@ -242,31 +242,19 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn typed_array_get(&mut self, object: Value, index: usize) -> Option<Value> {
-        let (buffer, offset, kind) = match self.heap.get(object) {
-            Some(Cell::TypedArray {
-                buffer,
-                object,
-                kind,
-                ..
-            }) => (*buffer, object.offset, *kind),
-            _ => return None,
-        };
-        let length = self.typed_array_length(object)?;
-        if index >= length {
-            return Some(Value::UNDEFINED);
-        }
-        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
+        let view = self.typed_array_view(object)?;
+        let kind = view.kind;
+        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(view.buffer) else {
             return Some(Value::UNDEFINED);
         };
         // The element's bytes, copied out so a BigInt result can be allocated.
         let mut element = [0; size_of::<u64>()];
-        let start = offset + index * kind.width();
         {
             let bytes = bytes.read();
-            let Some(source) = bytes.get(start..start + kind.width()) else {
+            let Some(start) = view.element(index, bytes.len()) else {
                 return Some(Value::UNDEFINED);
             };
-            element[..source.len()].copy_from_slice(source);
+            element[..kind.width()].copy_from_slice(&bytes[start..start + kind.width()]);
         }
         let bytes = &element;
         Some(match kind {
@@ -486,10 +474,13 @@ impl<H: Host> Vm<H> {
         let Some(number) = value.as_number() else {
             return false;
         };
-        if self.typed_array_kind(object).is_none_or(TypedArrayKind::is_bigint) {
-            return false;
+        match self.typed_array_view(object) {
+            Some(view) if !view.kind.is_bigint() => {
+                self.typed_array_write_view(view, index, &TypedArrayElement::Number(number));
+                true
+            }
+            _ => false,
         }
-        self.typed_array_write_element(object, index, &TypedArrayElement::Number(number))
     }
 
     pub(super) fn typed_array_write_element(
@@ -498,32 +489,38 @@ impl<H: Host> Vm<H> {
         index: usize,
         value: &TypedArrayElement,
     ) -> bool {
-        let (buffer, offset, kind) = match self.heap.get(object) {
-            Some(Cell::TypedArray {
-                buffer,
-                object,
-                kind,
-                ..
-            }) => (*buffer, object.offset, *kind),
-            _ => return false,
+        let Some(view) = self.typed_array_view(object) else {
+            return false;
         };
-        if self.array_buffer_detached(buffer)
-            || self
-                .typed_array_length(object)
-                .is_none_or(|length| index >= length)
-        {
-            return true;
-        }
-        if self.array_buffer_out_of_bounds(buffer, offset, kind.width() * (index + 1)) {
-            return true;
-        }
-        let encoded = Self::typed_array_element_bytes(kind, value);
-        if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) {
-            let mut bytes = bytes.make_mut();
-            let start = offset + index * kind.width();
-            bytes[start..start + kind.width()].copy_from_slice(&encoded[..kind.width()]);
-        }
+        self.typed_array_write_view(view, index, value);
         true
+    }
+
+    /// Writes element `index` of the typed array `view` describes; an index past its
+    /// current length, or a detached or shrunken buffer, writes nothing.
+    fn typed_array_write_view(&mut self, view: TypedArrayView, index: usize, value: &TypedArrayElement) {
+        let width = view.kind.width();
+        let encoded = Self::typed_array_element_bytes(view.kind, value);
+        if let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get_mut(view.buffer)
+            && let Some(start) = view.element(index, bytes.len())
+        {
+            bytes.make_mut()[start..start + width].copy_from_slice(&encoded[..width]);
+        }
+    }
+
+    /// What an element access reads of the typed array `object` before its buffer: one heap
+    /// read, where `typed_array_length` and the buffer checks would each make their own.
+    fn typed_array_view(&self, object: Value) -> Option<TypedArrayView> {
+        match self.heap.get(object) {
+            Some(Cell::TypedArray { kind, object, buffer, length, length_tracking }) => Some(TypedArrayView {
+                kind: *kind,
+                buffer: *buffer,
+                offset: object.offset,
+                length: *length,
+                length_tracking: *length_tracking,
+            }),
+            _ => None,
+        }
     }
 
     /// One element encoding serves indexed stores and validated bulk fills.
@@ -742,5 +739,33 @@ mod backing_address_tests {
         );
         assert_eq!(vm.heap.stats().5, accounted);
         vm.heap.release_root(root);
+    }
+}
+
+/// A typed array's view of its buffer, as an element access reads it (`Vm::typed_array_view`).
+#[derive(Clone, Copy)]
+struct TypedArrayView {
+    kind: TypedArrayKind,
+    buffer: Value,
+    offset: usize,
+    length: usize,
+    length_tracking: bool,
+}
+
+impl TypedArrayView {
+    /// The byte offset of element `index` in an attached buffer of `byte_length` bytes, or
+    /// `None` past the array's length as `Vm::typed_array_length` derives it: a
+    /// length-tracking view covers the buffer past its offset, a fixed one covers none of it
+    /// once the buffer shrank below its end.
+    fn element(self, index: usize, byte_length: usize) -> Option<usize> {
+        let width = self.kind.width();
+        let length = if self.length_tracking {
+            byte_length.saturating_sub(self.offset) / width
+        } else if self.offset.saturating_add(self.length * width) > byte_length {
+            0
+        } else {
+            self.length
+        };
+        (index < length).then(|| self.offset + index * width)
     }
 }

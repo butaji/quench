@@ -27,6 +27,9 @@ pub struct SharedCallback {
     pub args: Vec<quench_runtime::RootId>,
 }
 
+/// A TickObject's own slots, which `processTicksAndRejections` reads when the tick runs.
+static TICK_OBJECT_FIELDS: [&str; 2] = ["callback", "args"];
+
 /// Retain a native-context callback into Node's canonical next-tick queue.
 pub(crate) fn queue_next_tick(
     context: &mut NativeContext<'_, NodeHost>,
@@ -34,10 +37,8 @@ pub(crate) fn queue_next_tick(
     receiver: RootId,
     args: &[RootId],
 ) -> Result<(), RootedError> {
-    let resource = context.object_rooted()?;
-    context.define_named_data_property_rooted(resource, "callback", callback, true, true, true)?;
     let values = if args.is_empty() { context.undefined() } else { context.array_rooted(args)? };
-    context.define_named_data_property_rooted(resource, "args", values, true, true, true)?;
+    let resource = context.record_rooted(&TICK_OBJECT_FIELDS, &[callback, values])?;
     let id = super::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
     super::async_hooks_shared_vm::emit_init(context, resource, "TickObject", id)?;
     let execution = Some(CallbackExecution { lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation, optional_callback: None, id, resource: context.retain(resource)? });
@@ -83,15 +84,7 @@ pub(crate) fn invoke_tick(context: &mut NativeContext<'_, NodeHost>, resource: R
     if context.rooted_value(args).is_some_and(|value| value.is_undefined()) {
         return context.call_rooted(callback, receiver, &[]);
     }
-    let length = context.get_named_property_rooted(args, "length")?;
-    let length = context
-        .rooted_value(length)
-        .and_then(|value| value.as_number())
-        .unwrap_or_default() as usize;
-    let mut values = Vec::with_capacity(length);
-    for index in 0..length {
-        values.push(context.get_named_property_rooted(args, &index.to_string())?);
-    }
+    let values = context.array_like_values_rooted(args)?;
     context.call_rooted(callback, receiver, &values)
 }
 

@@ -37,6 +37,20 @@ const CODE_MAPPING: &str = "r-xp";
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const LOAD_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// The first-call release interval under a policy that returns pages at collections
+/// (memory-first). Before a run's first collections its first calls run code it runs only
+/// once, and that code stayed resident until the first collection while the heap built up:
+/// the max RSS of V8-v7 DeltaBlue and RayTrace without JIT, and of RegExp in both modes, fell
+/// at 18-100 ms, during that warm-up. A release costs the refaults that follow, about 0.35 ms
+/// (npm scenarios with 300-1800 first calls, x86_64 VM, 2026-10-22), so a release at every
+/// first call slowed TypeScript's transpile 313 -> 829 ms. At 5 ms (plain x86_64 build,
+/// MemoryFirst, 10 runs; `evidence/tod137-first-call-release-linux-2026-10-23`): V8-v7 max
+/// RSS without JIT -124 to -516 KiB on six fixtures, with JIT -144 to +48 KiB, scores within
+/// noise; npm scenarios run 7-21% longer for -3.4 to +0.1 MB. Memory-first is the opt-in
+/// policy that trades speed for memory; the throughput default keeps `LOAD_RELEASE_INTERVAL`.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const MEMORY_FIRST_FIRST_CALL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
+
 /// When the read-only pages were last released.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 static LAST_RELEASE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
@@ -337,6 +351,19 @@ impl CompileRelease {
     const COUNT: usize = 2;
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+impl CompileRelease {
+    /// How far apart this release's runs are kept.
+    fn interval(self) -> std::time::Duration {
+        let returns_pages = crate::shared_run::process_memory_policy()
+            .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
+        match self {
+            Self::FirstCall if returns_pages => MEMORY_FIRST_FIRST_CALL_INTERVAL,
+            Self::FirstCall | Self::CodeGeneration => LOAD_RELEASE_INTERVAL,
+        }
+    }
+}
+
 /// When each compile-phase release last ran, indexed by `CompileRelease`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 static LAST_COMPILE_RELEASES: std::sync::Mutex<[Option<std::time::Instant>; CompileRelease::COUNT]> =
@@ -348,7 +375,7 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
         return;
     };
     let last = &mut releases[release as usize];
-    if last.is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL) {
+    if last.is_some_and(|last| last.elapsed() < release.interval()) {
         return;
     }
     *last = Some(std::time::Instant::now());
