@@ -1,8 +1,8 @@
 //! Cranelift code generation for a deliberately small, guarded JavaScript subset.
 //!
-//! Native entry arguments are guarded Number values. Numeric functions return
-//! `f64`; static-string decision trees return a bytecode Return PC so the VM
-//! can load its rooted constant and preserve ordinary frame unwinding.
+//! Native entry arguments are guarded Number values. Numeric bytecode regions
+//! use the VM's common native-entry ABI; other artifacts retain their current
+//! bounded result ABIs, including static-string bytecode Return PCs.
 
 use crate::bytecode::{
     Constant, FieldBase, FieldLookup, Function, Op, Operand, OperandKind, ProgramKind,
@@ -16,7 +16,7 @@ use oxc_ast::ast::BinaryOperator;
 
 /// Native code and its result interpretation for a guarded JavaScript function.
 pub(super) struct JsJitArtifact {
-    /// Machine code for `extern "C" fn(*const f64) -> f64`.
+    /// Machine code using the ABI selected by `result`.
     pub(super) code: Vec<u8>,
     /// The number of formal parameters read from the argument array.
     pub(super) params: usize,
@@ -101,7 +101,8 @@ pub(super) struct JsJitCaptureArgument {
 }
 
 pub(super) enum JsJitResultKind {
-    Number,
+    /// Numeric bytecode regions emit the common VM native-entry ABI.
+    SharedNumberEntry,
     /// An Int32-guarded return path proven by the bytecode's `typeof` switch.
     Int32Identity(u32),
     CaptureNumber(JsJitCaptureArgument),
