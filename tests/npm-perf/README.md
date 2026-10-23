@@ -964,3 +964,16 @@ Quench measured 11,601 ops/s no-JIT and 12,821 JIT, versus Node at 48,544 and
 throughput and RSS are timer/sampling limited and not a reliable comparison.
 The constructor alone is much faster than Next's wrapper, but still loses to
 Node; no Next path wins.
+
+`next-response-components.cjs` separates `JSON.stringify`, string and byte
+`Response` construction, and `Response.json()`. Its final body read verifies
+the generated stream content after the timed loop. Quench's latest five-run
+diagnostics measured 13,405 / 107.7 MiB no-JIT and 13,012 / 87.4 MiB JIT for
+`Response.json()`, versus Node at 53,050 / 145.7 and 96,154 / 161.7. Bun's
+response-construction samples ran below 50 ms and cannot support throughput or
+RSS claims. The build embeds a checked Undici source override that specializes
+the private byte array and the common status-only options; custom headers and
+status text retain the generic path. A direct state allocation variant was
+rejected after inconsistent JIT results. Latest same-source paired results
+were within run noise, and this package remains behind Node and Bun. Linux RSS
+is diagnostic only.
