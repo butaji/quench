@@ -52,46 +52,31 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         kind: PropertyDefinitionKind,
     ) -> Result<Value, JsError> {
-        let source = self
-            .heap
-            .root(args.first().copied().unwrap_or(Value::UNDEFINED));
-        let key_input = self
-            .heap
-            .root(args.get(1).copied().unwrap_or(Value::UNDEFINED));
-        let input = self
-            .heap
-            .root(args.get(2).copied().unwrap_or(Value::UNDEFINED));
-        let mut key_root = None;
+        let [target, key, descriptor] =
+            [0, 1, 2].map(|index| args.get(index).copied().unwrap_or(Value::UNDEFINED));
+        // The heap does not move values: the call roots keep the arguments, and the key once
+        // converted, across the conversions' guest code.
+        let start = self.active_call_roots.len();
+        self.active_call_roots.extend([target, key, descriptor]);
         let outcome = (|| {
-            let target = self.heap.root_value(source).unwrap();
             if !self.is_object_like(target) {
                 return Err(self.type_error(p, "defineProperty target is not an object".into()));
             }
-            let key = self.heap.root_value(key_input).unwrap();
             let key = self.to_property_key(p, key)?;
-            let key = self.heap.root(key);
-            key_root = Some(key);
-            let descriptor = self.heap.root_value(input).unwrap();
+            self.active_call_roots.push(key);
             let record = self.to_property_descriptor(p, descriptor)?;
-            let target = self.heap.root_value(source).unwrap();
-            let property = self.heap.root_value(key).unwrap();
             match kind {
                 PropertyDefinitionKind::Reflect => {
-                    let accepted = self.define_own_property_record(p, target, property, record)?;
+                    let accepted = self.define_own_property_record(p, target, key, record)?;
                     Ok(Self::integrity_bool(accepted))
                 }
                 PropertyDefinitionKind::Object => {
-                    self.define_property_or_throw(p, target, property, record)?;
-                    Ok(self.heap.root_value(source).unwrap())
+                    self.define_property_or_throw(p, target, key, record)?;
+                    Ok(target)
                 }
             }
         })();
-        for root in [Some(source), Some(key_input), Some(input), key_root]
-            .into_iter()
-            .flatten()
-        {
-            self.heap.release_root(root);
-        }
+        self.active_call_roots.truncate(start);
         outcome
     }
 
@@ -117,95 +102,108 @@ impl<H: Host> Vm<H> {
         record: PropertyDescriptorRecord,
     ) -> Result<bool, JsError> {
         let _stack = self.enter_stack()?;
-        let target = self.heap.root(target);
-        let key = self.heap.root(key);
-        let descriptor = RootedPropertyDescriptor::new(&mut self.heap, record);
-        let outcome = (|| {
-            let object = self.heap.root_value(target).unwrap();
-            if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
-                if self.is_host_private_symbol(self.heap.root_value(key).unwrap()) { return Ok(false); }
-                return self.define_proxy_property_record(p, target, key, &descriptor);
+        if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
+            if self.is_host_private_symbol(key) {
+                return Ok(false);
             }
-            let property = self.heap.root_value(key).unwrap();
-            let property = match self.string_key_atom(property) {
-                Some(atom) => PropertyKey::string(atom),
-                None if matches!(self.heap.get(property), Some(Cell::Symbol(_))) => {
-                    PropertyKey::symbol(property)
-                }
-                _ => unreachable!("DefineOwnProperty receives a property key"),
-            };
-            if let PropertyKey::String(atom) = property {
-                if matches!(self.heap.get(object), Some(Cell::TypedArray { .. })) {
-                    match Self::typed_array_index_key(self.atom_name(atom)) {
-                        TypedArrayIndexKey::Index(index) => {
-                            return self.define_typed_array_property(
-                                p,
-                                object,
-                                index,
-                                descriptor.resolve(&self.heap),
-                            );
-                        }
-                        TypedArrayIndexKey::Invalid => return Ok(false),
-                        TypedArrayIndexKey::NotCanonical => {}
+            // A trap runs guest code, and the definition is read back through these roots.
+            let target = self.heap.root(target);
+            let key = self.heap.root(key);
+            let descriptor = RootedPropertyDescriptor::new(&mut self.heap, record);
+            let outcome = self.define_proxy_property_record(p, target, key, &descriptor);
+            descriptor.release(&mut self.heap);
+            self.heap.release_root(key);
+            self.heap.release_root(target);
+            return outcome;
+        }
+        // The heap does not move values, so the call roots keep each of them, unchanged,
+        // across whatever guest code a deferred namespace or a lazy member runs.
+        let start = self.active_call_roots.len();
+        self.active_call_roots.extend(
+            [target, key].into_iter().chain(record.value).chain(record.getter).chain(record.setter),
+        );
+        let outcome = self.define_ordinary_own_property(p, target, key, record);
+        self.active_call_roots.truncate(start);
+        outcome
+    }
+
+    /// `define_own_property_record` of a target that is no proxy, its values kept by the
+    /// caller's call roots.
+    fn define_ordinary_own_property(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        key: Value,
+        descriptor: PropertyDescriptorRecord,
+    ) -> Result<bool, JsError> {
+        let property = match self.string_key_atom(key) {
+            Some(atom) => PropertyKey::string(atom),
+            None if matches!(self.heap.get(key), Some(Cell::Symbol(_))) => PropertyKey::symbol(key),
+            _ => unreachable!("DefineOwnProperty receives a property key"),
+        };
+        if let PropertyKey::String(atom) = property {
+            if matches!(self.heap.get(object), Some(Cell::TypedArray { .. })) {
+                match Self::typed_array_index_key(self.atom_name(atom)) {
+                    TypedArrayIndexKey::Index(index) => {
+                        return self.define_typed_array_property(
+                            p,
+                            object,
+                            index,
+                            descriptor,
+                        );
                     }
-                }
-                if self.heap.array(object).is_some() {
-                    if atom == self.length_atom
-                        && !self
-                            .object_data(object)
-                            .is_some_and(Object::is_arguments_object)
-                    {
-                        return self.define_array_length(p, object, descriptor.resolve(&self.heap));
-                    }
-                }
-                self.evaluate_deferred_namespace_for_key(p, object, Some(property))?;
-                // A lazy data property is configurable with the attributes its data property
-                // will have, so only a descriptor that keeps more of it needs its value.
-                if !descriptor.resolve(&self.heap).replaces_kind_fields() {
-                    let object = self.heap.root_value(target).unwrap();
-                    self.materialize_lazy_data_property(p, object, property)?;
-                }
-                let object = self.heap.root_value(target).unwrap();
-                if self.heap.array(object).is_some()
-                    && let Some(index) = super::object_static::array_index(self.atom_name(atom))
-                {
-                    return self.define_array_property(
-                        object,
-                        index as usize,
-                        descriptor.resolve(&self.heap),
-                    );
-                }
-                if self
-                    .object_data(object)
-                    .is_some_and(Object::is_module_namespace)
-                {
-                    let Some(current) = self.module_namespace_value(p, object, atom)? else {
-                        return Ok(false);
-                    };
-                    let record = descriptor.resolve(&self.heap);
-                    return Ok(record.configurable != Some(true)
-                        && record.enumerable != Some(false)
-                        && record.writable != Some(false)
-                        && !record.has_accessor_fields()
-                        && record.value.is_none_or(|v| self.same_value(current, v)));
+                    TypedArrayIndexKey::Invalid => return Ok(false),
+                    TypedArrayIndexKey::NotCanonical => {}
                 }
             }
-            let object = self.heap.root_value(target).unwrap();
-            // A watched member (one a binding stands for, or one its initializer redefines)
-            // materializes before any definition, as before a write.
-            if self.watched_lazy_member(object, property)
-                || (matches!(property, PropertyKey::Symbol(_))
-                    && !descriptor.resolve(&self.heap).replaces_kind_fields())
-            {
+            if self.heap.array(object).is_some() {
+                if atom == self.length_atom
+                    && !self
+                        .object_data(object)
+                        .is_some_and(Object::is_arguments_object)
+                {
+                    return self.define_array_length(p, object, descriptor);
+                }
+            }
+            self.evaluate_deferred_namespace_for_key(p, object, Some(property))?;
+            // A lazy data property is configurable with the attributes its data property
+            // will have, so only a descriptor that keeps more of it needs its value.
+            if !descriptor.replaces_kind_fields() {
                 self.materialize_lazy_data_property(p, object, property)?;
             }
-            let object = self.heap.root_value(target).unwrap();
-            self.define_ordinary_property_key(object, property, descriptor.resolve(&self.heap))
-        })();
-        descriptor.release(&mut self.heap);
-        self.heap.release_root(key);
-        self.heap.release_root(target);
-        outcome
+            if self.heap.array(object).is_some()
+                && let Some(index) = super::object_static::array_index(self.atom_name(atom))
+            {
+                return self.define_array_property(
+                    object,
+                    index as usize,
+                    descriptor,
+                );
+            }
+            if self
+                .object_data(object)
+                .is_some_and(Object::is_module_namespace)
+            {
+                let Some(current) = self.module_namespace_value(p, object, atom)? else {
+                    return Ok(false);
+                };
+                let record = descriptor;
+                return Ok(record.configurable != Some(true)
+                    && record.enumerable != Some(false)
+                    && record.writable != Some(false)
+                    && !record.has_accessor_fields()
+                    && record.value.is_none_or(|v| self.same_value(current, v)));
+            }
+        }
+        // A watched member (one a binding stands for, or one its initializer redefines)
+        // materializes before any definition, as before a write.
+        if self.watched_lazy_member(object, property)
+            || (matches!(property, PropertyKey::Symbol(_))
+                && !descriptor.replaces_kind_fields())
+        {
+            self.materialize_lazy_data_property(p, object, property)?;
+        }
+        self.define_ordinary_property_key(object, property, descriptor)
     }
 
     fn define_proxy_property_record(
