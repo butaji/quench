@@ -251,7 +251,7 @@ impl UniqueElements {
         if required <= capacity {
             return;
         }
-        let grown = required.max(capacity * 2).max(MIN_GROWN_CAPACITY);
+        let grown = required.max(capacity + capacity / 2).max(MIN_GROWN_CAPACITY);
         self.grow_to(grown);
     }
 
