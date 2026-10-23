@@ -751,3 +751,17 @@ bounded region with generic values and exact side exits; `Binary` can invoke
 JavaScript coercion, so it cannot be treated as a primitive operation without
 a guard and a pre-effect exit. This profile narrows the search, but it does not
 yet establish a performance win.
+
+The first Zod v4 workload uses flat and nested object schemas, a discriminated
+union, successful `parse`, and invalid `safeParse` with issue-path checks. The
+11-round clean-production screen used 1,000 rounds and 50 warmups per process;
+output checks matched across engines. No-JIT throughput was 22,599 operations/s
+for Quench, 78,431 for Node `--jitless`, and 61,538 for Bun with JIT disabled.
+JIT throughput was 22,857 for Quench, 137,931 for Node, and 173,913 for Bun.
+Quench already used less sampled RSS in every comparison: 28.5 MB versus
+39.5/35.0 MB no-JIT, and 24.5 MB versus 52.1/47.9 MB with JIT. It does not
+meet the 20% threshold on no-JIT RSS against Bun (18.5% lower), and it misses
+the throughput threshold by a wide margin in both modes. Linux RSS is
+diagnostic; these results are a screen, not platform qualification. The local
+reports are `target/perf-reports/zod-parse-nojit-11.json` and
+`target/perf-reports/zod-parse-jit-11.json`.
