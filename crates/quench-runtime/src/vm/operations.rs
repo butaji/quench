@@ -116,6 +116,111 @@ number_arithmetic! {
     Divide => Division, divide;
 }
 
+/// The int32 operations used by JavaScript bitwise expressions. Keeping their
+/// operator mapping and operation selection in one stage lets the interpreter
+/// and native emitters share the same signed/unsigned shift decisions.
+pub(super) trait NumberBitwiseStage<T> {
+    type Output;
+
+    fn and(&mut self, left: T, right: T) -> Self::Output;
+    fn or(&mut self, left: T, right: T) -> Self::Output;
+    fn xor(&mut self, left: T, right: T) -> Self::Output;
+    fn shift_left(&mut self, left: T, right: T) -> Self::Output;
+    fn shift_right(&mut self, left: T, right: T) -> Self::Output;
+    fn shift_right_unsigned(&mut self, left: T, right: T) -> Self::Output;
+}
+
+macro_rules! number_bitwise {
+    ($($operation:ident => $operator:ident, $stage_method:ident;)+) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub(super) enum NumberBitwise { $($operation),+ }
+
+        impl NumberBitwise {
+            pub(super) fn from_operator(operator: u32) -> Option<Self> {
+                $(
+                    if operator == BinaryOperator::$operator as u32 {
+                        return Some(Self::$operation);
+                    }
+                )+
+                None
+            }
+
+            /// Whether this operation produces a signed Int32 from signed Int32
+            /// inputs, which is the current entry guard's proof domain.
+            pub(super) const fn in_signed_int32_domain(self) -> bool {
+                matches!(self, Self::And | Self::Or | Self::Xor)
+            }
+
+            #[inline(always)]
+            pub(super) fn apply<T, S: NumberBitwiseStage<T>>(
+                self,
+                stage: &mut S,
+                left: T,
+                right: T,
+            ) -> S::Output {
+                match self {
+                    $(Self::$operation => stage.$stage_method(left, right)),+
+                }
+            }
+        }
+    };
+}
+
+number_bitwise! {
+    And => BitwiseAnd, and;
+    Or => BitwiseOR, or;
+    Xor => BitwiseXOR, xor;
+    ShiftLeft => ShiftLeft, shift_left;
+    ShiftRight => ShiftRight, shift_right;
+    ShiftRightUnsigned => ShiftRightZeroFill, shift_right_unsigned;
+}
+
+struct I32BitwiseStage;
+
+impl NumberBitwiseStage<i32> for I32BitwiseStage {
+    type Output = i32;
+
+    #[inline(always)]
+    fn and(&mut self, left: i32, right: i32) -> Self::Output {
+        left & right
+    }
+    #[inline(always)]
+    fn or(&mut self, left: i32, right: i32) -> Self::Output {
+        left | right
+    }
+    #[inline(always)]
+    fn xor(&mut self, left: i32, right: i32) -> Self::Output {
+        left ^ right
+    }
+    #[inline(always)]
+    fn shift_left(&mut self, left: i32, right: i32) -> Self::Output {
+        ((left as u32).wrapping_shl((right as u32) & 31)) as i32
+    }
+    #[inline(always)]
+    fn shift_right(&mut self, left: i32, right: i32) -> Self::Output {
+        left >> ((right as u32) & 31)
+    }
+    #[inline(always)]
+    fn shift_right_unsigned(&mut self, left: i32, right: i32) -> Self::Output {
+        ((left as u32) >> ((right as u32) & 31)) as i32
+    }
+}
+
+#[inline(always)]
+fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) -> f64 {
+    let bits = operation.apply(&mut I32BitwiseStage, left, right);
+    if operation == NumberBitwise::ShiftRightUnsigned {
+        f64::from(bits as u32)
+    } else {
+        f64::from(bits)
+    }
+}
+
+#[inline(always)]
+fn number_bitwise_result(operation: NumberBitwise, left: i32, right: i32) -> Value {
+    Value::number(number_bitwise_f64_result(operation, left, right))
+}
+
 struct NumberF64Stage;
 
 impl NumberArithmeticStage<f64> for NumberF64Stage {
@@ -272,27 +377,14 @@ fn numeric_number_result(operator: BinaryOperator, left: f64, right: f64) -> f64
     if let Some(operation) = NumberArithmetic::from_operator(operator as u32) {
         return number_arithmetic_result(operation, left, right);
     }
+    if let Some(operation) = NumberBitwise::from_operator(operator as u32) {
+        let left = number_to_u32(left) as i32;
+        let right = number_to_u32(right) as i32;
+        return number_bitwise_f64_result(operation, left, right);
+    }
     match operator {
         BinaryOperator::Remainder => left % right,
         BinaryOperator::Exponential => exponentiate(left, right),
-        BinaryOperator::ShiftLeft => {
-            ((number_to_u32(left) as i32) << (number_to_u32(right) & 31)) as f64
-        }
-        BinaryOperator::ShiftRight => {
-            ((number_to_u32(left) as i32) >> (number_to_u32(right) & 31)) as f64
-        }
-        BinaryOperator::ShiftRightZeroFill => {
-            (number_to_u32(left) >> (number_to_u32(right) & 31)) as f64
-        }
-        BinaryOperator::BitwiseOR => {
-            ((number_to_u32(left) as i32) | (number_to_u32(right) as i32)) as f64
-        }
-        BinaryOperator::BitwiseXOR => {
-            ((number_to_u32(left) as i32) ^ (number_to_u32(right) as i32)) as f64
-        }
-        BinaryOperator::BitwiseAnd => {
-            ((number_to_u32(left) as i32) & (number_to_u32(right) as i32)) as f64
-        }
         _ => unreachable!("numeric operator table only contains numeric operators"),
     }
 }
@@ -411,20 +503,12 @@ fn numeric_integer_result(operator: BinaryOperator, left: i32, right: i32) -> Op
             }
         }
         BinaryOperator::Exponential => return None,
-        BinaryOperator::ShiftLeft => Value::integer(left.wrapping_shl((right as u32) & 31)),
-        BinaryOperator::ShiftRight => Value::integer(left >> ((right as u32) & 31)),
-        BinaryOperator::ShiftRightZeroFill => {
-            let result = (left as u32) >> ((right as u32) & 31);
-            if result <= i32::MAX as u32 {
-                Value::integer(result as i32)
-            } else {
-                Value::number(f64::from(result))
-            }
-        }
-        BinaryOperator::BitwiseOR => Value::integer(left | right),
-        BinaryOperator::BitwiseXOR => Value::integer(left ^ right),
-        BinaryOperator::BitwiseAnd => Value::integer(left & right),
-        _ => unreachable!("numeric operator table only contains numeric operators"),
+        _ => number_bitwise_result(
+            NumberBitwise::from_operator(operator as u32)
+                .expect("numeric operator table contains supported bitwise operations"),
+            left,
+            right,
+        ),
     })
 }
 
