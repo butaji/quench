@@ -957,3 +957,10 @@ at 322,581 / 24.83 and 555,556 / 33.65, and Bun at 212,766 / 33.25 and
 625,000 / 1.90. The short Bun samples understate RSS. These scenarios do not
 win. They locate Next's largest cost in response construction and streams,
 while route matching by itself is much faster but still behind both engines.
+
+`next-response-json.cjs` isolates the underlying `Response.json()` constructor.
+Quench measured 11,601 ops/s no-JIT and 12,821 JIT, versus Node at 48,544 and
+94,340. Bun's 625k/833k measurements came from very short samples, so its
+throughput and RSS are timer/sampling limited and not a reliable comparison.
+The constructor alone is much faster than Next's wrapper, but still loses to
+Node; no Next path wins.

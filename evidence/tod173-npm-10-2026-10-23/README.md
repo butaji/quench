@@ -114,3 +114,12 @@ remain diagnostic and no Next case meets the throughput gate.
 
 Additional reports: `next-generate-no-jit-5.json`, `next-generate-jit-5.json`,
 `next-match-no-jit-5.json`, and `next-match-jit-5.json`.
+
+`next-response-json.cjs` isolates global `Response.json()` without the Next
+wrapper. Quench measured 11,601 / 63.42 MiB no-JIT and 12,821 / 42.58 MiB JIT;
+Node measured 48,544 / 60.82 and 94,340 / 70.62. Bun completed these 5,000
+operations in under 10 ms (625k and 833k ops/s) and its Linux RSS sample is
+only a few MiB; both Bun numbers are below the reliable timing and RSS windows.
+This confirms the response stream implementation is still a major cost apart
+from Next's wrapper, but it does not produce a valid package win. Reports:
+`next-response-json-no-jit-5.json` and `next-response-json-jit-5.json`.
