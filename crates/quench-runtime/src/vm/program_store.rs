@@ -68,6 +68,37 @@ const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
 const JIT_MAX_ARTIFACTS: usize = JS_JIT_MAX_FUNCTIONS + WASM_JIT_MAX_TIER_ROOTS;
 const JIT_MAX_MAPPED_BYTES: usize = WASM_JIT_MAX_TIER_MAPPED_BYTES;
 
+/// One VM-local executable-code budget shared by the JavaScript, Wasm and
+/// eager compiled-program tiers. Per-language limits below this layer control
+/// how each tier competes for the shared cache; only this type mutates the
+/// aggregate artifact and mapped-byte totals.
+#[derive(Default)]
+struct JitCodeCacheBudget {
+    artifacts: usize,
+    mapped_bytes: usize,
+}
+
+impl JitCodeCacheBudget {
+    fn can_retain(&self, mapped_bytes: usize) -> bool {
+        self.artifacts < JIT_MAX_ARTIFACTS
+            && self.mapped_bytes.saturating_add(mapped_bytes) <= JIT_MAX_MAPPED_BYTES
+    }
+
+    fn retain(&mut self, mapped_bytes: usize) -> bool {
+        if !self.can_retain(mapped_bytes) {
+            return false;
+        }
+        self.artifacts += 1;
+        self.mapped_bytes += mapped_bytes;
+        true
+    }
+
+    fn release(&mut self, artifacts: usize, mapped_bytes: usize) {
+        self.artifacts = self.artifacts.saturating_sub(artifacts);
+        self.mapped_bytes = self.mapped_bytes.saturating_sub(mapped_bytes);
+    }
+}
+
 #[derive(Clone)]
 pub(super) enum JsTierState {
     Hot { observations: u8, numeric: u8 },
@@ -220,9 +251,8 @@ pub(crate) struct ProgramStore {
     js_jit_mapped_bytes: usize,
     wasm_jit_tier_roots: usize,
     wasm_jit_tier_mapped_bytes: usize,
-    /// Shared JS/Wasm code-cache budget counters.
-    jit_compiled_artifacts: usize,
-    jit_mapped_bytes: usize,
+    /// Shared JS/Wasm executable-code cache admission and accounting.
+    jit_code_cache: JitCodeCacheBudget,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
     js_jit_dataview_float64_enabled: bool,
@@ -244,8 +274,7 @@ impl Default for ProgramStore {
             js_jit_mapped_bytes: 0,
             wasm_jit_tier_roots: 0,
             wasm_jit_tier_mapped_bytes: 0,
-            jit_compiled_artifacts: 0,
-            jit_mapped_bytes: 0,
+            jit_code_cache: JitCodeCacheBudget::default(),
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
@@ -411,10 +440,8 @@ impl ProgramStore {
             .2
             .saturating_add(reclaimed_wasm_tiers.1)
             .saturating_add(reclaimed_wasm_baselines.1);
-        self.jit_compiled_artifacts = self
-            .jit_compiled_artifacts
-            .saturating_sub(reclaimed_artifacts);
-        self.jit_mapped_bytes = self.jit_mapped_bytes.saturating_sub(reclaimed_bytes);
+        self.jit_code_cache
+            .release(reclaimed_artifacts, reclaimed_bytes);
         self.unchecked_reclaimable = pending;
         if !reclaimed.is_empty() {
             let programs = &self.programs;
@@ -435,8 +462,7 @@ impl ProgramStore {
         self.js_jit_mapped_bytes = 0;
         self.wasm_jit_tier_roots = 0;
         self.wasm_jit_tier_mapped_bytes = 0;
-        self.jit_compiled_artifacts = 0;
-        self.jit_mapped_bytes = 0;
+        self.jit_code_cache = JitCodeCacheBudget::default();
         if let Some(diagnostics) = &mut self.js_jit_diagnostics {
             diagnostics.clear();
         }
@@ -967,22 +993,11 @@ impl ProgramStore {
             .and_then(Option::as_ref)
             .map(|previous| previous.mapped_bytes())
         {
-            self.jit_compiled_artifacts = self.jit_compiled_artifacts.saturating_sub(1);
-            self.jit_mapped_bytes = self
-                .jit_mapped_bytes
-                .saturating_sub(previous_bytes);
+            self.jit_code_cache.release(1, previous_bytes);
         }
         let compiled = compiled.filter(|compiled| {
-            self.jit_compiled_artifacts < JIT_MAX_ARTIFACTS
-                && self
-                    .jit_mapped_bytes
-                    .saturating_add(compiled.mapped_bytes())
-                    <= JIT_MAX_MAPPED_BYTES
+            self.jit_code_cache.retain(compiled.mapped_bytes())
         });
-        if let Some(compiled) = &compiled {
-            self.jit_compiled_artifacts += 1;
-            self.jit_mapped_bytes += compiled.mapped_bytes();
-        }
         if let Some(entry) = self.entry_mut(id) {
             entry.compiled = Some(compiled);
         }
@@ -1115,8 +1130,7 @@ impl ProgramStore {
                 .wasm_jit_tier_mapped_bytes
                 .saturating_add(bytes)
                 > WASM_JIT_MAX_TIER_MAPPED_BYTES
-            || self.jit_compiled_artifacts >= JIT_MAX_ARTIFACTS
-            || self.jit_mapped_bytes.saturating_add(bytes) > JIT_MAX_MAPPED_BYTES
+            || !self.jit_code_cache.can_retain(bytes)
         {
             return false;
         }
@@ -1126,8 +1140,8 @@ impl ProgramStore {
         entry.wasm_tiers.entry(root).or_default().compiled = Some(compiled);
         self.wasm_jit_tier_roots += 1;
         self.wasm_jit_tier_mapped_bytes += bytes;
-        self.jit_compiled_artifacts += 1;
-        self.jit_mapped_bytes += bytes;
+        let retained = self.jit_code_cache.retain(bytes);
+        debug_assert!(retained, "shared JIT budget changed during Wasm admission");
         true
     }
 
@@ -1690,17 +1704,13 @@ impl ProgramStore {
                     .js_jit_mapped_bytes
                     .saturating_add(compiled.mapped_bytes())
                     <= JS_JIT_MAX_MAPPED_BYTES
-                && self.jit_compiled_artifacts < JIT_MAX_ARTIFACTS
-                && self
-                    .jit_mapped_bytes
-                    .saturating_add(compiled.mapped_bytes())
-                    <= JIT_MAX_MAPPED_BYTES
+                && self.jit_code_cache.can_retain(compiled.mapped_bytes())
         });
         if let Some(compiled) = &compiled {
             self.js_jit_compiled_functions += 1;
             self.js_jit_mapped_bytes += compiled.mapped_bytes();
-            self.jit_compiled_artifacts += 1;
-            self.jit_mapped_bytes += compiled.mapped_bytes();
+            let retained = self.jit_code_cache.retain(compiled.mapped_bytes());
+            debug_assert!(retained, "shared JIT budget changed during JS admission");
         }
         if let Some(entry) = self.entry_mut(id) {
             entry.js_tiers.insert(
@@ -1719,7 +1729,7 @@ impl ProgramStore {
 
     #[cfg(test)]
     pub(super) fn jit_mapped_bytes(&self) -> usize {
-        self.jit_mapped_bytes
+        self.jit_code_cache.mapped_bytes
     }
 
     /// A program's lane views by function, derived on first use.
@@ -2151,6 +2161,31 @@ impl LaneViews {
     /// `function`'s view if it has one, without making the table.
     fn derived(&self, function: u32) -> Option<&super::dispatch_fast::LaneView> {
         self.0.get()?.get(function as usize)?.get()
+    }
+}
+
+#[cfg(test)]
+mod jit_code_cache_tests {
+    use super::{JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JitCodeCacheBudget};
+
+    #[test]
+    fn shared_jit_cache_budget_tracks_mixed_artifacts() {
+        let mut cache = JitCodeCacheBudget::default();
+        assert!(cache.retain(128 * 1024));
+        assert!(cache.retain(256 * 1024));
+        assert_eq!(cache.artifacts, 2);
+        assert_eq!(cache.mapped_bytes, 384 * 1024);
+
+        assert!(!cache.can_retain(JIT_MAX_MAPPED_BYTES));
+        cache.release(1, 256 * 1024);
+        assert_eq!(cache.artifacts, 1);
+        assert_eq!(cache.mapped_bytes, 128 * 1024);
+        assert!(cache.can_retain(JIT_MAX_MAPPED_BYTES - 128 * 1024));
+
+        for _ in 1..JIT_MAX_ARTIFACTS {
+            assert!(cache.retain(0));
+        }
+        assert!(!cache.can_retain(0));
     }
 }
 
