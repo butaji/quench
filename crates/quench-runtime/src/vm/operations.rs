@@ -1423,6 +1423,8 @@ impl<H: Host> Vm<H> {
             && left.is_heap()
             && let Some(value) = self.cached_concat(left, right)
         {
+            #[cfg(feature = "profile-aggregate")]
+            self.profile.concat_cache(true);
             return Ok(value);
         }
         if let Some(value) = self.number_binary(op, left, right) {

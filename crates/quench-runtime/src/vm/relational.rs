@@ -53,16 +53,24 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(object) {
             return Err(self.type_error(p, "right-hand side of 'in' is not an object".into()));
         }
-        // Accessor indices are stored as holes, so a present dense element is an own property.
+        // Array elements live outside the ordinary property table. Resolve both dense and
+        // sparse own elements directly, and avoid creating an atom for every absent index
+        // when the array and its prototype chain provably have no property there. This is
+        // especially important for methods such as `every` that perform HasProperty across
+        // long sparse ranges. Keep descriptors and exotic prototype chains on the general
+        // path so accessors, proxies and inherited indexed properties retain their behavior.
         if let Some(index) = self.array_index_key(key)
-            && self.heap.array(object).is_some_and(|array| {
-                array
-                    .elements()
-                    .get(index as usize)
-                    .is_some_and(|value| !value.is_deleted())
-            })
+            && self.heap.array(object).is_some()
         {
-            return Ok(true);
+            let index = index as usize;
+            if self.own_element_present(object, index) {
+                return Ok(true);
+            }
+            if self.array_descriptor_entry(object, index).is_none()
+                && self.inherited_index_absent(object, index)
+            {
+                return Ok(false);
+            }
         }
         self.with_call_roots([object, key], |vm| {
             let key = vm.to_property_key(p, key)?;
