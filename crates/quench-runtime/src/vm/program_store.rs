@@ -1195,6 +1195,10 @@ impl ProgramStore {
         self.entry(id)?.js_tiers.get(&function).cloned()
     }
 
+    pub(super) fn js_tier_ref(&self, id: ProgramId, function: u32) -> Option<&JsTierState> {
+        self.entry(id)?.js_tiers.get(&function)
+    }
+
     /// Whether the JavaScript tier settled on not compiling `function`.
     pub(super) fn js_tier_declined(&self, id: ProgramId, function: u32) -> bool {
         self.entry(id)
