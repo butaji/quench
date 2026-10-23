@@ -286,6 +286,32 @@ Candidate binary SHA-256:
 Raw reports: `zod-callcache-256-production-no-jit-11.json` and
 `zod-callcache-256-production-jit-11.json`.
 
+## `v2-merged` closure-retention refresh
+
+After fetching `v2-merged` commit `60d479a0e` and merging it as
+`4bbcad509`, I rebuilt a clean production binary and ran the new tip beside
+the saved pre-merge production binary. The paired runs used the same pinned
+workload, 11 interleaved rounds, 5,000 workload rounds per sample and 250
+warmups. This compares the merged closure-retention/GC work on this workload;
+both binaries produced the expected checksum.
+
+| Mode | Merged-tip Quench ops/s / RSS MiB | Saved control ops/s / RSS MiB | Paired throughput ratio | Paired RSS ratio |
+| --- | ---: | ---: | ---: | ---: |
+| No-JIT | 51,414 / 29.81 | 48,309 / 31.16 | 1.017 (9 / 11 ahead) | 0.958 |
+| JIT | 53,619 / 22.81 | 51,020 / 24.13 | 0.974 (5 / 11 ahead) | 0.945 |
+
+The merged tip has a small paired no-JIT speed gain and lower RSS in both
+modes, but the JIT throughput movement is negative and neither mode is a
+20% throughput win over Node and Bun. No-JIT RSS is still about 19% below Bun,
+short of the 20% target. These are Linux x86_64 diagnostics, not qualification
+measurements. Merged-tip binary SHA-256:
+`fdaa50d80f42bda6424eb4ca42dedb29db9f1daed084a06e0c7472b4c9ee6a86`;
+saved control binary SHA-256:
+`c61c923765f490a09208ebc14777bc4af89045c8132a6d8d52497891f22e6be2`.
+
+Raw paired reports: `zod-v2-merged-closure-refresh-no-jit-11.json` and
+`zod-v2-merged-closure-refresh-jit-11.json`.
+
 ## Exact field-path profile and holder-first probe screen
 
 A `profile-lane-exits` build sampled 500 rounds plus 50 warmups. The field
