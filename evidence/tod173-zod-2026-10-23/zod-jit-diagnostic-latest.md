@@ -66,3 +66,11 @@ construction, field reads, and calls. It still does not identify a safe fused
 region or establish a ≥20% ceiling; the next profiling step must map hot
 anonymous function IDs to source ranges and split exclusive from descendant
 costs before lowering effectful calls.
+
+The same profile identifies candidate adjacent pairs inside `v4/core/schemas.cjs`:
+`GetField→GetField` 113,780, `LoadEnvLocal→Call` 84,160,
+`LoadEnvLocal→GetField` 80,386, `GetField→JumpFalse` 63,139, and
+`LoadCapture→GetField` 60,134. These counts are execution frequency, not time
+saved. `LoadEnvLocal→Call` was already screened and lost 9.8% in no-JIT, so the
+frequency list is only a way to choose new, semantically safe candidates for
+measurement, not proof that fusion helps.
