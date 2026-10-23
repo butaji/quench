@@ -177,6 +177,33 @@ impl Heap {
         unsafe { self.slots.get_unchecked_mut(index).cell.as_mut() }
     }
 
+    /// Borrow two distinct legacy cells for one mutation and one read, applying the
+    /// write barrier to the mutated owner before either borrow is created.
+    pub(crate) fn get_mut_and_ref(
+        &mut self,
+        mutable: Value,
+        read_only: Value,
+    ) -> Option<(&mut Cell, &Cell)> {
+        let HeapReference::LegacySlot(mutable_index) = mutable.heap_reference()? else {
+            return None;
+        };
+        let HeapReference::LegacySlot(read_only_index) = read_only.heap_reference()? else {
+            return None;
+        };
+        let mutable_index = mutable_index as usize;
+        let read_only_index = read_only_index as usize;
+        if mutable_index == read_only_index
+            || mutable_index >= self.slots.len()
+            || read_only_index >= self.slots.len()
+        {
+            return None;
+        }
+        self.remember(mutable_index);
+        let (mutable_slot, read_only_slot) =
+            self.slots.get_two_mut(mutable_index, read_only_index)?;
+        Some((mutable_slot.cell.as_mut()?, read_only_slot.cell.as_ref()?))
+    }
+
     #[inline(always)]
     pub(crate) fn object(&self, value: Value) -> Option<&Object> {
         if let Some(record_id) = value.direct_object_index() {
@@ -458,7 +485,9 @@ impl Heap {
             HeapReference::IteratorRecord(record_id) => {
                 &mut unsafe { iterator_records.get_live_mut(record_id) }.object
             }
-            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) => return None,
+            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) => {
+                return None;
+            }
             HeapReference::LegacySlot(index) => {
                 slots.get_mut(index as usize)?.cell.as_mut()?.object_mut()?
             }
@@ -566,6 +595,7 @@ impl Heap {
             | HeapReference::IteratorRecord(_)
             | HeapReference::AwaitRecord(_)
             | HeapReference::StringRecord(_)
+            | HeapReference::V128Record(_)
             | HeapReference::LegacySlot(_) => None,
         }
     }
@@ -611,6 +641,7 @@ impl Heap {
             Some(HeapReference::AwaitRecord(id)) => self.await_records.is_live(id),
             Some(HeapReference::IteratorRecord(id)) => self.iterator_records.is_live(id),
             Some(HeapReference::StringRecord(id)) => self.string_records.is_live(id),
+            Some(HeapReference::V128Record(id)) => self.v128_records.is_live(id),
             None => false,
         }
     }

@@ -300,15 +300,40 @@ pub(crate) fn chunk_frame(body: &[u8]) -> Vec<u8> {
     frame
 }
 
+/// The size line that opens a chunked-coding frame of `length` bytes: hexadecimal digits
+/// and CRLF, the CRLF that closes the frame being `CHUNK_FRAME_END`.
+pub(crate) struct ChunkFrameHead {
+    bytes: [u8; CHUNK_FRAME_HEAD_CAPACITY],
+    length: usize,
+}
+
+/// A `usize` in hexadecimal, two digits per byte, then CRLF.
+const CHUNK_FRAME_HEAD_CAPACITY: usize = 2 * std::mem::size_of::<usize>() + CHUNK_FRAME_END.len();
+pub(crate) const CHUNK_FRAME_END: &[u8] = b"\r\n";
+
+impl ChunkFrameHead {
+    pub(crate) fn new(length: usize) -> Self {
+        use std::io::Write;
+        let mut bytes = [0; CHUNK_FRAME_HEAD_CAPACITY];
+        let mut cursor = &mut bytes[..];
+        write!(cursor, "{length:x}\r\n").expect("a usize's hexadecimal size line fits");
+        let length = CHUNK_FRAME_HEAD_CAPACITY - cursor.len();
+        Self { bytes, length }
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes[..self.length]
+    }
+}
+
 /// Append one chunked-coding frame; an empty body has none, as `0` ends the message.
 pub(crate) fn append_chunk_frame(out: &mut Vec<u8>, body: &[u8]) {
     if body.is_empty() {
         return;
     }
-    use std::io::Write;
-    write!(out, "{:x}\r\n", body.len()).expect("writing to a Vec cannot fail");
+    out.extend_from_slice(ChunkFrameHead::new(body.len()).bytes());
     out.extend_from_slice(body);
-    out.extend_from_slice(b"\r\n");
+    out.extend_from_slice(CHUNK_FRAME_END);
 }
 
 pub(crate) fn chunk_terminator(trailers: &[(String, String)]) -> Vec<u8> {

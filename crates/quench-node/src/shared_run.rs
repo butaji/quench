@@ -63,10 +63,9 @@ const TRIM_THRESHOLD_BYTES: libc::c_int = 16 * 1024 * 1024;
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 const TRIM_THRESHOLD_VARIABLE: &str = "MALLOC_TRIM_THRESHOLD_";
 
-/// The allocator setting and page releases the process's `policy` takes, applied once when
-/// it is selected (`select_memory_policy`); an explicit `TRIM_THRESHOLD_VARIABLE` wins.
-fn apply_process_policy(policy: MemoryPolicy) {
-    crate::host::resident_pages::apply_policy(policy);
+/// The allocator setting the process's `policy` takes, applied once when it is selected
+/// (`select_memory_policy`); an explicit `TRIM_THRESHOLD_VARIABLE` wins.
+fn apply_allocator_policy(policy: MemoryPolicy) {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     if policy == MemoryPolicy::Throughput && std::env::var_os(TRIM_THRESHOLD_VARIABLE).is_none() {
         // SAFETY: mallopt only adjusts allocator parameters.
@@ -83,6 +82,11 @@ fn apply_process_policy(policy: MemoryPolicy) {
 /// (`resident_pages`) are the process's, not one runtime's. The first selection holds.
 static PROCESS_MEMORY_POLICY: std::sync::OnceLock<MemoryPolicy> = std::sync::OnceLock::new();
 
+/// The policy this process selected, once `select_memory_policy` has run.
+pub(crate) fn process_memory_policy() -> Option<MemoryPolicy> {
+    PROCESS_MEMORY_POLICY.get().copied()
+}
+
 /// Selects the process's memory policy once: the CLI's `chosen` name, else
 /// `MEMORY_POLICY_ENV`, else the default. An unknown name is an error.
 fn select_memory_policy(chosen: Option<&str>) -> Result<MemoryPolicy, String> {
@@ -98,7 +102,7 @@ fn select_memory_policy(chosen: Option<&str>) -> Result<MemoryPolicy, String> {
         ),
         (None, None) => return Ok(*PROCESS_MEMORY_POLICY.get_or_init(|| {
             let policy = MemoryPolicy::default();
-            apply_process_policy(policy);
+            apply_allocator_policy(policy);
             policy
         })),
     };
@@ -106,7 +110,7 @@ fn select_memory_policy(chosen: Option<&str>) -> Result<MemoryPolicy, String> {
         format!("{source}: unknown memory policy '{name}' (expected {})", memory_policy_names())
     })?;
     Ok(*PROCESS_MEMORY_POLICY.get_or_init(|| {
-        apply_process_policy(policy);
+        apply_allocator_policy(policy);
         policy
     }))
 }

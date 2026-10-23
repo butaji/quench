@@ -5,6 +5,77 @@ the no-JIT package sequence. Repeat the package sequence with JIT enabled
 afterward. Quench defaults to the interpreter and enables its compiled mode
 with `--jit`; its production executable is `target/production/quench-node`.
 
+## Fastify
+
+`fastify-json-http.cjs` measures a schema-validated JSON route over one real
+HTTP/1.1 keep-alive connection. `fastify-json-inject.cjs` measures the same
+route through Fastify's `app.inject()` path and checks status, body, content
+headers, and repeated `Set-Cookie` values. Fastify 5.12.5 and its dependencies
+are pinned in the lockfile.
+
+```sh
+cd tests/npm-perf
+npm ci
+node run-workload.mjs fastify-json-http no-jit 11 ../../target/fastify-no-jit.json
+node run-workload.mjs fastify-json-http jit 11 ../../target/fastify-jit.json
+node run-workload.mjs fastify-json-inject no-jit 11 ../../target/fastify-inject-no-jit.json
+node run-workload.mjs fastify-json-inject jit 11 ../../target/fastify-inject-jit.json
+```
+
+The inject scenario exercises virtual response records because LightMyRequest
+captures response bytes through its mock socket. The shared response header
+record remains authoritative, and the response factory projects `getHeaders()`
+from that record. Treat inject and real socket results as separate scenarios.
+
+The runner reports end-to-end client request throughput, output parity, and
+sampled peak RSS for Quench, Node, and Bun. This workload includes both the
+client request machinery and Fastify's server path, so compare identical engine
+and runtime versions on the same host.
+
+Set `QUENCH_BENCH_CONCURRENCY` to compare bounded parallel HTTP load; the
+default is one in-flight request. For example, a local 500-request, 7-round
+screen can run as:
+
+```sh
+QUENCH_BENCH_CONCURRENCY=32 QUENCH_BENCH_ROUNDS=500 \
+  QUENCH_BENCH_WARMUPS=25 \
+  node run-workload.mjs fastify-json-http no-jit 7 ../../target/fastify-concurrency32.json
+```
+
+The no-JIT concurrency sweep peaked at 32: Quench measured 1,572 requests/s /
+44.96 MB, Node `--jitless` 1,984 / 54.43 MB, and Bun no-JIT 1,866 / 49.39 MB.
+At 64 concurrent requests Quench fell to 1,534 requests/s. In the 32-request
+JIT screen, Quench measured 1,259 / 43.13 MB versus Node at 3,497 / 69.69 MB
+and Bun at 4,630 / 78.86 MB. These 7-round, 500-request samples are
+diagnostic only; Quench still loses on throughput in both phases.
+
+An 11-round, 1,000-request Linux diagnostic measured no-JIT Quench at
+304.5 requests/s / 45.56 MB sampled max RSS, Node `--jitless` at 1,658.4 /
+52.94 MB, and Bun no-JIT at 1,416.4 / 49.29 MB. JIT measured Quench at
+314.5 / 43.18 MB, Node at 3,891.1 / 71.93 MB, and Bun at 3,194.9 /
+81.54 MB. Output parity matched. Quench's sampled RSS was lower, but throughput
+was far behind both engines in both phases; Linux RSS is diagnostic only.
+
+A candidate that removed repeated request and response header-boundary scans
+was rejected after interleaved 11-round A/B screens at 1,000 requests. No-JIT
+candidate/control measured 304.5 / 45.56 MB versus 327.5 / 45.11 MB; JIT
+measured 314.5 / 43.18 MB versus 323.3 / 42.75 MB. Output parity matched, but
+the candidate lost speed and added RSS in both phases, so the runtime change
+was reverted. The paired reports are in `work/fastify-perf/`.
+
+A response-composition candidate that wrote directly into the socket's pending
+output vector also lost throughput. Paired 7-round, 500-request screens at
+concurrency 32 measured no-JIT candidate/control at 1,316 / 44.28 MB versus
+1,330 / 42.95 MB, and JIT at 1,121 / 42.17 MB versus 1,266 / 41.22 MB.
+Output parity matched; the candidate was reverted.
+
+A candidate that moved framed request bodies directly into byte-backed buffers
+to avoid the Latin-1 string round trip was also rejected. In paired 7-round,
+500-request screens at concurrency 32, no-JIT candidate/control measured
+1,344 / 46.58 MB versus 1,355 / 42.54 MB; JIT measured 1,179 / 44.08 MB
+versus 1,279 / 43.24 MB. Output parity matched, but this implementation was
+slower and used more RSS. The body conversion change was reverted.
+
 ## React / react-dom
 
 The first workload repeatedly server renders a fixed component tree with
@@ -57,6 +128,9 @@ For a same-run Quench build comparison, set `QUENCH_CONTROL_BIN` to a second
 `quench-node` binary. The runner interleaves both Quench binaries with Node
 and Bun and records the control binary hash separately. This helps distinguish
 small PGO or code-change effects from host load drift across separate reports.
+For no-JIT GC pacing comparisons, set `QUENCH_CONTROL_GC_MAX_YOUNG` to override
+the control row's young-generation cap while the candidate uses
+`QUENCH_GC_MAX_YOUNG`.
 
 Winning means at least 20% higher throughput and at least 20% lower maximum
 RSS than both Node and Bun in the active phase. Compare the throughput and RSS
@@ -354,3 +428,276 @@ a 3.0% speed gain for 4.7% more RSS. Output matched at 24,980,000 bytes and
 checksum 414318. RSS was 22.3% below Node and 24.9% below Bun, but the 512-unit
 build remains the better memory/speed balance. Report:
 `work/react-perf/react-pgo-prefix-256-vs-512-memory-first-max-young-32k-nojit-11.json`.
+
+A 256-entry capture-walk memo table was screened against the default 64-entry
+table, targeting the repeated outer-capture walks in React's lane profile. The
+3-round screen appeared 8.3% faster, but the paired 11-round full-size run was
+only 4.0% faster (314.5 renders/s vs 302.5) and used 4.6% more RSS (28.06 MB
+vs 26.83 MB). Output matched at 24,980,000 bytes/checksum 414318, but the small
+speed increase did not justify the memory cost, so the table was restored to 64.
+Report: `work/react-perf/react-pgo-capture-walks-256-vs-64-memory-first-max-young-32k-nojit-11.json`.
+
+A 64K young-generation cap did not improve the paired 32K PGO+512 control. The
+11-round full-size run measured 303.0 renders/s / 26.82 MB at 64K versus 325.9 /
+26.83 MB at 32K (-7.0% speed, effectively identical RSS), with matching output.
+The 32K cap remains selected. Report:
+`work/react-perf/react-pgo-prefix-512-young64k-vs-32k-11.json`.
+
+An early string-pair branch tried to bypass numeric operator checks for the
+625k React string-string additions. The paired three-round screen measured
+307.0 renders/s / 28.02 MB versus 305.4 / 26.89 MB for the unchanged PGO+512
+control: only 0.5% more throughput and 4.2% more RSS, with matching output. The
+fast path was reverted without a full run because it showed no useful signal.
+Report: `work/react-perf/react-pgo-string-pair-fastpath-vs-control-memory-first-32k-screen-3.json`.
+
+After the diagnostic GC builds, the ordinary PGO+512 production `quench-node`
+was restored and rerun with the full 5,000-render workload, 250 warmups,
+memory-first policy, and 32K young cap for 11 interleaved rounds. It measured
+325.9 renders/s / 26.86 MB versus Node `--jitless` at 1,662.2 / 36.22 MB and
+Bun no-JIT at 1,496.6 / 37.44 MB. Output matched at 24,980,000 bytes and
+checksum 414318. RSS remains over 20% lower than both engines, but throughput
+is about five times slower, so React no-JIT is not won. Report:
+`work/react-perf/react-pgo512-restored-full-memoryfirst-32k-nojit-11.json`.
+
+A PGO build with `-Ctarget-cpu=native` looked 5.7% faster in a three-round
+screen, but the full 11-round interleaved comparison reversed that result:
+298.5 renders/s / 27.81 MB versus the generic PGO+512 control at 319.5 /
+28.63 MB. Output matched at 24,980,000 bytes / checksum 414318. Native codegen
+reduced sampled RSS by 2.9% while lowering speed by 6.6%, so it was rejected
+and the ordinary PGO binary restored. Report:
+`work/react-perf/react-pgo512-nativecpu-vs-generic-memoryfirst-32k-nojit-11.json`.
+
+A feature-gated call-target census now samples both lane calls and same-program
+calls entered through the general dispatch loop. In a 500-render React run it
+found four dominant monomorphic sites (two with roughly 90k sampled calls each,
+and two with roughly 13k each); all other sites were sparse. The new general
+dispatch hook did not reveal a second class of high-volume call sites, so a
+per-site target memo has too little likely coverage to justify its complexity
+as the next optimization. A followup also sampled normal frame materialization
+and left the same four sites on top. These profile builds are intentionally
+instrumented; the extended run's 52.9 renders/s is not a performance result.
+Output matched at 2,498,000 bytes/checksum 41826. Full diagnostic output:
+`work/react-perf/react-call-target-profile-all.log`.
+
+The lane profiler now reports dynamic record counts by opcode and the next
+opcode after each Move. Over the same 500-render React input, Move led with
+20.9M records, followed by GetField (14.2M), JumpBinaryFalse (10.7M),
+LoadLocalPlain (8.6M), JumpFalse (8.2M), and Call (7.9M). Move's successors
+were Move (5.8M), Call (4.5M), JumpFalse (3.6M), and GetField (1.1M); the
+existing Move-pair fusion already handles adjacent moves. This supports testing
+a Move-to-JumpFalse fusion, which skips a dispatch on about 3.6M records in this
+sample. Diagnostic output:
+`work/react-perf/react-lane-opcode-profile.log` and
+`work/react-perf/react-lane-move-successors.log`.
+
+The Move-to-JumpFalse fusion screen matched output, but the full 11-round paired
+run was effectively flat: 319.26 renders/s / 27.20 MB versus 318.69 / 27.70 MB
+for the generic PGO+512 control (+0.18% speed, -1.8% RSS). The fused handler
+was reverted. Reports:
+`work/react-perf/react-move-jumpfalse-vs-generic-screen-3.json` and
+`work/react-perf/react-move-jumpfalse-vs-generic-11.json`.
+
+Reordering the monomorphic own-field cache lookup to fetch the site cache before
+loading the receiver object record was also rejected. The 11-round paired
+React no-JIT run measured 316.7 renders/s / 27.78 MB versus 327.1 / 27.69 MB
+for the generic PGO+512 control (-3.2% speed; effectively unchanged RSS).
+Output matched at 24,980,000 bytes/checksum 414318. The small screen had also
+shown no reliable throughput gain. Report:
+`work/react-perf/react-getfield-load-order-11.json`.
+
+An activation-window experiment filled only the registers after call arguments,
+avoiding initialization stores that were immediately overwritten by the
+argument copy. In the full 11-round React no-JIT comparison it measured 307.0
+renders/s / 26.78 MB versus 312.6 / 27.66 MB for the generic PGO+512 control
+(-1.8% speed, -3.2% RSS). Output matched. Because it reduced RSS without a
+throughput win, the change was reverted. The existing PGO profile also dropped
+counts for inlined call handlers after the change, so a fresh profile would be
+needed to evaluate the candidate fairly. Report:
+`work/react-perf/react-activation-fill-after-args-11.json`.
+
+The feature-only lane profiler now counts dynamic opcode transitions. Across
+500 React SSR renders, the most frequent pairs were `LoadLocalPlain` →
+`JumpBinaryFalse` (5.75M), `Move` → `Call` (5.57M), `JumpBinaryFalse` →
+`LoadLocalPlain` (5.22M), and `Move` → `JumpFalse` (4.22M). These dynamic counts
+include taken control flow and are more useful for choosing fusion candidates
+than static instruction adjacency. The instrumented run produced the expected
+2,498,000 bytes/checksum 41826; its throughput is diagnostic only. Report:
+`work/react-perf/react-dynamic-transition-profile.log`.
+
+A direct `LoadConst` → `Return` fusion was screened from the dynamic pair
+census. The short 3-round screen measured 311.1 renders/s / 26.91 MB versus
+316.1 / 27.72 MB for the control, but the full 11-round paired run reversed
+that result: 303.0 / 27.37 MB versus 299.6 / 27.67 MB (+1.1% speed, -1.1%
+RSS). Output matched at 24,980,000 bytes/checksum 414318, so the fusion is
+retained as a small speed-and-memory improvement. It returns the already
+resolved constant through the existing activation/frame return path, avoiding
+the temporary register write/read and one dispatch. Reports:
+`work/react-perf/react-loadconst-return-screen-3.json` and
+`work/react-perf/react-loadconst-return-11.json`.
+
+The next diagnostic classified a plain `Move` immediately before `Call` by
+whether its destination supplies the callee, receiver, or a call-window argument.
+Among the classified instances in a 500-render React SSR run, no destinations
+supplied the callee or receiver: 1.77M wrote argument 0, 154K argument 1, 112K
+argument 2, 198K argument 3, and 112K a later argument. Calls with one argument
+accounted for 1.77M instances. This narrows a possible fusion to argument-window
+transfer, but does not establish a profitable or safe generalized call fast path;
+the instrumented run's timing is diagnostic only. Output matched at 2,498,000
+bytes/checksum 41826. Report:
+`work/react-perf/react-movecall-relations-500.json` and
+`work/react-perf/react-movecall-relations-500.log`.
+
+Clearing script activation windows of at most eight registers exactly, instead
+of always writing the 16-register fill block, reduced work but lost throughput.
+The short screen measured 308.3 renders/s / 25.95 MB versus 335.7 / 27.75 MB
+for the same-run control. The full 11-round paired run confirmed a smaller
+regression: 313.2 / 27.22 MB versus 327.0 / 27.68 MB (-4.2% speed, -1.7% RSS).
+Output matched at 24,980,000 bytes/checksum 414318; the implementation was
+reverted. A guarded adjacent own-field pair was then screened from the 2.91M
+dynamic `GetField → GetField` transitions in the 500-render profile. The full
+11-round run measured 320.1 renders/s / 26.9 MB versus 317.7 / 27.6 MB for the
+paired control (+0.8% speed, -2.5% RSS). Output matched at 24,980,000
+bytes/checksum 414318. The small speed gain did not clear the experiment's
+noise margin, so the implementation was reverted. Reports:
+`work/react-perf/react-exact-small-fill-screen-3.json` and
+`work/react-perf/react-exact-small-fill-11.json`,
+`work/react-perf/react-adjacent-field-pair-screen-3.json`, and
+`work/react-perf/react-adjacent-field-pair-11.json`. The next `Move → Call`
+argument-window attempt used compiler forward-substitution for the one-argument
+form. It preserved output but failed the three-round screen: 285.1 renders/s /
+24.5 MB versus 308.3 / 24.7 MB for the paired control. It was reverted without
+a full run. Report: `work/react-perf/react-call-window-forward-screen-3.json`.
+A wide-aware `LoadCapture → Move` compiler rewrite was screened from the 2.73M
+dynamic transitions in the React profile. It preserved output but measured
+261.7 renders/s / 27.0 MB versus 325.8 / 27.6 MB for the paired control, so the
+compiler change was reverted without a full run. The build reused PGO data from
+before the rewrite-function change and reported a function hash mismatch; this
+limits attribution but does not provide a positive signal. Report:
+`work/react-perf/react-wide-capture-move-screen-3.json`. It was reverted.
+
+The next profile-ranked no-JIT candidate coalesces an exact plain local load
+with the following register/register integer-comparison branch. It keeps the
+branch record independently callable and sends non-integer operands to the
+existing generic relation handler. The full 11-round React SSR run measured
+331.1 renders/s / 26.90 MB versus the paired generic PGO control at 323.4 /
+27.14 (+2.4% throughput, -0.9% RSS), with matching 24,980,000 output bytes and
+checksum 414318. Node `--jitless` measured 1,696.1 / 36.18 MB and Bun no-JIT
+1,512.9 / 37.51 MB. Quench's RSS is over 20% below both, but throughput is
+still 5.1x behind Node and 4.6x behind Bun; this is a retained local
+improvement, not a package win. Report:
+`work/react-perf/react-loadlocal-jumpbinary-nojit-11.json`.
+
+The reverse-order `JumpBinaryFalse → LoadLocalPlain` pair had a misleadingly
+positive three-round screen when built with a stale profile: 333.6 renders/s /
+25.87 MB versus 326.9 / 27.48 for the paired control. Rebuilding with a fresh
+PGO training profile reversed the result: 307.8 / 26.26 MB versus 313.9 /
+26.58 (-2.0% throughput, -1.2% RSS), with matching output. The reverse-pair
+change was reverted. Reports:
+`work/react-perf/react-jumpbinary-loadlocal-screen-3.json` and
+`work/react-perf/react-jumpbinary-loadlocal-freshpgo-screen-3.json`.
+
+The PGO build can optionally include React SSR samples by setting
+`QUENCH_PGO_REACT_ROUNDS` after installing `tests/npm-perf` dependencies. With
+1,000 training rounds, the three-round screen measured 394.6 renders/s /
+25.31 MB versus the generic-PGO control at 362.8 / 26.33. The 11-round paired
+run measured 346.3 / 25.62 versus 309.4 / 26.39 (+11.9% throughput, -2.9%
+RSS), with matching 24,980,000 output bytes and checksum 414318. Node `--jitless`
+measured 1,604.6 / 36.22 MB and Bun no-JIT 1,580.3 / 37.52 MB. Quench remains
+4.6x slower than both, so this profile-directed build is a substantial local
+improvement, not a package win. Linux RSS is diagnostic. Reports:
+`work/react-perf/react-profile-guided-build-screen-3.json` and
+`work/react-perf/react-profile-guided-build-nojit-11.json`.
+
+Increasing the optional React training sample to 5,000 rounds passed an
+11-round paired no-JIT screen at 5,000 measured renders per round: 345.6
+renders/s / 24.50 MB sampled max RSS versus the generic-profile control at
+330.6 / 26.43 (+4.5% throughput, -7.3% RSS). Output matched at 24,980,000
+bytes and checksum 414318. Node `--jitless` measured 1,649.6 renders/s /
+36.19 MB, and Bun no-JIT 1,479.7 / 37.39 MB. The larger training weight
+improves the paired Quench result but remains 4.8x slower than Node and 4.3x
+slower than Bun. The candidate clears the RSS margin but is not a package win.
+Linux RSS remains diagnostic. The 5,000-round instrumented run took longer
+than the default per-fixture timeout, so `tools/pgo-build.sh` now gives this
+optional training workload its own 120-second limit. Report:
+`work/react-perf/react-profile-guided-build-5000-screen-3.json` and
+`work/react-perf/react-profile-guided-build-5000-nojit-11.json`.
+
+After merging `origin/v2-merged`, the latest 11-round no-JIT baseline uses the
+new PGO corpus (38 curriculum programs, 100 diagnostic micros, Node-compat
+fixtures, and 5,000 React rounds). It measures 365.1 renders/s / 21.07 MB
+sampled max RSS. Node `--jitless` is 1,638.3 / 36.18 MB and Bun no-JIT is
+1,484.6 / 37.40 MB. Outputs still match at 24,980,000 bytes/checksum 414318.
+Quench remains 4.5x slower than Node and 4.1x slower than Bun, despite 42–44%
+lower sampled RSS; this is the fresh merged-source baseline, not a package win.
+Report: `work/react-perf/react-ssr-postmerge-pgo-5000-nojit-11.json`.
+
+The post-merge `profile-memory` diagnostic run (500 React SSR rounds, 50 warmups;
+unoptimized diagnostic binary, so its elapsed time is not comparable with the
+production score) found 16,525 live out-of-line object properties, 16,482
+narrowable (99.7%), plus 5,321/5,321 narrowable dense-array elements. These
+counts suggest compact storage is feasible, but their total backing capacity is
+small compared with process RSS. The same snapshot attributed 1,017,728 bytes
+to field-cache side tables, 917,504 bytes to shape records, and 198,198 bytes to
+shape lookup indexes. Profile output also included 39.6 MB of diagnostic
+instrumentation, which is excluded from runtime memory totals. Next, measure
+field-cache occupancy and target high-capacity tables before prototyping a
+representation change. Diagnostic log: `work/react-perf/react-memory-counters.stderr`.
+
+The follow-up occupancy probe found 1,288 active mono field-cache entries out
+of 22,831 sites (5.64%). The 1,017,728-byte field-cache total includes the
+monomorphic table, per-site indexes, and field-add cache sets; it is not all
+recoverable by making the mono table sparse. A sparse mono table could save
+roughly 259 KB at this occupancy, but adds an indexed indirection to a hot read.
+Before changing that path, split the aggregate and inspect the unusually large
+fixed-depth prototype storage in `FieldAddCacheSet`. Diagnostic log:
+`work/react-perf/react-memory-sites.stderr`.
+
+The split profile measured 369,792 B for mono entries, 123,264 B each for
+megamorphic and field-add indexes, and 401,408 B for field-add sets. Of 343
+sets, 340 use one way, two use two ways, and one uses three; none uses the
+fourth. Across 347 entries, 266 have prototype depth 0, 57 depth 1–2, six
+depth 4, and 18 depth 7. This points to two compact-layout experiments: a
+three-way set (no evictions in this sample) and a short inline prototype prefix
+with an overflow path, preserving deep-chain behavior. Both still require
+paired production throughput/RSS checks across package workloads before they
+can be accepted. Diagnostic log:
+`work/react-perf/react-memory-field-add-occupancy.stderr`.
+
+The fresh post-merge JIT baseline (three rounds, 1,000 renders each) matched
+output and measured 537.6 renders/s / 28.90 MB for Quench, 15,625 / 46.87 MB
+for Node, and 8,621 / 98.58 MB for Bun. This is a diagnostic sample; Quench is
+still far behind on speed.
+
+I tested removing a duplicate string-concat cache probe on the string+string
+miss path, then retrained PGO against that change. In 11-round paired screens
+at 1,000 renders, no-JIT measured 516.8 / 37.39 MB versus control at 513.6 /
+36.40 MB (+0.6% throughput, +2.7% RSS); JIT measured 514.1 / 29.40 MB versus
+509.7 / 29.04 MB (+0.9% throughput, +1.2% RSS). All outputs matched. These
+results show no useful performance win, so I reverted the cache-probe change.
+The aggregate profiler did miss early cache hits; its counter now records those
+hits in `binary()` so future string-cache decisions use complete counts. This
+report change is profile-only. Reports:
+`work/react-perf/react-ssr-concat-dedup-nojit-1000-3.json` and
+`work/react-perf/react-ssr-concat-dedup-jit-1000-3.json`, plus the 11-round
+paired reports with the same names and `-11` suffix.
+
+Two further React SSR candidates were rejected after paired 11-round screens
+at 1,000 renders per round. A liveness-checked `Move`→`Move` rewrite measured
+566.9 renders/s / 37.43 MB no-JIT versus control at 544.7 / 36.31 MB; JIT
+measured 533.6 / 29.35 MB versus 536.5 / 28.94 MB. The speed increase did not
+come with an RSS reduction. An occupied-only full sweep driven by the existing
+per-slab free bitmap measured 527.7 / 37.62 MB no-JIT versus 533.6 / 36.23 MB;
+JIT measured 539.1 / 29.48 MB versus 523.8 / 28.84 MB. It was slightly slower
+no-JIT and increased RSS in both modes. Both runtime changes were reverted.
+Linux RSS samples are diagnostic; output parity matched in all runs. Reports
+are in the local `work/react-perf` scratch directory as
+`react-movemove-{nojit,jit}-1000-11.json` and
+`react-occupied-sweep-{nojit,jit}-1000-11.json`.
+
+A lazy canonical empty-string record was tested with GC rooting and
+snapshot/restore reconstruction. It passed its focused heap test, but lost the
+interleaved 11-round no-JIT React screen: 518.4 renders/s / 37.59 MB versus the
+control at 548.2 / 36.27 MB. Output matched. The allocation branch and
+long-lived root cost more than the saved empty records in this workload, so
+the runtime change was reverted. Report:
+`work/react-perf/react-empty-string-nojit-1000-11.json`.

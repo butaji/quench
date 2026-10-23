@@ -854,6 +854,20 @@ fn property_sites_past_the_site_space_share_a_site_per_name() {
 }
 
 #[test]
+fn super_inside_with_reads_the_home_object() {
+    // A `with` object cannot shadow the compiler's binding of a method's home object.
+    let source = "var o = { m() { with ({ x: 9 }) { return super.x + x + (() => super.x)(); } } };\n\
+                  Object.setPrototypeOf(o, { x: 3 });\n\
+                  var result = o.m();";
+    let program = Engine::specialize(source, "super-inside-with.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("result");
+    let result = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(result.as_number(), Some(15.0));
+}
+
+#[test]
 fn name_shared_sites_keep_loads_apart_from_stores() {
     // Past the unique sites, a load of `a` from a read-only field and an inherited getter
     // records entries a store of `a` must not take: the store fails or runs the setter.
@@ -3436,13 +3450,14 @@ fn dynamic_constructor_roots_release_after_prototype_completion() {
                 } else {
                     vm.own_property(vm.realm.globals, prototype_atom).unwrap()
                 };
+                let constructor = vm.native_value(native);
                 let argument = vm.heap.alloc_string("return 42".into());
                 let weak_argument = vm.heap.weak_handle(argument).unwrap();
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
                 let result = vm.construct_value_with_new_target(
                     &program,
-                    vm.native_value(native),
+                    constructor,
                     target,
                     &[argument],
                 );
@@ -10032,6 +10047,63 @@ fn string_repeat_limits_preserve_lazy_utf16_length_and_fractional_counts() {
 }
 
 #[test]
+fn empty_string_repeat_keeps_coercion_order_without_allocating_a_copy() {
+    let source = r#"
+      let conversions = 0;
+      const empty = '';
+      const repeated = empty.repeat({
+        valueOf() { conversions++; return Number.MAX_SAFE_INTEGER; }
+      });
+      print(repeated === '');
+      print(conversions);
+      print(new String('').repeat(Number.MAX_SAFE_INTEGER) === '');
+      for (const invalid of [Infinity, -1]) {
+        try { empty.repeat(invalid); print('missing error'); }
+        catch (error) { print(error.name); }
+      }
+      try { empty.repeat(Symbol()); print('missing error'); }
+      catch (error) { print(error.name); }
+    "#;
+    let program = Engine::specialize(source, "empty-repeat-fast-path.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["true", "1", "true", "RangeError", "RangeError", "TypeError"]
+    );
+}
+
+#[test]
+fn decode_uri_reuses_unescaped_input_and_preserves_uri_semantics() {
+    let source = r#"
+      const input = 'plain café / text';
+      print(decodeURI(input) === input);
+      print(decodeURI('%E2%82%AC%3F') + '|' + decodeURIComponent('%E2%82%AC%3F'));
+      for (const malformed of ['%', '%2', '%C0%AF', '%E0%80%AF', '%ED%A0%80']) {
+        try { decodeURI(malformed); print('missing error'); }
+        catch (error) { print(error.name + ':' + error.message); }
+      }
+    "#;
+    let program = Engine::specialize(source, "decode-uri-fast-path.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        [
+            "true",
+            "€%3F|€?",
+            "URIError:URI malformed",
+            "URIError:URI malformed",
+            "URIError:URI malformed",
+            "URIError:URI malformed",
+            "URIError:URI malformed",
+        ]
+    );
+}
+
+#[test]
 fn string_constructor_and_template_coercion_preserve_wtf16_and_original_hooks() {
     let source = r#"
       for (const text of ["\ud800", "\ud801", "\udfff", "a\ud800b", "\ud83d\ude00"]) {
@@ -11166,6 +11238,24 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
 }
 
 #[test]
+fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "function add(a, b) { return a + b; } add(1, 2);",
+        "js-jit-rejected-lane.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    let id = vm.programs.insert(program.clone()).unwrap();
+
+    assert!(vm.js_tier_may_claim(&program, id, 1));
+    vm.programs
+        .reject_js_function(id, 1, "unsupported-shape");
+    assert!(vm.programs.js_tier_declined(id, 1));
+    assert!(!vm.js_tier_may_claim(&program, id, 1));
+}
+
+#[test]
 fn js_jit_promotion_requires_a_confident_numeric_profile() {
     let program = Engine::compile(crate::ExecutionRequest::script("void 0", "js-jit-profile-gate.js"))
         .unwrap();
@@ -11319,6 +11409,30 @@ for(const object of [{},[],function(){},Object.create(null)]) {
         let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
         Vm::new(TestHost::default()).execute(&decoded).unwrap();
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn eval_comment_only_sources_take_the_empty_script_fast_path() {
+    let source = r#"
+if (eval('/* block comment */ // trailing comment') !== undefined) throw Error('comment completion');
+if (eval('\uFEFF/* Unicode space */\u2028// line comment') !== undefined) throw Error('Unicode trivia');
+if (eval('// line comment\u2028 11') !== 11) throw Error('line separator ended comment');
+if (eval('/* comment */ 17') !== 17) throw Error('executable source was skipped');
+let invalid = false;
+try { eval('/* unterminated'); } catch (error) { invalid = error instanceof SyntaxError; }
+if (!invalid) throw Error('unterminated comment accepted');
+"#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "eval-comment-fast-path.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "eval-comment-fast-path.js").unwrap(),
+    ] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
     }
 }
 

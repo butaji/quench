@@ -732,11 +732,12 @@ impl AwaitState {
     }
 
     /// Its edges: the realm and promise it resumes, the generator, the suspended frame.
-    pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
-        [self.realm, self.promise]
-            .into_iter()
-            .chain(self.generator)
-            .chain(self.continuation.iter().flat_map(|continuation| continuation.roots()))
+    pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {
+        out.extend([self.realm, self.promise]);
+        out.extend(self.generator);
+        if let Some(continuation) = &self.continuation {
+            continuation.extend_roots(out);
+        }
     }
 }
 impl TypedArrayKind {
@@ -890,9 +891,9 @@ impl Native {
             Self::ObjectLiteralPrototype
                 | Self::ObjectKeys
                 | Self::ObjectDefineProperty
+                | Self::ObjectGetPrototypeOf
                 | Self::ObjectEntries
                 | Self::ObjectGetOwnPropertyNames
-                | Self::ObjectGetPrototypeOf
                 | Self::ObjectHasOwn
                 | Self::ObjectPrototypeHasOwnProperty
                 | Self::ObjectPrototypeToString
@@ -905,7 +906,9 @@ impl Native {
                 | Self::RegExpTest
                 | Self::JsonStringify
                 | Self::ParseInt
+                | Self::ArrayShift
                 | Self::WeakMapSet
+                | Self::FinalizationRegistryRegister
                 | Self::TypedArrayToStringTag
         )
     }
@@ -1713,6 +1716,7 @@ impl Object {
             Some(HeapReference::IteratorRecord(id)) => PROTO_ITERATOR_RECORD_BASE + id,
             Some(HeapReference::AwaitRecord(_)) => unreachable!("an await state is never a prototype"),
             Some(HeapReference::StringRecord(_)) => unreachable!("a string is never a prototype"),
+            Some(HeapReference::V128Record(_)) => unreachable!("a Wasm vector is never a prototype"),
             None if proto.is_null() => PROTO_NULL,
             None => {
                 debug_assert!(proto.is_undefined(), "a prototype is an object or null");
