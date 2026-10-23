@@ -101,6 +101,7 @@ impl<H: Host> Vm<H> {
             profile: Profile,
             shape_slot_memo: Default::default(),
             plain_copy_shapes: Default::default(),
+            plain_assign_shapes: Default::default(),
             embedding_record_shapes: Default::default(),
             typed_array_geometry: Default::default(),
             function_name_shapes: Default::default(),
