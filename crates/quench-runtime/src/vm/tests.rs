@@ -12484,3 +12484,51 @@ fn promoted_move_coalescing_reads_liveness_of_the_code_it_rewrites() {
     vm.execute(&Engine::specialize(source, "promoted-move-rounds.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), ["SIGA,SIGC"]);
 }
+
+/// A call-only closure makes no `prototype` until a callee's legacy `caller` reaches it, and
+/// then has the one its creation would have made (Node v22 oracle). Closures whose value
+/// escapes, is named by `arguments` or by a direct `eval` keep theirs from creation.
+#[test]
+fn call_only_closures_make_their_prototype_when_caller_reaches_them() {
+    let source = r#"
+      var seen = [];
+      function probe() {
+        var f = probe.caller;
+        var d = Object.getOwnPropertyDescriptor(f, 'prototype');
+        var names = Object.getOwnPropertyNames(f).filter(function (n) { return n !== 'arguments' && n !== 'caller'; });
+        seen.push([names.join(','), typeof d.value, d.writable, d.enumerable, d.configurable,
+          f.prototype.constructor === f, Object.getOwnPropertyNames(f.prototype).join(','),
+          Object.getPrototypeOf(f.prototype) === Object.prototype].join('|'));
+        var o = new f(true);
+        seen.push(o instanceof f);
+        return 1;
+      }
+      function callOnly(n) {
+        var loop;
+        var total = 0;
+        loop = function (stop) { if (stop) return 0; total += n; return probe(); };
+        (loop(false)), (total += 1);
+        return total;
+      }
+      function escapes() {
+        var g;
+        g = function () { return 1; };
+        var k;
+        k = function () { return arguments.callee === k; };
+        var e;
+        e = function () { return 4; };
+        e();
+        return [typeof g.prototype, k(), eval('typeof e.prototype')].join('|');
+      }
+      function returned() { var r; r = function () { return 3; }; return r; }
+      print(JSON.stringify([callOnly(5), escapes(), typeof returned().prototype, seen]));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "call-only-prototype.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        [r#"[6,"object|true|object","object",["length,name,prototype|object|true|false|false|true|constructor|true",true]]"#]
+    );
+}

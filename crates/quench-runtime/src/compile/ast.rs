@@ -525,6 +525,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     parent: self.function_id,
                     with_depth: self.with_depth,
                     inherited_strict: self.strict,
+                    prototype_unobservable: false,
                 };
                 let id = self.owner.compile_plain_function(function, context);
                 let dst = self.reg();
