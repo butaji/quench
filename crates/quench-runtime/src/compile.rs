@@ -3172,7 +3172,7 @@ impl<'a> Compiler<'a> {
             .filter(|parameters| {
                 has_arguments_binding
                     && !parameter_shadows_arguments
-                    && FunctionCompiler::has_non_simple_parameters(parameters)
+                    && !FunctionCompiler::binds_parameters_directly(parameters)
             })
             .map(|_| {
                 let slot = locals.len() as u16;
@@ -3220,8 +3220,10 @@ impl<'a> Compiler<'a> {
             && options
                 .defaults
                 .is_none_or(|formal| !FunctionCompiler::has_non_simple_parameters(formal));
+        let direct_parameters = !options.rest_override
+            && options.defaults.is_none_or(FunctionCompiler::binds_parameters_directly);
         let promote_plain_locals = parent.is_some()
-            && simple_parameters
+            && direct_parameters
             && !options.async_function
             && !options.generator
             && !options.derived_constructor

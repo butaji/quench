@@ -1990,9 +1990,10 @@ impl Function {
             // An arrow's `this` is its environment's, which its activation binds
             // (`Vm::lexical_activation_this`). One that reaches `super` reads a hidden name
             // (`activation_binding_reads`) or its home as a capture, as any closure reads one.
-            let ordinary = self.parent.is_some()
+            // Ordinary but for a rest parameter, which a frameless activation gathers
+            // (`CallEntry::Gathers`) and a plain frame does not.
+            let ordinary_with_rest = self.parent.is_some()
                 && !self.derived_constructor
-                && !self.rest
                 && self.self_binding_slot.is_none()
                 && !self.parameter_eval_arguments_error
                 && !self.inherited_with_scope
@@ -2002,6 +2003,7 @@ impl Function {
                 && !self.activation_binding_reads(atoms)
                 // A plain activation makes no closure, whichever bindings it would see.
                 && !self.instructions().any(|instruction| instruction.op() == Op::MakeClosure);
+            let ordinary = ordinary_with_rest && !self.rest;
             // A field initializer is an ordinary method call on the instance whose
             // activation keeps its implicit bindings (`activation_binding_reads`); only the
             // derived instance initializer, which `super()` runs, is entered natively.
@@ -2063,11 +2065,13 @@ impl Function {
                 live_parameters,
                 addresses_locals,
                 forwards_arguments,
-                registers_only: ordinary
+                registers_only: ordinary_with_rest
                     && in_loop
                     && self.initial_register == InitialRegister::Undefined
                     && if self.arguments_slot.is_none() {
-                        !addresses_locals && (!legacy_reflection || live_parameters)
+                        // A rest body's activation keeps every value passed
+                        // (`CallEntry::Gathers`), which legacy reflection reads.
+                        !addresses_locals && (!legacy_reflection || live_parameters || self.rest)
                     } else {
                         reaches_only_forwarded_arguments
                     },
