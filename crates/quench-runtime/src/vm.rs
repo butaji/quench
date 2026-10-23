@@ -1467,6 +1467,9 @@ pub(super) enum StepResult {
         call_guard: crate::stack::GuestCallGuard,
         /// For `new`: the allocated receiver, the result unless the callee returns an object.
         construct_this: Option<Value>,
+        /// For an async callee pushed in place: its rooted promise
+        /// (`PendingGeneralCall::settles`).
+        settles: Option<crate::heap::RootId>,
     },
     Return(Value),
     Await {

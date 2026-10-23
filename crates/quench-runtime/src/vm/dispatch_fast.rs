@@ -7701,6 +7701,7 @@ impl<H: Host> Vm<H> {
                             call_pc: call_pc as u32,
                             destination: result & crate::bytecode::REGISTER_MASK,
                             construct_this: Some(state.this),
+                            settles: None,
                             returns: result & crate::bytecode::RETURN_REGISTER != 0,
                             call_guard: crate::stack::GuestCallGuard::enter().ok(),
                             caller_program: None,
@@ -7764,6 +7765,7 @@ impl<H: Host> Vm<H> {
                 call_pc: call_pc as u32,
                 destination: result & crate::bytecode::REGISTER_MASK,
                 construct_this,
+                settles: None,
                 returns: result & crate::bytecode::RETURN_REGISTER != 0,
                 call_guard,
                 caller_program,
@@ -10846,6 +10848,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Ip {
         call_pc: call_pc as u32,
         destination: i.a,
         construct_this: None,
+        settles: None,
         returns: false,
         call_guard: Some(call_guard),
         caller_program: None,
@@ -11791,6 +11794,7 @@ fn lane_push_frame_call<H: Host>(
             destination,
             call_guard,
             construct_this,
+            ..
         })) => {
             // A callee of another program runs in its own, which the push made active
             // and the loop's executing one sets aside as the loop's own push does.
@@ -11812,6 +11816,7 @@ fn lane_push_frame_call<H: Host>(
                 call_pc: call_pc as u32,
                 destination,
                 construct_this,
+                settles: None,
                 returns,
                 call_guard: Some(call_guard),
                 caller_program,
@@ -11917,6 +11922,7 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
                 call_pc: call_pc as u32,
                 destination: i.a & crate::bytecode::REGISTER_MASK,
                 construct_this: Some(this),
+                settles: None,
                 returns,
                 call_guard: Some(call_guard),
                 caller_program,
@@ -11981,9 +11987,10 @@ fn lane_return_script_frame<H: Host>(
     let mut frame = unsafe { (*cx).frame };
     let mut exit_ip = ip;
     loop {
-        let returns_here = pending
-            .last()
-            .is_some_and(|call| call.caller + 1 == frame && frame + 1 == vm.frames.len());
+        // An async callee's promise settles on the general path (`PendingGeneralCall::settles`).
+        let returns_here = pending.last().is_some_and(|call| {
+            call.caller + 1 == frame && frame + 1 == vm.frames.len() && call.settles.is_none()
+        });
         if !returns_here {
             // A record that has not run yet runs again on the general path; one that ran (a
             // call made, `retired`) completes the loop's own frame with the value there.
@@ -12039,7 +12046,7 @@ fn lane_return_frame<H: Host>(r: Registers, ip: Ip) -> Ip {
     // the general path owns that [[Construct]] step.
     if !unsafe { (*cx).inline_calls }
         || pending.last().is_none_or(|call| {
-            call.construct_this.is_some() || call.caller_program.is_some()
+            call.construct_this.is_some() || call.caller_program.is_some() || call.settles.is_some()
         })
     {
         return exit(ip);
