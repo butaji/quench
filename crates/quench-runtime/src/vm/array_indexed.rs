@@ -317,10 +317,17 @@ impl<H: Host> Vm<H> {
                         | Native::ArrayFindLast
                         | Native::ArrayFindLastIndex
                 );
-                if !typed_array && !finds_holes && !self.has_property(p, this, key)? {
-                    continue;
-                }
-                let value = self.get_index(p, this, key)?;
+                // A present dense element is an own data property: HasProperty holds and Get
+                // reads it, observing nothing.
+                let value = match self.dense_array_element(this, key) {
+                    Some(value) if !typed_array => value,
+                    _ => {
+                        if !typed_array && !finds_holes && !self.has_property(p, this, key)? {
+                            continue;
+                        }
+                        self.get_index(p, this, key)?
+                    }
+                };
                 let callback_args = [value, Value::number(index as f64), this];
                 let mapped = self.call_value(p, callback, this_arg, &callback_args)?;
                 match native {
