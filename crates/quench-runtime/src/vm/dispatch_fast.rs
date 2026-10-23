@@ -166,6 +166,7 @@ pub(super) struct LaneView {
     /// records that point into them, which are their only readers.
     loops: Box<[LoopSite]>,
     plain_backward_jump_sites: usize,
+    osr_rejections: Option<Box<[(super::compiled::RegionRejection, usize)]>>,
 }
 
 #[derive(Default)]
@@ -180,6 +181,7 @@ pub(super) struct OsrDiagnostics {
     pub(super) entry_guard_misses: u64,
     pub(super) exits: u64,
     pub(super) widenings: u64,
+    pub(super) analysis_rejections: Vec<(super::compiled::RegionRejection, usize)>,
 }
 
 impl LaneView {
@@ -212,6 +214,11 @@ impl LaneView {
                 .sum(),
             exits: self.loops.iter().map(|site| site.native_exits.get()).sum(),
             widenings: self.loops.iter().map(|site| site.widenings.get()).sum(),
+            analysis_rejections: self
+                .osr_rejections
+                .as_deref()
+                .unwrap_or_default()
+                .to_vec(),
         }
     }
 }
@@ -5338,6 +5345,26 @@ fn lane_loop_entry<H: Host>(
             let elements = vm.heap.record_array(value)?.elements().as_slice();
             entry.push_array(elements.as_ptr().cast_mut(), elements.len())?;
         }
+    }
+    // These regions cannot run calls or field writes; indexed writes are rejected when a
+    // cached field is present. Thus a hit on an ordinary data field stays valid for the
+    // whole native run. Any miss, accessor, private name, or non-Number exits before native
+    // code can alter a register.
+    let code = unsafe { &*(*cx).code };
+    for field in &region.fields {
+        if vm.is_private_name(field.atom) {
+            return None;
+        }
+        let receiver = match field.receiver {
+            super::compiled::FieldReceiver::This => unsafe { lane_held_this(cx) },
+            super::compiled::FieldReceiver::Register(register) => r.get(register),
+        };
+        let super::object::FieldCacheProbe::Hit(value) =
+            vm.cached_field_hit(code, receiver, field.cache_site)
+        else {
+            return None;
+        };
+        entry.push_field(value.as_number()?);
     }
     Some(entry)
 }
@@ -13282,6 +13309,11 @@ fn derive_lane_view<H: Host>(
         let absorbed = decoded[target];
         let plain = |op: Op| absorbed.op() == op && serves(records[target].handler, op, ACC_NONE);
         let backward = target <= pc;
+        // In compiled mode an OSR site's backedge must remain a standalone jump record.
+        // The lane's `THROUGH` fusion would replace both its handler and jump distance.
+        if loop_tier && backward {
+            continue;
+        }
         let (handler, c) = if plain(Op::Move) {
             (JumpFusions::<H>::THROUGH[0][usize::from(backward)], 0)
         } else if plain(Op::WasmI32AddImmediate)
@@ -13314,7 +13346,8 @@ fn derive_lane_view<H: Host>(
             // A jump after the pair joins it.
             let jump = records
                 .get(pc + 2)
-                .and_then(|record| jump_direction(record.handler));
+                .and_then(|record| jump_direction(record.handler))
+                .filter(|backward| !loop_tier || !backward);
             records[pc].handler = match jump {
                 None => lane_move_pair::<H, false, false> as Handler,
                 Some(false) => lane_move_pair::<H, true, false>,
@@ -13337,6 +13370,10 @@ fn derive_lane_view<H: Host>(
             continue;
         };
         if let Some(backward) = jump_direction(records[pc + 1].handler) {
+            // Leave a hot OSR latch's jump record visible to `install_loop_sites`.
+            if loop_tier && backward {
+                continue;
+            }
             records[pc].handler =
                 JumpFusions::<H>::THEN[usize::from(add)][usize::from(backward)] as *const ();
         }
@@ -13746,10 +13783,10 @@ fn derive_lane_view<H: Host>(
     specialize_frame_locals::<H>(function, &mut records);
     specialize_outer_captures::<H>(&mut records);
     let environment_window = specialize_environment_window::<H>(function, &decoded, &mut records);
-    let loops = if loop_tier && kind != crate::bytecode::ProgramKind::Wasm {
+    let (loops, osr_rejections) = if loop_tier && kind != crate::bytecode::ProgramKind::Wasm {
         install_loop_sites::<H>(function, &decoded, constants, live, diagnostics, &mut records)
     } else {
-        Box::default()
+        (Box::default(), Vec::new())
     };
     // The fused record is a script handler; Wasm bodies run none.
     if !wasm {
@@ -13791,6 +13828,8 @@ fn derive_lane_view<H: Host>(
             .enumerate()
             .filter(|(pc, instruction)| instruction.op() == Op::Jump && instruction.jump_target() <= *pc as u32)
             .count(),
+        osr_rejections: (!osr_rejections.is_empty())
+            .then(|| osr_rejections.into_boxed_slice()),
     }
 }
 
@@ -13804,7 +13843,7 @@ fn install_loop_sites<H: Host>(
     live: Option<&[u64]>,
     diagnostics: bool,
     records: &mut [LaneInstruction],
-) -> Box<[LoopSite]> {
+) -> (Box<[LoopSite]>, Vec<(super::compiled::RegionRejection, usize)>) {
     let backward = lane_jump_always::<H, true> as Handler as *const ();
     // A fused record ahead of a jump runs that jump itself, reading its offset from the jump's
     // record (`JumpFusions::THEN`, a move pair with its jump): a site there would replace the
@@ -13822,18 +13861,33 @@ fn install_loop_sites<H: Host>(
                 .any(|&handler| records[pc - 2].handler == handler as *const ());
         then || pair
     };
+    let mut rejections = Vec::new();
     let sites: Vec<(usize, LoopSite)> = (0..records.len())
         .filter(|pc| records[*pc].handler == backward && decoded[*pc].op() == Op::Jump && !fused_into(*pc))
         .filter_map(|pc| {
             let header = decoded[pc].jump_target();
-            let region = super::compiled::analyze_osr_region(
+            let region = match super::compiled::analyze_osr_region(
                 function,
                 decoded,
                 constants,
                 live,
                 header,
                 pc as u32,
-            )?;
+            ) {
+                Ok(region) => region,
+                Err(reason) => {
+                    if diagnostics {
+                        if let Some((_, count)) =
+                            rejections.iter_mut().find(|(existing, _)| *existing == reason)
+                        {
+                            *count += 1;
+                        } else {
+                            rejections.push((reason, 1));
+                        }
+                    }
+                    return None;
+                }
+            };
             Some((
                 pc,
                 LoopSite {
@@ -13860,7 +13914,7 @@ fn install_loop_sites<H: Host>(
         records[pc].handler = lane_loop_jump::<H> as Handler as *const ();
         records[pc].operand = LaneOperand { site };
     }
-    sites
+    (sites, rejections)
 }
 
 /// Gives each lane record whose operands are registers the handler for that operand shape,
