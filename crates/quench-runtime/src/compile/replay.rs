@@ -441,6 +441,8 @@ pub(crate) struct PlainFunctionContext {
     pub(super) parent: u32,
     pub(super) with_depth: u16,
     pub(super) inherited_strict: bool,
+    /// A function expression whose `prototype` no program text observes (`call_only`).
+    pub(super) prototype_unobservable: bool,
 }
 
 /// Where an arrow function is made: everything its compilation reads beyond its own syntax,
