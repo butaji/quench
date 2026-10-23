@@ -19,10 +19,6 @@ impl ProgramStore {
             // Compiled code is never in a snapshot: its budgets and memos start over.
             js_jit_tracked_functions: _,
             js_jit_rejected_functions: _,
-            js_jit_compiled_functions: _,
-            js_jit_mapped_bytes: _,
-            wasm_jit_tier_roots: _,
-            wasm_jit_tier_mapped_bytes: _,
             jit_code_cache: _,
             js_jit_diagnostics: _,
             // Process configuration a restoring store reads again, and its diagnostics.
