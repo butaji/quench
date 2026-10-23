@@ -45,7 +45,9 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
-pub(super) use osr_loop::{LoopEntry, LoopOutcome, LoopRegion, Observation, Widening};
+pub(super) use osr_loop::{
+    FieldReceiver, LoopEntry, LoopOutcome, LoopRegion, Observation, RegionRejection, Widening,
+};
 
 /// How the shared VM executes JavaScript and Wasm functions. Compiled code is
 /// lazy and falls back to the interpreter; both modes use the same VM, heap,
@@ -592,9 +594,101 @@ struct CallContext {
     /// Per-import attribution, present only during opt-in diagnostic runs.
     import_callout_counts: *const std::cell::Cell<u64>,
     import_callout_count: usize,
+    /// A stack-owned adapter payload for JS and OSR entries that use this
+    /// module's common native-entry trampoline without Wasm callouts.
+    adapter_payload: *mut (),
 }
 
 impl CallContext {
+    fn native_adapter(
+        adapter_payload: *mut (),
+        interrupt: *const std::sync::atomic::AtomicBool,
+        poll_page: Option<(usize, usize)>,
+    ) -> Self {
+        let marker = 0u8;
+        let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
+        Self {
+            stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
+            interrupt,
+            table: std::ptr::null(),
+            vm: std::ptr::null_mut(),
+            env: Value::NULL,
+            entry_stack: 0,
+            guard_start: 0,
+            guard_end: 0,
+            globals: std::ptr::null(),
+            callout: 0,
+            call_reference: 0,
+            compiled: std::ptr::null(),
+            program: ProgramId::MAIN,
+            import_callouts: std::ptr::null_mut(),
+            known_callouts: std::ptr::null_mut(),
+            reference_callouts: std::ptr::null_mut(),
+            memory: Value::NULL,
+            memory_length: 0,
+            raised: None,
+            call_reference_diagnostic: 0,
+            reference_call_sites: std::ptr::null(),
+            reference_call_site_count: 0,
+            poll_start: poll_page.map_or(0, |(start, _)| start),
+            poll_end: poll_page.map_or(0, |(start, bytes)| start + bytes),
+            reference_epoch: std::ptr::null(),
+            reference_fast_caches: std::ptr::null_mut(),
+            emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
+            emscripten_memcpy_raw_i32_hits: std::ptr::null_mut(),
+            emscripten_memcpy_early_import_hits: std::ptr::null_mut(),
+            emscripten_memcpy_cache: std::ptr::null_mut(),
+            emscripten_memcpy_leaf: 0,
+            emscripten_memcpy_leaf_hits: std::ptr::null_mut(),
+            import_callout_counts: std::ptr::null(),
+            import_callout_count: 0,
+            adapter_payload,
+        }
+    }
+
+    /// The context of code that reads only the interrupt state: the flag, and the VM's
+    /// poll page, whose fault ends the call as terminated (`guard_fault`).
+    fn interrupt_only(interrupt: &crate::execution_interrupt::ExecutionInterrupt) -> Self {
+        let poll = interrupt.poll_page();
+        Self {
+            stack_limit: 0,
+            interrupt: interrupt.atomic_flag(),
+            table: std::ptr::null(),
+            vm: std::ptr::null_mut(),
+            env: Value::NULL,
+            entry_stack: 0,
+            guard_start: 0,
+            guard_end: 0,
+            globals: std::ptr::null(),
+            callout: 0,
+            call_reference: 0,
+            compiled: std::ptr::null(),
+            program: ProgramId::MAIN,
+            import_callouts: std::ptr::null_mut(),
+            known_callouts: std::ptr::null_mut(),
+            reference_callouts: std::ptr::null_mut(),
+            memory: Value::NULL,
+            memory_length: 0,
+            raised: None,
+            call_reference_diagnostic: 0,
+            reference_call_sites: std::ptr::null(),
+            reference_call_site_count: 0,
+            poll_start: poll.map_or(0, |(start, _)| start),
+            poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
+            reference_epoch: std::ptr::null(),
+            reference_fast_caches: std::ptr::null_mut(),
+            emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
+            emscripten_memcpy_raw_i32_hits: std::ptr::null_mut(),
+            emscripten_memcpy_early_import_hits: std::ptr::null_mut(),
+            emscripten_memcpy_cache: std::ptr::null_mut(),
+            emscripten_memcpy_leaf: 0,
+            emscripten_memcpy_leaf_hits: std::ptr::null_mut(),
+            import_callout_counts: std::ptr::null(),
+            import_callout_count: 0,
+            adapter_payload: std::ptr::null_mut(),
+        }
+    }
+
     /// A nested native entry shares the caller's instance and callout state,
     /// but needs its own guard-resume stack pointer and raised completion, as a
     /// nested `run_compiled` invocation would. Its stack limit is never below
@@ -641,6 +735,7 @@ impl CallContext {
             emscripten_memcpy_leaf_hits: self.emscripten_memcpy_leaf_hits,
             import_callout_counts: self.import_callout_counts,
             import_callout_count: self.import_callout_count,
+            adapter_payload: std::ptr::null_mut(),
         }
     }
 }
@@ -1261,15 +1356,8 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
             }
             let native_entry_sample_started =
                 native_entry_should_sample.then(std::time::Instant::now);
-            let status = match guard_trampoline() {
-                Some(trampoline) => {
-                    let outer = ACTIVE_CONTEXT.with(|active| active.replace(&mut nested));
-                    let status = unsafe { trampoline(&mut nested, base, length, args, out, entry) };
-                    ACTIVE_CONTEXT.with(|active| active.set(outer));
-                    status
-                }
-                None => unsafe { entry(&mut nested, base, length, args, out) },
-            };
+            // SAFETY: as the direct path's call; the nested context outlives the call.
+            let status = unsafe { enter_native(&mut nested, base, length, args, out, entry) };
             if let Some(started) = native_entry_sample_started {
                 compiled.finish_native_entry_sample(function, started);
             }
@@ -2261,15 +2349,32 @@ impl Drop for CodeMemory {
 pub(super) struct CompiledOsrRegion(osr_loop::CompiledLoop);
 
 impl CompiledOsrRegion {
+    /// Runs the region on `registers` with `entry`'s record, through the native entry every
+    /// compiled artifact shares (`enter_native`).
+    ///
     /// # Safety
-    /// `registers` and `entry` must describe the live activation guarded by the lane.
+    /// `registers` is the running activation's register file, at least `Function::registers`
+    /// long; `entry` was built for this region from the current values of its arrays and
+    /// captures, which nothing changes while the call runs; `interrupt` is the VM's, whose
+    /// poll page the region was compiled for (`compile_osr_region`).
     pub(super) unsafe fn run(
         &self,
         registers: *mut crate::value::Value,
         entry: &LoopEntry,
+        interrupt: &crate::execution_interrupt::ExecutionInterrupt,
     ) -> LoopOutcome {
-        // SAFETY: the caller keeps the guarded activation and entry alive for this run.
-        unsafe { self.0.run(registers, entry) }
+        let mut context = CallContext::interrupt_only(interrupt);
+        let mut word = 0u64;
+        // SAFETY: as the caller promises; the code reads and writes only those and the
+        // result word.
+        let status = unsafe {
+            enter_native(&mut context, registers.addr() as u64, 0, entry.words(), &mut word, self.0.entry)
+        };
+        if i64::from(status) == TERMINATED_STATUS {
+            LoopOutcome::Terminated
+        } else {
+            LoopOutcome::decode(word)
+        }
     }
 
     pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
@@ -2285,7 +2390,7 @@ pub(super) fn analyze_osr_region(
     live: Option<&[u64]>,
     header: u32,
     backedge: u32,
-) -> Option<LoopRegion> {
+) -> Result<LoopRegion, RegionRejection> {
     osr_loop::region(function, decoded, constants, live, header, backedge)
 }
 
@@ -2293,8 +2398,9 @@ pub(super) fn analyze_osr_region(
 pub(super) fn compile_osr_region(
     region: &LoopRegion,
     observation: &Observation<'_>,
+    interrupt: &crate::execution_interrupt::ExecutionInterrupt,
 ) -> Option<CompiledOsrRegion> {
-    osr_loop::compile(region, observation).map(CompiledOsrRegion)
+    osr_loop::compile(region, observation, poll_address(interrupt)).map(CompiledOsrRegion)
 }
 
 /// A guarded JavaScript numeric function compiled from a narrow residual
@@ -2362,6 +2468,48 @@ pub(super) enum CompiledJsResult {
         resume_value: Value,
     },
     StringTransform(super::js_compiled::JsJitStringTransform, bool),
+}
+
+#[derive(Clone, Copy)]
+enum JsNativeCallInput<'a> {
+    Arguments {
+        values: &'a [f64],
+        interrupt: &'a std::sync::atomic::AtomicBool,
+    },
+    CaptureNumber(f64),
+    StringHashLoop {
+        units: crate::vm::wtf16::Units<'a>,
+        interrupt: &'a std::sync::atomic::AtomicBool,
+    },
+    StringTransform(crate::vm::wtf16::Units<'a>),
+}
+
+struct JsNativeCall<'a> {
+    function: &'a CompiledJsFunction,
+    input: JsNativeCallInput<'a>,
+    poll_page: Option<(usize, usize)>,
+    result: Option<CompiledJsResult>,
+}
+
+unsafe extern "C" fn js_native_entry(
+    context: *mut CallContext,
+    _base: u64,
+    _length: u64,
+    _arguments: *const u64,
+    result: *mut u64,
+) -> u32 {
+    // SAFETY: `CompiledJsFunction::call_through_shared_entry` owns this payload
+    // and keeps all borrowed inputs alive through the trampoline call.
+    let call = unsafe { &mut *(*context).adapter_payload.cast::<JsNativeCall<'_>>() };
+    call.result = call.function.execute(call.input, call.poll_page);
+    #[cfg(test)]
+    call.function
+        .native_entries
+        .set(call.function.native_entries.get().saturating_add(1));
+    // SAFETY: the shared trampoline caller supplies this result word. The
+    // adapter result itself is carried in the stack-owned payload.
+    unsafe { result.write(0) };
+    if call.result.is_some() { 0 } else { 1 }
 }
 
 impl CompiledJsFunction {
@@ -2555,61 +2703,20 @@ impl CompiledJsFunction {
         &self,
         arguments: &[f64],
         interrupt: &std::sync::atomic::AtomicBool,
+        poll_page: Option<(usize, usize)>,
     ) -> Option<CompiledJsResult> {
-        #[cfg(test)]
-        self.native_entries
-            .set(self.native_entries.get().saturating_add(1));
-        // SAFETY: the artifact result kind selects the matching ABI, and
-        // `arguments` has the formal count encoded into the native function.
-        unsafe {
-            match self.entry {
-                CompiledJsEntry::Number(entry) => {
-                    Some(CompiledJsResult::Number(entry(arguments.as_ptr())))
-                }
-                CompiledJsEntry::Int32Identity { entry, return_pc } => {
-                    Some(CompiledJsResult::Int32Identity {
-                        value: entry(arguments.as_ptr()),
-                        return_pc,
-                    })
-                }
-                CompiledJsEntry::CaptureNumber(_) => None,
-                CompiledJsEntry::NumberInterruptible(entry) => {
-                    let mut completed = 0_u32;
-                    let result = entry(arguments.as_ptr(), interrupt, &mut completed);
-                    (completed != 0).then_some(CompiledJsResult::Number(result))
-                }
-                CompiledJsEntry::StringHashLoop(_) => None,
-                CompiledJsEntry::StringTransform { .. } => None,
-                CompiledJsEntry::StringReturnPc(entry) => {
-                    Some(CompiledJsResult::StringReturnPc(entry(arguments.as_ptr())))
-                }
-                CompiledJsEntry::Boolean(entry) => {
-                    Some(CompiledJsResult::Boolean(entry(arguments.as_ptr()) != 0))
-                }
-                CompiledJsEntry::FieldReject {
-                    entry,
-                    resume_pc,
-                    resume_register,
-                    resume_value,
-                } => Some(CompiledJsResult::FieldReject {
-                    fast_path: entry(arguments.as_ptr()) != 0,
-                    resume_pc,
-                    resume_register,
-                    resume_value,
-                }),
-            }
-        }
+        self.call_through_shared_entry(JsNativeCallInput::Arguments {
+            values: arguments,
+            interrupt,
+        }, poll_page)
     }
 
-    fn call_capture_number(&self, value: f64) -> Option<CompiledJsResult> {
-        #[cfg(test)]
-        self.native_entries
-            .set(self.native_entries.get().saturating_add(1));
-        let CompiledJsEntry::CaptureNumber(entry) = self.entry else {
-            return None;
-        };
-        // SAFETY: the capture identity compiler emits `fn(f64) -> f64`.
-        Some(CompiledJsResult::Number(unsafe { entry(value) }))
+    fn call_capture_number(
+        &self,
+        value: f64,
+        poll_page: Option<(usize, usize)>,
+    ) -> Option<CompiledJsResult> {
+        self.call_through_shared_entry(JsNativeCallInput::CaptureNumber(value), poll_page)
     }
 
     fn is_capture_number(&self) -> bool {
@@ -2620,41 +2727,160 @@ impl CompiledJsFunction {
         &self,
         units: crate::vm::wtf16::Units<'_>,
         interrupt: &std::sync::atomic::AtomicBool,
+        poll_page: Option<(usize, usize)>,
     ) -> Option<CompiledJsResult> {
-        #[cfg(test)]
-        self.native_entries
-            .set(self.native_entries.get().saturating_add(1));
-        let CompiledJsEntry::StringHashLoop(entry) = self.entry else {
-            return None;
-        };
-        let mut completed = 0_u32;
-        let (units_ptr, length, ascii) = match units {
-            crate::vm::wtf16::Units::Ascii(bytes) => (bytes.as_ptr(), bytes.len(), 1),
-            crate::vm::wtf16::Units::Wide(units) => (units.as_ptr().cast::<u8>(), units.len(), 0),
-        };
-        // SAFETY: `units` remains borrowed for the duration of the native call;
-        // the generated code selects the matching byte or UTF-16 load width.
-        let result = unsafe { entry(units_ptr, &length, ascii, interrupt, &mut completed) };
-        (completed != 0).then_some(CompiledJsResult::Number(result))
+        self.call_through_shared_entry(
+            JsNativeCallInput::StringHashLoop { units, interrupt },
+            poll_page,
+        )
     }
 
     fn call_string_transform(
         &self,
         units: crate::vm::wtf16::Units<'_>,
+        poll_page: Option<(usize, usize)>,
     ) -> Option<CompiledJsResult> {
-        #[cfg(test)]
-        self.native_entries
-            .set(self.native_entries.get().saturating_add(1));
-        let CompiledJsEntry::StringTransform { entry, transform } = self.entry else {
-            return None;
+        self.call_through_shared_entry(JsNativeCallInput::StringTransform(units), poll_page)
+    }
+
+    fn call_through_shared_entry(
+        &self,
+        input: JsNativeCallInput<'_>,
+        poll_page: Option<(usize, usize)>,
+    ) -> Option<CompiledJsResult> {
+        let interrupt = match &input {
+            JsNativeCallInput::Arguments { interrupt, .. }
+            | JsNativeCallInput::StringHashLoop { interrupt, .. } => {
+                std::ptr::from_ref(*interrupt)
+            }
+            JsNativeCallInput::CaptureNumber(_) | JsNativeCallInput::StringTransform(_) => {
+                std::ptr::null()
+            }
         };
-        let (units_ptr, length, ascii) = match units {
-            crate::vm::wtf16::Units::Ascii(bytes) => (bytes.as_ptr(), bytes.len(), 1),
-            crate::vm::wtf16::Units::Wide(units) => (units.as_ptr().cast::<u8>(), units.len(), 0),
+        let mut call = JsNativeCall {
+            function: self,
+            input,
+            poll_page,
+            result: None,
         };
-        // SAFETY: `units` remains borrowed while native code reads its prefix.
-        let transformed = unsafe { entry(units_ptr, length, ascii) } != 0;
-        Some(CompiledJsResult::StringTransform(transform, transformed))
+        let (status, _) = run_native_adapter(
+            (&mut call as *mut JsNativeCall<'_>).cast(),
+            interrupt,
+            poll_page,
+            js_native_entry,
+        );
+        (status == 0).then_some(())?;
+        call.result
+    }
+
+    fn execute(
+        &self,
+        input: JsNativeCallInput<'_>,
+        poll_page: Option<(usize, usize)>,
+    ) -> Option<CompiledJsResult> {
+        match (self.entry, input) {
+            (CompiledJsEntry::Number(entry), JsNativeCallInput::Arguments { values, .. }) => {
+                // SAFETY: the artifact result kind selects this ABI and `values`
+                // contains the formal count recorded at compilation.
+                Some(CompiledJsResult::Number(unsafe { entry(values.as_ptr()) }))
+            }
+            (
+                CompiledJsEntry::Int32Identity { entry, return_pc },
+                JsNativeCallInput::Arguments { values, .. },
+            ) => {
+                // SAFETY: the integer identity artifact emits the Number ABI.
+                Some(CompiledJsResult::Int32Identity {
+                    value: unsafe { entry(values.as_ptr()) },
+                    return_pc,
+                })
+            }
+            (
+                CompiledJsEntry::CaptureNumber(entry),
+                JsNativeCallInput::CaptureNumber(value),
+            ) => {
+                // SAFETY: this artifact emits `fn(f64) -> f64`.
+                Some(CompiledJsResult::Number(unsafe { entry(value) }))
+            }
+            (
+                CompiledJsEntry::NumberInterruptible(entry),
+                JsNativeCallInput::Arguments { values, interrupt },
+            ) => {
+                let mut completed = 0_u32;
+                let interrupt = poll_page.map_or_else(
+                    || std::ptr::from_ref(interrupt),
+                    |(start, _)| start as *const std::sync::atomic::AtomicBool,
+                );
+                // SAFETY: the result kind emits the matching polled Number ABI.
+                let result = unsafe { entry(values.as_ptr(), interrupt, &mut completed) };
+                (completed != 0).then_some(CompiledJsResult::Number(result))
+            }
+            (
+                CompiledJsEntry::StringHashLoop(entry),
+                JsNativeCallInput::StringHashLoop { units, interrupt },
+            ) => {
+                let mut completed = 0_u32;
+                let (units_ptr, length, ascii) = match units {
+                    crate::vm::wtf16::Units::Ascii(bytes) => (bytes.as_ptr(), bytes.len(), 1),
+                    crate::vm::wtf16::Units::Wide(units) => {
+                        (units.as_ptr().cast::<u8>(), units.len(), 0)
+                    }
+                };
+                // SAFETY: `units` stays borrowed while generated code reads it.
+                let interrupt = poll_page.map_or_else(
+                    || std::ptr::from_ref(interrupt),
+                    |(start, _)| start as *const std::sync::atomic::AtomicBool,
+                );
+                let result = unsafe { entry(units_ptr, &length, ascii, interrupt, &mut completed) };
+                (completed != 0).then_some(CompiledJsResult::Number(result))
+            }
+            (
+                CompiledJsEntry::StringTransform { entry, transform },
+                JsNativeCallInput::StringTransform(units),
+            ) => {
+                let (units_ptr, length, ascii) = match units {
+                    crate::vm::wtf16::Units::Ascii(bytes) => (bytes.as_ptr(), bytes.len(), 1),
+                    crate::vm::wtf16::Units::Wide(units) => {
+                        (units.as_ptr().cast::<u8>(), units.len(), 0)
+                    }
+                };
+                // SAFETY: `units` remains borrowed while generated code reads it.
+                let transformed = unsafe { entry(units_ptr, length, ascii) } != 0;
+                Some(CompiledJsResult::StringTransform(transform, transformed))
+            }
+            (
+                CompiledJsEntry::StringReturnPc(entry),
+                JsNativeCallInput::Arguments { values, .. },
+            ) => {
+                // SAFETY: the static-string artifact emits the `u32` ABI.
+                Some(CompiledJsResult::StringReturnPc(unsafe {
+                    entry(values.as_ptr())
+                }))
+            }
+            (CompiledJsEntry::Boolean(entry), JsNativeCallInput::Arguments { values, .. }) => {
+                // SAFETY: the Boolean artifact emits the matching ABI.
+                Some(CompiledJsResult::Boolean(unsafe {
+                    entry(values.as_ptr()) != 0
+                }))
+            }
+            (
+                CompiledJsEntry::FieldReject {
+                    entry,
+                    resume_pc,
+                    resume_register,
+                    resume_value,
+                },
+                JsNativeCallInput::Arguments { values, .. },
+            ) => {
+                // SAFETY: the field-reject artifact emits `fn(*const f64) -> u32`.
+                Some(CompiledJsResult::FieldReject {
+                    fast_path: unsafe { entry(values.as_ptr()) != 0 },
+                    resume_pc,
+                    resume_register,
+                    resume_value,
+                })
+            }
+            _ => None,
+        }
     }
 
     fn is_string_hash_loop(&self) -> bool {
@@ -6045,9 +6271,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             pending: Vec::new(),
             redirect: None,
             threading: true,
-            poll: guard_support()
-                .and_then(|_| self.vm.execution_interrupt.poll_page())
-                .map(|(start, _)| start as i64),
+            poll: poll_address(&self.vm.execution_interrupt),
             zero_extended: std::collections::HashMap::new(),
             unrolled: if program_unrolls(self.code) {
                 unrollable_loops(&instructions, plan)
@@ -6468,6 +6692,70 @@ fn guard_trampoline() -> Option<Trampoline> {
     guard_support().map(|support| support.trampoline)
 }
 
+/// Where compiled code polls for termination: the VM's poll page when every entry runs
+/// through the fault-resuming trampoline, else nowhere, and code checks the context's
+/// interrupt flag.
+fn poll_address(interrupt: &crate::execution_interrupt::ExecutionInterrupt) -> Option<i64> {
+    guard_support()
+        .and_then(|_| interrupt.poll_page())
+        .map(|(start, _)| start as i64)
+}
+
+/// Runs compiled `entry` with `context`, through the trampoline where the host has one: it
+/// gives this entry its own resumable stack point, including when a compiled indirect call
+/// nests it, and a guard or poll fault returns its status.
+///
+/// # Safety
+/// `entry` is compiled code for this `Entry` signature, and `context`, `arguments` and
+/// `out` are what it reads and writes for the call's duration.
+unsafe fn enter_native(
+    context: &mut CallContext,
+    base: u64,
+    length: u64,
+    arguments: *const u64,
+    out: *mut u64,
+    entry: Entry,
+) -> u32 {
+    match guard_trampoline() {
+        Some(trampoline) => {
+            let outer = ACTIVE_CONTEXT.with(|active| active.replace(context));
+            // SAFETY: as the caller promises; the trampoline saves the caller's registers
+            // and records where a fault resumes.
+            let status = unsafe { trampoline(context, base, length, arguments, out, entry) };
+            ACTIVE_CONTEXT.with(|active| active.set(outer));
+            status
+        }
+        // SAFETY: as the caller promises.
+        None => unsafe { entry(context, base, length, arguments, out) },
+    }
+}
+
+/// Runs a JavaScript native denotation through the same entry and resumable
+/// stack used by Wasm code and OSR regions. The adapter carries only borrowed
+/// call inputs; the generated denotation itself never sees a Wasm instance.
+fn run_native_adapter(
+    payload: *mut (),
+    interrupt: *const std::sync::atomic::AtomicBool,
+    poll_page: Option<(usize, usize)>,
+    entry: Entry,
+) -> (u32, u64) {
+    let mut context = CallContext::native_adapter(payload, interrupt, poll_page);
+    let mut result = 0u64;
+    // SAFETY: the payload, context, and result remain live until the common
+    // native entry returns; the JS adapter uses none of the Wasm arguments.
+    let status = unsafe {
+        enter_native(
+            &mut context,
+            0,
+            0,
+            std::ptr::null(),
+            &mut result,
+            entry,
+        )
+    };
+    (status, result)
+}
+
 /// A fault inside the running compiled call's guard reservation resumes at
 /// the trampoline's landing with the trampoline's saved stack; anything else
 /// belongs to the previous handler.
@@ -6586,6 +6874,13 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn execution_mode(&self) -> ExecutionMode {
         self.execution_mode
+    }
+
+    /// A compiled tier's poll page is usable only when the shared entry can
+    /// resume the protected-page fault back into the interpreter.
+    pub(super) fn compiled_poll_page(&self) -> Option<(usize, usize)> {
+        guard_trampoline()?;
+        self.execution_interrupt.poll_page()
     }
 
     /// Whether the per-function JavaScript tier runs: compiled execution, in a build whose
@@ -7273,15 +7568,23 @@ impl<H: Host> Vm<H> {
             self.programs
                 .record_js_jit_native_entry(program_id, function_id);
         }
+        let poll_page = self.compiled_poll_page();
         let result = if compiled.is_capture_number() {
-            compiled.call_capture_number(capture_number?)?
+            compiled.call_capture_number(capture_number?, poll_page)?
         } else if compiled.is_string_hash_loop() {
-            compiled
-                .call_string_hash_loop(string_hash_units?, self.execution_interrupt.atomic_flag())?
+            compiled.call_string_hash_loop(
+                string_hash_units?,
+                self.execution_interrupt.atomic_flag(),
+                poll_page,
+            )?
         } else if compiled.is_string_transform() {
-            compiled.call_string_transform(string_transform_units?)?
+            compiled.call_string_transform(string_transform_units?, poll_page)?
         } else {
-            compiled.call(&arguments, self.execution_interrupt.atomic_flag())?
+            compiled.call(
+                &arguments,
+                self.execution_interrupt.atomic_flag(),
+                poll_page,
+            )?
         };
         match result {
             CompiledJsResult::Number(value) => {
@@ -7408,6 +7711,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
+        let poll_page = self.compiled_poll_page();
         let (programs, interrupt) = (&mut self.programs, self.execution_interrupt.atomic_flag());
         let function = program.function_get(function_id as usize)?;
         let compiled = match programs.js_tier(program_id, function_id)? {
@@ -7446,7 +7750,7 @@ impl<H: Host> Vm<H> {
             programs.record_js_jit_entry(program_id, function_id, true, function.params);
             programs.record_js_jit_native_entry(program_id, function_id);
         }
-        match compiled.call(&numeric_arguments, interrupt)? {
+        match compiled.call(&numeric_arguments, interrupt, poll_page)? {
             CompiledJsResult::Number(value) => Some(Value::number(value)),
             CompiledJsResult::Int32Identity { value, .. } => Some(Value::number(value)),
             CompiledJsResult::Boolean(value) => {
@@ -8343,38 +8647,18 @@ impl<H: Host> Vm<H> {
                     .diagnostics
                     .as_ref()
                     .map_or(0, |stats| stats.import_callout_counts.len()),
+                adapter_payload: std::ptr::null_mut(),
             };
             let mut out = 0u64;
             let native_entry_should_sample = compiled.note_native_entry(id as usize);
             let native_entry_sample_started =
                 native_entry_should_sample.then(std::time::Instant::now);
-            let status = match guard_trampoline() {
-                Some(trampoline) => {
-                    // The trampoline gives this entry its own resumable stack
-                    // point, including when a compiled indirect call nests it.
-                    let outer = ACTIVE_CONTEXT.with(|active| active.replace(&mut context));
-                    // SAFETY: as below; the trampoline saves the caller's registers
-                    // and records where a guard fault resumes.
-                    let status = unsafe {
-                        trampoline(
-                            &mut context,
-                            base,
-                            length,
-                            raw.as_ptr(),
-                            &mut out,
-                            function.entry,
-                        )
-                    };
-                    ACTIVE_CONTEXT.with(|active| active.set(outer));
-                    status
-                }
-                // SAFETY: the entry is compiled code for this function's
-                // signature; the context, arguments and result outlive the call,
-                // and the memory view stays valid because compiled code never
-                // grows memory.
-                None => unsafe {
-                    (function.entry)(&mut context, base, length, raw.as_ptr(), &mut out)
-                },
+            // SAFETY: the entry is compiled code for this function's
+            // signature; the context, arguments and result outlive the call,
+            // and the memory view stays valid because compiled code never
+            // grows memory.
+            let status = unsafe {
+                enter_native(&mut context, base, length, raw.as_ptr(), &mut out, function.entry)
             };
             if let Some(started) = native_entry_sample_started {
                 compiled.finish_native_entry_sample(id as usize, started);
@@ -8861,6 +9145,7 @@ mod tests {
             emscripten_memcpy_leaf_hits: hits,
             import_callout_counts: std::ptr::null(),
             import_callout_count: 0,
+            adapter_payload: std::ptr::null_mut(),
         }
     }
 

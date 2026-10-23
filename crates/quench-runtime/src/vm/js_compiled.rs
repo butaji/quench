@@ -549,36 +549,94 @@ pub(super) fn number_capture_candidate(function: &Function) -> Option<JsJitCaptu
 /// slow path inside generated code.
 pub(super) fn has_int32_bitwise_candidate(program: &ResidualProgram, function: &Function) -> bool {
     let mut found = false;
-    function.code.iter().all(|packed| {
+    let mut branch_seen = false;
+    let mut registers = [false; MAX_REGISTERS];
+    for register in registers.iter_mut().take(usize::from(function.params)) {
+        *register = true;
+    }
+    for packed in function.code.iter().copied() {
         let instruction = packed.as_wide();
-        if instruction.op() != Op::Binary
-            || !matches!(
+        let op = instruction.op();
+        if matches!(op, Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse) {
+            branch_seen = true;
+            continue;
+        }
+        // Read only by the arms below, whose ops each write a result register.
+        let destination = || usize::from(instruction.result_register());
+        if op == Op::Binary
+            && matches!(
                 instruction.binary_operator(),
                 x if x == BinaryOperator::BitwiseAnd as u32
                     || x == BinaryOperator::BitwiseOR as u32
                     || x == BinaryOperator::BitwiseXOR as u32
             )
         {
-            return true;
+            // Guarded field and capture inputs are exact ToInt32 values at native entry.
+            // Keep this proof straight-line so no unanalysed branch join can weaken it.
+            if branch_seen {
+                return false;
+            }
+            found = true;
+            let operands_are_i32 = [instruction.operand_b(), instruction.operand_c()]
+                .into_iter()
+                .all(|operand| match operand.kind() {
+                    Some(crate::bytecode::OperandKind::Register) => operand
+                        .register_index()
+                        .and_then(|register| registers.get(usize::from(register)))
+                        .copied()
+                        .unwrap_or(false),
+                    Some(crate::bytecode::OperandKind::Constant) => {
+                        let Some(Constant::Number(value)) =
+                            program.constants.get(usize::from(operand.payload()))
+                        else {
+                            return false;
+                        };
+                        is_i32_number(*value)
+                    }
+                    _ => false,
+                });
+            if !operands_are_i32 {
+                return false;
+            }
+            if let Some(slot) = registers.get_mut(destination()) {
+                *slot = true;
+            }
+            continue;
         }
-        found = true;
-        [instruction.operand_b(), instruction.operand_c()]
-            .into_iter()
-            .all(|operand| match operand.kind() {
-                Some(crate::bytecode::OperandKind::Register) => operand
-                    .register_index()
-                    .is_some_and(|register| usize::from(register) < usize::from(function.params)),
-                Some(crate::bytecode::OperandKind::Constant) => {
-                    let Some(Constant::Number(value)) =
-                        program.constants.get(usize::from(operand.payload()))
-                    else {
-                        return false;
-                    };
-                    is_i32_number(*value)
+
+        match op {
+            Op::LoadConst => {
+                let is_i32 = matches!(
+                    program.constants.get(instruction.constant_index()),
+                    Some(Constant::Number(value)) if is_i32_number(*value)
+                );
+                if let Some(slot) = registers.get_mut(destination()) {
+                    *slot = is_i32;
                 }
-                _ => false,
-            })
-    }) && found
+            }
+            Op::LoadCapture | Op::GetField => {
+                if let Some(slot) = registers.get_mut(destination()) {
+                    *slot = true;
+                }
+            }
+            Op::Move => {
+                let value = registers
+                    .get(usize::from(instruction.register_b()))
+                    .copied()
+                    .unwrap_or(false);
+                if let Some(slot) = registers.get_mut(destination()) {
+                    *slot = value;
+                }
+            }
+            Op::Unary | Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+                if let Some(slot) = registers.get_mut(destination()) {
+                    *slot = false;
+                }
+            }
+            _ => {}
+        }
+    }
+    found
 }
 
 pub(super) fn is_i32_number(value: f64) -> bool {
@@ -756,14 +814,28 @@ pub(super) fn cached_numeric_field_argument_candidate(
     candidate
 }
 
-/// Collect cached reads from `this` and parameter zero in a straight-line
-/// numeric region. Field values are guarded and supplied as separate ABI
-/// inputs, so native code never holds a guest heap reference.
+/// Collect cached reads from `this` and parameters in pure regions. Field values
+/// are guarded and supplied as separate ABI inputs, so native code never holds
+/// a guest heap reference.
 pub(super) fn cached_numeric_field_inputs_candidate(
     function: &Function,
 ) -> Option<smallvec::SmallVec<[JsJitNumericFieldInput; MAX_NUMERIC_FIELD_INPUTS]>> {
+    if function.params != 0
+        && function.code.iter().any(|packed| {
+            !packed.is_wide()
+                && matches!(
+                    packed.as_wide().op(),
+                    Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
+                )
+        })
+    {
+        // Parameter-backed branch regions still use their established entry
+        // checks; the new multi-field path targets zero-argument `this` helpers.
+        return None;
+    }
     let mut inputs: smallvec::SmallVec<[_; MAX_NUMERIC_FIELD_INPUTS]> =
         smallvec::SmallVec::new();
+    let mut branch_seen = false;
     for (pc, packed) in function.code.iter().copied().enumerate() {
         if packed.is_wide() {
             return None;
@@ -792,6 +864,13 @@ pub(super) fn cached_numeric_field_inputs_candidate(
             } else {
                 return None;
             };
+            if branch_seen && matches!(receiver, JsJitFieldReceiver::Parameter(_)) {
+                // Preserve the existing field entry path for parameter reads
+                // reached only after a branch, such as a null check. `this`
+                // is already a known receiver and can use its guarded cache
+                // entry across forward control flow.
+                return None;
+            }
             inputs.push(JsJitNumericFieldInput {
                 cache_site,
                 pc,
@@ -808,9 +887,24 @@ pub(super) fn cached_numeric_field_inputs_candidate(
                 | Op::Binary
                 | Op::NumericAdd
                 | Op::NumericMultiply
+                | Op::Unary
+                | Op::Jump
+                | Op::JumpFalse
+                | Op::JumpTrue
+                | Op::JumpBinaryFalse
                 | Op::Return
         ) {
             return None;
+        } else if matches!(
+            instruction.op(),
+            Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
+        ) {
+            if usize::try_from(instruction.jump_target()).is_ok_and(|target| target <= pc) {
+                // Loops stay in the OSR compiler; this function collects
+                // inputs only for acyclic native regions.
+                return None;
+            }
+            branch_seen = true;
         }
     }
     (!inputs.is_empty()).then_some(inputs)
@@ -1715,11 +1809,29 @@ fn compile_number_domain_boolean_tree(
     {
         *value = BranchValue::Number;
     }
-    let field_argument = cached_field_argument_candidate(function);
+    // The branch-aware field path is currently limited to `this` reads in
+    // zero-parameter helpers. Parameter reads retain the established guarded
+    // entry path, which handles null checks before the field access.
+    let numeric_field_inputs = (function.params == 0)
+        .then(|| cached_numeric_field_inputs_candidate(function))
+        .flatten();
+    let field_argument = if numeric_field_inputs.is_none() {
+        cached_field_argument_candidate(function)
+    } else {
+        None
+    };
     let entry_pc = field_argument.map_or(0, |field| field.entry_pc);
     if field_argument.is_some() {
         entry.registers[0] = BranchValue::Unknown;
     }
+    if let Some(inputs) = &numeric_field_inputs {
+        for input in inputs {
+            if let JsJitFieldReceiver::Parameter(parameter) = input.receiver {
+                *entry.registers.get_mut(usize::from(parameter))? = BranchValue::Unknown;
+            }
+        }
+    }
+    let capture_arguments = numeric_capture_candidate(function).unwrap_or_default();
     states[entry_pc] = Some(entry);
     let mut reachable = vec![false; code_len];
 
@@ -1753,9 +1865,37 @@ fn compile_number_domain_boolean_tree(
                     .get_mut(usize::from(instruction.result_register()))? = value;
                 successors.push(pc + 1);
             }
-            Op::GetField => {
-                if pc != entry_pc || field_argument.is_none() {
+            Op::LoadCapture => {
+                if !capture_arguments.iter().any(|capture| {
+                    capture.depth == instruction.capture_depth()
+                        && capture.slot == instruction.capture_slot()
+                }) {
                     return None;
+                }
+                *state
+                    .registers
+                    .get_mut(usize::from(instruction.result_register()))? = BranchValue::Number;
+                successors.push(pc + 1);
+            }
+            Op::GetField => {
+                let input = numeric_field_inputs
+                    .as_ref()
+                    .and_then(|inputs| inputs.iter().find(|input| input.pc == pc));
+                if input.is_none() && (pc != entry_pc || field_argument.is_none()) {
+                    return None;
+                }
+                if let Some(input) = input {
+                    let expected_base = match input.receiver {
+                        JsJitFieldReceiver::This => FieldBase::THIS,
+                        JsJitFieldReceiver::Parameter(parameter) => FieldBase(parameter),
+                    };
+                    if !matches!(
+                        instruction.field_lookup(),
+                        Some(FieldLookup::Atom { base, cache_site, .. })
+                            if base == expected_base && cache_site == input.cache_site
+                    ) {
+                        return None;
+                    }
                 }
                 let result = usize::from(instruction.result_register());
                 *state.registers.get_mut(result)? = BranchValue::Number;
@@ -1858,7 +1998,21 @@ fn compile_number_domain_boolean_tree(
                     &state.locals,
                     instruction.operand_c(),
                 )?;
+                let bitwise = matches!(
+                    instruction.binary_operator(),
+                    x if x == BinaryOperator::BitwiseAnd as u32
+                        || x == BinaryOperator::BitwiseOR as u32
+                        || x == BinaryOperator::BitwiseXOR as u32
+                );
                 let result = match (left, right) {
+                    (left, right)
+                        if bitwise
+                            && branch_value_is_number(left)
+                            && branch_value_is_number(right)
+                            && has_int32_bitwise_candidate(program, function) =>
+                    {
+                        BranchValue::Number
+                    }
                     (left, right)
                         if branch_value_is_number(left)
                             && branch_value_is_number(right)
@@ -2021,6 +2175,24 @@ fn compile_number_domain_boolean_tree(
             .load(types::F64, ir::MemFlagsData::trusted(), arguments, offset);
         builder.def_var(*variable, value);
     }
+    for (index, capture) in capture_arguments.iter().enumerate() {
+        let register = function
+            .code
+            .iter()
+            .map(|packed| packed.as_wide())
+            .find(|instruction| {
+                instruction.op() == Op::LoadCapture
+                    && instruction.capture_depth() == capture.depth
+                    && instruction.capture_slot() == capture.slot
+            })?
+            .result_register();
+        let argument_index = params.checked_add(index)?;
+        let offset = i32::try_from(argument_index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
+        let value = builder
+            .ins()
+            .load(types::F64, ir::MemFlagsData::trusted(), arguments, offset);
+        builder.def_var(*variables.get(usize::from(register))?, value);
+    }
 
     let mut emitted_return = false;
     for pc in 0..code_len {
@@ -2051,11 +2223,39 @@ fn compile_number_domain_boolean_tree(
                     );
                 }
             }
+            Op::LoadCapture => {}
             Op::GetField => {
-                let source = builder.use_var(*variables.first()?);
+                let value = if let Some((field_index, _)) = numeric_field_inputs
+                    .as_ref()
+                    .and_then(|inputs| {
+                        inputs
+                            .iter()
+                            .enumerate()
+                            .find(|(_, input)| input.pc == pc)
+                    })
+                {
+                    let argument_index = params
+                        .checked_add(capture_arguments.len())?
+                        .checked_add(field_index)?;
+                    let offset =
+                        i32::try_from(argument_index.checked_mul(std::mem::size_of::<f64>())?)
+                            .ok()?;
+                    builder
+                        .ins()
+                        .load(types::F64, ir::MemFlagsData::trusted(), arguments, offset)
+                } else if field_argument.is_some_and(|field| field.entry_pc == pc) {
+                    // Legacy field-argument entries pass only the guarded
+                    // property value at ABI slot zero. The appended slot
+                    // layout belongs to numeric_field_inputs above.
+                    builder
+                        .ins()
+                        .load(types::F64, ir::MemFlagsData::trusted(), arguments, 0)
+                } else {
+                    return None;
+                };
                 builder.def_var(
                     *variables.get(usize::from(instruction.result_register()))?,
-                    source,
+                    value,
                 );
             }
             Op::StoreLocal | Op::StoreLocalPlain => {
@@ -2149,31 +2349,77 @@ fn compile_number_domain_boolean_tree(
                     instruction.operand_c(),
                 )?;
                 if branch_value_is_number(left) && branch_value_is_number(right) {
-                    let condition = branch_number_comparison(
-                        &mut builder,
-                        instruction.binary_operator(),
-                        &variables,
-                        &local_variables,
-                        program,
-                        &state.registers,
-                        &state.locals,
-                        instruction.operand_b(),
-                        instruction.operand_c(),
-                    )?;
-                    if instruction.result_flags() == RETURN_REGISTER {
-                        let yes = builder.ins().iconst(types::I32, 1);
-                        let no = builder.ins().iconst(types::I32, 0);
-                        let result = builder.ins().select(condition, yes, no);
-                        builder.ins().return_(&[result]);
-                        emitted_return = true;
-                    } else {
-                        let yes = builder.ins().f64const(Ieee64::with_bits(1.0f64.to_bits()));
-                        let no = builder.ins().f64const(Ieee64::with_bits(0.0f64.to_bits()));
-                        let value = builder.ins().select(condition, yes, no);
+                    let operator = instruction.binary_operator();
+                    if matches!(
+                        operator,
+                        x if x == BinaryOperator::BitwiseAnd as u32
+                            || x == BinaryOperator::BitwiseOR as u32
+                            || x == BinaryOperator::BitwiseXOR as u32
+                    ) {
+                        if instruction.result_flags() == RETURN_REGISTER {
+                            return None;
+                        }
+                        let left = branch_numeric_operand(
+                            &mut builder,
+                            &variables,
+                            &local_variables,
+                            program,
+                            &state.registers,
+                            &state.locals,
+                            instruction.operand_b(),
+                        )?;
+                        let right = branch_numeric_operand(
+                            &mut builder,
+                            &variables,
+                            &local_variables,
+                            program,
+                            &state.registers,
+                            &state.locals,
+                            instruction.operand_c(),
+                        )?;
+                        let left = builder.ins().fcvt_to_sint(types::I32, left);
+                        let right = builder.ins().fcvt_to_sint(types::I32, right);
+                        let value = match operator {
+                            x if x == BinaryOperator::BitwiseAnd as u32 => {
+                                builder.ins().band(left, right)
+                            }
+                            x if x == BinaryOperator::BitwiseOR as u32 => {
+                                builder.ins().bor(left, right)
+                            }
+                            _ => builder.ins().bxor(left, right),
+                        };
+                        let value = builder.ins().fcvt_from_sint(types::F64, value);
                         builder.def_var(
                             *variables.get(usize::from(instruction.result_register()))?,
                             value,
                         );
+                    } else {
+                        let condition = branch_number_comparison(
+                            &mut builder,
+                            operator,
+                            &variables,
+                            &local_variables,
+                            program,
+                            &state.registers,
+                            &state.locals,
+                            instruction.operand_b(),
+                            instruction.operand_c(),
+                        )?;
+                        if instruction.result_flags() == RETURN_REGISTER {
+                            let yes = builder.ins().iconst(types::I32, 1);
+                            let no = builder.ins().iconst(types::I32, 0);
+                            let result = builder.ins().select(condition, yes, no);
+                            builder.ins().return_(&[result]);
+                            emitted_return = true;
+                        } else {
+                            let yes = builder.ins().f64const(Ieee64::with_bits(1.0f64.to_bits()));
+                            let no = builder.ins().f64const(Ieee64::with_bits(0.0f64.to_bits()));
+                            let value = builder.ins().select(condition, yes, no);
+                            builder.def_var(
+                                *variables.get(usize::from(instruction.result_register()))?,
+                                value,
+                            );
+                        }
                     }
                 }
             }
@@ -2345,8 +2591,8 @@ fn compile_number_domain_boolean_tree(
         params,
         result: JsJitResultKind::Boolean,
         field_argument,
-        numeric_field_inputs: Vec::new(),
-        capture_arguments: Vec::new(),
+        numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.into_vec()),
+        capture_arguments: capture_arguments.into_vec(),
     })
 }
 
