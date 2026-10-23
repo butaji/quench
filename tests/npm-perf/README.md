@@ -997,3 +997,16 @@ no-JIT and was flat in JIT. The current production candidate measured 15,588 /
 optimization is retained as a component gain, not a package win. Paired
 iteration and production reports with `noop` in their names are in the evidence
 folder.
+
+The UTF-8 response path now lets the plain-data JSON writer emit the response
+bytes directly, avoiding the intermediate JavaScript string and TextEncoder
+round trip; values requiring observable JSON behavior retain Undici's normal
+serializer. Five-run production A/B comparisons against the previous
+direct-state binary measured `Response.json()` at 22,292 versus 17,718 ops/s
+no-JIT and 22,252 versus 17,979 JIT (+25.8% and +23.8%). Sampled RSS fell
+2.4% and 4.2%. Next route generation measured 7,407 versus 7,013 ops/s no-JIT
+and 7,163 versus 7,090 JIT, with 3.1% and 4.3% lower RSS. This component
+improvement still loses throughput to Node and Bun, and Quench's RSS remains
+higher than Bun's, so neither scenario meets the package win gate. Production
+paired reports use `*utf8-production-paired-*` in
+`evidence/tod173-next-response-2026-10-23/`.
