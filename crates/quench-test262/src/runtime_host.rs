@@ -3,14 +3,17 @@
 use std::path::Path;
 
 use quench_runtime::{
-    CapabilityId, Engine, ExecutionMode, ExecutionRequest, Host, HostGlobal, ModuleSource, Runtime,
-    SourceKind, SystemHost,
+    CapabilityId, Engine, ExecutionMode, ExecutionRequest, Host, HostFunction, HostFunctionId,
+    HostGlobal, ModuleSource, NativeContext, RootId, RootedError, Runtime, SourceKind, SystemHost,
 };
+use std::time::{Duration, Instant};
 
 use crate::Test262Host;
 
 const TEST262_MODULE_SOURCE_SPECIFIER: &str = "<module source>";
 const HARNESS_SCRIPT_NAME: &str = "<test262-harness>";
+const TIMER_MIN_DELAY_MS: f64 = 1.0;
+const TIMER_MAX_DELAY_MS: f64 = 2_147_483_647.0;
 
 static HOST_GLOBALS: [HostGlobal; 2] = [
     HostGlobal {
@@ -38,6 +41,16 @@ pub struct Test262RuntimeHost {
     done: Option<String>,
     /// The execution every case's runtime uses: the interpreter, or compiled (JIT) execution.
     execution_mode: ExecutionMode,
+    timers: Vec<TestTimer>,
+    next_timer_id: u64,
+}
+
+#[derive(Debug)]
+struct TestTimer {
+    id: u64,
+    callback: RootId,
+    args: Vec<RootId>,
+    deadline: Instant,
 }
 
 impl Host for Test262RuntimeHost {
@@ -77,6 +90,31 @@ impl Host for Test262RuntimeHost {
         self.can_block
     }
 
+    fn functions(&self) -> &[HostFunction<Self>] {
+        quench_runtime::host_functions![
+            method "test262SetTimeout" (2) => set_timeout,
+            method "test262ClearTimeout" (1) => clear_timeout,
+        ]
+    }
+
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        if !context.host_mut().async_test {
+            return Ok(());
+        }
+        let global = context.global_root()?;
+        for (name, id) in [
+            ("setTimeout", HostFunctionId(0)),
+            ("clearTimeout", HostFunctionId(1)),
+        ] {
+            let key = context.string_rooted(name);
+            let function = context.host_function(id)?;
+            if !context.define_data_property_rooted(global, key, function, true, false, true)? {
+                return Err(RootedError::host(format!("cannot install Test262 {name}")));
+            }
+        }
+        Ok(())
+    }
+
     fn resolve_dynamic_import(
         &mut self,
         referrer: &str,
@@ -95,7 +133,10 @@ impl Host for Test262RuntimeHost {
             .join(specifier);
         let bytes =
             std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
-        Ok(Some(ModuleSource::from_bytes(path.display().to_string(), bytes)))
+        Ok(Some(ModuleSource::from_bytes(
+            path.display().to_string(),
+            bytes,
+        )))
     }
 }
 
@@ -140,26 +181,47 @@ impl Test262RuntimeHost {
                 .iter()
                 .map(|script| (*script, HARNESS_SCRIPT_NAME))
                 .collect::<Vec<_>>();
-            runtime.execute_after_scripts(&harness, &program).map_err(|error| {
-                format!("quench runtime: {}", runtime.format_error(&program, &error))
-            })?;
-            if async_test {
-                runtime.run_jobs(&program).map_err(|error| {
-                    format!(
-                        "quench runtime jobs: {}",
-                        runtime.format_error(&program, &error)
-                    )
+            runtime
+                .execute_after_scripts(&harness, &program)
+                .map_err(|error| {
+                    format!("quench runtime: {}", runtime.format_error(&program, &error))
                 })?;
-                if let Some(error) = runtime.host_mut().done.clone() {
-                    if !error.is_empty() {
-                        return Err(format!("quench runtime async: {error}"));
+            if async_test {
+                loop {
+                    runtime.run_jobs(&program).map_err(|error| {
+                        format!(
+                            "quench runtime jobs: {}",
+                            runtime.format_error(&program, &error)
+                        )
+                    })?;
+                    if let Some(error) = runtime.host_mut().done.clone() {
+                        if !error.is_empty() {
+                            return Err(format!("quench runtime async: {error}"));
+                        }
+                        break;
                     }
-                } else {
-                    return Err("quench runtime async: $DONE was not called".into());
+                    let Some(timer) = runtime.host_mut().take_next_timer() else {
+                        return Err("quench runtime async: $DONE was not called".into());
+                    };
+                    let args = timer.args;
+                    let queued = runtime.enqueue_rooted_job(timer.callback, &args);
+                    runtime.release_root(timer.callback);
+                    for arg in args {
+                        runtime.release_root(arg);
+                    }
+                    if !queued {
+                        return Err("quench runtime async: timer callback root expired".into());
+                    }
                 }
             }
             Ok(())
         })();
+        for timer in runtime.host_mut().take_all_timers() {
+            runtime.release_root(timer.callback);
+            for arg in timer.args {
+                runtime.release_root(arg);
+            }
+        }
         *self = runtime.into_host();
         result
     }
@@ -237,4 +299,124 @@ impl Test262Host for Test262RuntimeHost {
             SourceKind::Module,
         )
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Test262RuntimeHost;
+
+    #[test]
+    fn async_timer_is_a_macrotask_and_then_reactions_stay_microtasks() {
+        let mut host = Test262RuntimeHost::default();
+        host.async_test = true;
+        host.execute(
+            r#"
+              const order = [];
+              const canceled = setTimeout(() => { throw new Error('canceled timer ran'); }, 0);
+              clearTimeout(canceled);
+              setTimeout(() => {
+                order.push('timer');
+                Promise.resolve().then(() => {
+                  order.push('timer-reaction');
+                  if (order.join(',') !== 'initial-reaction,timer,timer-reaction') {
+                    throw new Error(order.join(','));
+                  }
+                  $DONE();
+                });
+              }, 0);
+              Promise.resolve().then(() => order.push('initial-reaction'));
+            "#,
+            "test262-timer-order.js",
+        )
+        .unwrap();
+    }
+}
+
+impl Test262RuntimeHost {
+    fn take_next_timer(&mut self) -> Option<TestTimer> {
+        let (index, deadline) = self
+            .timers
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, timer)| (timer.deadline, timer.id))
+            .map(|(index, timer)| (index, timer.deadline))?;
+        let delay = deadline.saturating_duration_since(Instant::now());
+        if !delay.is_zero() {
+            std::thread::sleep(delay);
+        }
+        Some(self.timers.remove(index))
+    }
+
+    fn cancel_timer(&mut self, id: u64) -> Option<TestTimer> {
+        let index = self.timers.iter().position(|timer| timer.id == id)?;
+        Some(self.timers.remove(index))
+    }
+
+    fn take_all_timers(&mut self) -> Vec<TestTimer> {
+        std::mem::take(&mut self.timers)
+    }
+}
+
+fn set_timeout(
+    context: &mut NativeContext<'_, Test262RuntimeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(callback) = args.first().copied() else {
+        let error = context.type_error_rooted("setTimeout callback is not callable")?;
+        return Err(context.throw(error));
+    };
+    if !context.is_callable_rooted(callback)? {
+        let error = context.type_error_rooted("setTimeout callback is not callable")?;
+        return Err(context.throw(error));
+    }
+    let delay = args
+        .get(1)
+        .copied()
+        .map(|value| context.to_number(value))
+        .transpose()?
+        .unwrap_or(0.0);
+    let delay = if !delay.is_finite() || delay <= 0.0 {
+        TIMER_MIN_DELAY_MS
+    } else {
+        delay.clamp(TIMER_MIN_DELAY_MS, TIMER_MAX_DELAY_MS)
+    };
+    let callback = context.retain(callback)?;
+    let mut retained_args = Vec::with_capacity(args.len().saturating_sub(2));
+    for arg in args.iter().skip(2).copied() {
+        retained_args.push(context.retain(arg)?);
+    }
+    let host = context.host_mut();
+    let id = host.next_timer_id;
+    host.next_timer_id = id
+        .checked_add(1)
+        .ok_or_else(|| RootedError::host("Test262 timer identifier space exhausted"))?;
+    host.timers.push(TestTimer {
+        id,
+        callback,
+        args: retained_args,
+        deadline: Instant::now() + Duration::from_secs_f64(delay / 1000.0),
+    });
+    Ok(context.number(id as f64))
+}
+
+fn clear_timeout(
+    context: &mut NativeContext<'_, Test262RuntimeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = args
+        .first()
+        .copied()
+        .map(|value| context.to_number(value))
+        .transpose()?;
+    if let Some(id) = id.filter(|id| id.is_finite() && *id >= 0.0) {
+        if let Some(timer) = context.host_mut().cancel_timer(id as u64) {
+            context.release_root(timer.callback);
+            for arg in timer.args {
+                context.release_root(arg);
+            }
+        }
+    }
+    Ok(context.undefined())
 }
