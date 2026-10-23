@@ -939,3 +939,21 @@ resize. Four-way resize throughput is near parity, with Quench using less
 sampled RSS, but it does not reach the 20% speed advantage. The effort-zero
 variant also loses throughput. This is a useful async-path improvement, not a
 package win. Linux RSS remains diagnostic.
+
+### Next response generation versus route matching
+
+The original `next-route-response.cjs` includes `await response.json()`, which
+profiles show spends most of its runtime in Undici's `Response` and body
+stream. Added `next-route-generate.cjs` to measure the typical server path:
+match a dynamic route, construct `NextResponse.json`, and hand off its body
+stream without parsing the response in the handler. Added
+`next-route-match.cjs` to isolate Next's matcher and parameter extraction.
+
+Five-run Linux diagnostics: generation measured 5,112 / 67.81 MiB no-JIT and
+4,965 / 47.72 MiB JIT for Quench, versus Node at 26,596 / 70.00 and
+58,140 / 84.10, and Bun at 113,636 / 37.26 and 208,333 / 6.15. Matcher-only
+measured 56,818 / 25.64 MiB no-JIT and 64,516 / 17.73 MiB JIT, versus Node
+at 322,581 / 24.83 and 555,556 / 33.65, and Bun at 212,766 / 33.25 and
+625,000 / 1.90. The short Bun samples understate RSS. These scenarios do not
+win. They locate Next's largest cost in response construction and streams,
+while route matching by itself is much faster but still behind both engines.
