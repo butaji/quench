@@ -2204,11 +2204,11 @@ impl<H: Host> Vm<H> {
                 self.module_namespace_default(value)
             }
             "text" => {
-                let source = self.heap.alloc_string(module.source.clone().into());
+                let source = self.heap.alloc_string(JsString::from_str(&module.source));
                 self.module_namespace_default(source)
             }
             "json" => {
-                let source = self.heap.alloc_string(module.source.clone().into());
+                let source = self.heap.alloc_string(JsString::from_str(&module.source));
                 let value = self.json_parse(p, &[source])?;
                 self.module_namespace_default(value)
             }
@@ -3535,7 +3535,7 @@ impl<H: Host> Vm<H> {
             &module.name,
             &[self.specialization_part(), STATIC_MODULE_GOAL, &module.source],
         )?;
-        let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(module.source.as_str()));
+        let text = crate::bytecode::SourceText::Shared(module.source.clone());
         let specialized = self.specialized;
         self.decode_cached_program(bytes, text, 0, &module.name, specialized).ok()
     }
