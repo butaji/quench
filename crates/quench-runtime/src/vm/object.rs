@@ -1898,7 +1898,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn string_prototype_field_hit(&self, site: u16) -> Option<Value> {
         let prototype = self.heap.object_record(self.string_proto)?;
         // SAFETY: the active program's layout reserves every compiler-emitted site.
-        let cache = unsafe { *self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        let cache = unsafe { self.field_caches.get_unchecked(self.field_cache_index(site)) };
         // An entry records only a non-dictionary shape, which the exact shape matches only
         // outside dictionary storage; a polymorphic site's other entries take the walk.
         (cache.holder == NO_FIELD_HOLDER && cache.receiver == prototype.exact_shape())
