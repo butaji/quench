@@ -1,0 +1,523 @@
+{
+  "schema": 1,
+  "workload": "esbuild-transform",
+  "phase": "jit",
+  "runs": 5,
+  "qualificationReady": false,
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 5
+  },
+  "rssMeasurement": "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)",
+  "inputs": {
+    "workloadSha256": "d03c9825002be90ea400108c6c57dda5641fe57cb43fcd5231a94c39e366c3cb",
+    "packageLockSha256": "92dbfcb2312b42ddf55a8f0b06c40368544ca4b5e861782ead6770268da3c1b0",
+    "quenchBinarySha256": "7002effc11f8f3ebf80fa1de18846ecf90d05ff4868e7263955d26e4d10cc7e6",
+    "nodeBinary": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "bunBinary": "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun"
+  },
+  "nodeVersion": "v24.19.0",
+  "bunVersion": "1.4.4",
+  "summary": {
+    "quench-jit": {
+      "medianOperationsPerSecond": 334.001336005344,
+      "medianElapsedMs": 1497,
+      "medianMaximumRssBytes": 62025728
+    },
+    "node-jit": {
+      "medianOperationsPerSecond": 1041.6666666666667,
+      "medianElapsedMs": 480,
+      "medianMaximumRssBytes": 84041728
+    },
+    "bun-jit": {
+      "medianOperationsPerSecond": 1103.7527593818984,
+      "medianElapsedMs": 453,
+      "medianMaximumRssBytes": 70320128
+    }
+  },
+  "output": {
+    "workload": "esbuild-transform",
+    "package": "esbuild@0.28.2",
+    "warmups": 50,
+    "cases": [
+      "sync-tsx-transform",
+      "jsx-lowering",
+      "minification"
+    ],
+    "bytes": 137000,
+    "checksum": 731100389
+  },
+  "samples": [
+    {
+      "engine": "quench-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "esbuild-transform",
+        "package": "esbuild@0.28.2",
+        "rounds": 500,
+        "warmups": 50,
+        "cases": [
+          "sync-tsx-transform",
+          "jsx-lowering",
+          "minification"
+        ],
+        "bytes": 137000,
+        "checksum": 731100389,
+        "elapsedMs": 1533,
+        "operationsPerSecond": 326.1578604044357
+      },
+      "maxRssBytes": 61956096,
+      "wallTimeMs": 1764.404217,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/esbuild-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "500",
+        "QUENCH_BENCH_WARMUPS": "50"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "esbuild-transform",
+        "package": "esbuild@0.28.2",
+        "rounds": 500,
+        "warmups": 50,
+        "cases": [
+          "sync-tsx-transform",
+          "jsx-lowering",
+          "minification"
+        ],
+        "bytes": 137000,
+        "checksum": 731100389,
+        "elapsedMs": 480,
+        "operationsPerSecond": 1041.6666666666667
+      },
+      "maxRssBytes": 82673664,
+      "wallTimeMs": 632.816338,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/esbuild-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "500",
+        "QUENCH_BENCH_WARMUPS": "50"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "esbuild-transform",
+        "package": "esbuild@0.28.2",
+        "rounds": 500,
+        "warmups": 50,
+        "cases": [
+          "sync-tsx-transform",
+          "jsx-lowering",
+          "minification"
+        ],
+        "bytes": 137000,
+        "checksum": 731100389,
+        "elapsedMs": 453,
+        "operationsPerSecond": 1103.7527593818984
+      },
+      "maxRssBytes": 71467008,
+      "wallTimeMs": 564.633714,
+      "stderr": "",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/esbuild-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "500",
+        "QUENCH_BENCH_WARMUPS": "50"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "esbuild-transform",
+        "package": "esbuild@0.28.2",
+        "rounds": 500,
+        "warmups": 50,
+        "cases": [
+          "sync-tsx-transform",
+          "jsx-lowering",
+          "minification"
+        ],
+        "bytes": 137000,
+        "checksum": 731100389,
+        "elapsedMs": 498,
+        "operationsPerSecond": 1004.0160642570281
+      },
+      "maxRssBytes": 84385792,
+      "wallTimeMs": 666.168126,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/esbuild-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "500",
+        "QUENCH_BENCH_WARMUPS": "50"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "esbuild-transform",
+        "package": "esbuild@0.28.2",
+        "rounds": 500,
+        "warmups": 50,
+        "cases": [
+          "sync-tsx-transform",
+          "jsx-lowering",
+          "minification"
+        ],
+        "bytes": 137000,
+        "checksum": 731100389,
+        "elapsedMs": 467,
+        "operationsPerSecond": 1070.6638115631692
+      },
+      "maxRssBytes": 69550080,
+      "wallTimeMs": 595.869924,
+      "stderr": "",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/esbuild-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "500",
+        "QUENCH_BENCH_WARMUPS": "50"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "esbuild-transform",
+        "package": "esbuild@0.28.2",
+        "rounds": 500,
+        "warmups": 50,
+        "cases": [
+          "sync-tsx-transform",
+          "jsx-lowering",
+          "minification"
+        ],
+        "bytes": 137000,
+        "checksum": 731100389,
+        "elapsedMs": 1553,
+        "operationsPerSecond": 321.9575016097875
+      },
+      "maxRssBytes": 61911040,
+      "wallTimeMs": 1796.906022,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/esbuild-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "500",
+        "QUENCH_BENCH_WARMUPS": "50"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "esbuild-transform",
+        "package": "esbuild@0.28.2",
+        "rounds": 500,
+        "warmups": 50,
+        "cases": [
+          "sync-tsx-transform",
+          "jsx-lowering",
+          "minification"
+        ],
+        "bytes": 137000,
+        "checksum": 731100389,
+        "elapsedMs": 428,
+        "operationsPerSecond": 1168.2242990654206
+      },
+      "maxRssBytes": 70074368,
+      "wallTimeMs": 534.190376,
+      "stderr": "",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/esbuild-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "500",
+        "QUENCH_BENCH_WARMUPS": "50"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "esbuild-transform",
+        "package": "esbuild@0.28.2",
+        "rounds": 500,
+        "warmups": 50,
+        "cases": [
+          "sync-tsx-transform",
+          "jsx-lowering",
+          "minification"
+        ],
+        "bytes": 137000,
+        "checksum": 731100389,
+        "elapsedMs": 1497,
+        "operationsPerSecond": 334.001336005344
+      },
+      "maxRssBytes": 62251008,
+      "wallTimeMs": 1742.897432,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/esbuild-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "500",
+        "QUENCH_BENCH_WARMUPS": "50"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "esbuild-transform",
+        "package": "esbuild@0.28.2",
+        "rounds": 500,
+        "warmups": 50,
+        "cases": [
+          "sync-tsx-transform",
+          "jsx-lowering",
+          "minification"
+        ],
+        "bytes": 137000,
+        "checksum": 731100389,
+        "elapsedMs": 490,
+        "operationsPerSecond": 1020.4081632653061
+      },
+      "maxRssBytes": 79536128,
+      "wallTimeMs": 633.17695,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/esbuild-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "500",
+        "QUENCH_BENCH_WARMUPS": "50"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "esbuild-transform",
+        "package": "esbuild@0.28.2",
+        "rounds": 500,
+        "warmups": 50,
+        "cases": [
+          "sync-tsx-transform",
+          "jsx-lowering",
+          "minification"
+        ],
+        "bytes": 137000,
+        "checksum": 731100389,
+        "elapsedMs": 1421,
+        "operationsPerSecond": 351.8648838845883
+      },
+      "maxRssBytes": 62025728,
+      "wallTimeMs": 1655.029156,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/esbuild-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "500",
+        "QUENCH_BENCH_WARMUPS": "50"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "esbuild-transform",
+        "package": "esbuild@0.28.2",
+        "rounds": 500,
+        "warmups": 50,
+        "cases": [
+          "sync-tsx-transform",
+          "jsx-lowering",
+          "minification"
+        ],
+        "bytes": 137000,
+        "checksum": 731100389,
+        "elapsedMs": 461,
+        "operationsPerSecond": 1084.5986984815618
+      },
+      "maxRssBytes": 84041728,
+      "wallTimeMs": 631.002544,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/esbuild-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "500",
+        "QUENCH_BENCH_WARMUPS": "50"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "esbuild-transform",
+        "package": "esbuild@0.28.2",
+        "rounds": 500,
+        "warmups": 50,
+        "cases": [
+          "sync-tsx-transform",
+          "jsx-lowering",
+          "minification"
+        ],
+        "bytes": 137000,
+        "checksum": 731100389,
+        "elapsedMs": 456,
+        "operationsPerSecond": 1096.4912280701753
+      },
+      "maxRssBytes": 71225344,
+      "wallTimeMs": 575.416473,
+      "stderr": "",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/esbuild-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "500",
+        "QUENCH_BENCH_WARMUPS": "50"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "esbuild-transform",
+        "package": "esbuild@0.28.2",
+        "rounds": 500,
+        "warmups": 50,
+        "cases": [
+          "sync-tsx-transform",
+          "jsx-lowering",
+          "minification"
+        ],
+        "bytes": 137000,
+        "checksum": 731100389,
+        "elapsedMs": 444,
+        "operationsPerSecond": 1126.126126126126
+      },
+      "maxRssBytes": 84541440,
+      "wallTimeMs": 585.085459,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/esbuild-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "500",
+        "QUENCH_BENCH_WARMUPS": "50"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "esbuild-transform",
+        "package": "esbuild@0.28.2",
+        "rounds": 500,
+        "warmups": 50,
+        "cases": [
+          "sync-tsx-transform",
+          "jsx-lowering",
+          "minification"
+        ],
+        "bytes": 137000,
+        "checksum": 731100389,
+        "elapsedMs": 382,
+        "operationsPerSecond": 1308.9005235602094
+      },
+      "maxRssBytes": 70320128,
+      "wallTimeMs": 482.937351,
+      "stderr": "",
+      "command": [
+        "/home/agent/.npm/_npx/5c4f1b4a21be27f7/node_modules/.bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/esbuild-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "500",
+        "QUENCH_BENCH_WARMUPS": "50"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "esbuild-transform",
+        "package": "esbuild@0.28.2",
+        "rounds": 500,
+        "warmups": 50,
+        "cases": [
+          "sync-tsx-transform",
+          "jsx-lowering",
+          "minification"
+        ],
+        "bytes": 137000,
+        "checksum": 731100389,
+        "elapsedMs": 1392,
+        "operationsPerSecond": 359.1954022988506
+      },
+      "maxRssBytes": 62214144,
+      "wallTimeMs": 1622.023747,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/esbuild-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "500",
+        "QUENCH_BENCH_WARMUPS": "50"
+      }
+    }
+  ]
+}

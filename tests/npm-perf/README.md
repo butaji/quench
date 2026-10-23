@@ -878,3 +878,44 @@ The React JIT diagnostic recorded zero native entries across 58 functions;
 the hottest render functions fell back 42,680–215,160 times each in a
 200-render sample. The next runtime change should target broad native coverage
 for closure/capture-heavy functions and validate both throughput and RSS.
+
+## Added package workloads (October 23, 2026)
+
+The pinned dependency set now includes all ten requested npm packages:
+React/react-dom, Next, Vite, esbuild, sharp, Fastify, Undici, ws, Pino, and
+Zod. The added workloads cover Next dynamic route matching and `NextResponse`
+JSON, Vite's TSX transform, esbuild's TSX transform, and sharp raw-image resize
+plus WebP encoding. Inputs, lockfile and binary hashes, versions, parity
+checksums, medians, and sampled RSS are retained in
+[`evidence/tod173-npm-10-2026-10-23/`](../../evidence/tod173-npm-10-2026-10-23/).
+
+Five-run Linux diagnostics show no package win. Quench must exceed both
+comparators' throughput by 20% and reduce both maximum RSS values by 20%; Linux
+RSS here is sampled every 50 ms and cannot qualify a result.
+
+| Workload / phase | Quench ops/s / MiB | Node ops/s / MiB | Bun ops/s / MiB | Result |
+| --- | ---: | ---: | ---: | --- |
+| esbuild no-JIT | 305 / 59.29 | 899 / 64.28 | 965 / 56.88 | Loses speed and Bun RSS |
+| esbuild JIT | 334 / 59.15 | 1,042 / 80.15 | 1,104 / 67.06 | Loses speed |
+| sharp no-JIT | 367 / 50.54 | 453 / 56.18 | 452 / 52.20 | Closest no-JIT; misses both gates |
+| sharp JIT | 360 / 46.53 | 441 / 68.57 | 450 / 61.06 | RSS improves, speed loses |
+| Next no-JIT, 20k rounds | 4,196 / 53.22 | 19,342 / 42.18 | 112,360 / 46.14 | Loses both |
+| Next JIT, 20k rounds | 4,314 / 39.56 | 81,301 / 60.04 | 210,526 / 52.52 | RSS improves, speed loses |
+| Vite no-JIT, 500 rounds | 8,333 / 68.88 | unavailable | 13,889 / 59.13 | Node `--jitless` cannot load Oxc WASM |
+| Vite JIT, 500 rounds | 8,333 / 56.69 | 27,778 / 70.86 | 31,250 / 66.42 | Loses speed |
+| Undici no-JIT | 1,984 / 60.07 | unavailable | 3,257 / 46.64 | Node `--jitless` cannot load llhttp WASM |
+
+Next's extended 20,000-operation samples remove the clock-resolution artifact
+in the earlier short runs. The output matched across all participating
+engines. The extended JIT sample shows lower Quench RSS, but throughput is
+about 19x below Node and 49x below Bun. Sharp's native work and asynchronous
+Node-API completion path make it the nearest candidate: with JIT, Quench RSS is
+24% below Bun, but throughput remains about 20% below Bun and 18% below Node.
+The small package sweep does not justify a runtime change yet; further work
+needs function-level profiling and paired candidate/control screens.
+
+Vite and Undici node no-JIT omissions are explicit in their reports and do not
+mean a runtime result was invented. Bun and Quench run those phases. All package
+screens have `qualificationReady: false`; compare them as host-local
+performance diagnostics only. The Zod study and its source-rejected candidates
+remain documented separately in `evidence/tod173-zod-2026-10-23/`.
