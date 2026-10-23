@@ -2358,9 +2358,8 @@ impl Heap {
                     if Self::marked(&self.marks, index_usize) {
                         promoted += 1;
                     } else if let Some(cell) = slot.cell.take() {
+                        // Its mark bit is already clear: the test above found it so.
                         reclaim(properties, index_usize, cell);
-                        self.marks[index_usize / 64]
-                            .fetch_and(!(1 << (index_usize % 64)), Ordering::Relaxed);
                     }
                 }
                 self.young.clear();
@@ -2986,32 +2985,6 @@ impl Heap {
         if length <= MAX_DENSE_ARRAY_HOLE_LENGTH || dense_enough {
             self.materialize_sparse_array(array, length);
         }
-    }
-    /// Stores `value` at each index of `range`, which lies within `array`'s length, in its
-    /// dense elements: one store per element, where `sparse_set` would hash each. Storage
-    /// that is sparse turns dense first when the filled range alone makes it dense enough
-    /// (`dense_storage_fits`); otherwise `false` leaves the array as it was.
-    pub(crate) fn fill_array_elements(
-        &mut self,
-        array: Value,
-        range: std::ops::Range<usize>,
-        value: Value,
-    ) -> bool {
-        if let Some(length) = self.sparse_length(array) {
-            if !dense_storage_fits(range.len(), length) {
-                return false;
-            }
-            self.materialize_sparse_array(array, length);
-        }
-        let Some(object) = self.array_store_mut(array, value) else {
-            return false;
-        };
-        let elements = object.elements_mut();
-        if range.end > elements.len() {
-            return false;
-        }
-        elements.make_mut()[range].fill(value);
-        true
     }
     pub(crate) fn sparse_set_length(&mut self, array: Value, length: usize) {
         let Some(elements) = self.array_elements(array) else {
