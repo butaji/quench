@@ -407,3 +407,82 @@ and left the same four sites on top. These profile builds are intentionally
 instrumented; the extended run's 52.9 renders/s is not a performance result.
 Output matched at 2,498,000 bytes/checksum 41826. Full diagnostic output:
 `work/react-perf/react-call-target-profile-all.log`.
+
+The lane profiler now reports dynamic record counts by opcode and the next
+opcode after each Move. Over the same 500-render React input, Move led with
+20.9M records, followed by GetField (14.2M), JumpBinaryFalse (10.7M),
+LoadLocalPlain (8.6M), JumpFalse (8.2M), and Call (7.9M). Move's successors
+were Move (5.8M), Call (4.5M), JumpFalse (3.6M), and GetField (1.1M); the
+existing Move-pair fusion already handles adjacent moves. This supports testing
+a Move-to-JumpFalse fusion, which skips a dispatch on about 3.6M records in this
+sample. Diagnostic output:
+`work/react-perf/react-lane-opcode-profile.log` and
+`work/react-perf/react-lane-move-successors.log`.
+
+The Move-to-JumpFalse fusion screen matched output, but the full 11-round paired
+run was effectively flat: 319.26 renders/s / 27.20 MB versus 318.69 / 27.70 MB
+for the generic PGO+512 control (+0.18% speed, -1.8% RSS). The fused handler
+was reverted. Reports:
+`work/react-perf/react-move-jumpfalse-vs-generic-screen-3.json` and
+`work/react-perf/react-move-jumpfalse-vs-generic-11.json`.
+
+Reordering the monomorphic own-field cache lookup to fetch the site cache before
+loading the receiver object record was also rejected. The 11-round paired
+React no-JIT run measured 316.7 renders/s / 27.78 MB versus 327.1 / 27.69 MB
+for the generic PGO+512 control (-3.2% speed; effectively unchanged RSS).
+Output matched at 24,980,000 bytes/checksum 414318. The small screen had also
+shown no reliable throughput gain. Report:
+`work/react-perf/react-getfield-load-order-11.json`.
+
+An activation-window experiment filled only the registers after call arguments,
+avoiding initialization stores that were immediately overwritten by the
+argument copy. In the full 11-round React no-JIT comparison it measured 307.0
+renders/s / 26.78 MB versus 312.6 / 27.66 MB for the generic PGO+512 control
+(-1.8% speed, -3.2% RSS). Output matched. Because it reduced RSS without a
+throughput win, the change was reverted. The existing PGO profile also dropped
+counts for inlined call handlers after the change, so a fresh profile would be
+needed to evaluate the candidate fairly. Report:
+`work/react-perf/react-activation-fill-after-args-11.json`.
+
+The feature-only lane profiler now counts dynamic opcode transitions. Across
+500 React SSR renders, the most frequent pairs were `LoadLocalPlain` →
+`JumpBinaryFalse` (5.75M), `Move` → `Call` (5.57M), `JumpBinaryFalse` →
+`LoadLocalPlain` (5.22M), and `Move` → `JumpFalse` (4.22M). These dynamic counts
+include taken control flow and are more useful for choosing fusion candidates
+than static instruction adjacency. The instrumented run produced the expected
+2,498,000 bytes/checksum 41826; its throughput is diagnostic only. Report:
+`work/react-perf/react-dynamic-transition-profile.log`.
+
+A direct `LoadConst` → `Return` fusion was screened from the dynamic pair
+census. The short 3-round screen measured 311.1 renders/s / 26.91 MB versus
+316.1 / 27.72 MB for the control, but the full 11-round paired run reversed
+that result: 303.0 / 27.37 MB versus 299.6 / 27.67 MB (+1.1% speed, -1.1%
+RSS). Output matched at 24,980,000 bytes/checksum 414318, so the fusion is
+retained as a small speed-and-memory improvement. It returns the already
+resolved constant through the existing activation/frame return path, avoiding
+the temporary register write/read and one dispatch. Reports:
+`work/react-perf/react-loadconst-return-screen-3.json` and
+`work/react-perf/react-loadconst-return-11.json`.
+
+The next diagnostic classified a plain `Move` immediately before `Call` by
+whether its destination supplies the callee, receiver, or a call-window argument.
+Among the classified instances in a 500-render React SSR run, no destinations
+supplied the callee or receiver: 1.77M wrote argument 0, 154K argument 1, 112K
+argument 2, 198K argument 3, and 112K a later argument. Calls with one argument
+accounted for 1.77M instances. This narrows a possible fusion to argument-window
+transfer, but does not establish a profitable or safe generalized call fast path;
+the instrumented run's timing is diagnostic only. Output matched at 2,498,000
+bytes/checksum 41826. Report:
+`work/react-perf/react-movecall-relations-500.json` and
+`work/react-perf/react-movecall-relations-500.log`.
+
+Clearing script activation windows of at most eight registers exactly, instead
+of always writing the 16-register fill block, reduced work but lost throughput.
+The short screen measured 308.3 renders/s / 25.95 MB versus 335.7 / 27.75 MB
+for the same-run control. The full 11-round paired run confirmed a smaller
+regression: 313.2 / 27.22 MB versus 327.0 / 27.68 MB (-4.2% speed, -1.7% RSS).
+Output matched at 24,980,000 bytes/checksum 414318; the implementation was
+reverted. Next is a guarded adjacent own-field pair, based on the 2.91M dynamic
+`GetField → GetField` transitions in the 500-render profile. Reports:
+`work/react-perf/react-exact-small-fill-screen-3.json` and
+`work/react-perf/react-exact-small-fill-11.json`.
