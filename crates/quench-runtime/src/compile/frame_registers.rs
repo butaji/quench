@@ -128,9 +128,6 @@ pub(super) fn promote<'a>(
         if let Some(target) = instruction.numeric_local_target() {
             exclude(usize::from(target));
         }
-        if let Some(local) = instruction.local_field_base() {
-            exclude(usize::from(local));
-        }
         if instruction.op().immediate_role() != ImmediateRole::LocalSlot {
             continue;
         }
@@ -213,6 +210,12 @@ pub(super) fn promote<'a>(
             }
             _ => {
                 let mut changed = false;
+                // A field read fused onto a local (`rewrite::LocalField`) reads the register
+                // the local now lives in, as the load it absorbed would have.
+                if let Some(target) = instruction.local_field_base().and_then(|local| register(usize::from(local))) {
+                    instruction.set_b(crate::bytecode::FieldBase::register(target).0);
+                    changed = true;
+                }
                 for field in [InstructionField::B, InstructionField::C] {
                     if !matches!(
                         instruction.op().field_layout(field),
