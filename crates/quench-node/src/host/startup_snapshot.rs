@@ -298,6 +298,10 @@ pub(crate) fn preload(
             context.call_rooted(require, undefined, &[specifier]).map(drop)
         })?;
     }
+    // Node's `fs` loads its option policy with it; Quench's at its first call.
+    if kind.builtins().contains(&"fs") {
+        context.scoped(crate::modules::fs_policy_shared_vm::capture)?;
+    }
     Ok(())
 }
 

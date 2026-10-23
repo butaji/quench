@@ -2942,9 +2942,11 @@ pub(crate) fn read_file_sync(
     let defaulted = context
         .rooted_value(provided_options)
         .is_some_and(|value| value.is_undefined() || value.is_null());
+    // An encoding name alone (`utf8_encoding_option`) also leaves the default flag `r`.
+    let default_flag = defaulted || utf8_encoding_option(context, provided_options, defaults)?;
     let options = if defaulted {
         defaults
-    } else if utf8_encoding_option(context, provided_options, defaults)? {
+    } else if default_flag {
         let key = context.string_rooted("encoding");
         context.define_data_property_rooted(defaults, key, provided_options, true, true, true)?;
         defaults
@@ -2993,7 +2995,7 @@ pub(crate) fn read_file_sync(
     }
     let mut filename = None;
     let bytes = if let Some(fd) = fd {
-        if !defaulted {
+        if !default_flag {
             let flag = get(context, options, "flag")?;
             super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
         }
@@ -3019,7 +3021,8 @@ pub(crate) fn read_file_sync(
         if !fast_utf8 && !std::fs::metadata(&path).is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0) {
             return super::fs_read_file_shared_vm::read_general(context, original, options, false, false);
         }
-        let flags = if defaulted {
+        // Node's `stringToFlags('r')`.
+        let flags = if default_flag {
             libc::O_RDONLY
         } else {
             let flags = super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
