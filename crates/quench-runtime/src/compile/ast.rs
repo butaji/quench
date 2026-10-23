@@ -563,7 +563,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     fn parameter_local_names(params: &oxc_ast::ast::FormalParameters<'_>) -> Vec<String> {
-        let non_simple = Self::has_non_simple_parameters(params);
+        let non_simple = !Self::binds_parameters_directly(params);
         let mut result = params
             .items
             .iter()
@@ -578,6 +578,20 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             ));
         }
         result
+    }
+
+    /// Whether each parameter's binding is the local its argument arrives in: identifiers
+    /// without initializers, and an identifier rest parameter, whose local the activation
+    /// fills with the rest array. Such a list evaluates nothing and binds no pattern, so it
+    /// needs no parameter-scope bindings; a rest one is still non-simple to the language
+    /// (`has_non_simple_parameters`): its `arguments` is unmapped.
+    pub(super) fn binds_parameters_directly(params: &oxc_ast::ast::FormalParameters<'_>) -> bool {
+        params.items.iter().all(|item| {
+            item.initializer.is_none() && matches!(item.pattern, BindingPattern::BindingIdentifier(_))
+        }) && params
+            .rest
+            .as_ref()
+            .is_none_or(|rest| matches!(rest.rest.argument, BindingPattern::BindingIdentifier(_)))
     }
 
     pub(super) fn has_non_simple_parameters(params: &oxc_ast::ast::FormalParameters<'_>) -> bool {
@@ -707,27 +721,19 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     pub(super) fn emit_parameter_bindings(&mut self, params: &oxc_ast::ast::FormalParameters<'_>) {
-        let non_simple = Self::has_non_simple_parameters(params);
-        // A simple parameter list binds each name to the slot its argument already fills,
-        // so there is nothing to initialize.
-        if !non_simple {
+        // A list that binds directly names each parameter by the slot its argument (or the
+        // rest array) already fills, so there is nothing to initialize.
+        if Self::binds_parameters_directly(params) {
             return;
         }
         let parameter_names = Self::parameter_local_names(params);
-        if non_simple {
-            for name in Self::parameter_bound_names(params) {
-                let atom = self.owner.atom(&name);
-                if let Some(slot) = self.local_slots.get(&atom).copied() {
-                    self.emit(Op::InitializeTdz, 0, 0, 0, u32::from(slot));
-                }
+        for name in Self::parameter_bound_names(params) {
+            let atom = self.owner.atom(&name);
+            if let Some(slot) = self.local_slots.get(&atom).copied() {
+                self.emit(Op::InitializeTdz, 0, 0, 0, u32::from(slot));
             }
         }
         for (index, item) in params.items.iter().enumerate() {
-            // A simple parameter's binding is the local its argument arrives in, already
-            // initialized: binding it again would store the value it holds.
-            if !non_simple {
-                continue;
-            }
             let atom = self.owner.atom(&parameter_names[index]);
             let current = self.load_atom(atom);
             if let Some(initializer) = &item.initializer {
@@ -762,7 +768,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             let atom = self.owner.atom(&Self::parameter_name(
                 &rest.rest.argument,
                 params.items.len(),
-                non_simple,
+                true,
             ));
             let current = self.load_atom(atom);
             self.bind_pattern(&rest.rest.argument, current);
