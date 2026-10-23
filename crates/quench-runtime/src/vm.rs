@@ -1688,6 +1688,9 @@ pub(crate) struct Vm<H> {
     /// Owners with out-of-cell edges at the previous collection, which sizes the next index.
     gc_owned_root_count: usize,
     frame_pool: Vec<Box<Frame>>,
+    /// Emptied call stacks of finished general loops, one per nesting level reached: a loop
+    /// takes one on entry, so running a job allocates no stack of its own.
+    pending_call_stacks: Vec<Vec<dispatch_frame::PendingGeneralCall>>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
     /// Whether Wasm functions with a compiled denotation run as native code.

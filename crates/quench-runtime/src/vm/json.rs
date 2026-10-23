@@ -133,26 +133,8 @@ impl JsonPlainWrite {
 
 /// An integer's decimal digits, as Number::toString writes them.
 fn write_json_integer(value: i32, output: &mut JsonText) {
-    let mut digits = [0u8; I32_DECIMAL_WIDTH];
-    let mut start = digits.len();
-    let mut magnitude = value.unsigned_abs();
-    loop {
-        start -= 1;
-        digits[start] = b'0' + (magnitude % DECIMAL_RADIX) as u8;
-        magnitude /= DECIMAL_RADIX;
-        if magnitude == 0 {
-            break;
-        }
-    }
-    if value < 0 {
-        output.push(b'-');
-    }
-    output.extend_from_slice(&digits[start..]);
+    output.extend_from_slice(itoa::Buffer::new().format(value).as_bytes());
 }
-
-const DECIMAL_RADIX: u32 = 10;
-/// The decimal digits of the largest `i32` magnitude, 2^31.
-const I32_DECIMAL_WIDTH: usize = 10;
 
 /// The JSON text a stringification writes: UTF-8 bytes, decoded once when it completes.
 type JsonText = Vec<u8>;
@@ -1189,7 +1171,7 @@ impl<H: Host> Vm<H> {
         }
         if let Some(number) = value.as_number() {
             if number.is_finite() {
-                plain.output.extend_from_slice(crate::number_to_string::format(number).as_bytes());
+                crate::number_to_string::write(number, &mut plain.output);
             } else {
                 plain.output.extend_from_slice(b"null");
             }
@@ -1574,7 +1556,7 @@ impl<H: Host> Vm<H> {
         }
         if let Some(value) = value.as_number() {
             if value.is_finite() {
-                state.output.extend_from_slice(crate::number_to_string::format(value).as_bytes());
+                crate::number_to_string::write(value, &mut state.output);
             } else {
                 state.output.extend_from_slice(b"null");
             }
