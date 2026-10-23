@@ -3617,14 +3617,15 @@ script_handler! {
 
 script_handler! {
     /// `GetField` of a string primitive, which `String.prototype` answers through the
-    /// site's cache (`Vm::string_prototype_field_hit`): a method read, as `s.substring`, at a
-    /// site `Vm::string_field_site_cacheable` admits. A miss moves the record on as
+    /// site's cache or its chain's data walk (`Vm::cached_string_field_hit`): a method read,
+    /// as `s.substring`, or an absent name, at a site `Vm::string_field_site_cacheable` admits. A miss moves the record on as
     /// `lane_get_field_miss` decides.
     fn lane_get_field_string<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
         let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
-            .filter(|object| vm.heap.is_string(*object))
-            .and_then(|_| vm.string_prototype_field_hit(i.c))
+            .and_then(|object| vm.cached_string_field_hit(code, object, i.imm(), i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script(cx))
         };
@@ -8477,15 +8478,23 @@ script_handler! {
     }
 }
 
+/// The by-name load a `LoadName` handler runs for (`Op::LoadName`): a `LoadNameCall` also
+/// writes its call's receiver, and a `LoadNameTypeof` reads an absent global as `undefined`.
+const LOAD_NAME: u8 = 0;
+/// `LOAD_NAME` for `Op::LoadNameCall`.
+const LOAD_NAME_CALL: u8 = 1;
+/// `LOAD_NAME` for `Op::LoadNameTypeof`.
+const LOAD_NAME_TYPEOF: u8 = 2;
+
 script_handler! {
     /// A `LoadName`'s first run: a name the global object answers whenever no global
     /// lexical binding shadows it (`Vm::names_resolve_to_global_object`: a function whose
     /// unresolved names are global (`ProgramStore::unresolved_names_are_global`) and resolve
     /// statically, and a name no internal binding owns) takes `lane_load_global_name`; any
-    /// other always takes the general path. A `LoadNameCall` (`CALL`) also writes the call's
-    /// receiver, `undefined` for a binding of the global object's environment.
+    /// other always takes the general path. `KIND` is the load's (`LOAD_NAME`): a call's also
+    /// writes its receiver, `undefined` for a binding of the global object's environment.
     #[inline(never)]
-    fn lane_load_name_first<CALL: bool>(cx, r, ip, i, view) {
+    fn lane_load_name_first<KIND: u8>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
@@ -8494,7 +8503,7 @@ script_handler! {
                 crate::bytecode::intrinsic_name_native(&code.atoms[i.imm() as usize])
         {
             r.set(i.a, vm.native_value(native));
-            if CALL {
+            if KIND == LOAD_NAME_CALL {
                 r.set(i.b, Value::UNDEFINED);
             }
             next!(cx, r, following(ip), Carried::script(cx))
@@ -8504,18 +8513,23 @@ script_handler! {
             .activations
             .last()
             .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
-        let global = vm.programs.unresolved_names_are_global(unsafe { (*cx).program }, function)
-            && !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
-            && code.function_get(function as usize).is_some_and(|function| {
-                function.names_resolve_statically(code)
-            });
+        // An internal name is no binding source text can declare, except the internal globals
+        // the realm installs on its global object, which a static lookup reads as any other.
+        // Static resolution rules out a `with` object, which the general search consults first.
+        let statically = code
+            .function_get(function as usize)
+            .is_some_and(|function| function.names_resolve_statically(code));
+        let global = statically
+            && vm.programs.unresolved_names_are_global(unsafe { (*cx).program }, function)
+            && (!vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
+                || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&vm.atom_name(i.imm())));
         if global {
-            requicken(ip, lane_load_global_name::<H, CALL>);
-            sibling!(lane_load_global_name::<H, CALL>, r, ip, Carried::script(cx))
+            requicken(ip, lane_load_global_name::<H, KIND>);
+            sibling!(lane_load_global_name::<H, KIND>, r, ip, Carried::script(cx))
         }
         if crate::bytecode::is_intrinsic_name(vm.atom_name(i.imm())) {
-            requicken(ip, lane_load_intrinsic_name::<H, CALL>);
-            sibling!(lane_load_intrinsic_name::<H, CALL>, r, ip, Carried::script(cx))
+            requicken(ip, lane_load_intrinsic_name::<H, KIND>);
+            sibling!(lane_load_intrinsic_name::<H, KIND>, r, ip, Carried::script(cx))
         }
         requicken(ip, lane_exit::<H>);
         exit(ip)
@@ -8527,13 +8541,13 @@ script_handler! {
     /// emits for `{ __proto__: v }` or `super`: the native it stands for, which no binding
     /// can shadow and no scope affects (`Vm::intrinsic_name_value`).
     #[inline(never)]
-    fn lane_load_intrinsic_name<CALL: bool>(cx, r, ip, i, view) {
+    fn lane_load_intrinsic_name<KIND: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let Some(value) = vm.intrinsic_name_value(i.imm()) else {
             return exit(ip);
         };
         r.set(i.a, value);
-        if CALL {
+        if KIND == LOAD_NAME_CALL {
             r.set(i.b, Value::UNDEFINED);
         }
         next!(cx, r, following(ip), Carried::script(cx))
@@ -8545,9 +8559,10 @@ script_handler! {
     /// an initialized global lexical binding of the name, which the general path's search
     /// finds first there, else the global object's cached field (`Vm::cached_field_hit`).
     /// Any other read, including an uninitialized binding or a cache miss, takes the general
-    /// path, which raises or caches it. A `LoadNameCall` (`CALL`) also writes the call's
-    /// receiver, `undefined` for a global binding.
-    fn lane_load_global_name<CALL: bool>(cx, r, ip, i, view) {
+    /// path, which raises or caches it. A `LoadNameCall` (`LOAD_NAME_CALL`) also writes the
+    /// call's receiver, `undefined` for a global binding, and `typeof` (`LOAD_NAME_TYPEOF`)
+    /// reads an absent name as `undefined`.
+    fn lane_load_global_name<KIND: u8>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
@@ -8558,7 +8573,7 @@ script_handler! {
                 return exit(ip);
             };
             r.set(i.a, value);
-            if CALL {
+            if KIND == LOAD_NAME_CALL {
                 r.set(i.b, Value::UNDEFINED);
             }
             next!(cx, r, following(ip), Carried::script(cx))
@@ -8566,14 +8581,16 @@ script_handler! {
         let value = match vm.cached_field_hit(code, vm.realm.globals, i.c) {
             super::object::FieldCacheProbe::Hit(value) => value,
             // A global object no cache records (a dictionary shape) still answers a present
-            // data property through its shape walk; an absent name raises on the general path.
-            _ => match vm.plain_global_binding(atom) {
-                Some(value) => value,
-                None => return exit(ip),
+            // data property through its shape walk. An absent name is `undefined` to `typeof`
+            // and raises on the general path otherwise.
+            _ => match vm.plain_global_lookup(atom) {
+                Some(Some(value)) => value,
+                Some(None) if KIND == LOAD_NAME_TYPEOF => Value::UNDEFINED,
+                _ => return exit(ip),
             },
         };
         r.set(i.a, value);
-        if CALL {
+        if KIND == LOAD_NAME_CALL {
             r.set(i.b, Value::UNDEFINED);
         }
         next!(cx, r, following(ip), Carried::script(cx))
@@ -9167,10 +9184,10 @@ fn lane_promise_native<H: Host>(
 /// (`Vm::plain_array_iterator_next`), which allocates its result, an object's own
 /// property query by a string key (`Vm::plain_own_property_query`), and a dense array's
 /// `splice` (`Vm::plain_array_splice`, which allocates the removed array), `unshift`
-/// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), `Object.hasOwn`,
-/// `Object.is`, `Symbol.for` of a string, and the Map and Set mutators on their own
-/// collections (`Vm::plain_collection_mutation`). `None` leaves any other call to
-/// `lane_call_native`.
+/// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), for-in's per-key
+/// check (`Vm::plain_for_in_key_is_enumerable`), `Object.hasOwn`, `Object.is`, `Symbol.for`
+/// of a string, and the Map and Set mutators on their own collections
+/// (`Vm::plain_collection_mutation`). `None` leaves any other call to `lane_call_native`.
 #[inline(never)]
 fn lane_pure_native<H: Host>(
     vm: &mut Vm<H>,
@@ -9200,6 +9217,7 @@ fn lane_pure_native<H: Host>(
         }
         Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
         Native::ArrayShift => vm.plain_array_shift(receiver),
+        Native::ForInKeyIsEnumerable => vm.plain_for_in_key_is_enumerable(code, *args.first()?, *args.get(1)?),
         Native::ObjectHasOwn => vm.plain_own_property_query(
             code,
             Native::ObjectPrototypeHasOwnProperty,
@@ -9208,6 +9226,14 @@ fn lane_pure_native<H: Host>(
         ),
         // Pure of any arguments: SameValue.
         Native::ObjectIs => vm.call_object_native(code, Native::ObjectIs, args).ok(),
+        // `super` reads (`Reflect.get` and `Reflect.getPrototypeOf` of a home object): an
+        // ordinary target's data property, whose read ignores the receiver, and its prototype.
+        Native::ReflectGet => {
+            let target = *args.first()?;
+            vm.heap.ordinary_object(target)?;
+            vm.plain_keyed_get(target, *args.get(1)?)
+        }
+        Native::ReflectGetPrototypeOf => Some(vm.heap.ordinary_object(*args.first()?)?.proto()),
         // The registry lookup of a string key, which ToString leaves as it is.
         Native::SymbolFor if args.first().is_some_and(|key| vm.heap.is_string(*key)) => {
             let symbol = vm.call_symbol_native(code, Native::SymbolFor, args).ok()?;
@@ -12143,8 +12169,9 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CallKnown => Some(lane_call_known::<H>),
         Op::Call => Some(lane_script_call::<H>),
         Op::Construct => Some(lane_script_construct::<H>),
-        Op::LoadName => Some(lane_load_name_first::<H, false>),
-        Op::LoadNameCall => Some(lane_load_name_first::<H, true>),
+        Op::LoadName => Some(lane_load_name_first::<H, LOAD_NAME>),
+        Op::LoadNameCall => Some(lane_load_name_first::<H, LOAD_NAME_CALL>),
+        Op::LoadNameTypeof => Some(lane_load_name_first::<H, LOAD_NAME_TYPEOF>),
         Op::MakeObject2 => Some(lane_make_object2::<H>),
         Op::MakeClosure => Some(lane_make_closure::<H>),
         Op::MakeObjectLiteral => Some(lane_make_object_literal::<H>),

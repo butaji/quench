@@ -1,6 +1,21 @@
 use smallvec::SmallVec;
 
 pub(crate) const INTRINSIC_REGEXP_BINDING: &str = "\0quench:intrinsic-regexp";
+/// Internal global bindings, which compiled code loads by name and no source text can
+/// declare: the for-in key list and its per-key enumerability check, iterator closing and
+/// `with` scope exit (`WITH_ENTER_BINDING` enters).
+pub(crate) const FOR_IN_KEYS_BINDING: &str = "\0quench:for-in-keys";
+pub(crate) const FOR_IN_KEY_IS_ENUMERABLE_BINDING: &str = "\0quench:for-in-key-is-enumerable";
+pub(crate) const ITERATOR_CLOSE_BINDING: &str = "\0quench:iterator-close";
+pub(crate) const WITH_EXIT_BINDING: &str = "\0quench:with-exit";
+/// Every internal global the realm installs on its global object.
+pub(crate) const INTERNAL_GLOBAL_BINDINGS: [&str; 5] = [
+    FOR_IN_KEYS_BINDING,
+    FOR_IN_KEY_IS_ENUMERABLE_BINDING,
+    ITERATOR_CLOSE_BINDING,
+    WITH_ENTER_BINDING,
+    WITH_EXIT_BINDING,
+];
 
 /// The native an engine-internal intrinsic name stands for: a by-name read of it resolves to
 /// that native before consulting any binding (`Vm::intrinsic_name_value`), and no source
@@ -17,9 +32,9 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
         "\0quench:object-define-property" => Native::ObjectDefineProperty,
         "\0quench:object-freeze" => Native::ObjectFreeze,
         // The iteration helpers each realm also installs on its global object.
-        "\0quench:iterator-close" => Native::IteratorClose,
-        "\0quench:for-in-keys" => Native::ForInKeys,
-        "\0quench:for-in-key-is-enumerable" => Native::ForInKeyIsEnumerable,
+        ITERATOR_CLOSE_BINDING => Native::IteratorClose,
+        FOR_IN_KEYS_BINDING => Native::ForInKeys,
+        FOR_IN_KEY_IS_ENUMERABLE_BINDING => Native::ForInKeyIsEnumerable,
         _ => return None,
     })
 }
