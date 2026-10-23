@@ -11413,6 +11413,30 @@ for(const object of [{},[],function(){},Object.create(null)]) {
 }
 
 #[test]
+fn eval_comment_only_sources_take_the_empty_script_fast_path() {
+    let source = r#"
+if (eval('/* block comment */ // trailing comment') !== undefined) throw Error('comment completion');
+if (eval('\uFEFF/* Unicode space */\u2028// line comment') !== undefined) throw Error('Unicode trivia');
+if (eval('// line comment\u2028 11') !== 11) throw Error('line separator ended comment');
+if (eval('/* comment */ 17') !== 17) throw Error('executable source was skipped');
+let invalid = false;
+try { eval('/* unterminated'); } catch (error) { invalid = error instanceof SyntaxError; }
+if (!invalid) throw Error('unterminated comment accepted');
+"#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "eval-comment-fast-path.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "eval-comment-fast-path.js").unwrap(),
+    ] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
 fn private_data_values_survive_collection_and_release_without_their_receiver() {
     let source = r#"
 class Base {constructor(object){return object}}
