@@ -11193,6 +11193,60 @@ fn js_jit_lowers_guarded_numeric_field_reads_from_nonzero_formal() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_lowers_guarded_numeric_field_reads_from_captured_objects() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function makeReader() {
+            const state = {value: 7};
+            function read() { return state.value * 2; }
+            return {read, state};
+          }
+          const reader = makeReader();
+          for (let index = 0; index < 40; index++) {
+            if (reader.read() !== 14) throw Error('captured numeric field');
+          }
+          reader.state.value = '8';
+          if (reader.read() !== 16) throw Error('captured field type guard');
+          let reads = 0;
+          Object.defineProperty(reader.state, 'value', {
+            configurable: true,
+            get() { reads++; return 9; }
+          });
+          if (reader.read() !== 18 || reads !== 1) throw Error('captured accessor fallback');
+        "#,
+        "js-jit-captured-object-field.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "read")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function_id)
+    else {
+        panic!("captured-object numeric field region should compile");
+    };
+    assert_eq!(compiled.numeric_field_inputs().len(), 1);
+    assert!(matches!(
+        compiled.numeric_field_inputs()[0].receiver,
+        super::js_compiled::JsJitFieldReceiver::Capture { .. }
+    ));
+    assert!(compiled.native_entries() >= 9);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_lowers_multiple_guarded_this_field_reads_into_arithmetic() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
