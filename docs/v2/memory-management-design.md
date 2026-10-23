@@ -356,6 +356,20 @@ Against the target, max RSS ≤ 0.8 × the lowest other runtime
 
 ### 8.4 What remains, by owner
 
+- **Code layout** (RSS lane, TOD-171): bolting v2-gc `3d7dc0656a` with the old profile gave
+  anonymous memory −120 KiB but file pages +350 KiB on Richards. The board needs a retrained
+  link order and BOLT profile before it shows this lane's gains
+  (`tod137-bolt-board-after-memo-and-first-call-…`).
+- **Warm-up spike** (this lane, partly addressed): DeltaBlue, RayTrace and RegExp peaked in
+  their first 20–100 ms. Under MemoryFirst, first-call releases 5 ms apart lower those peaks.
+  Releasing at every first call would lower them further, but costs npm 1.4–2.9× in time,
+  because no unprivileged process can tell hot code pages from cold ones.
+- **Start-up anonymous memory:** about 1.47 MB at Richards' peak, against QuickJS's whole
+  heap of 0.55 MB. The host bootstrap adds about 363 KiB of malloc, and every scored run
+  needs `process` and EventEmitter (`console.log` writes through `process.stdout`). The
+  runtime realm is about 300 KiB (c2's lazy native table and intrinsic groups, TOD-21).
+  The shape table, LaneStack and compile-cache entries are already resident only as used.
+
 - **Start-up heap** (RSS lane, TOD-21 and TOD-104): lazy host modules and lazy builtin function
   objects. The checkpoint census sizes each item; at about 1.6 MB it is larger than every
   remaining gap.
