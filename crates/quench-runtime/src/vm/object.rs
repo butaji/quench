@@ -3745,12 +3745,11 @@ impl<H: Host> Vm<H> {
                 .checked_add(1)
                 .filter(|length| u32::try_from(*length).is_ok())
                 .expect("object property storage exhausted"),
-            ShapeTransition::Descriptor { .. } | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured | ShapeTransition::Constructed { .. } => storage_len,
+            ShapeTransition::Descriptor { .. } | ShapeTransition::Delete { .. } | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured | ShapeTransition::Constructed { .. } => storage_len,
             ShapeTransition::Root
-            | ShapeTransition::Delete { .. }
             | ShapeTransition::Vacant
             | ShapeTransition::Dictionary { .. } => {
-                unreachable!("cached shape transitions are adds, descriptors or metadata")
+                unreachable!("cached shape transitions are adds, deletions, descriptors or metadata")
             }
         };
         let mut next = self.append_shape(shape, transition, next_storage_len);
@@ -3781,16 +3780,21 @@ impl<H: Host> Vm<H> {
         let Some(slot) = self.property_shape_slot(shape, key) else {
             return;
         };
-        let storage_len = self.shapes[shape as usize].storage_len();
-        let next_id = self.append_shape(
+        let next_id = self.append_cached_shape_transition(
             shape,
             ShapeTransition::Delete {
                 key,
                 slot: slot as u32,
             },
-            storage_len,
         );
-        let next_id = if self.shapes[next_id as usize].dictionary_trigger.is_none() {
+        // An object keeps a shape, which caches serve, until more of its slots are vacated
+        // than hold properties: its storage is then mostly holes, and add-and-delete churn
+        // (an object used as a map) would otherwise grow its shape chain without bound.
+        let storage_len = self.shapes[next_id as usize].storage_len();
+        let vacated = storage_len - self.shape_entries(next_id).len();
+        let next_id = if self.shapes[next_id as usize].dictionary_trigger.is_none()
+            && vacated > storage_len - vacated
+        {
             let dictionary_shape = self.append_shape(
                 next_id,
                 ShapeTransition::Dictionary {
