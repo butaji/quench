@@ -591,3 +591,21 @@ with an overflow path, preserving deep-chain behavior. Both still require
 paired production throughput/RSS checks across package workloads before they
 can be accepted. Diagnostic log:
 `work/react-perf/react-memory-field-add-occupancy.stderr`.
+
+The fresh post-merge JIT baseline (three rounds, 1,000 renders each) matched
+output and measured 537.6 renders/s / 28.90 MB for Quench, 15,625 / 46.87 MB
+for Node, and 8,621 / 98.58 MB for Bun. This is a diagnostic sample; Quench is
+still far behind on speed.
+
+I tested removing a duplicate string-concat cache probe on the string+string
+miss path, then retrained PGO against that change. In 11-round paired screens
+at 1,000 renders, no-JIT measured 516.8 / 37.39 MB versus control at 513.6 /
+36.40 MB (+0.6% throughput, +2.7% RSS); JIT measured 514.1 / 29.40 MB versus
+509.7 / 29.04 MB (+0.9% throughput, +1.2% RSS). All outputs matched. These
+results show no useful performance win, so I reverted the cache-probe change.
+The aggregate profiler did miss early cache hits; its counter now records those
+hits in `binary()` so future string-cache decisions use complete counts. This
+report change is profile-only. Reports:
+`work/react-perf/react-ssr-concat-dedup-nojit-1000-3.json` and
+`work/react-perf/react-ssr-concat-dedup-jit-1000-3.json`, plus the 11-round
+paired reports with the same names and `-11` suffix.
