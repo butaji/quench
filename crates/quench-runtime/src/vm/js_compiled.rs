@@ -4312,6 +4312,7 @@ fn operand_value(
 /// which never change, so it is derived once per function (`ProgramStore::js_entry_facts`);
 /// re-deriving them at every entry of a function the tier watches had made JIT runs execute
 /// more instructions than interpreted ones (semver npm scenario +4.6%).
+#[derive(Default)]
 pub(super) struct JsEntryFacts {
     pub(super) numeric_find: Option<JsJitNumericFind>,
     pub(super) field_increment: Option<JsJitThisFieldIncrement>,
@@ -4328,14 +4329,29 @@ pub(super) struct JsEntryFacts {
     pub(super) field_reject: bool,
     pub(super) string_hash_loop: bool,
     pub(super) string_transform: Option<JsJitStringTransform>,
+    /// Whether an entry may run native code (`Vm::js_jit_at_entry`): the function is a tier
+    /// candidate, or one of the entry patterns that run without a tier matched it.
+    pub(super) enters: bool,
 }
 
 impl JsEntryFacts {
     pub(super) fn of(program: &ResidualProgram, function: &Function) -> Self {
+        let numeric_find = numeric_find_candidate(function);
+        let field_increment = cached_this_field_increment_candidate(program, function);
+        let field_return = cached_this_field_return_candidate(function);
+        let enters = function_candidate(function, program)
+            || numeric_find.is_some()
+            || field_increment.is_some()
+            || field_return.is_some();
+        // The other facts are read only past the candidate check an entering function passes.
+        if !enters {
+            return Self::default();
+        }
         Self {
-            numeric_find: numeric_find_candidate(function),
-            field_increment: cached_this_field_increment_candidate(program, function),
-            field_return: cached_this_field_return_candidate(function),
+            enters,
+            numeric_find,
+            field_increment,
+            field_return,
             numeric_loop: has_numeric_loop_candidate(function),
             int32_bitwise: has_int32_bitwise_candidate(program, function),
             int32_identity: int32_identity_return_candidate(program, function).is_some(),
