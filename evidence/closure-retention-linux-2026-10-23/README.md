@@ -194,3 +194,25 @@ constructor's demand lacked; that led to the instance-initializer rule above.
   the `iteration` profile, which has no debug assertions.
 - No production-profile V8-v7 qualification was run: the host did not have the disk space
   for a production build next to this work.
+
+## Production qualification on V8-v7: not merged yet
+
+Setup:
+- Both sides are static production builds with the same flags, unbolted: `qvb` is v2-gc
+  `053d759ab6`; `qcr` is this branch merged with it (`e785823816`).
+- Binaries are evicted before each run, and the A/B pairs alternate.
+- Raw results: `v8v7-production-memory-first-7-runs.txt` and `v8v7-production-throughput-5-runs.txt`.
+- This host's A/A floor is about ±130 KiB.
+
+Results:
+- **MemoryFirst:** median max RSS rises on 12 of 16 rows, mostly by +80 to +204 KiB, against
+  falls on 4: DeltaBlue −84, DeltaBlue `--jit` −36, NavierStokes `--jit` −184, Richards
+  `--jit` −4.
+- **Throughput:** most rows are within ±140 KiB, but Crypto `--jit` is +460 and EarleyBoyer
+  `--jit` +412.
+- **Score:** within noise except Splay under MemoryFirst, at ×0.91 and ×0.93.
+
+V8-v7 has few over-captured environments, so it pays for the readable-slot table and the
+larger code without gaining from them. Merging waits on cutting that cost: build the table
+only for programs with shared closure environments, or derive it lazily at the first full
+collection that traces one. Then rerun this A/B.
