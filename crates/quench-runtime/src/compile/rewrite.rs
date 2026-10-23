@@ -196,7 +196,7 @@ fn remove_dead_moves(
     methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
-    current: &mut Option<CodeLiveness>,
+    current: &mut Option<CodeFacts>,
 ) -> bool {
     if !function.code.iter().any(|instruction| instruction.op() == Op::Move) {
         return false;
@@ -217,7 +217,7 @@ fn remove_dead_moves(
         .iter()
         .filter(|entry| entry.local < function.params)
         .fold(0_u64, |mask, entry| mask | register_bit(entry.register));
-    let mut changed = false;
+    let mut changed = Vec::new();
     for pc in 0..function.code.len() {
         let mov = function.code[pc];
         if mov.op() != Op::Move || mov.is_wide() || protected[pc] {
@@ -230,26 +230,53 @@ fn remove_dead_moves(
             continue;
         }
         function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
-        changed = true;
+        changed.push(pc);
     }
-    if !changed {
-        *current = Some(analysis);
-    }
-    changed
+    hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
+}
+
+/// Hands `analysis` on to the next pass after the instructions at `changed` were rewritten in
+/// place, and whether any was.
+fn hand_on(
+    analysis: CodeLiveness,
+    changed: &[usize],
+    function: &BcFunction,
+    methods: &(impl liveness::MethodArguments + ?Sized),
+    field_sites: &[FieldSite],
+    superinstructions: &[Superinstruction],
+    current: &mut Option<CodeFacts>,
+) -> bool {
+    *current = Some(if changed.is_empty() {
+        CodeFacts::Live(analysis)
+    } else {
+        analysis.rewritten(changed, function, methods, field_sites, superinstructions)
+    });
+    !changed.is_empty()
 }
 
 /// Drops every `Nop`, relocating jumps, handlers and source positions onto the instruction
-/// that followed it. The code's liveness, indexed by the old positions, is dropped with them.
-fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeLiveness>) {
-    *liveness = None;
+/// that followed it. The transfer masks of the instructions that stay are handed on with them.
+fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
+    let mut transfers = match liveness.take() {
+        Some(CodeFacts::Live(analysis)) => Some(analysis.transfers),
+        Some(CodeFacts::Transfers(transfers)) => Some(transfers),
+        None => None,
+    };
     let old = std::mem::take(&mut function.code);
     let mut code = Vec::with_capacity(old.len());
     let mut map = vec![0usize; old.len() + 1];
     for (pc, &instruction) in old.iter().enumerate() {
         map[pc] = code.len();
         if instruction.op() != Op::Nop {
+            if let Some(transfers) = &mut transfers {
+                transfers[code.len()] = transfers[pc];
+            }
             code.push(instruction);
         }
+    }
+    if let Some(mut transfers) = transfers {
+        transfers.truncate(code.len());
+        *liveness = Some(CodeFacts::Transfers(transfers));
     }
     map[old.len()] = code.len();
     relocate(
@@ -266,26 +293,61 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeLiveness>) {
 }
 
 /// The liveness of a function's code as it stands: each instruction's transfer masks and the
-/// registers live before it. A pass that leaves the code unchanged hands it on.
+/// registers live before it.
 struct CodeLiveness {
     transfers: Vec<(u64, u64)>,
     live: Vec<u64>,
 }
 
+/// What a pass hands the next about the code as it stands. A pass that leaves the code
+/// unchanged hands on its liveness; one that rewrites instructions in place, or only drops
+/// `Nop`s, hands on the transfer masks, which depend on each instruction alone and are
+/// updated for the instructions it changed, so the next pass derives only the live sets.
+enum CodeFacts {
+    Live(CodeLiveness),
+    Transfers(Vec<(u64, u64)>),
+}
+
 impl CodeLiveness {
-    /// `current` when a pass handed it on, otherwise derived from the code.
+    /// The liveness `current` hands on or completes, otherwise derived from the code.
     fn of(
-        current: &mut Option<Self>,
+        current: &mut Option<CodeFacts>,
         function: &BcFunction,
         methods: &(impl liveness::MethodArguments + ?Sized),
         field_sites: &[FieldSite],
         superinstructions: &[Superinstruction],
     ) -> Option<Self> {
-        current.take().or_else(|| {
-            let transfers = liveness::transfers(function, methods, field_sites, superinstructions)?;
-            let live = liveness::analyze_transfers(function, &transfers);
-            Some(Self { transfers, live })
-        })
+        let transfers = match current.take() {
+            Some(CodeFacts::Live(analysis)) => return Some(analysis),
+            Some(CodeFacts::Transfers(transfers)) => {
+                debug_assert!(
+                    liveness::transfers(function, methods, field_sites, superinstructions)
+                        .is_some_and(|derived| derived == transfers),
+                    "handed-on transfer masks match the code"
+                );
+                transfers
+            }
+            None => liveness::transfers(function, methods, field_sites, superinstructions)?,
+        };
+        let live = liveness::analyze_transfers(function, &transfers);
+        Some(Self { transfers, live })
+    }
+
+    /// The facts to hand on after the instructions at `changed` were rewritten in place.
+    fn rewritten(
+        self,
+        changed: &[usize],
+        function: &BcFunction,
+        methods: &(impl liveness::MethodArguments + ?Sized),
+        field_sites: &[FieldSite],
+        superinstructions: &[Superinstruction],
+    ) -> CodeFacts {
+        let mut transfers = self.transfers;
+        for &pc in changed {
+            let instruction = fixed_width(function.code[pc], &function.wide);
+            transfers[pc] = liveness::transfer(instruction, methods, field_sites, superinstructions);
+        }
+        CodeFacts::Transfers(transfers)
     }
 }
 
@@ -366,7 +428,7 @@ fn coalesce_distant_producer_moves(
     methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
-    current: &mut Option<CodeLiveness>,
+    current: &mut Option<CodeFacts>,
 ) -> bool {
     // Liveness is the expensive part; a function without a `Move` has nothing to coalesce.
     if !function
@@ -393,7 +455,7 @@ fn coalesce_distant_producer_moves(
         .iter()
         .fold(0_u64, |mask, entry| mask | register_bit(entry.register));
     let mut claimed_until = 0;
-    let mut changed = false;
+    let mut changed = Vec::new();
     for target in 0..function.code.len() {
         let mov = function.code[target];
         if mov.op() != Op::Move || mov.is_wide() || protected[target] {
@@ -404,7 +466,7 @@ fn coalesce_distant_producer_moves(
         // A move of a register onto itself changes nothing anything could observe.
         if source == destination {
             function.code[target] = Instr::new(Op::Nop, 0, 0, 0, 0);
-            changed = true;
+            changed.push(target);
             continue;
         }
         if pair.count_ones() != 2
@@ -455,12 +517,9 @@ fn coalesce_distant_producer_moves(
         function.code[producer] = retargeted;
         function.code[target] = Instr::new(Op::Nop, 0, 0, 0, 0);
         claimed_until = target + 1;
-        changed = true;
+        changed.extend([producer, target]);
     }
-    if !changed {
-        *current = Some(analysis);
-    }
-    changed
+    hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
 }
 
 /// Lets the instruction after a `Move` read the move's source in place of its destination when
@@ -475,7 +534,7 @@ fn forward_move_sources(
     methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
-    current: &mut Option<CodeLiveness>,
+    current: &mut Option<CodeFacts>,
 ) -> bool {
     if !function
         .code
@@ -506,7 +565,7 @@ fn forward_move_sources(
             .iter()
             .any(|handler| handler.start as usize <= pc && pc < handler.end as usize)
     };
-    let mut changed = false;
+    let mut changed = Vec::new();
     let mut pc = 0;
     while pc + 1 < function.code.len() {
         let (mov, consumer) = (function.code[pc], function.code[pc + 1]);
@@ -536,16 +595,13 @@ fn forward_move_sources(
         if let Some(rewritten) = rewritten {
             function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
             function.code[pc + 1] = rewritten;
-            changed = true;
+            changed.extend([pc, pc + 1]);
             pc += 2;
         } else {
             pc += 1;
         }
     }
-    if !changed {
-        *current = Some(analysis);
-    }
-    changed
+    hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
 }
 
 /// `instruction` reading register `to` wherever a register, operand or field-base field reads
@@ -797,7 +853,7 @@ fn rewrite_once(
     methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &mut SiteTable<'_, FieldSite>,
     superinstructions: &[Superinstruction],
-    current: &mut Option<CodeLiveness>,
+    current: &mut Option<CodeFacts>,
 ) -> bool {
     let rewrites_pair = |first: &Instr, second: &Instr| {
         !first.is_wide()
@@ -872,8 +928,8 @@ fn rewrite_once(
     map[old.len()] = code.len();
     if !changed {
         function.code = old;
-        if analysis.is_some() {
-            *current = analysis;
+        if let Some(analysis) = analysis {
+            *current = Some(CodeFacts::Live(analysis));
         }
         return false;
     }
