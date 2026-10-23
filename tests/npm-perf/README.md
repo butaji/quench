@@ -496,6 +496,12 @@ argument-window attempt used compiler forward-substitution for the one-argument
 form. It preserved output but failed the three-round screen: 285.1 renders/s /
 24.5 MB versus 308.3 / 24.7 MB for the paired control. It was reverted without
 a full run. Report: `work/react-perf/react-call-window-forward-screen-3.json`.
-Next, investigate a wide-aware `LoadCapture → Move` compiler rewrite from the
-2.73M dynamic transitions in the React profile; first measure what fraction
-survives the existing liveness and control-flow constraints.
+A wide-aware `LoadCapture → Move` compiler rewrite was screened from the 2.73M
+dynamic transitions in the React profile. It preserved output but measured
+261.7 renders/s / 27.0 MB versus 325.8 / 27.6 MB for the paired control, so the
+compiler change was reverted without a full run. The build reused PGO data from
+before the rewrite-function change and reported a function hash mismatch; this
+limits attribution but does not provide a positive signal. Report:
+`work/react-perf/react-wide-capture-move-screen-3.json`. Next, rank fresh
+interpreter hotspots from the dynamic profile and avoid further Move fusion
+until a candidate demonstrates measurable throughput improvement.
