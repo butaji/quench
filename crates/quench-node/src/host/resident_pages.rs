@@ -362,6 +362,12 @@ impl CompileRelease {
             Self::FirstCall | Self::CodeGeneration => LOAD_RELEASE_INTERVAL,
         }
     }
+
+    /// Whether a boundary this release's interval holds back releases at the interval's end
+    /// (`TrailingRelease`): the first calls of a policy that returns pages at collections.
+    fn trails(self) -> bool {
+        self.interval() == MEMORY_FIRST_FIRST_CALL_INTERVAL && matches!(self, Self::FirstCall)
+    }
 }
 
 /// When each compile-phase release last ran, indexed by `CompileRelease`.
@@ -375,12 +381,96 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
         return;
     };
     let last = &mut releases[release as usize];
-    if last.is_some_and(|last| last.elapsed() < release.interval()) {
+    let interval = release.interval();
+    if let Some(previous) = last.filter(|previous| previous.elapsed() < interval) {
+        drop(releases);
+        if release.trails() {
+            TrailingRelease::schedule(release, previous + interval, action);
+        }
         return;
     }
     *last = Some(std::time::Instant::now());
     drop(releases);
     action();
+}
+
+/// A release the interval held back, run at the interval's end by a helper thread unless a
+/// release ran after the boundary that asked for it (`CompileRelease::trails`). A held-back
+/// first call still ran code once, and a run's last first calls come in one burst at its
+/// start: without a trailing release that code stayed resident until the first collection,
+/// which a run that allocates little reaches late (V8-v7 Richards under MemoryFirst: about
+/// 1 MB of warm-up code resident from 15 to 317 ms, against a 972 KiB working set after).
+/// Releasing drops only read-only file pages, which the running thread refaults on its next
+/// touch, so another thread may release at any time.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[derive(Clone, Copy)]
+struct TrailingRelease {
+    release: CompileRelease,
+    due: std::time::Instant,
+    /// The last boundary held back: a release after it already covers what it ran.
+    held: std::time::Instant,
+    action: fn(),
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static TRAILING_RELEASE: (std::sync::Mutex<Option<TrailingRelease>>, std::sync::Condvar) =
+    (std::sync::Mutex::new(None), std::sync::Condvar::new());
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+impl TrailingRelease {
+    fn schedule(release: CompileRelease, due: std::time::Instant, action: fn()) {
+        static HELPER: std::sync::Once = std::sync::Once::new();
+        HELPER.call_once(|| {
+            // Without the helper, held-back boundaries wait for the next one, as before.
+            let _ = std::thread::Builder::new()
+                .name("quench-release".into())
+                .spawn(Self::run);
+        });
+        let (pending, wake) = &TRAILING_RELEASE;
+        if let Ok(mut pending) = pending.lock() {
+            let held = std::time::Instant::now();
+            *pending = Some(match *pending {
+                Some(earlier) => Self { held, ..earlier },
+                None => Self { release, due, held, action },
+            });
+            wake.notify_one();
+        }
+    }
+
+    fn run() {
+        let (pending, wake) = &TRAILING_RELEASE;
+        let Ok(mut guard) = pending.lock() else {
+            return;
+        };
+        loop {
+            let Some(trailing) = *guard else {
+                let Ok(next) = wake.wait(guard) else { return };
+                guard = next;
+                continue;
+            };
+            let now = std::time::Instant::now();
+            if now < trailing.due {
+                let Ok((next, _)) = wake.wait_timeout(guard, trailing.due - now) else { return };
+                guard = next;
+                continue;
+            }
+            *guard = None;
+            drop(guard);
+            let covered = LAST_RELEASE
+                .lock()
+                .ok()
+                .and_then(|last| *last)
+                .is_some_and(|last| last > trailing.held);
+            if !covered {
+                if let Ok(mut releases) = LAST_COMPILE_RELEASES.lock() {
+                    releases[trailing.release as usize] = Some(now);
+                }
+                (trailing.action)();
+            }
+            let Ok(next) = pending.lock() else { return };
+            guard = next;
+        }
+    }
 }
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
