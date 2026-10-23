@@ -115,14 +115,12 @@ pub(crate) struct GeneratorRecord {
 }
 
 impl GeneratorRecord {
-    pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
-        std::iter::once(self.realm)
-            .chain(self.continuation.iter().flat_map(Continuation::roots))
-            .chain(
-                self.requests
-                    .iter()
-                    .flat_map(|request| [request.promise, request.value]),
-            )
+    pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {
+        out.push(self.realm);
+        if let Some(continuation) = &self.continuation {
+            continuation.extend_roots(out);
+        }
+        out.extend(self.requests.iter().flat_map(|request| [request.promise, request.value]));
     }
 }
 
@@ -198,25 +196,30 @@ impl Continuation {
         }
     }
 
-    pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
-        self.context
-            .callee()
-            .into_iter()
-            .chain(self.original_arguments.iter().copied())
-            .chain(self.with_objects.iter().copied())
-            .chain(std::iter::once(self.env))
-            .chain(std::iter::once(self.this))
-            .chain(self.locals.iter().copied())
-            .chain(self.dynamic_bindings.iter().map(|(_, value)| *value))
-            .chain(self.registers.iter().copied())
-            .chain(match self.completion {
-                Completion::GeneratorStart => None,
-                Completion::Return(value)
-                | Completion::Throw(value)
-                | Completion::Yield(value)
-                | Completion::Await(value) => Some(value),
-            })
-            .chain(std::iter::once(self.promise))
+    /// Its edges, appended to `out` a slice at a time: the GC traces every suspended frame
+    /// this way, where a chained iterator pushes value by value.
+    pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {
+        out.extend(self.context.callee());
+        out.extend_from_slice(&self.original_arguments);
+        out.extend_from_slice(&self.with_objects);
+        out.extend([self.env, self.this]);
+        out.extend_from_slice(&self.locals);
+        out.extend(self.dynamic_bindings.iter().map(|(_, value)| *value));
+        out.extend_from_slice(&self.registers);
+        out.extend(match self.completion {
+            Completion::GeneratorStart => None,
+            Completion::Return(value)
+            | Completion::Throw(value)
+            | Completion::Yield(value)
+            | Completion::Await(value) => Some(value),
+        });
+        out.push(self.promise);
+    }
+
+    pub(crate) fn roots(&self) -> Vec<Value> {
+        let mut roots = Vec::new();
+        self.extend_roots(&mut roots);
+        roots
     }
 }
 
@@ -246,7 +249,7 @@ mod tests {
             promise: Value::heap(7),
         };
         assert_eq!(
-            continuation.roots().collect::<Vec<_>>(),
+            continuation.roots(),
             [
                 Value::heap(9),
                 Value::heap(10),

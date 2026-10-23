@@ -470,6 +470,14 @@ impl Regex {
                     .is_some_and(|program| program.anchor_excludes(start, first.map(u32::from))))
     }
 
+    /// Whether every search of a subject, ASCII (`ascii`) or not, reads its text as it is,
+    /// never decoding it into the units a subject keeps once decoded (`Subject::decoded`):
+    /// the backtracking program runs over ASCII bytes, and outside Unicode mode over code
+    /// units too. A caller can then prepare such a subject for one search alone.
+    pub fn searches_undecoded(&self, ascii: bool) -> bool {
+        self.complete().backtracking.is_some() && (ascii || !(self.flags.unicode || self.flags.unicode_sets))
+    }
+
     fn complete(&self) -> &CompleteMatcher {
         self.complete.get_or_init(|| {
             self.with_parsed_source(|parsed| {
@@ -916,6 +924,18 @@ impl Subject {
         }
     }
 
+    /// A subject over UTF-16 text known to hold a non-ASCII unit, as a string's wide
+    /// storage always does: neither the ASCII narrowing `new` tries nor its carriage-return
+    /// scan can pay off, so preparing the subject touches no unit.
+    pub fn from_non_ascii(units: std::rc::Rc<[u16]>) -> Self {
+        debug_assert!(units.iter().any(|unit| *unit > ASCII_MAX));
+        Self {
+            text: SubjectText::Wide { units, ascii: None },
+            carriage_return: std::cell::OnceCell::new(),
+            decoded: Default::default(),
+        }
+    }
+
     /// A subject over the bytes `range` of ASCII text, matched in place without a copy.
     pub fn from_ascii(text: std::rc::Rc<str>, range: std::ops::Range<usize>) -> Self {
         debug_assert!(text.is_ascii() && range.end <= text.len());
@@ -940,26 +960,6 @@ impl Subject {
             carriage_return: std::cell::OnceCell::new(),
             decoded: Default::default(),
         }
-    }
-
-    /// Makes this the subject `short_ascii(text)` makes, in place: no new subject is built
-    /// and moved in, and whatever was prepared for the old text is dropped.
-    pub fn respell_short_ascii(&mut self, text: &str) {
-        debug_assert!(text.is_ascii());
-        let length = u8::try_from(text.len()).expect("short text fits its length byte");
-        match &mut self.text {
-            SubjectText::Inline { length: own, bytes } => {
-                bytes[..text.len()].copy_from_slice(text.as_bytes());
-                *own = length;
-            }
-            other => {
-                let mut bytes = [0; INLINE_SUBJECT_BYTES];
-                bytes[..text.len()].copy_from_slice(text.as_bytes());
-                *other = SubjectText::Inline { length, bytes };
-            }
-        }
-        self.carriage_return.take();
-        self.decoded.iter_mut().for_each(|decoded| drop(decoded.take()));
     }
 
     fn has_carriage_return(&self) -> bool {
@@ -1012,11 +1012,6 @@ impl Subject {
     pub fn is_ascii_text_of(&self, text: &std::rc::Rc<str>, range: &std::ops::Range<usize>) -> bool {
         matches!(&self.text, SubjectText::Ascii { text: own, range: own_range }
             if std::rc::Rc::ptr_eq(own, text) && own_range == range)
-    }
-
-    /// Whether this subject spells exactly the ASCII `text`, compared by content.
-    pub fn spells_ascii(&self, text: &str) -> bool {
-        self.ascii() == Some(text.as_bytes())
     }
 }
 

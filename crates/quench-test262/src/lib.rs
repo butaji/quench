@@ -18,6 +18,31 @@ pub use harness_cache::HarnessCache;
 pub use runtime_host::Test262RuntimeHost;
 pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
 
+use quench_runtime::ExecutionMode;
+
+/// The switch that runs cases in compiled (JIT) execution, spelled as the Wasm runner's.
+pub const JIT_FLAG: &str = "--jit";
+
+/// The execution `args` select, with the switch removed: compiled when they carry
+/// `JIT_FLAG`, else the interpreter.
+pub fn take_execution_mode<T: PartialEq<str>>(args: &mut Vec<T>) -> ExecutionMode {
+    let before = args.len();
+    args.retain(|arg| arg != JIT_FLAG);
+    if args.len() < before {
+        ExecutionMode::Compiled
+    } else {
+        ExecutionMode::Interpreted
+    }
+}
+
+/// The name reports and logs give `mode`.
+pub fn execution_mode_name(mode: ExecutionMode) -> &'static str {
+    match mode {
+        ExecutionMode::Interpreted => "no-jit",
+        ExecutionMode::Compiled => "jit",
+    }
+}
+
 /// Engine-facing execution contract for an external conformance runner.
 pub trait Test262Host: Send {
     /// Configure per-test host policy before dispatch.

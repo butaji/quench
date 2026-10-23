@@ -1,42 +1,35 @@
 use super::*;
 use crate::{Engine, ResidualProgram};
+use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
 
-#[derive(Default)]
-struct CapturingHost;
-
-impl Host for CapturingHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 {
-        0.0
-    }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![method "captured" (0) => captured]
-    }
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-        let external = context.external_rooted(0x1234)?;
-        assert_eq!(context.external_address_rooted(external), Some(0x1234));
-        assert!(context.has_builtin_brand_rooted(external, BuiltinBrand::External)?);
-        let object = context.object_rooted()?;
-        assert!(!context.has_builtin_brand_rooted(object, BuiltinBrand::External)?);
-        assert_eq!(context.external_address_rooted(object), None);
-        let global = context.global_root()?;
-        let key = context.string_rooted("external");
-        context.set_property_rooted(global, key, external, global)?;
-        let data = context.object_rooted()?;
-        let key = context.string_rooted("answer");
-        let answer = context.number(42.0);
-        assert!(context.set_property_rooted(data, key, answer, data)?);
-        let operation = context.host_function_with_data(HostFunctionId(0), data)?;
-        let global = context.global_root()?;
-        let key = context.string_rooted("captured");
-        assert!(context.set_property_rooted(global, key, operation, global)?);
-        Ok(())
-    }
+fn capturing_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![method "captured" (0) => captured])
+        .with_install(|context: &mut NativeContext<'_, TestHost>| {
+            let external = context.external_rooted(0x1234)?;
+            assert_eq!(context.external_address_rooted(external), Some(0x1234));
+            assert!(context.has_builtin_brand_rooted(external, BuiltinBrand::External)?);
+            let object = context.object_rooted()?;
+            assert!(!context.has_builtin_brand_rooted(object, BuiltinBrand::External)?);
+            assert_eq!(context.external_address_rooted(object), None);
+            let global = context.global_root()?;
+            let key = context.string_rooted("external");
+            context.set_property_rooted(global, key, external, global)?;
+            let data = context.object_rooted()?;
+            let key = context.string_rooted("answer");
+            let answer = context.number(42.0);
+            assert!(context.set_property_rooted(data, key, answer, data)?);
+            let operation = context.host_function_with_data(HostFunctionId(0), data)?;
+            let global = context.global_root()?;
+            let key = context.string_rooted("captured");
+            assert!(context.set_property_rooted(global, key, operation, global)?);
+            Ok(())
+        })
 }
 
 fn captured(
-    context: &mut NativeContext<'_, CapturingHost>,
+    context: &mut NativeContext<'_, TestHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -68,7 +61,7 @@ fn captured(
 
 #[test]
 fn captured_host_environment_survives_scope_drop_collection_and_guest_reentry() {
-    let mut runtime = Runtime::new(CapturingHost);
+    let mut runtime = Runtime::new(capturing_host());
     let program = Engine::specialize(
         "function caller() { let callerLocal = 7; return captured(); } var result = caller();",
         "host-capture.js",
@@ -122,51 +115,46 @@ struct InitializerState {
     scoped: Vec<RootId>,
 }
 
-#[derive(Clone, Default)]
-struct InitializingHost(Rc<RefCell<InitializerState>>);
 
-impl Host for InitializingHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 {
-        0.0
-    }
-
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-        let object = context.object_rooted()?;
-        let global = context.global_root()?;
-        let key = context.string_rooted("installed");
-        let state = context.host_mut().0.clone();
-        state.borrow_mut().scoped.extend([object, global, key]);
-        context.collect()?;
-        let mode = state.borrow().mode;
-        match mode {
-            Initialization::Install => {
-                assert!(context.set_property_rooted(global, key, object, global)?);
-                context.collect()
+fn initializing_host(state: Rc<RefCell<InitializerState>>) -> TestHost {
+    TestHost::default()
+        .with_state(state)
+        .with_install(|context: &mut NativeContext<'_, TestHost>| {
+            let object = context.object_rooted()?;
+            let global = context.global_root()?;
+            let key = context.string_rooted("installed");
+            let state = context.host_mut().state::<RefCell<InitializerState>>();
+            state.borrow_mut().scoped.extend([object, global, key]);
+            context.collect()?;
+            let mode = state.borrow().mode;
+            match mode {
+                Initialization::Install => {
+                    assert!(context.set_property_rooted(global, key, object, global)?);
+                    context.collect()
+                }
+                Initialization::Throw => {
+                    let error = context.throw(object);
+                    state.borrow_mut().scoped.extend(error.exception);
+                    context.collect()?;
+                    Err(error)
+                }
+                Initialization::Foreign(root) => {
+                    let mut error = RootedError::host("foreign initializer exception");
+                    error.exception = Some(root);
+                    Err(error)
+                }
+                Initialization::Trap => typed_trap(context, global, &[]).map(drop),
+                Initialization::Unrooted(value) => Err(RootedError {
+                    error: JsError::thrown(value, "unrooted initializer exception".into()),
+                    exception: None,
+                }),
             }
-            Initialization::Throw => {
-                let error = context.throw(object);
-                state.borrow_mut().scoped.extend(error.exception);
-                context.collect()?;
-                Err(error)
-            }
-            Initialization::Foreign(root) => {
-                let mut error = RootedError::host("foreign initializer exception");
-                error.exception = Some(root);
-                Err(error)
-            }
-            Initialization::Trap => typed_trap(context, global, &[]).map(drop),
-            Initialization::Unrooted(value) => Err(RootedError {
-                error: JsError::thrown(value, "unrooted initializer exception".into()),
-                exception: None,
-            }),
-        }
-    }
+        })
 }
 
 #[test]
 fn host_initialization_scopes_objects_and_validates_exceptions_before_guest_execution() {
-    let host = InitializingHost::default();
+    let host = initializing_host(Rc::default());
     let mut runtime = Runtime::new(host.clone());
     let program = Engine::specialize("var reached = installed;", "host-initialization.js").unwrap();
     for _ in 0..2 {
@@ -178,35 +166,35 @@ fn host_initialization_scopes_objects_and_validates_exceptions_before_guest_exec
         let object = runtime.get_property_rooted(global, initialized).unwrap();
         runtime.collect(&program).unwrap();
         assert_eq!(runtime.rooted_value(result), runtime.rooted_value(object));
-        for root in &host.0.borrow().scoped {
+        for root in &host.state::<RefCell<InitializerState>>().borrow().scoped {
             assert!(!runtime.root_is_live(*root));
         }
     }
-    host.0.borrow_mut().mode = Initialization::Throw;
+    host.state::<RefCell<InitializerState>>().borrow_mut().mode = Initialization::Throw;
     let error = runtime.execute(&program).unwrap_err();
     let exception = runtime.root(error.thrown_value().unwrap());
     runtime.collect(&program).unwrap();
     assert!(runtime.root_is_live(exception));
-    for root in &host.0.borrow().scoped {
+    for root in &host.state::<RefCell<InitializerState>>().borrow().scoped {
         assert!(!runtime.root_is_live(*root));
     }
     let global = runtime.global_root().unwrap();
     let key = runtime.string_rooted("reached");
     let result = runtime.get_property_rooted(global, key).unwrap();
     assert!(runtime.rooted_value(result).unwrap().is_undefined());
-    let mut other = Runtime::new(TestHost::default());
+    let mut other = Runtime::new(state_host(Rc::default()));
     let foreign = other.root(Value::number(1.0));
-    host.0.borrow_mut().mode = Initialization::Foreign(foreign);
+    host.state::<RefCell<InitializerState>>().borrow_mut().mode = Initialization::Foreign(foreign);
     let error = runtime.execute(&program).unwrap_err();
     assert_eq!(error.to_string(), "released or foreign embedding root");
     assert!(error.thrown_value().is_none());
-    for root in &host.0.borrow().scoped {
+    for root in &host.state::<RefCell<InitializerState>>().borrow().scoped {
         assert!(!runtime.root_is_live(*root));
     }
-    host.0.borrow_mut().mode = Initialization::Trap;
+    host.state::<RefCell<InitializerState>>().borrow_mut().mode = Initialization::Trap;
     let error = runtime.execute(&program).unwrap_err();
     assert_eq!(error.wasm_trap(), Some(crate::WasmTrap::Unreachable));
-    host.0.borrow_mut().mode = Initialization::Unrooted(other.rooted_value(foreign).unwrap());
+    host.state::<RefCell<InitializerState>>().borrow_mut().mode = Initialization::Unrooted(other.rooted_value(foreign).unwrap());
     let error = runtime.execute(&program).unwrap_err();
     assert!(error.thrown_value().is_none());
     assert_eq!(error.to_string(), "unrooted initializer exception");
@@ -221,16 +209,11 @@ struct State {
     calls: usize,
 }
 
-#[derive(Clone, Default)]
-struct TestHost(Rc<RefCell<State>>);
 
-impl Host for TestHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 {
-        0.0
-    }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![
+fn state_host(state: Rc<RefCell<State>>) -> TestHost {
+    TestHost::default()
+        .with_state(state)
+        .with_natives(crate::host_functions![
             #[cfg(not(any()))]
             global "echo" (1) => echo,
             #[cfg(any())]
@@ -242,8 +225,7 @@ impl Host for TestHost {
             method "construct" (2) => construct,
             method "compare" (2) => compare,
             global "collectJSON" (0) => collect_json,
-        ]
-    }
+        ])
 }
 
 fn typed_trap<H: Host>(
@@ -263,7 +245,7 @@ fn echo(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let retained = ctx.retain(args[0])?;
-    let state = ctx.host_mut().0.clone();
+    let state = ctx.host_mut().state::<RefCell<State>>();
     {
         let mut state = state.borrow_mut();
         state.borrowed.extend([receiver, args[0]]);
@@ -285,7 +267,7 @@ fn reenter(
         Ok(root) => Some(*root),
         Err(error) => error.exception,
     };
-    ctx.host_mut().0.borrow_mut().borrowed.extend(root);
+    ctx.host_mut().state::<RefCell<State>>().borrow_mut().borrowed.extend(root);
     result
 }
 
@@ -305,7 +287,7 @@ fn construct(
 ) -> Result<RootId, RootedError> {
     let result = ctx.construct_rooted(args[0], args[1], &args[2..]);
     ctx.collect()?;
-    let state = ctx.host_mut().0.clone();
+    let state = ctx.host_mut().state::<RefCell<State>>();
     state.borrow_mut().borrowed.extend_from_slice(args);
     match &result {
         Ok(root) => state.borrow_mut().borrowed.push(*root),
@@ -340,7 +322,7 @@ fn native_construction_reentry_scopes_results_and_retains_thrown_identity() {
         assert!(runtime.release_root(value));
     }
     assert_eq!(runtime.rooted_value(exception), error.error.thrown_value());
-    for root in &host.0.borrow().borrowed {
+    for root in &host.state::<RefCell<State>>().borrow().borrowed {
         assert!(!runtime.root_is_live(*root));
     }
     runtime.execute(&program).unwrap();
@@ -387,7 +369,7 @@ fn escaped(
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let state = ctx.host_mut().0.clone();
+    let state = ctx.host_mut().state::<RefCell<State>>();
     let mut state = state.borrow_mut();
     state.borrowed.push(receiver);
     let root = state.invalid_result.unwrap();
@@ -402,7 +384,7 @@ fn escaped(
 }
 
 fn initialized(source: &str) -> (Runtime<TestHost>, ResidualProgram, TestHost) {
-    let host = TestHost::default();
+    let host = state_host(Rc::default());
     let mut runtime = Runtime::new(host.clone());
     let program = Engine::specialize(source, "native-host.js").unwrap();
     runtime.execute(&program).unwrap();
@@ -423,11 +405,11 @@ fn callback_scopes_expire_but_promoted_handles_keep_guest_identity() {
     let value = property(&mut runtime, global, "value");
     let result = property(&mut runtime, global, "result");
     assert_eq!(runtime.rooted_value(value), runtime.rooted_value(result));
-    assert_eq!(host.0.borrow().calls, 1);
-    for root in &host.0.borrow().borrowed {
+    assert_eq!(host.state::<RefCell<State>>().borrow().calls, 1);
+    for root in &host.state::<RefCell<State>>().borrow().borrowed {
         assert!(!runtime.root_is_live(*root));
     }
-    let retained = host.0.borrow().retained[0];
+    let retained = host.state::<RefCell<State>>().borrow().retained[0];
     runtime.collect(&program).unwrap();
     assert_eq!(runtime.rooted_value(retained), runtime.rooted_value(result));
     assert!(runtime.release_root(retained));
@@ -435,10 +417,10 @@ fn callback_scopes_expire_but_promoted_handles_keep_guest_identity() {
     let receiver = runtime.root(Value::UNDEFINED);
     let result = runtime.call_rooted(callback, receiver, &[value]).unwrap();
     assert_eq!(runtime.rooted_value(result), runtime.rooted_value(value));
-    for root in &host.0.borrow().borrowed {
+    for root in &host.state::<RefCell<State>>().borrow().borrowed {
         assert!(!runtime.root_is_live(*root));
     }
-    let retained = host.0.borrow().retained[1];
+    let retained = host.state::<RefCell<State>>().borrow().retained[1];
     runtime.execute(&program).unwrap();
     assert!(!runtime.root_is_live(retained));
     assert!(!runtime.root_is_live(callback));
@@ -465,7 +447,7 @@ fn native_reentry_preserves_program_ownership_and_propagates_retained_exceptions
         runtime.rooted_value(payload),
         runtime.rooted_value(argument)
     );
-    for root in &host.0.borrow().borrowed {
+    for root in &host.state::<RefCell<State>>().borrow().borrowed {
         assert!(!runtime.root_is_live(*root));
     }
     let rejecting = runtime.host_function(REJECT).unwrap();
@@ -491,7 +473,7 @@ fn native_reentry_preserves_program_ownership_and_propagates_retained_exceptions
         runtime.rooted_value(payload),
         runtime.rooted_value(argument)
     );
-    for root in &host.0.borrow().borrowed {
+    for root in &host.state::<RefCell<State>>().borrow().borrowed {
         assert!(!runtime.root_is_live(*root));
     }
     assert!(runtime.release_root(exception));
@@ -500,20 +482,20 @@ fn native_reentry_preserves_program_ownership_and_propagates_retained_exceptions
 #[test]
 fn callbacks_cannot_return_foreign_or_released_handles() {
     let (mut runtime, _, host) = initialized("");
-    let mut other = Runtime::new(TestHost::default());
+    let mut other = Runtime::new(state_host(Rc::default()));
     let foreign = other.root(Value::number(1.0));
     let stale = runtime.root(Value::number(2.0));
     assert!(runtime.release_root(stale));
     let receiver = runtime.root(Value::UNDEFINED);
     let callback = runtime.host_function(ESCAPED).unwrap();
     for exception in [false, true] {
-        host.0.borrow_mut().invalid_exception = exception;
+        host.state::<RefCell<State>>().borrow_mut().invalid_exception = exception;
         for invalid in [foreign, stale] {
-            host.0.borrow_mut().invalid_result = Some(invalid);
+            host.state::<RefCell<State>>().borrow_mut().invalid_result = Some(invalid);
             let error = runtime.call_rooted(callback, receiver, &[]).unwrap_err();
             assert!(error.exception.is_none());
             assert_eq!(error.to_string(), "released or foreign embedding root");
-            for root in &host.0.borrow().borrowed {
+            for root in &host.state::<RefCell<State>>().borrow().borrowed {
                 assert!(!runtime.root_is_live(*root));
             }
         }
@@ -542,7 +524,7 @@ fn compare(
     if let Err(error) = &result {
         context
             .host_mut()
-            .0
+            .state::<RefCell<State>>()
             .borrow_mut()
             .borrowed
             .extend(error.exception);
@@ -573,7 +555,7 @@ fn native_comparison_preserves_coercion_exception_roots_through_collection() {
         );
         assert_eq!(runtime.rooted_value(exception), error.error.thrown_value());
         assert!(runtime.release_root(exception));
-        for root in &host.0.borrow().borrowed {
+        for root in &host.state::<RefCell<State>>().borrow().borrowed {
             assert!(!runtime.root_is_live(*root));
         }
     }
@@ -582,7 +564,7 @@ fn native_comparison_preserves_coercion_exception_roots_through_collection() {
 #[test]
 fn native_value_operations_reject_foreign_and_released_roots() {
     let (mut runtime, _, _) = initialized("");
-    let mut other = Runtime::new(TestHost::default());
+    let mut other = Runtime::new(state_host(Rc::default()));
     let foreign = other.root(Value::TRUE);
     let stale = runtime.root(Value::TRUE);
     assert!(runtime.release_root(stale));
@@ -650,31 +632,27 @@ fn collect_json(
     Ok(context.undefined())
 }
 
-#[derive(Default)]
-struct LazyHost;
 
-struct RestartIntrinsicsHost;
 
-impl Host for RestartIntrinsicsHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-        context.with_startup_intrinsics(|context| {
-            context.evaluate_script_rooted(
-                "Array.bootstrapRealmMarker = { fresh: true };",
-                "restart-intrinsics-bootstrap.js",
-            )
-        })?;
-        context.seal_startup_intrinsics();
-        Ok(())
-    }
+fn restart_intrinsics_host() -> TestHost {
+    TestHost::default()
+        .with_install(|context: &mut NativeContext<'_, TestHost>| {
+            context.with_startup_intrinsics(|context| {
+                context.evaluate_script_rooted(
+                    "Array.bootstrapRealmMarker = { fresh: true };",
+                    "restart-intrinsics-bootstrap.js",
+                )
+            })?;
+            context.seal_startup_intrinsics();
+            Ok(())
+        })
 }
 
 #[test]
 fn startup_intrinsics_are_reset_before_a_replacement_realm_bootstraps() {
     let source = "if (!Array.bootstrapRealmMarker.fresh) throw new Error('stale bootstrap'); Array.bootstrapRealmMarker.fresh = false;";
     for program in [Engine::compile(crate::ExecutionRequest { source, name: "restart-intrinsics.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "restart-intrinsics.js").unwrap()] {
-        let mut runtime = Runtime::new(RestartIntrinsicsHost);
+        let mut runtime = Runtime::new(restart_intrinsics_host());
         for _ in 0..2 {
             runtime.execute(&program).unwrap();
         }
@@ -685,45 +663,40 @@ const LAZY_GROUP_SCRIPT: &str = "globalThis.inits = (globalThis.inits || 0) + 1;
     globalThis.A = 'a'; globalThis.B = 'b'; \
     Object.defineProperty(globalThis, 'C', { value: 'c', writable: true, configurable: true });";
 
-impl Host for LazyHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 {
-        0.0
-    }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![
+fn lazy_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![
             method "initializeGroup" (0) => initialize_lazy_group,
             method "initializeSingle" (0) => initialize_lazy_single,
             method "initializeIntegrity" (0) => initialize_lazy_integrity,
-        ]
-    }
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-        let global = context.global_root()?;
-        let marker = context.string_rooted("before");
-        let key = context.string_rooted("before");
-        assert!(context.set_property_rooted(global, key, marker, global)?);
-        for (operation, names) in [(0, &["A", "B", "C"][..]), (1, &["D"][..])] {
-            let initializer = context.host_function(HostFunctionId(operation))?;
-            context.define_lazy_data_properties_rooted(global, names, false, initializer)?;
-        }
-        let key = context.string_rooted("after");
-        assert!(context.set_property_rooted(global, key, marker, global)?);
-        for (name, property, indexed) in [("lazyIntegrity", "value", false), ("lazyArrayIntegrity", "0", true)] {
-            let holder = if indexed { context.array_rooted(&[])? } else { context.object_rooted()? };
-            let key = context.string_rooted(property);
-            let data = context.array_rooted(&[holder, key])?;
-            let initializer = context.host_function_with_data(HostFunctionId(2), data)?;
-            context.define_lazy_data_properties_rooted(holder, &[property], true, initializer)?;
-            let key = context.string_rooted(name);
-            assert!(context.set_property_rooted(global, key, holder, global)?);
-        }
-        context.seal_startup_intrinsics();
-        Ok(())
-    }
+        ])
+        .with_install(|context: &mut NativeContext<'_, TestHost>| {
+            let global = context.global_root()?;
+            let marker = context.string_rooted("before");
+            let key = context.string_rooted("before");
+            assert!(context.set_property_rooted(global, key, marker, global)?);
+            for (operation, names) in [(0, &["A", "B", "C"][..]), (1, &["D"][..])] {
+                let initializer = context.host_function(HostFunctionId(operation))?;
+                context.define_lazy_data_properties_rooted(global, names, false, initializer)?;
+            }
+            let key = context.string_rooted("after");
+            assert!(context.set_property_rooted(global, key, marker, global)?);
+            for (name, property, indexed) in [("lazyIntegrity", "value", false), ("lazyArrayIntegrity", "0", true)] {
+                let holder = if indexed { context.array_rooted(&[])? } else { context.object_rooted()? };
+                let key = context.string_rooted(property);
+                let data = context.array_rooted(&[holder, key])?;
+                let initializer = context.host_function_with_data(HostFunctionId(2), data)?;
+                context.define_lazy_data_properties_rooted(holder, &[property], true, initializer)?;
+                let key = context.string_rooted(name);
+                assert!(context.set_property_rooted(global, key, holder, global)?);
+            }
+            context.seal_startup_intrinsics();
+            Ok(())
+        })
 }
 
 fn initialize_lazy_group(
-    context: &mut NativeContext<'_, LazyHost>,
+    context: &mut NativeContext<'_, TestHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -731,7 +704,7 @@ fn initialize_lazy_group(
 }
 
 fn initialize_lazy_single(
-    context: &mut NativeContext<'_, LazyHost>,
+    context: &mut NativeContext<'_, TestHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -739,7 +712,7 @@ fn initialize_lazy_single(
 }
 
 fn initialize_lazy_integrity(
-    context: &mut NativeContext<'_, LazyHost>,
+    context: &mut NativeContext<'_, TestHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -793,7 +766,7 @@ fn lazy_data_properties_materialize_before_integrity_descriptor_changes() {
                 .unwrap(),
                 Engine::specialize(&source, "lazy-integrity.js").unwrap(),
             ] {
-                Runtime::new(LazyHost).execute(&program).unwrap_or_else(|error| panic!("{holder}: {operation}: {error:?}"));
+                Runtime::new(lazy_host()).execute(&program).unwrap_or_else(|error| panic!("{holder}: {operation}: {error:?}"));
             }
         }
     }
@@ -801,7 +774,7 @@ fn lazy_data_properties_materialize_before_integrity_descriptor_changes() {
 
 #[test]
 fn lazy_data_properties_materialize_once_as_data_in_place() {
-    let mut runtime = Runtime::new(LazyHost);
+    let mut runtime = Runtime::new(lazy_host());
     let program = Engine::specialize(
         r#"
 const check = (ok, message) => { if (!ok) throw new Error(message); };
@@ -839,16 +812,11 @@ var result = "ok";
     );
 }
 
-#[derive(Default)]
-struct NumberCoercionHost;
-impl Host for NumberCoercionHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![global "nativeNumber" (1) => native_number_coercion]
-    }
+fn number_coercion_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![global "nativeNumber" (1) => native_number_coercion])
 }
-fn native_number_coercion(context: &mut NativeContext<'_, NumberCoercionHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+fn native_number_coercion(context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     context.collect()?;
     let number = context.to_number(args[0])?;
     Ok(context.number(number))
@@ -866,22 +834,15 @@ fn native_number_conversion_uses_original_hooks_and_shared_language_errors() {
     for program in [
         Engine::compile(crate::ExecutionRequest { source, name: "native-number.js", kind: crate::SourceKind::Script }).unwrap(),
         Engine::specialize(source,"native-number.js").unwrap(),
-    ] { Runtime::new(NumberCoercionHost).execute(&program).unwrap(); }
+    ] { Runtime::new(number_coercion_host()).execute(&program).unwrap(); }
 }
 
-#[derive(Default)]
-struct InstanceOfHost;
-impl Host for InstanceOfHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 {
-        0.0
-    }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![global "nativeInstanceOf" (2) => native_instanceof]
-    }
+fn instance_of_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![global "nativeInstanceOf" (2) => native_instanceof])
 }
 fn native_instanceof(
-    context: &mut NativeContext<'_, InstanceOfHost>,
+    context: &mut NativeContext<'_, TestHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -910,26 +871,21 @@ fn native_instanceof_preserves_original_hooks_proxy_effects_and_abrupt_completio
         .unwrap(),
         Engine::specialize(source, "native-instanceof.js").unwrap(),
     ] {
-        Runtime::new(InstanceOfHost).execute(&program).unwrap();
+        Runtime::new(instance_of_host()).execute(&program).unwrap();
     }
 }
 
-#[derive(Default)]
-struct CallerSourcesHost;
-impl Host for CallerSourcesHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![global "nativeCallerSources" (0) => native_caller_sources, global "nativeDynamicCaller" (0) => native_dynamic_caller]
-    }
+fn caller_sources_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![global "nativeCallerSources" (0) => native_caller_sources, global "nativeDynamicCaller" (0) => native_dynamic_caller])
 }
-fn native_caller_sources(context: &mut NativeContext<'_, CallerSourcesHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+fn native_caller_sources(context: &mut NativeContext<'_, TestHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     context.collect()?;
     let sources=context.call_stack_source_names();
     let sources=sources.iter().map(|source|context.string_rooted(source)).collect::<Vec<_>>();
     context.array_rooted(&sources)
 }
-fn native_dynamic_caller(context: &mut NativeContext<'_, CallerSourcesHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+fn native_dynamic_caller(context: &mut NativeContext<'_, TestHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     context.evaluate_script_rooted("nativeCallerSources()", "dynamic-caller-source.js")
 }
 #[test]
@@ -940,18 +896,16 @@ fn native_call_stack_source_names_follow_original_compiler_metadata_after_collec
     const dynamic=nativeDynamicCaller();if(dynamic[0]!=='dynamic-caller-source.js'||!dynamic.includes('native-caller-sources.js'))throw Error('dynamic caller metadata changed');
     "#;
     for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-caller-sources.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-caller-sources.js").unwrap()] {
-        Runtime::new(CallerSourcesHost).execute(&program).unwrap();
+        Runtime::new(caller_sources_host()).execute(&program).unwrap();
     }
 }
 
-struct SnapshotMetadataHost;
-impl Host for SnapshotMetadataHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> { context.seal_startup_intrinsics(); Ok(()) }
-    fn functions(&self) -> &[HostFunction<Self>] { crate::host_functions![global "nativeSnapshotMetadata" (1) => native_snapshot_metadata, global "nativeCollectionPreview" (1) => native_collection_preview] }
+fn snapshot_metadata_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![global "nativeSnapshotMetadata" (1) => native_snapshot_metadata, global "nativeCollectionPreview" (1) => native_collection_preview])
+        .with_install(|context: &mut NativeContext<'_, TestHost>| { context.seal_startup_intrinsics(); Ok(()) })
 }
-fn native_collection_preview(context: &mut NativeContext<'_, SnapshotMetadataHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+fn native_collection_preview(context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let Some(preview) = context.collection_preview_rooted(value)? else { return Ok(context.undefined()); };
     if args.len() > 1 { context.evaluate_script_rooted("previewOwner.clear()", "clear-preview-owner.js")?; }
@@ -960,7 +914,7 @@ fn native_collection_preview(context: &mut NativeContext<'_, SnapshotMetadataHos
     let pairs = context.boolean(preview.is_key_value);
     context.array_rooted(&[values, pairs])
 }
-fn native_snapshot_metadata(context: &mut NativeContext<'_, SnapshotMetadataHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+fn native_snapshot_metadata(context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let target = context.proxy_target_rooted(value)?.unwrap_or_else(|| context.undefined());
     let (detail_target, handler) = context.proxy_details_rooted(value)?
@@ -993,17 +947,15 @@ fn native_bootstrap_names_and_proxy_targets_survive_mutation_revocation_and_coll
       if(previewOwner.size!==0||retained[0][0].key!==42||retained[0][1].marker!==99)throw Error('preview roots lost cleared entries');
     "#;
     for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-snapshot-metadata.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-snapshot-metadata.js").unwrap()] {
-        Runtime::new(SnapshotMetadataHost).execute(&program).unwrap();
+        Runtime::new(snapshot_metadata_host()).execute(&program).unwrap();
     }
 }
 
-struct BoundedViewHost;
-impl Host for BoundedViewHost {
-    fn write_line(&mut self,_:&str){}
-    fn clock_millis(&mut self)->f64{0.0}
-    fn functions(&self)->&[HostFunction<Self>]{crate::host_functions![global "nativeBoundedView" (1) => native_bounded_view]}
+fn bounded_view_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![global "nativeBoundedView" (1) => native_bounded_view])
 }
-fn native_bounded_view(context:&mut NativeContext<'_,BoundedViewHost>,_:RootId,args:&[RootId])->Result<RootId,RootedError>{
+fn native_bounded_view(context:&mut NativeContext<'_,TestHost>,_:RootId,args:&[RootId])->Result<RootId,RootedError>{
     let value=args.first().copied().unwrap_or_else(||context.undefined());
     let keys=context.own_non_index_keys_rooted(value,false)?;context.collect()?;
     let bytes=context.bytes_prefix_rooted(value,2).ok_or_else(||RootedError::host("buffer bytes missing"))?;
@@ -1018,18 +970,14 @@ fn native_bounded_byte_snapshots_and_non_index_keys_preserve_views_and_gc_roots(
       if(nativeBoundedView(ab)[0].join()!=='1,2')throw Error('backing prefix changed');
       if(nativeBoundedView(new DataView(ab,2,2))[0].join()!=='3,4')throw Error('DataView prefix changed');
     "#;
-    for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-bounded-view.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-bounded-view.js").unwrap()]{Runtime::new(BoundedViewHost).execute(&program).unwrap();}
+    for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-bounded-view.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-bounded-view.js").unwrap()]{Runtime::new(bounded_view_host()).execute(&program).unwrap();}
 }
 
-struct NonIndexKeyHost;
-impl Host for NonIndexKeyHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![global "nativeNonIndexKeys" (2) => native_non_index_keys]
-    }
+fn non_index_key_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![global "nativeNonIndexKeys" (2) => native_non_index_keys])
 }
-fn native_non_index_keys(context: &mut NativeContext<'_, NonIndexKeyHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+fn native_non_index_keys(context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let enumerable = context.truthy_rooted(args[1])?;
     let keys = context.own_non_index_keys_rooted(args[0], enumerable)?;
     context.collect()?;
@@ -1053,22 +1001,18 @@ fn native_non_index_keys_keep_array_length_order_descriptors_symbols_and_proxy_s
       if(nativeNonIndexKeys(view,false).join()!=='extra')throw Error('view indices expanded');
     "#;
     for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-non-index-keys.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-non-index-keys.js").unwrap()] {
-        Runtime::new(NonIndexKeyHost).execute(&program).unwrap();
+        Runtime::new(non_index_key_host()).execute(&program).unwrap();
     }
 }
 
-struct BootstrapRegExpHost;
-impl Host for BootstrapRegExpHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-        context.seal_startup_intrinsics(); Ok(())
-    }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![global "nativeBootstrapRegExp" (1) => native_bootstrap_regexp]
-    }
+fn bootstrap_reg_exp_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![global "nativeBootstrapRegExp" (1) => native_bootstrap_regexp])
+        .with_install(|context: &mut NativeContext<'_, TestHost>| {
+            context.seal_startup_intrinsics(); Ok(())
+        })
 }
-fn native_bootstrap_regexp(context: &mut NativeContext<'_, BootstrapRegExpHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+fn native_bootstrap_regexp(context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let missing = context.undefined();
     let fail = context.truthy_rooted(args.first().copied().unwrap_or(missing))?;
     context.with_startup_intrinsics(|context| {
@@ -1098,19 +1042,15 @@ fn native_builtin_setup_preserves_regexp_statics_across_nested_gc_and_throw() {
       /(next)/.exec('next');if(RegExp.$1!=='next')throw Error('later guest match was suppressed');
     "#;
     for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-bootstrap-regexp.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-bootstrap-regexp.js").unwrap()] {
-        Runtime::new(BootstrapRegExpHost).execute(&program).unwrap();
+        Runtime::new(bootstrap_reg_exp_host()).execute(&program).unwrap();
     }
 }
 
-struct PromiseSlotsHost;
-impl Host for PromiseSlotsHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![global "promiseSlots" (1) => promise_slots]
-    }
+fn promise_slots_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![global "promiseSlots" (1) => promise_slots])
 }
-fn promise_slots(context: &mut NativeContext<'_, PromiseSlotsHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+fn promise_slots(context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let snapshot = context.promise_snapshot_rooted(args[0])?;
     context.collect()?;
     let result = match snapshot {
@@ -1137,47 +1077,41 @@ fn native_promise_slots_preserve_identity_without_observation_or_guest_hooks() {
       if(ran)throw Error('inspection drained jobs');
     "#;
     for program in [Engine::compile(crate::ExecutionRequest{source,name:"promise-slots.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"promise-slots.js").unwrap()] {
-        let mut runtime=Runtime::new(PromiseSlotsHost);
+        let mut runtime=Runtime::new(promise_slots_host());
         runtime.execute(&program).unwrap();
         assert!(runtime.take_promise_rejection_unhandled_events().is_empty());
     }
 }
 
-struct FunctionMetadataHost;
-impl Host for FunctionMetadataHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 {
-        0.0
-    }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![global "metadataCallback" (2) => empty_metadata_callback]
-    }
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-        let global = context.global_root()?;
-        let data = context.object_rooted()?;
-        for (name, constructor) in [("MetadataCaptured", false), ("MetadataCtor", true)] {
-            let function = if constructor {
-                context.host_constructor_with_data(HostFunctionId(0), data)?
-            } else {
-                context.host_function_with_data(HostFunctionId(0), data)?
-            };
-            let key = context.string_rooted(name);
-            context.define_data_property_rooted(global, key, function, true, true, true)?;
-        }
-        let named_constructor = context.host_constructor_named(HostFunctionId(0), "")?;
-        let key = context.string_rooted("MetadataAnonymousCtor");
-        context.define_data_property_rooted(global, key, named_constructor, true, true, true)?;
-        let captured_constructor = context.host_constructor_named_with_data(HostFunctionId(0), "", data)?;
-        let key = context.string_rooted("MetadataAnonymousCapturedCtor");
-        context.define_data_property_rooted(global, key, captured_constructor, true, true, true)?;
-        let anonymous = context.host_function_named(HostFunctionId(0), "")?;
-        let key = context.string_rooted("MetadataAnonymous");
-        context.define_data_property_rooted(global, key, anonymous, true, true, true)?;
-        Ok(())
-    }
+fn function_metadata_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![global "metadataCallback" (2) => empty_metadata_callback])
+        .with_install(|context: &mut NativeContext<'_, TestHost>| {
+            let global = context.global_root()?;
+            let data = context.object_rooted()?;
+            for (name, constructor) in [("MetadataCaptured", false), ("MetadataCtor", true)] {
+                let function = if constructor {
+                    context.host_constructor_with_data(HostFunctionId(0), data)?
+                } else {
+                    context.host_function_with_data(HostFunctionId(0), data)?
+                };
+                let key = context.string_rooted(name);
+                context.define_data_property_rooted(global, key, function, true, true, true)?;
+            }
+            let named_constructor = context.host_constructor_named(HostFunctionId(0), "")?;
+            let key = context.string_rooted("MetadataAnonymousCtor");
+            context.define_data_property_rooted(global, key, named_constructor, true, true, true)?;
+            let captured_constructor = context.host_constructor_named_with_data(HostFunctionId(0), "", data)?;
+            let key = context.string_rooted("MetadataAnonymousCapturedCtor");
+            context.define_data_property_rooted(global, key, captured_constructor, true, true, true)?;
+            let anonymous = context.host_function_named(HostFunctionId(0), "")?;
+            let key = context.string_rooted("MetadataAnonymous");
+            context.define_data_property_rooted(global, key, anonymous, true, true, true)?;
+            Ok(())
+        })
 }
 fn empty_metadata_callback(
-    context: &mut NativeContext<'_, FunctionMetadataHost>,
+    context: &mut NativeContext<'_, TestHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1207,23 +1141,18 @@ for(const [functionValue,constructor] of [[metadataCallback,false],[MetadataCapt
         .unwrap(),
         Engine::specialize(source, "host-function-metadata.js").unwrap(),
     ] {
-        Runtime::new(FunctionMetadataHost)
+        Runtime::new(function_metadata_host())
             .execute(&program)
             .unwrap();
     }
 }
 
-#[derive(Default)]
-struct ProxySnapshotHost;
-impl Host for ProxySnapshotHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![global "snapshotProxy" (2) => snapshot_proxy]
-    }
+fn proxy_snapshot_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![global "snapshotProxy" (2) => snapshot_proxy])
 }
 fn snapshot_proxy(
-    context: &mut NativeContext<'_, ProxySnapshotHost>, _: RootId, args: &[RootId],
+    context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
     let proxy = args.first().copied().unwrap_or(undefined);
@@ -1249,21 +1178,16 @@ if(snapshotProxy({})!==undefined)throw Error('ordinary object snapshot');
         Engine::specialize_unspecialized(source, "proxy-snapshot.js").unwrap(),
         Engine::specialize(source, "proxy-snapshot.js").unwrap(),
     ] {
-        Runtime::new(ProxySnapshotHost).execute(&program).unwrap();
+        Runtime::new(proxy_snapshot_host()).execute(&program).unwrap();
     }
 }
 
-#[derive(Default)]
-struct CollectionPreviewHost;
-impl Host for CollectionPreviewHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![global "previewCollection" (2) => preview_collection]
-    }
+fn collection_preview_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![global "previewCollection" (2) => preview_collection])
 }
 fn preview_collection(
-    context: &mut NativeContext<'_, CollectionPreviewHost>, _: RootId, args: &[RootId],
+    context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
     let source = args.first().copied().unwrap_or(undefined);
@@ -1289,37 +1213,31 @@ if(previewCollection({})!==undefined)throw Error('ordinary object preview');
         Engine::specialize_unspecialized(source, "collection-preview.js").unwrap(),
         Engine::specialize(source, "collection-preview.js").unwrap(),
     ] {
-        Runtime::new(CollectionPreviewHost).execute(&program).unwrap();
+        Runtime::new(collection_preview_host()).execute(&program).unwrap();
     }
 }
 
-#[derive(Default)]
-struct ConstructorProvenanceHost {
-    constructor: Option<HostWeakRoot>,
-}
-impl Host for ConstructorProvenanceHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 {
-        0.0
-    }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![
+/// The weak root a test host's `remember*` native keeps.
+type Remembered = std::cell::Cell<Option<HostWeakRoot>>;
+fn constructor_provenance_host() -> TestHost {
+    TestHost::default()
+        .with_state(Rc::new(Remembered::default()))
+        .with_natives(crate::host_functions![
             global "rememberConstructor" (1) => remember_constructor,
             global "constructedName" (1) => constructed_name,
-        ]
-    }
+        ])
 }
 fn remember_constructor(
-    context: &mut NativeContext<'_, ConstructorProvenanceHost>,
+    context: &mut NativeContext<'_, TestHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let weak = context.host_weak_root(args[0])?;
-    context.host_mut().constructor = Some(weak);
+    context.host_mut().state::<Remembered>().set(Some(weak));
     Ok(context.undefined())
 }
 fn constructed_name(
-    context: &mut NativeContext<'_, ConstructorProvenanceHost>,
+    context: &mut NativeContext<'_, TestHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1343,7 +1261,7 @@ function checkPrototype(){if(constructedName(Object.getPrototypeOf(child))!==und
         Engine::specialize_unspecialized(source, "constructor-provenance.js").unwrap(),
         Engine::specialize(source, "constructor-provenance.js").unwrap(),
     ] {
-        let mut runtime = Runtime::new(ConstructorProvenanceHost::default());
+        let mut runtime = Runtime::new(constructor_provenance_host());
         runtime.execute(&program).unwrap();
         // Check release after each activation returns, avoiding conservative
         // roots held by an active guest frame's locals or registers.
@@ -1367,7 +1285,8 @@ function checkPrototype(){if(constructedName(Object.getPrototypeOf(child))!==und
             runtime.collect(&program).unwrap();
             let weak = runtime
                 .host_mut()
-                .constructor
+                .state::<Remembered>()
+                .get()
                 .expect("remembered constructor");
             assert_eq!(runtime.host_weak_root_is_live(weak), alive, "{operation}");
         }
@@ -1388,7 +1307,7 @@ function dropSites(){sites=null}
         Engine::specialize_unspecialized(source,"stack-name-roots.js").unwrap(),
         Engine::specialize(source,"stack-name-roots.js").unwrap(),
     ] {
-        let mut runtime = Runtime::new(ConstructorProvenanceHost::default());
+        let mut runtime = Runtime::new(constructor_provenance_host());
         runtime.execute(&program).unwrap();
         for (operation, alive) in [
             ("createStack", true), ("exposeSites", true),
@@ -1400,26 +1319,22 @@ function dropSites(){sites=null}
             let result=runtime.call_rooted(function,global,&[]).unwrap();
             for root in [result,function,key,global]{assert!(runtime.release_root(root));}
             runtime.collect(&program).unwrap();
-            let weak=runtime.host_mut().constructor.expect("remembered frame");
+            let weak=runtime.host_mut().state::<Remembered>().get().expect("remembered frame");
             assert_eq!(runtime.host_weak_root_is_live(weak),alive,"{operation}");
         }
     }
 }
 
-struct ProtectedStartupHost;
-impl Host for ProtectedStartupHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![global "protectedStartup" (1) => protected_startup]
-    }
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-        context.seal_startup_intrinsics();
-        Ok(())
-    }
+fn protected_startup_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![global "protectedStartup" (1) => protected_startup])
+        .with_install(|context: &mut NativeContext<'_, TestHost>| {
+            context.seal_startup_intrinsics();
+            Ok(())
+        })
 }
 fn protected_startup(
-    context: &mut NativeContext<'_, ProtectedStartupHost>,
+    context: &mut NativeContext<'_, TestHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1466,7 +1381,7 @@ check();
         Engine::compile(crate::ExecutionRequest { source, name: "protected-startup.js", kind: crate::SourceKind::Script }).unwrap(),
         Engine::specialize(source, "protected-startup.js").unwrap(),
     ] {
-        Runtime::new(ProtectedStartupHost).execute(&program).unwrap();
+        Runtime::new(protected_startup_host()).execute(&program).unwrap();
     }
 }
 
@@ -1492,7 +1407,7 @@ if(Object.getPrototypeOf(async function(){})!==asyncPrototype||Object.getPrototy
         Engine::specialize_unspecialized(source, "function-factory-origins.js").unwrap(),
         Engine::specialize(source, "function-factory-origins.js").unwrap(),
     ] {
-        Runtime::new(ConstructorProvenanceHost::default())
+        Runtime::new(constructor_provenance_host())
             .execute(&program)
             .unwrap();
     }
@@ -1510,7 +1425,7 @@ function dropIterator(){state=null}
         Engine::specialize_unspecialized(source, "generator-origin-roots.js").unwrap(),
         Engine::specialize(source, "generator-origin-roots.js").unwrap(),
     ] {
-        let mut runtime = Runtime::new(ConstructorProvenanceHost::default());
+        let mut runtime = Runtime::new(constructor_provenance_host());
         runtime.execute(&program).unwrap();
         for (operation, alive) in [
             ("createIterator", true),
@@ -1525,30 +1440,24 @@ function dropIterator(){state=null}
                 assert!(runtime.release_root(root));
             }
             runtime.collect(&program).unwrap();
-            let weak = runtime.host_mut().constructor.unwrap();
+            let weak = runtime.host_mut().state::<Remembered>().get().unwrap();
             assert_eq!(runtime.host_weak_root_is_live(weak), alive, "{operation}");
         }
     }
 }
 
-#[derive(Default)]
-struct BoxedPrimitiveHost {
-    payload: Option<HostWeakRoot>,
-}
-impl Host for BoxedPrimitiveHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![global "rememberPayload" (1) => remember_boxed_payload]
-    }
+fn boxed_primitive_host() -> TestHost {
+    TestHost::default()
+        .with_state(Rc::new(Remembered::default()))
+        .with_natives(crate::host_functions![global "rememberPayload" (1) => remember_boxed_payload])
 }
 fn remember_boxed_payload(
-    context: &mut NativeContext<'_, BoxedPrimitiveHost>,
+    context: &mut NativeContext<'_, TestHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let weak = context.host_weak_root(args[0])?;
-    context.host_mut().payload = Some(weak);
+    context.host_mut().state::<Remembered>().set(Some(weak));
     Ok(context.undefined())
 }
 #[test]
@@ -1563,7 +1472,7 @@ function dropWrapper(){wrapper=null}
         Engine::specialize_unspecialized(source, "boxed-primitive-roots.js").unwrap(),
         Engine::specialize(source, "boxed-primitive-roots.js").unwrap(),
     ] {
-        let mut runtime = Runtime::new(BoxedPrimitiveHost::default());
+        let mut runtime = Runtime::new(boxed_primitive_host());
         runtime.execute(&program).unwrap();
         for (operation, alive) in [("createWrapper", true), ("readWrapper", true), ("dropWrapper", false)] {
             let global = runtime.global_root().unwrap();
@@ -1572,7 +1481,7 @@ function dropWrapper(){wrapper=null}
             let result = runtime.call_rooted(function, global, &[]).unwrap();
             for root in [result, function, key, global] { assert!(runtime.release_root(root)); }
             runtime.collect(&program).unwrap();
-            let payload = runtime.host_mut().payload.unwrap();
+            let payload = runtime.host_mut().state::<Remembered>().get().unwrap();
             assert_eq!(runtime.host_weak_root_is_live(payload), alive, "{operation}");
         }
     }
@@ -1583,62 +1492,61 @@ struct PreparedScriptState {
     script: Option<PreparedScript>,
     invalidations: usize,
 }
-struct PreparedScriptHost(Rc<RefCell<PreparedScriptState>>);
-impl Host for PreparedScriptHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn functions(&self) -> &[HostFunction<Self>] { &[] }
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-        let state = context.host_mut().0.clone();
-        let first = context.create_realm_rooted()?;
-        let second = context.create_realm_rooted()?;
-        let old = state.borrow_mut().script.take();
-        if let Some(old) = old {
-            assert!(!context.prepared_script_is_current(&old));
-            assert!(context.evaluate_prepared_script_in_realm_rooted(first, &old).is_err());
-            state.borrow_mut().invalidations += 1;
-        }
-        let prepared = context.prepare_specialized_script_in_realm_with_origin(
-            first,
-            "(() => { const secret = {}; return function(value) { return { value, secret, array: [], error: new Error('prepared') }; }; })()",
-            "prepared-host.js", 0, 0,
-        )?;
-        assert!(context.prepared_script_is_current(&prepared));
-        context.collect()?;
-        let left_factory = context.evaluate_prepared_script_in_realm_rooted(first, &prepared)?;
-        let right_factory = context.evaluate_prepared_script_in_realm_rooted(second, &prepared)?;
-        context.collect()?;
-        let undefined = context.undefined();
-        let one = context.number(1.0);
-        let two = context.number(2.0);
-        let left = context.call_rooted(left_factory, undefined, &[one])?;
-        let again = context.call_rooted(left_factory, undefined, &[two])?;
-        let right = context.call_rooted(right_factory, undefined, &[two])?;
-        context.collect()?;
-        let property = |context: &mut NativeContext<'_, Self>, object, name| {
-            let key = context.string_rooted(name);
-            context.get_property_rooted(object, key)
-        };
-        let left_secret = property(context, left, "secret")?;
-        let same_secret = property(context, again, "secret")?;
-        let right_secret = property(context, right, "secret")?;
-        assert_eq!(context.rooted_value(left_secret), context.rooted_value(same_secret));
-        assert_ne!(context.rooted_value(left_secret), context.rooted_value(right_secret));
-        for name in ["array", "error"] {
-            let left = property(context, left, name)?;
-            let right = property(context, right, name)?;
-            let left = context.prototype_rooted(left)?;
-            let right = context.prototype_rooted(right)?;
-            assert_ne!(context.rooted_value(left), context.rooted_value(right));
-        }
-        for object in [left, right] {
-            let error = property(context, object, "error")?;
-            let stack = property(context, error, "stack")?;
-            assert!(context.to_string(stack)?.contains("prepared-host.js"));
-        }
-        state.borrow_mut().script = Some(prepared);
-        Ok(())
-    }
+fn prepared_script_host(state: Rc<RefCell<PreparedScriptState>>) -> TestHost {
+    TestHost::default()
+        .with_state(state)
+        .with_natives(&[])
+        .with_install(|context: &mut NativeContext<'_, TestHost>| {
+            let state = context.host_mut().state::<RefCell<PreparedScriptState>>();
+            let first = context.create_realm_rooted()?;
+            let second = context.create_realm_rooted()?;
+            let old = state.borrow_mut().script.take();
+            if let Some(old) = old {
+                assert!(!context.prepared_script_is_current(&old));
+                assert!(context.evaluate_prepared_script_in_realm_rooted(first, &old).is_err());
+                state.borrow_mut().invalidations += 1;
+            }
+            let prepared = context.prepare_specialized_script_in_realm_with_origin(
+                first,
+                "(() => { const secret = {}; return function(value) { return { value, secret, array: [], error: new Error('prepared') }; }; })()",
+                "prepared-host.js", 0, 0,
+            )?;
+            assert!(context.prepared_script_is_current(&prepared));
+            context.collect()?;
+            let left_factory = context.evaluate_prepared_script_in_realm_rooted(first, &prepared)?;
+            let right_factory = context.evaluate_prepared_script_in_realm_rooted(second, &prepared)?;
+            context.collect()?;
+            let undefined = context.undefined();
+            let one = context.number(1.0);
+            let two = context.number(2.0);
+            let left = context.call_rooted(left_factory, undefined, &[one])?;
+            let again = context.call_rooted(left_factory, undefined, &[two])?;
+            let right = context.call_rooted(right_factory, undefined, &[two])?;
+            context.collect()?;
+            let property = |context: &mut NativeContext<'_, TestHost>, object, name| {
+                let key = context.string_rooted(name);
+                context.get_property_rooted(object, key)
+            };
+            let left_secret = property(context, left, "secret")?;
+            let same_secret = property(context, again, "secret")?;
+            let right_secret = property(context, right, "secret")?;
+            assert_eq!(context.rooted_value(left_secret), context.rooted_value(same_secret));
+            assert_ne!(context.rooted_value(left_secret), context.rooted_value(right_secret));
+            for name in ["array", "error"] {
+                let left = property(context, left, name)?;
+                let right = property(context, right, name)?;
+                let left = context.prototype_rooted(left)?;
+                let right = context.prototype_rooted(right)?;
+                assert_ne!(context.rooted_value(left), context.rooted_value(right));
+            }
+            for object in [left, right] {
+                let error = property(context, object, "error")?;
+                let stack = property(context, error, "stack")?;
+                assert!(context.to_string(stack)?.contains("prepared-host.js"));
+            }
+            state.borrow_mut().script = Some(prepared);
+            Ok(())
+        })
 }
 #[test]
 fn prepared_host_scripts_share_code_but_own_realm_state_and_reject_runtime_reset_handles() {
@@ -1647,44 +1555,42 @@ fn prepared_host_scripts_share_code_but_own_realm_state_and_reject_runtime_reset
         Engine::specialize("void 0", "prepared-entry.js").unwrap(),
     ] {
         let state = Rc::new(RefCell::new(PreparedScriptState::default()));
-        let mut runtime = Runtime::new(PreparedScriptHost(state.clone()));
+        let mut runtime = Runtime::new(prepared_script_host(state.clone()));
         runtime.execute(&program).unwrap();
         runtime.execute(&program).unwrap();
-        let mut other = Runtime::new(PreparedScriptHost(state.clone()));
+        let mut other = Runtime::new(prepared_script_host(state.clone()));
         other.execute(&program).unwrap();
         assert_eq!(state.borrow().invalidations, 2);
     }
 }
 
-struct ErrorSourceHost;
-impl Host for ErrorSourceHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn functions(&self) -> &[HostFunction<Self>] { &[] }
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-        let first_source = "new Error('first')";
-        let second_source = "\nnew Error('second')";
-        let global = context.global_root()?;
-        let first = context.evaluate_script_in_realm_rooted(global, first_source, "same-source-name.js")?;
-        let second = context.evaluate_script_in_realm_rooted(global, second_source, "same-source-name.js")?;
-        // The metadata owns immutable source text, not a lookup by a reusable filename
-        // or a borrowed Script slot. Collection and later compilation must preserve it.
-        context.collect()?;
-        for (error, source, line) in [(first, first_source, 1), (second, second_source.trim_start(), 2)] {
-            let position = context.error_source_position_rooted(error)?.expect("captured source");
-            assert_eq!(position.source_line.as_deref(), Some(source));
-            assert_eq!(position.script_name.as_deref(), Some("same-source-name.js"));
-            assert_eq!(position.line_number, line);
-            assert_eq!(position.column_number, 1);
-        }
-        let eval = context.evaluate_script_rooted("new Error('eval')", "named-eval.js")?;
-        context.collect()?;
-        let position = context.error_source_position_rooted(eval)?.expect("captured eval source");
-        assert_eq!(position.source_line.as_deref(), Some("new Error('eval')"));
-        assert_eq!(position.script_name, None);
-        assert_eq!((position.line_number, position.column_number), (1, 1));
-        Ok(())
-    }
+fn error_source_host() -> TestHost {
+    TestHost::default()
+        .with_natives(&[])
+        .with_install(|context: &mut NativeContext<'_, TestHost>| {
+            let first_source = "new Error('first')";
+            let second_source = "\nnew Error('second')";
+            let global = context.global_root()?;
+            let first = context.evaluate_script_in_realm_rooted(global, first_source, "same-source-name.js")?;
+            let second = context.evaluate_script_in_realm_rooted(global, second_source, "same-source-name.js")?;
+            // The metadata owns immutable source text, not a lookup by a reusable filename
+            // or a borrowed Script slot. Collection and later compilation must preserve it.
+            context.collect()?;
+            for (error, source, line) in [(first, first_source, 1), (second, second_source.trim_start(), 2)] {
+                let position = context.error_source_position_rooted(error)?.expect("captured source");
+                assert_eq!(position.source_line.as_deref(), Some(source));
+                assert_eq!(position.script_name.as_deref(), Some("same-source-name.js"));
+                assert_eq!(position.line_number, line);
+                assert_eq!(position.column_number, 1);
+            }
+            let eval = context.evaluate_script_rooted("new Error('eval')", "named-eval.js")?;
+            context.collect()?;
+            let position = context.error_source_position_rooted(eval)?.expect("captured eval source");
+            assert_eq!(position.source_line.as_deref(), Some("new Error('eval')"));
+            assert_eq!(position.script_name, None);
+            assert_eq!((position.line_number, position.column_number), (1, 1));
+            Ok(())
+        })
 }
 
 #[test]
@@ -1693,7 +1599,7 @@ fn error_source_metadata_owns_original_text_across_same_named_scripts_and_collec
         Engine::specialize_unspecialized("void 0", "error-source-entry.js").unwrap(),
         Engine::specialize("void 0", "error-source-entry.js").unwrap(),
     ] {
-        let mut runtime = Runtime::new(ErrorSourceHost);
+        let mut runtime = Runtime::new(error_source_host());
         runtime.execute(&program).unwrap();
     }
 }
@@ -1703,78 +1609,75 @@ struct CompiledScriptStateForTest {
     script: Option<CompiledScript>,
     invalidations: usize,
 }
-struct CompiledScriptHost(Rc<RefCell<CompiledScriptStateForTest>>);
-impl Host for CompiledScriptHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![method "scriptIdentity" (0) => compiled_script_identity]
-    }
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-        let state = context.host_mut().0.clone();
-        let previous = state.borrow().script.clone();
-        if let Some(script) = previous {
-            assert!(!context.compiled_script_is_current(&script));
-            let global = context.global_root()?;
-            assert!(context.evaluate_compiled_script_in_realm_rooted(global, &script).is_err());
-            state.borrow_mut().invalidations += 1;
-            return Ok(());
-        }
-        let first = context.create_realm_rooted()?;
-        let second = context.create_realm_rooted()?;
-        for global in [first, second] {
-            let function = context.host_function(HostFunctionId(0))?;
-            let key = context.string_rooted("scriptIdentity");
-            context.define_data_property_rooted(global, key, function, true, true, true)?;
-        }
-        let script = context.compile_script_in_realm_with_origin(first,
-            "({identity:scriptIdentity(), array:[], error:new Error('owned'), template:((x)=>x)`site`, Class:class { #value=1; read(){return this.#value} }})",
-            "owned-host-script.js", 0, 0)?;
-        context.collect()?;
-        context.collect()?;
-        let left = context.evaluate_compiled_script_in_realm_rooted(first, &script)?;
-        let again = context.evaluate_compiled_script_in_realm_rooted(first, &script)?;
-        let right = context.evaluate_compiled_script_in_realm_rooted(second, &script)?;
-        context.collect()?;
-        let get = |context: &mut NativeContext<'_, Self>, object, name| {
-            let key = context.string_rooted(name);
-            context.get_property_rooted(object, key)
-        };
-        for name in ["identity", "template"] {
-            let a = get(context, left, name)?;
-            let b = get(context, again, name)?;
-            assert!(context.strict_equal_rooted(a, b)?);
-            let c = get(context, right, name)?;
-            assert_eq!(context.strict_equal_rooted(a, c)?, name == "identity");
-        }
-        for name in ["array", "error"] {
-            let a = get(context, left, name)?;
-            let b = get(context, again, name)?;
-            assert!(!context.strict_equal_rooted(a, b)?);
-            let c = get(context, right, name)?;
-            let a = context.prototype_rooted(a)?;
-            let c = context.prototype_rooted(c)?;
-            assert!(!context.strict_equal_rooted(a, c)?);
-        }
-        let first_class = get(context, left, "Class")?;
-        let second_class = get(context, again, "Class")?;
-        assert!(!context.strict_equal_rooted(first_class, second_class)?);
-        let first_instance = context.construct_rooted(first_class, first_class, &[])?;
-        let second_instance = context.construct_rooted(second_class, second_class, &[])?;
-        let read = get(context, first_instance, "read")?;
-        let one = context.call_rooted(read, first_instance, &[])?;
-        assert_eq!(context.rooted_value(one), Some(Value::number(1.0)));
-        assert!(context.call_rooted(read, second_instance, &[]).is_err());
-        let after = context.evaluate_compiled_script_in_realm_rooted(first, &script)?;
-        let old = get(context, left, "identity")?;
-        let fresh = get(context, after, "identity")?;
-        assert!(context.strict_equal_rooted(old, fresh)?);
-        state.borrow_mut().script = Some(script);
-        Ok(())
-    }
+fn compiled_script_host(state: Rc<RefCell<CompiledScriptStateForTest>>) -> TestHost {
+    TestHost::default()
+        .with_state(state)
+        .with_natives(crate::host_functions![method "scriptIdentity" (0) => compiled_script_identity])
+        .with_install(|context: &mut NativeContext<'_, TestHost>| {
+            let state = context.host_mut().state::<RefCell<CompiledScriptStateForTest>>();
+            let previous = state.borrow().script.clone();
+            if let Some(script) = previous {
+                assert!(!context.compiled_script_is_current(&script));
+                let global = context.global_root()?;
+                assert!(context.evaluate_compiled_script_in_realm_rooted(global, &script).is_err());
+                state.borrow_mut().invalidations += 1;
+                return Ok(());
+            }
+            let first = context.create_realm_rooted()?;
+            let second = context.create_realm_rooted()?;
+            for global in [first, second] {
+                let function = context.host_function(HostFunctionId(0))?;
+                let key = context.string_rooted("scriptIdentity");
+                context.define_data_property_rooted(global, key, function, true, true, true)?;
+            }
+            let script = context.compile_script_in_realm_with_origin(first,
+                "({identity:scriptIdentity(), array:[], error:new Error('owned'), template:((x)=>x)`site`, Class:class { #value=1; read(){return this.#value} }})",
+                "owned-host-script.js", 0, 0)?;
+            context.collect()?;
+            context.collect()?;
+            let left = context.evaluate_compiled_script_in_realm_rooted(first, &script)?;
+            let again = context.evaluate_compiled_script_in_realm_rooted(first, &script)?;
+            let right = context.evaluate_compiled_script_in_realm_rooted(second, &script)?;
+            context.collect()?;
+            let get = |context: &mut NativeContext<'_, TestHost>, object, name| {
+                let key = context.string_rooted(name);
+                context.get_property_rooted(object, key)
+            };
+            for name in ["identity", "template"] {
+                let a = get(context, left, name)?;
+                let b = get(context, again, name)?;
+                assert!(context.strict_equal_rooted(a, b)?);
+                let c = get(context, right, name)?;
+                assert_eq!(context.strict_equal_rooted(a, c)?, name == "identity");
+            }
+            for name in ["array", "error"] {
+                let a = get(context, left, name)?;
+                let b = get(context, again, name)?;
+                assert!(!context.strict_equal_rooted(a, b)?);
+                let c = get(context, right, name)?;
+                let a = context.prototype_rooted(a)?;
+                let c = context.prototype_rooted(c)?;
+                assert!(!context.strict_equal_rooted(a, c)?);
+            }
+            let first_class = get(context, left, "Class")?;
+            let second_class = get(context, again, "Class")?;
+            assert!(!context.strict_equal_rooted(first_class, second_class)?);
+            let first_instance = context.construct_rooted(first_class, first_class, &[])?;
+            let second_instance = context.construct_rooted(second_class, second_class, &[])?;
+            let read = get(context, first_instance, "read")?;
+            let one = context.call_rooted(read, first_instance, &[])?;
+            assert_eq!(context.rooted_value(one), Some(Value::number(1.0)));
+            assert!(context.call_rooted(read, second_instance, &[]).is_err());
+            let after = context.evaluate_compiled_script_in_realm_rooted(first, &script)?;
+            let old = get(context, left, "identity")?;
+            let fresh = get(context, after, "identity")?;
+            assert!(context.strict_equal_rooted(old, fresh)?);
+            state.borrow_mut().script = Some(script);
+            Ok(())
+        })
 }
 fn compiled_script_identity(
-    context: &mut NativeContext<'_, CompiledScriptHost>, _: RootId, _: &[RootId],
+    context: &mut NativeContext<'_, TestHost>, _: RootId, _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let frame = context.source_stack_frames(1).pop().expect("actual Script activation");
     assert_eq!(frame.script_name, "owned-host-script.js");
@@ -1788,31 +1691,29 @@ fn compiled_host_scripts_keep_source_identity_and_own_separate_realm_execution_s
         Engine::specialize("void 0", "owned-entry.js").unwrap(),
     ] {
         let state = Rc::new(RefCell::new(CompiledScriptStateForTest::default()));
-        let mut runtime = Runtime::new(CompiledScriptHost(state.clone()));
+        let mut runtime = Runtime::new(compiled_script_host(state.clone()));
         runtime.execute(&program).unwrap();
         runtime.execute(&program).unwrap();
-        let mut foreign = Runtime::new(CompiledScriptHost(state.clone()));
+        let mut foreign = Runtime::new(compiled_script_host(state.clone()));
         foreign.execute(&program).unwrap();
         assert_eq!(state.borrow().invalidations, 2);
     }
 }
 
-struct HostPrivateSymbolHost;
-impl Host for HostPrivateSymbolHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn functions(&self) -> &[HostFunction<Self>] { &[] }
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-        let global = context.global_root()?;
-        for (name, private) in [("nativePrivate", true), ("nativePublic", false)] {
-            let symbol = if private { context.private_symbol_rooted(Some("same")) }
-                         else { context.symbol_rooted(Some("same")) };
-            let name = context.string_rooted(name);
-            context.define_data_property_rooted(global, name, symbol, true, true, true)?;
-        }
-        context.collect()?;
-        Ok(())
-    }
+fn host_private_symbol_host() -> TestHost {
+    TestHost::default()
+        .with_natives(&[])
+        .with_install(|context: &mut NativeContext<'_, TestHost>| {
+            let global = context.global_root()?;
+            for (name, private) in [("nativePrivate", true), ("nativePublic", false)] {
+                let symbol = if private { context.private_symbol_rooted(Some("same")) }
+                             else { context.symbol_rooted(Some("same")) };
+                let name = context.string_rooted(name);
+                context.define_data_property_rooted(global, name, symbol, true, true, true)?;
+            }
+            context.collect()?;
+            Ok(())
+        })
 }
 #[test]
 fn host_private_symbols_preserve_explicit_access_and_bypass_public_object_protocols() {
@@ -1892,33 +1793,26 @@ fn host_private_symbols_preserve_explicit_access_and_bypass_public_object_protoc
     "#;
     for program in [Engine::specialize_unspecialized(source, "native-private-symbol.js").unwrap(),
                     Engine::specialize(source, "native-private-symbol.js").unwrap()] {
-        let mut runtime = Runtime::new(HostPrivateSymbolHost);
+        let mut runtime = Runtime::new(host_private_symbol_host());
         runtime.execute(&program).unwrap();
     }
 }
 
-#[derive(Default)]
-struct IdentityHost;
 
-impl Host for IdentityHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 {
-        0.0
-    }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![method "identity" (1) => identity]
-    }
-    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
-        let operation = context.host_function(HostFunctionId(0))?;
-        let global = context.global_root()?;
-        let key = context.string_rooted("identity");
-        assert!(context.set_property_rooted(global, key, operation, global)?);
-        Ok(())
-    }
+fn identity_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![method "identity" (1) => identity])
+        .with_install(|context: &mut NativeContext<'_, TestHost>| {
+            let operation = context.host_function(HostFunctionId(0))?;
+            let global = context.global_root()?;
+            let key = context.string_rooted("identity");
+            assert!(context.set_property_rooted(global, key, operation, global)?);
+            Ok(())
+        })
 }
 
 fn identity(
-    context: &mut NativeContext<'_, IdentityHost>,
+    context: &mut NativeContext<'_, TestHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1927,7 +1821,7 @@ fn identity(
 
 #[test]
 fn native_calls_reuse_root_lists_instead_of_accumulating_them() {
-    let mut runtime = Runtime::new(IdentityHost);
+    let mut runtime = Runtime::new(identity_host());
     let program = Engine::specialize(
         "for (let i = 0; i < 1000; i++) identity(i, [i]);",
         "native-root-lists.js",
@@ -1938,25 +1832,18 @@ fn native_calls_reuse_root_lists_instead_of_accumulating_them() {
     assert!(pooled <= 1, "{pooled} root lists pooled after sequential native calls");
 }
 
-#[derive(Default)]
-struct LaneHost;
 
-impl Host for LaneHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 {
-        0.0
-    }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![
+fn lane_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![
             global "callBack" (2) => lane_call_back,
             global "raise" (1) => lane_raise,
             global "collected" (1) => lane_collected,
-        ]
-    }
+        ])
 }
 
 fn lane_call_back(
-    ctx: &mut NativeContext<'_, LaneHost>,
+    ctx: &mut NativeContext<'_, TestHost>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1964,7 +1851,7 @@ fn lane_call_back(
 }
 
 fn lane_raise(
-    ctx: &mut NativeContext<'_, LaneHost>,
+    ctx: &mut NativeContext<'_, TestHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1972,7 +1859,7 @@ fn lane_raise(
 }
 
 fn lane_collected(
-    ctx: &mut NativeContext<'_, LaneHost>,
+    ctx: &mut NativeContext<'_, TestHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1985,7 +1872,7 @@ fn throws_through_lane_host_calls_of_another_program_reach_the_entry_programs_ca
     // A wrapper compiled as another program calls a host function from its lane run; the
     // guest callback's throw unwinds through the wrapper into a catch of the loop's entry
     // program, whose handlers the unwind reads from that program, not the wrapper's.
-    let mut runtime = Runtime::new(LaneHost);
+    let mut runtime = Runtime::new(lane_host());
     let program = Engine::specialize(
         "var wrap = new Function('f', 'let s = 0; for (let k = 0; k < 3; k++) s += k; return callBack(f, s);');
          function run(i) {
@@ -2015,7 +1902,7 @@ fn host_functions_called_from_lane_frames_keep_reentry_errors_and_roots() {
     // Host functions run in place from a frame's lane run: a guest callback they call
     // sees its arguments, a thrown value reaches the guest's catch, and a collection
     // inside the host keeps the frame's live registers.
-    let mut runtime = Runtime::new(LaneHost);
+    let mut runtime = Runtime::new(lane_host());
     let program = Engine::specialize(
         "function run(i) {
            const o = { i };
@@ -2041,21 +1928,17 @@ fn host_functions_called_from_lane_frames_keep_reentry_errors_and_roots() {
     );
 }
 
-struct DescriptorFieldsHost;
-impl Host for DescriptorFieldsHost {
-    fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
-    fn functions(&self) -> &[HostFunction<Self>] {
-        crate::host_functions![
+fn descriptor_fields_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![
             global "nativeCopyProperty" (4) => native_copy_property,
             global "nativeDefineValue" (3) => native_define_value,
             global "nativeDefineMixed" (2) => native_define_mixed
-        ]
-    }
+        ])
 }
 /// `nativeCopyProperty(source, key, target, targetKey)`: whether [[GetOwnProperty]] found the
 /// property, after defining it on `target` from the fields it reported.
-fn native_copy_property(context: &mut NativeContext<'_, DescriptorFieldsHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+fn native_copy_property(context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let [source, key, target, target_key] = args else { unreachable!("four arguments") };
     let Some(fields) = context.own_property_fields_rooted(*source, *key)? else {
         return Ok(context.boolean(false));
@@ -2065,14 +1948,14 @@ fn native_copy_property(context: &mut NativeContext<'_, DescriptorFieldsHost>, _
     Ok(context.boolean(defined))
 }
 /// `nativeDefineValue(target, key, value)`: `Reflect.defineProperty(target, key, { value })`.
-fn native_define_value(context: &mut NativeContext<'_, DescriptorFieldsHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+fn native_define_value(context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let [target, key, value] = args else { unreachable!("three arguments") };
     let fields = DescriptorFields { value: Some(*value), ..DescriptorFields::default() };
     let defined = context.define_property_fields_rooted(*target, *key, fields)?;
     Ok(context.boolean(defined))
 }
 /// `nativeDefineMixed(target, key)`: a descriptor with both a value and a getter.
-fn native_define_mixed(context: &mut NativeContext<'_, DescriptorFieldsHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+fn native_define_mixed(context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let [target, key] = args else { unreachable!("two arguments") };
     let undefined = context.undefined();
     let fields = DescriptorFields { value: Some(undefined), get: Some(undefined), ..DescriptorFields::default() };
@@ -2105,7 +1988,7 @@ fn native_descriptor_fields_match_get_own_property_and_define_property() {
       if(!(caught instanceof TypeError))throw Error('mixed fields');
     "#;
     for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-descriptor-fields.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-descriptor-fields.js").unwrap()] {
-        Runtime::new(DescriptorFieldsHost).execute(&program).unwrap();
+        Runtime::new(descriptor_fields_host()).execute(&program).unwrap();
     }
 }
 

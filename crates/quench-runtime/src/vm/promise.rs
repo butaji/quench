@@ -1159,7 +1159,7 @@ impl<H: Host> Vm<H> {
         // its caller's, which is the realm whose objects it builds.
         let realm = match self.heap.function(callee) {
             Some(FunctionRecord { realm, .. })
-                if *realm == self.realm.globals || !self.shared_natives.contains(&callee) =>
+                if *realm == self.realm.globals || !self.is_shared_native(callee) =>
             {
                 *realm
             }
@@ -1308,7 +1308,8 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn install_promise(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let prototype = self.object();
-        self.install_promise_for_realm(program, self.native_value(Native::Promise), prototype, None)
+        let native_promise = self.native_value(Native::Promise);
+        self.install_promise_for_realm(program, native_promise, prototype, None)
     }
 
     pub(super) fn install_promise_for_realm(
@@ -5330,6 +5331,94 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<Value, JsError> {
         self.promise_resolve_for_constructor(p, self.intrinsic_promise_constructor(), value)
+    }
+
+    /// `Promise.prototype.then` of a receiver whose species steps provably answer the
+    /// intrinsic `%Promise%` without running guest code (`promise_species_intrinsic`), made
+    /// without a frame for the lane: the reaction promise and `perform_promise_then`, as
+    /// `promise_then`'s intrinsic arm makes them. `None` leaves any other receiver, an
+    /// impure species read, or a lifecycle-observing host, whose hooks run guest code, to
+    /// the general call.
+    pub(super) fn lane_promise_then(
+        &mut self,
+        p: &ResidualProgram,
+        promise: Value,
+        on_fulfilled: Value,
+        on_rejected: Value,
+    ) -> Option<Value> {
+        if self.host.observes_promise_lifecycle()
+            || !self.is_promise(promise)
+            || !self.promise_species_intrinsic(promise)
+        {
+            return None;
+        }
+        // Nothing below runs guest code or collects, so the receiver and handlers stay
+        // live in the caller's registers, as `lane_new_array`'s arguments do.
+        let next = self.promise_object_with_parent(None).ok()?;
+        self.perform_promise_then(p, promise, on_fulfilled, on_rejected, next);
+        Some(next)
+    }
+
+    /// `Promise.resolve` of the intrinsic `%Promise%` receiver whose steps provably observe
+    /// nothing: a promise whose `constructor` reads as plain data to the receiver is
+    /// returned as is; any other value resolves a fresh promise as `promise_resolve_value`
+    /// resolves one, where its `then` also reads as plain data — fulfilled directly when
+    /// that `then` is not callable, else through the thenable job the general path would
+    /// enqueue. `None` leaves an impure read or a lifecycle-observing host to the general
+    /// call.
+    pub(super) fn lane_promise_resolve(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        value: Value,
+    ) -> Option<Value> {
+        if self.host.observes_promise_lifecycle()
+            || receiver != self.intrinsic_promise_constructor()
+        {
+            return None;
+        }
+        if self.is_promise(value) {
+            let constructor_atom = self.runtime_atoms.constructor;
+            let observed = self.plain_named_load(value, constructor_atom)?;
+            return (observed == receiver).then_some(value);
+        }
+        let then = if self.object_data(value).is_some() {
+            let then_atom = self.runtime_atoms.then;
+            self.plain_named_load(value, then_atom)?
+        } else {
+            Value::UNDEFINED
+        };
+        let promise = self.promise_object_with_parent(None).ok()?;
+        if self.is_function(then) {
+            let execution_context = self.host.capture_job_context(None);
+            self.realm.jobs.push_back(super::PendingJob::Thenable(ThenableJob {
+                realm: self.realm.globals,
+                then,
+                thenable: value,
+                promise,
+                execution_context,
+            }));
+        } else {
+            // A fresh promise has no reactions, so the settle enqueues nothing.
+            self.promise_settle(p, promise, PromiseState::Fulfilled, value).ok()?;
+        }
+        Some(promise)
+    }
+
+    /// Whether `promise`'s species steps provably answer the intrinsic `%Promise%`: its
+    /// `constructor` reads as plain data (`plain_named_load`) to that constructor — or to
+    /// `undefined`, which PromiseSpeciesConstructor answers with the intrinsic — and the
+    /// constructor's own `@@species` is still an intrinsic accessor, whose getter returns
+    /// its receiver (`has_intrinsic_species_getter`). Both reads observe nothing, so a
+    /// failed proof only leaves the observable steps to the general path.
+    fn promise_species_intrinsic(&mut self, promise: Value) -> bool {
+        let constructor_atom = self.runtime_atoms.constructor;
+        let Some(constructor) = self.plain_named_load(promise, constructor_atom) else {
+            return false;
+        };
+        constructor.is_undefined()
+            || (constructor == self.intrinsic_promise_constructor()
+                && self.has_intrinsic_species_getter(constructor))
     }
 
     pub(super) fn promise_then(

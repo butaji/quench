@@ -659,7 +659,7 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
-        roots.extend(self.natives.iter().map(|(_, value)| *value));
+        roots.extend(self.natives.roots());
         roots.extend(self.atom_strings.values().copied());
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
@@ -1067,6 +1067,7 @@ impl<H: Host> Vm<H> {
         // admits no frameless call while one is due, would push a frame for every call. The
         // job's own values are call roots, and a collection inside its callback, which any
         // back edge makes, is no less possible.
+        self.maybe_collect(program);
         let previous = std::mem::replace(&mut self.native_microtask_running, true);
         let result = match job {
             PendingJob::Call {

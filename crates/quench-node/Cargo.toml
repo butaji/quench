@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 autobins = false
 
+[lib]
+# No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
+doctest = false
+
 [[bin]]
 name = "quench-node"
 path = "src/bin/quench-node.rs"
@@ -15,10 +19,7 @@ path = "src/bin/quench-node.rs"
 # (v2-cloud-c) and the npm lane (v2-npm) link it by default: on npm scenarios it left peak
 # RSS unchanged and cut wall time 4-15% (x86_64 Linux VM, 4 cores, 2026-10-20: ms 105 -> 99
 # ms, chalk 125 -> 107, typescript 576 -> 505; harness imports 238M -> 229M instructions).
-# On the web lane the size-classed allocator serves the runtime's allocate-and-free pairs
-# without glibc's bin search (express ping 1.6-1.7K -> 2.2-2.4K requests/s on the merged
-# tree, 2026-10-21); a lane setting, kept here after each merge of v2-merged (TOD-167).
-default = ["quench-alloc"]
+default = []
 profile-memory = ["quench-runtime/profile-memory"]
 verify-replay = ["quench-runtime/verify-replay"]
 # Quench's size-classed small-object allocator as the global allocator (TOD-137).

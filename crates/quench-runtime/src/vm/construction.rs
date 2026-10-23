@@ -30,6 +30,13 @@ pub(super) struct ClosureTemplate {
     prototype: Option<(Value, u32)>,
 }
 
+/// The closure template slot of a program's function: functions of different programs share
+/// ids, so the program is mixed in by a multiplicative hash (the 32-bit golden ratio).
+fn closure_template_index(program: ProgramId, function: u32) -> usize {
+    const PROGRAM_MIX: u32 = 0x9E37_79B9;
+    (function ^ program.raw().wrapping_mul(PROGRAM_MIX)) as usize & (CLOSURE_TEMPLATES - 1)
+}
+
 /// A closure's own `length` and `name`, which the recorded shapes add first; its `prototype`,
 /// when it has one, follows them.
 const FINISHED_CLOSURE_NAMED_SLOTS: usize = 2;
@@ -384,7 +391,7 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(active)
                 .to_vec()
         };
-        let template_index = id as usize & (CLOSURE_TEMPLATES - 1);
+        let template_index = closure_template_index(self.active_program, id);
         let plain_scope = with_objects.is_empty();
         if plain_scope
             && let Some(template) = self.closure_templates[template_index].filter(|template| {

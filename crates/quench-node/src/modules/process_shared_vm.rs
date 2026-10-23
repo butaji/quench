@@ -367,17 +367,32 @@ fn install_config(
     let variables = context.object_rooted()?;
     for (name, fact) in process_state::config_variable_facts() {
         let value = fact_value(context, *fact)?;
-        install(context, variables, name, value)?;
+        install_frozen(context, variables, name, value)?;
     }
-    install(context, config, "variables", variables)?;
-    let freeze = context.evaluate_script_rooted(
-        "(value) => Object.freeze(value)",
-        "node:process/freeze-config.js",
-    )?;
-    let undefined = context.undefined();
-    context.call_rooted(freeze, undefined, &[variables])?;
-    context.call_rooted(freeze, undefined, &[config])?;
+    install_frozen(context, config, "variables", variables)?;
+    for object in [variables, config] {
+        if !context.prevent_extensions_rooted(object)? {
+            return Err(RootedError::host("cannot freeze process.config"));
+        }
+    }
     install(context, process, "config", config)
+}
+
+/// Defines `name` as `Object.freeze` leaves a data property: enumerable, neither writable
+/// nor configurable. With `prevent_extensions_rooted` after the last one, the object is
+/// frozen without compiling a script to call `Object.freeze` (6 KiB of start-up malloc).
+fn install_frozen(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+    value: RootId,
+) -> Result<(), RootedError> {
+    let key = context.string_rooted(name);
+    if context.define_data_property_rooted(object, key, value, false, true, false)? {
+        Ok(())
+    } else {
+        Err(RootedError::host(format!("cannot install frozen process.config member {name}")))
+    }
 }
 
 fn install_facts(
