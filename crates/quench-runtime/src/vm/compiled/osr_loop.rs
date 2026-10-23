@@ -21,7 +21,7 @@
 //! Nothing in a region allocates, collects, or runs guest code, so the arrays, their
 //! element storage and the captures the entry read stay as they are while native code runs.
 
-use crate::bytecode::{Function, Op, Operand, OperandKind, Register, WideInstruction};
+use crate::bytecode::{FieldBase, FieldLookup, Function, Op, Operand, OperandKind, Register, WideInstruction};
 use crate::value::{Value, ValueLayout};
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, UserFuncName,
@@ -39,6 +39,7 @@ const MAX_REGION_INSTRUCTIONS: usize = 512;
 const MAX_REGION_REGISTERS: usize = 128;
 const MAX_REGION_ARRAYS: usize = 8;
 const MAX_REGION_CAPTURES: usize = 16;
+const MAX_REGION_FIELDS: usize = 16;
 /// The largest native body a region may produce.
 const MAX_CODE_BYTES: usize = 64 * 1024;
 
@@ -146,6 +147,8 @@ pub(crate) struct LoopRegion {
     pub(crate) arrays: Vec<ArrayUse>,
     /// The depth-0 capture slots `LoadCapture` reads, in entry-record order.
     pub(crate) captures: Vec<u16>,
+    /// Numeric cached data fields, in entry-record order.
+    pub(crate) fields: Vec<FieldUse>,
     /// The region's instructions, from the header.
     instructions: Vec<WideInstruction>,
     /// The Number constants the region reads, by constant index.
@@ -153,6 +156,31 @@ pub(crate) struct LoopRegion {
     /// The function's live registers before each instruction (`compile::liveness`), when
     /// liveness covers it.
     live: Option<Box<[u64]>>,
+}
+
+/// Why a backward jump was excluded from OSR before native code generation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RegionRejection {
+    RegionTooLarge,
+    UnsupportedInstruction(Op),
+    RegisterLimit,
+    CaptureLimit,
+    ArrayLimit,
+    FieldLimit,
+    FieldMutation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FieldReceiver {
+    This,
+    Register(Register),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FieldUse {
+    pub(crate) receiver: FieldReceiver,
+    pub(crate) atom: crate::bytecode::Atom,
+    pub(crate) cache_site: u16,
 }
 
 impl LoopRegion {
@@ -181,7 +209,8 @@ const ENTRY_CAPTURES: usize = 0;
 const WORD_BYTES: i32 = 8;
 /// An array's two entry words: its element pointer, then its length.
 const ARRAY_WORDS: usize = 2;
-const ENTRY_WORDS: usize = ENTRY_CAPTURES + MAX_REGION_CAPTURES + ARRAY_WORDS * MAX_REGION_ARRAYS;
+const ENTRY_WORDS: usize =
+    ENTRY_CAPTURES + MAX_REGION_CAPTURES + ARRAY_WORDS * MAX_REGION_ARRAYS + MAX_REGION_FIELDS;
 
 impl LoopEntry {
     pub(crate) fn new() -> Self {
@@ -216,6 +245,10 @@ impl LoopEntry {
         self.push(elements.addr() as u64);
         self.push(length as u64);
         Some(())
+    }
+
+    pub(crate) fn push_field(&mut self, value: f64) {
+        self.push(value.to_bits());
     }
 }
 
@@ -312,7 +345,9 @@ struct Admission<'a> {
     constants: &'a [Value],
     roles: std::collections::BTreeMap<Register, Role>,
     captures: Vec<u16>,
+    pub(crate) fields: Vec<FieldUse>,
     numbers: std::collections::BTreeMap<u16, f64>,
+    writes_indexed: bool,
 }
 
 impl Admission<'_> {
@@ -370,26 +405,45 @@ pub(super) fn region(
     live: Option<&[u64]>,
     header: u32,
     backedge: u32,
-) -> Option<LoopRegion> {
+) -> Result<LoopRegion, RegionRejection> {
     let (start, end) = (header as usize, backedge as usize);
     if start > end || end >= decoded.len() || end - start >= MAX_REGION_INSTRUCTIONS {
-        return None;
+        return Err(RegionRejection::RegionTooLarge);
     }
     let mut admission = Admission {
         constants,
         roles: std::collections::BTreeMap::new(),
         captures: Vec::new(),
+        fields: Vec::new(),
         numbers: std::collections::BTreeMap::new(),
+        writes_indexed: false,
     };
     for instruction in &decoded[start..=end] {
-        admit(&mut admission, *instruction)?;
+        admit(&mut admission, *instruction)
+            .ok_or(RegionRejection::UnsupportedInstruction(instruction.op()))?;
+    }
+    if admission.fields.len() > MAX_REGION_FIELDS {
+        return Err(RegionRejection::FieldLimit);
+    }
+    if !admission.fields.is_empty()
+        && (admission.writes_indexed
+            || admission.fields.iter().any(|field| match field.receiver {
+                FieldReceiver::This => false,
+                FieldReceiver::Register(register) => decoded[start..=end]
+                    .iter()
+                    .any(|instruction| number_definition(*instruction) == Some(register)),
+            }))
+    {
+        return Err(RegionRejection::FieldMutation);
     }
     let registers = usize::from(function.registers);
     if admission.roles.keys().any(|register| usize::from(*register) >= registers)
         || admission.roles.len() > MAX_REGION_REGISTERS
-        || admission.captures.len() > MAX_REGION_CAPTURES
     {
-        return None;
+        return Err(RegionRejection::RegisterLimit);
+    }
+    if admission.captures.len() > MAX_REGION_CAPTURES {
+        return Err(RegionRejection::CaptureLimit);
     }
     let numbers = admission
         .roles
@@ -405,13 +459,16 @@ pub(super) fn region(
             Role::Number => None,
         })
         .collect();
-    (arrays.len() <= MAX_REGION_ARRAYS).then_some(())?;
-    Some(LoopRegion {
+    if arrays.len() > MAX_REGION_ARRAYS {
+        return Err(RegionRejection::ArrayLimit);
+    }
+    Ok(LoopRegion {
         header,
         backedge,
         numbers,
         arrays,
         captures: admission.captures,
+        fields: admission.fields,
         instructions: decoded[start..=end].to_vec(),
         constants: admission.numbers,
         live: live.map(Box::from),
@@ -466,7 +523,23 @@ fn admit(admission: &mut Admission<'_>, instruction: WideInstruction) -> Option<
             admission.note(base, Role::Array { written: false })?;
             admission.source(instruction.operand_c())?;
         }
+        Op::GetField => {
+            let FieldLookup::Atom { atom, base, cache_site } = instruction.field_lookup()? else {
+                return None;
+            };
+            let receiver = if base == FieldBase::THIS {
+                FieldReceiver::This
+            } else {
+                FieldReceiver::Register(base.register_index()?)
+            };
+            let field = FieldUse { receiver, atom, cache_site };
+            if !admission.fields.contains(&field) {
+                admission.fields.push(field);
+            }
+            admission.result(instruction)?;
+        }
         Op::SetIndex => {
+            admission.writes_indexed = true;
             admission.number(instruction.register_a())?;
             admission.note(instruction.register_b(), Role::Array { written: true })?;
             admission.number(instruction.register_c())?;
@@ -579,6 +652,7 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
             | Op::Unary
             | Op::ToNumeric
             | Op::GetIndex
+            | Op::GetField
     )
     .then(|| instruction.result_register())
 }
@@ -784,6 +858,7 @@ fn definition(
             Unary::BitwiseNot => Representation::Int32,
         },
         Op::GetIndex => element_representation(instruction, observation),
+        Op::GetField => Representation::Float64,
         _ => return None,
     };
     Some((instruction.result_register(), representation))
@@ -1206,6 +1281,7 @@ impl CompiledLoop {
     pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
         self.widenings.get(&pc).copied()
     }
+
 }
 
 /// Native code for `region` under `observation`, or `None` when Cranelift declines it. Its
@@ -1281,6 +1357,8 @@ struct Lowering<'a, 'b> {
     units: std::collections::BTreeSet<Register>,
     /// Each capture's value, unboxed at entry, in region order.
     captures: Vec<Typed>,
+    /// Numeric cached field values, loaded from the guarded entry record.
+    fields: Vec<Typed>,
     capture_representations: Vec<Representation>,
     blocks: Vec<ir::Block>,
     /// The region's counted loops; each has a preheader block, which every arrival at its
@@ -1405,6 +1483,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             pc: region.header,
             units,
             captures: Vec::new(),
+            fields: Vec::new(),
             capture_representations,
             blocks,
             counted,
@@ -1696,6 +1775,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let otherwise = self.not_entered(Some(Widening::Capture(index as u16)));
             let value = self.unbox(bits, representation, otherwise);
             self.captures.push(Typed { value, representation });
+        }
+        let fields_start = ENTRY_CAPTURES
+            + self.region.captures.len()
+            + ARRAY_WORDS * self.region.arrays.len();
+        for index in 0..self.region.fields.len() {
+            let bits = self.word(fields_start + index);
+            let value = self.builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
+            self.fields.push(Typed { value, representation: Representation::Float64 });
         }
         // Only an entry value some read reaches is loaded and guarded.
         let registers: Vec<(Register, Definition)> = (0..self.region.numbers.len())
@@ -2406,6 +2493,24 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.fall_through(pc)
             }
             Op::RequireObjectCoercible => self.fall_through(pc),
+            Op::GetField => {
+                let FieldLookup::Atom { atom, base, cache_site } = instruction.field_lookup()? else {
+                    return None;
+                };
+                let receiver = if base == FieldBase::THIS {
+                    FieldReceiver::This
+                } else {
+                    FieldReceiver::Register(base.register_index()?)
+                };
+                let field = self
+                    .region
+                    .fields
+                    .iter()
+                    .position(|field| field.receiver == receiver && field.atom == atom && field.cache_site == cache_site)?;
+                let value = self.fields[field];
+                self.define(instruction.result_register(), value);
+                self.fall_through(pc)
+            }
             Op::GetIndex => {
                 let base = instruction.operand_b().register_index()?;
                 let (elements, length) = self.arrays[&base];
