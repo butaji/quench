@@ -701,6 +701,8 @@ pub(crate) enum JsDenotation {
     GetField,
     NumericBinary,
     CapturedValue,
+    PlainLocalLoad,
+    PlainLocalStore,
     Return,
 }
 const READ_THROW: Effect = Effect::READS_HEAP.union(Effect::THROWS);
@@ -796,8 +798,8 @@ opcodes!(
     SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     // The general loop's fast arms dispatch on these with the opcodes above, so they share
     // one dense range of opcode numbers.
-    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
-    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
+    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalLoad, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalStore, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
     JumpTrue => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
     // `Call` whose last window argument the instruction before it loaded from the activation's
     // `arguments` binding (`CallPlan::forwards_arguments`).

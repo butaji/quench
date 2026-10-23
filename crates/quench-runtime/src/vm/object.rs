@@ -1110,7 +1110,18 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Result<Value, JsError> {
         self.prepare_named_function_info_lookup(object, atom);
-        match self.cached_field_hit(p, object, site) {
+        let probe = self.cached_field_hit(p, object, site);
+        #[cfg(feature = "profile-lane-exits")]
+        self.record_field_probe_path(
+            site as usize,
+            atom,
+            match probe {
+                FieldCacheProbe::Hit(_) => 0,
+                FieldCacheProbe::OrdinaryMiss => 1,
+                FieldCacheProbe::Ineligible => 2,
+            },
+        );
+        match probe {
             FieldCacheProbe::Hit(value) => Ok(value),
             FieldCacheProbe::OrdinaryMiss => match self.array_length_field(object, atom) {
                 Some(length) => Ok(length),
@@ -1121,6 +1132,31 @@ impl<H: Host> Vm<H> {
                 None => self.get_field_uncached(p, object, atom, site, object.heap_reference()),
             },
         }
+    }
+
+    #[cfg(feature = "profile-lane-exits")]
+    fn record_field_probe_path(&self, site: usize, atom: Atom, outcome: u8) {
+        let Some(frame) = self.frames.last() else {
+            return;
+        };
+        let (field_site, part) = frame.source_field.map_or((u32::MAX, 3), |(field_site, part)| {
+            let part = match part {
+                crate::bytecode::FieldPart::First => 0,
+                crate::bytecode::FieldPart::Second => 1,
+                crate::bytecode::FieldPart::Sink => 2,
+            };
+            (field_site as u32, part)
+        });
+        super::lane_exits::field_probe(
+            frame.program.raw(),
+            frame.function,
+            frame.pc as u32,
+            field_site,
+            site,
+            atom as u32,
+            part,
+            outcome,
+        );
     }
 
     /// `array.length`: an array's own `length` is a data property no definition can turn
@@ -1861,10 +1897,13 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn string_prototype_field_hit(&self, site: u16) -> Option<Value> {
         let prototype = self.heap.object_record(self.string_proto)?;
-        if self.shape_is_dictionary(prototype.shape()) {
-            return None;
-        }
-        Some(self.cached_field_value(self.field_cache_index(site), prototype)?.value)
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        let cache = unsafe { *self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        // An entry records only a non-dictionary shape, which the exact shape matches only
+        // outside dictionary storage; a polymorphic site's other entries take the walk.
+        (cache.holder == NO_FIELD_HOLDER && cache.receiver == prototype.exact_shape())
+            // SAFETY: the shape and its own data slot were recorded together on the miss path.
+            .then(|| unsafe { self.heap.property_get_flat(prototype, cache.slot as usize) })
     }
 
     /// The field cache's answer for an object cell other than a string or a
@@ -2069,8 +2108,16 @@ impl<H: Host> Vm<H> {
                     ));
                 }
                 match getter {
-                    Some(getter) => self.call_value(p, getter, object, &[]),
-                    None => self.get_property(p, object, atom),
+                    Some(getter) => {
+                        #[cfg(feature = "profile-lane-exits")]
+                        self.record_field_probe_path(site, atom, 6);
+                        self.call_value(p, getter, object, &[])
+                    }
+                    None => {
+                        #[cfg(feature = "profile-lane-exits")]
+                        self.record_field_probe_path(site, atom, 7);
+                        self.get_property(p, object, atom)
+                    }
                 }
             }
         }
@@ -2248,6 +2295,8 @@ impl<H: Host> Vm<H> {
             }
             self.profile
                 .field_cache_hit(usize::from(hit.tier), hit.depth);
+            #[cfg(feature = "profile-lane-exits")]
+            self.record_field_probe_path(site, atom, 3);
             return Some(hit.value);
         }
         if self
@@ -2259,6 +2308,8 @@ impl<H: Host> Vm<H> {
         if let Some(slot) = self.shape_slot(receiver.shape(), atom)
             && let Some(value) = self.heap.property_get(receiver, slot)
         {
+            #[cfg(feature = "profile-lane-exits")]
+            self.record_field_probe_path(site, atom, 4);
             if slot < FIELD_CACHE_SLOT_CAPACITY {
                 self.record_field_cache(
                     site,
@@ -2274,6 +2325,8 @@ impl<H: Host> Vm<H> {
         if let Some((holder_shape, slot, value)) = self.immediate_prototype_data_field(object, atom)
             && slot < FIELD_CACHE_SLOT_CAPACITY
         {
+            #[cfg(feature = "profile-lane-exits")]
+            self.record_field_probe_path(site, atom, 4);
             self.record_field_cache(
                 site,
                 FieldCache {
@@ -2291,6 +2344,8 @@ impl<H: Host> Vm<H> {
             || self.heap.array(object).is_some()
             || self.heap.function(object).is_some() && self.function_links_answer(atom);
         let (cache, value) = self.inherited_field(receiver, shape_holds_own, atom)?;
+        #[cfg(feature = "profile-lane-exits")]
+        self.record_field_probe_path(site, atom, 5);
         if self.field_cache_records(site) {
             self.note_field_cache_write(site);
             self.record_inherited_field(site, cache);

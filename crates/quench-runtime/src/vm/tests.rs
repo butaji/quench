@@ -10425,14 +10425,35 @@ if(fn().getFunctionName()!=='anonymous')throw Error('deleted length layout');
 }
 
 #[test]
+fn shared_number_arithmetic_maps_all_four_numeric_operators() {
+    use oxc_ast::ast::BinaryOperator;
+    use super::operations::NumberArithmetic;
+
+    for (operator, expected) in [
+        (BinaryOperator::Addition, NumberArithmetic::Add),
+        (BinaryOperator::Subtraction, NumberArithmetic::Subtract),
+        (BinaryOperator::Multiplication, NumberArithmetic::Multiply),
+        (BinaryOperator::Division, NumberArithmetic::Divide),
+    ] {
+        assert_eq!(NumberArithmetic::from_operator(operator as u32), Some(expected));
+    }
+    assert_eq!(
+        NumberArithmetic::from_operator(BinaryOperator::Equality as u32),
+        None
+    );
+}
+
+#[test]
 #[cfg(not(quench_profiled))]
 fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     let source = r#"
       function add(left, right) { return left + right; }
+      function subtract(left, right) { return left - right; }
       function divide(left, right) { return left / right; }
       function plusOne(value) { return value + 1; }
       for (let index = 0; index < 40; index++) {
         if (add(index, 2) !== index + 2) throw new Error('numeric result');
+        if (subtract(index + 2, 2) !== index) throw new Error('numeric subtraction result');
         if (divide(index + 1, 2) !== (index + 1) / 2) throw new Error('division result');
         if (plusOne(index) !== index + 1) throw new Error('numeric constant result');
       }
@@ -10461,13 +10482,59 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
 
-    for function in [1, 2, 3] {
+    for function in [1, 2, 3, 4] {
         assert!(matches!(
             vm.programs
                 .js_tier(super::program_store::ProgramId::MAIN, function),
             Some(super::program_store::JsTierState::Compiled(_))
         ));
     }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_compiles_straight_line_plain_local_temporaries() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function scaled(value) {
+            let temporary = value + 1;
+            return temporary * 2;
+          }
+          for (let index = 0; index < 40; index++) {
+            if (scaled(index) !== (index + 1) * 2) throw Error('local temporary result');
+          }
+          if (!Number.isNaN(scaled('x'))) throw Error('local temporary fallback');
+          let coercions = 0;
+          const boxed = { valueOf() { coercions++; return 5; } };
+          if (scaled(boxed) !== 12 || coercions !== 1) throw Error('effectful fallback');
+        "#,
+        "js-jit-plain-local.js",
+    ))
+    .unwrap();
+    let scaled = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "scaled")
+        })
+        .unwrap() as u32;
+    assert!(
+        super::js_compiled::compile(&program, scaled).is_some(),
+        "the generic numeric lowering should accept a straight-line plain local"
+    );
+
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, scaled),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
 }
 
 #[test]
