@@ -284,21 +284,32 @@ enum Int32Operator {
     ShiftRightUnsigned,
 }
 
-fn arithmetic(operator: u32) -> Option<Arithmetic> {
-    use BinaryOperator as B;
-    Some(match operator {
-        op if op == B::Addition as u32 => Arithmetic::Float(FloatOperator::Add),
-        op if op == B::Subtraction as u32 => Arithmetic::Float(FloatOperator::Subtract),
-        op if op == B::Multiplication as u32 => Arithmetic::Float(FloatOperator::Multiply),
-        op if op == B::Division as u32 => Arithmetic::Float(FloatOperator::Divide),
-        op if op == B::BitwiseOR as u32 => Arithmetic::Int32(Int32Operator::Or),
-        op if op == B::BitwiseAnd as u32 => Arithmetic::Int32(Int32Operator::And),
-        op if op == B::BitwiseXOR as u32 => Arithmetic::Int32(Int32Operator::Xor),
-        op if op == B::ShiftLeft as u32 => Arithmetic::Int32(Int32Operator::ShiftLeft),
-        op if op == B::ShiftRight as u32 => Arithmetic::Int32(Int32Operator::ShiftRight),
-        op if op == B::ShiftRightZeroFill as u32 => Arithmetic::Int32(Int32Operator::ShiftRightUnsigned),
-        _ => return None,
-    })
+fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
+    if let Some(operation) = super::super::operations::NumberArithmetic::from_js_instruction(
+        instruction,
+        operator,
+    ) {
+        return Some(Arithmetic::Float(match operation {
+            super::super::operations::NumberArithmetic::Add => FloatOperator::Add,
+            super::super::operations::NumberArithmetic::Subtract => FloatOperator::Subtract,
+            super::super::operations::NumberArithmetic::Multiply => FloatOperator::Multiply,
+            super::super::operations::NumberArithmetic::Divide => FloatOperator::Divide,
+        }));
+    }
+    let operation = super::super::operations::NumberBitwise::from_js_instruction(
+        instruction,
+        operator,
+    )?;
+    Some(Arithmetic::Int32(match operation {
+        super::super::operations::NumberBitwise::Or => Int32Operator::Or,
+        super::super::operations::NumberBitwise::And => Int32Operator::And,
+        super::super::operations::NumberBitwise::Xor => Int32Operator::Xor,
+        super::super::operations::NumberBitwise::ShiftLeft => Int32Operator::ShiftLeft,
+        super::super::operations::NumberBitwise::ShiftRight => Int32Operator::ShiftRight,
+        super::super::operations::NumberBitwise::ShiftRightUnsigned => {
+            Int32Operator::ShiftRightUnsigned
+        }
+    }))
 }
 
 /// A unary operator a region lowers on a Number.
@@ -479,7 +490,7 @@ fn admit(admission: &mut Admission<'_>, instruction: WideInstruction) -> Option<
             }
         }
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-            arithmetic(instruction.binary_operator())?;
+            arithmetic(instruction.op(), instruction.binary_operator())?;
             admission.result(instruction)?;
             admission.source(instruction.operand_b())?;
             admission.source(instruction.operand_c())?;
@@ -844,12 +855,16 @@ fn definition(
             let index = region.captures.iter().position(|capture| *capture == slot)?;
             captures[index]
         }
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply => match arithmetic(instruction.binary_operator())? {
-            Arithmetic::Float(FloatOperator::Divide) => Representation::Float64,
-            Arithmetic::Float(_) => both(source(instruction.operand_b()), source(instruction.operand_c())),
-            Arithmetic::Int32(Int32Operator::ShiftRightUnsigned) => Representation::Float64,
-            Arithmetic::Int32(_) => Representation::Int32,
-        },
+        Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+            match arithmetic(instruction.op(), instruction.binary_operator())? {
+                Arithmetic::Float(FloatOperator::Divide) => Representation::Float64,
+                Arithmetic::Float(_) => {
+                    both(source(instruction.operand_b()), source(instruction.operand_c()))
+                }
+                Arithmetic::Int32(Int32Operator::ShiftRightUnsigned) => Representation::Float64,
+                Arithmetic::Int32(_) => Representation::Int32,
+            }
+        }
         Op::Unary => match unary(instruction.unary_operator())? {
             Unary::Plus | Unary::Negate => registers(instruction.register_b()),
             Unary::BitwiseNot => Representation::Int32,
@@ -1126,7 +1141,7 @@ fn counted_loop(
                             matches!(base, Base::Term(term) if terms[term].multiply)
                         })
                 };
-                let operator = arithmetic(instruction.binary_operator())?;
+                let operator = arithmetic(instruction.op(), instruction.binary_operator())?;
                 let sum = match (operator, left.1, right.1) {
                     (Arithmetic::Float(FloatOperator::Add), Some(left), Some(right)) => match (left, right) {
                         (_, Affine { base: Base::Constant, addend: None, offset }) => left.plus(offset),
@@ -2392,7 +2407,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.fall_through(pc)
             }
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-                let operator = arithmetic(instruction.binary_operator())?;
+                let operator = arithmetic(instruction.op(), instruction.binary_operator())?;
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
                 let result = instruction.result_register();
