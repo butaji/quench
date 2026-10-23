@@ -515,20 +515,12 @@ pub(super) fn compile_js_numeric_region(
 
     let Body { builder, .. } = body;
     builder.finalize(isa.frontend_config());
-    let mut context = cranelift_codegen::Context::for_function(native);
-    let compiled = context
-        .compile(
-            &*isa,
-            &mut cranelift_codegen::control::ControlPlane::default(),
-        )
-        .ok()?;
-    if !compiled.buffer.relocs().is_empty() {
-        return None;
-    }
-    let code = compiled.code_buffer().to_vec();
-    if code.is_empty() || code.len() > super::js_compiled::MAX_CODE_BYTES {
-        return None;
-    }
+    let code = compile_native_function(
+        native,
+        &*isa,
+        super::js_compiled::MAX_CODE_BYTES,
+        |code| Some(code.to_vec()),
+    )?;
     Some(super::js_compiled::JsJitArtifact {
         code,
         params,
@@ -2962,6 +2954,22 @@ fn compile_and_publish_entry(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     max_code_bytes: usize,
 ) -> Option<(CodeMemory, Entry)> {
+    compile_native_function(function, isa, max_code_bytes, |code| {
+        let memory = CodeMemory::new(code)?;
+        // SAFETY: callers lower the function with `native_entry_signature`.
+        let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
+        Some((memory, entry))
+    })
+}
+
+/// Compile a relocation-free native function under the shared code-size policy, then
+/// consume its machine-code view through the frontend's artifact representation.
+fn compile_native_function<T>(
+    function: ir::Function,
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    max_code_bytes: usize,
+    publish: impl FnOnce(&[u8]) -> Option<T>,
+) -> Option<T> {
     let mut context = cranelift_codegen::Context::for_function(function);
     let compiled = context
         .compile(isa, &mut cranelift_codegen::control::ControlPlane::default())
@@ -2973,10 +2981,7 @@ fn compile_and_publish_entry(
     if code.is_empty() || code.len() > max_code_bytes {
         return None;
     }
-    let memory = CodeMemory::new(code)?;
-    // SAFETY: callers lower the function with `native_entry_signature`.
-    let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
-    Some((memory, entry))
+    publish(code)
 }
 
 /// A guarded JavaScript numeric function compiled from a narrow residual
