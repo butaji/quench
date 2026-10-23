@@ -15,6 +15,8 @@ static DETAILS: std::sync::Mutex<Option<std::collections::HashMap<String, u64>>>
     std::sync::Mutex::new(None);
 
 static CALL_TARGET_SAMPLE: AtomicU64 = AtomicU64::new(0);
+/// Exact, opt-in census of the general dispatch loop's in-loop call-target probe.
+static CALL_ELIGIBILITY: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
 static CALL_TARGETS: std::sync::LazyLock<
     std::sync::Mutex<std::collections::HashMap<(u32, u32, u32), CallTargetProfile>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
@@ -51,6 +53,17 @@ pub(super) fn call_target(
     *profile.functions.entry(target).or_default() += 1;
 }
 
+/// Record an in-loop call-target probe outcome. `outcome` indexes the labels below.
+pub(super) fn call_eligibility(outcome: usize) {
+    if let Some(counter) = CALL_ELIGIBILITY.get(outcome) {
+        counter.fetch_add(1, Ordering::Relaxed);
+        REPORT.call_once(|| {
+            // SAFETY: `report` is a plain function that outlives the process.
+            unsafe { libc::atexit(report) };
+        });
+    }
+}
+
 /// Counts one exit by a description of its operands (operator and value kinds).
 pub(super) fn record_detail(detail: String) {
     let mut details = DETAILS.lock().expect("lane exit details");
@@ -66,6 +79,23 @@ pub(super) fn record(op: Op) {
 }
 
 extern "C" fn report() {
+    const CALL_ELIGIBILITY_NAMES: [&str; 6] = [
+        "positive_cache_hit",
+        "positive_resolution",
+        "non_heap_callee",
+        "native_or_wrong_realm_or_non_callable",
+        "missing_program_or_function",
+        "unsupported_call_plan",
+    ];
+    let call_eligibility: Vec<_> = CALL_ELIGIBILITY_NAMES
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (*name, CALL_ELIGIBILITY[index].load(Ordering::Relaxed)))
+        .filter(|(_, count)| *count > 0)
+        .collect();
+    if !call_eligibility.is_empty() {
+        eprintln!("in-loop call eligibility: {call_eligibility:?}");
+    }
     let mut counts: Vec<(u64, usize)> = EXITS
         .iter()
         .enumerate()
