@@ -536,3 +536,17 @@ measured 1,604.6 / 36.22 MB and Bun no-JIT 1,580.3 / 37.52 MB. Quench remains
 improvement, not a package win. Linux RSS is diagnostic. Reports:
 `work/react-perf/react-profile-guided-build-screen-3.json` and
 `work/react-perf/react-profile-guided-build-nojit-11.json`.
+
+Increasing the optional React training sample to 5,000 rounds passed an
+11-round paired no-JIT screen at 5,000 measured renders per round: 345.6
+renders/s / 24.50 MB sampled max RSS versus the generic-profile control at
+330.6 / 26.43 (+4.5% throughput, -7.3% RSS). Output matched at 24,980,000
+bytes and checksum 414318. Node `--jitless` measured 1,649.6 renders/s /
+36.19 MB, and Bun no-JIT 1,479.7 / 37.39 MB. The larger training weight
+improves the paired Quench result but remains 4.8x slower than Node and 4.3x
+slower than Bun. The candidate clears the RSS margin but is not a package win.
+Linux RSS remains diagnostic. The 5,000-round instrumented run took longer
+than the default per-fixture timeout, so `tools/pgo-build.sh` now gives this
+optional training workload its own 120-second limit. Report:
+`work/react-perf/react-profile-guided-build-5000-screen-3.json` and
+`work/react-perf/react-profile-guided-build-5000-nojit-11.json`.
