@@ -10674,13 +10674,15 @@ fn js_jit_compiles_numeric_capture_arithmetic_and_guards_mutation() {
 fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
-          function mask(value) { return value & 7; }
+          function mask(value) { return value ^ 7; }
           for (let index = -20; index < 20; index++) {
-            if (mask(index) !== (index & 7)) throw Error('int32 bitwise');
+            if (mask(index) !== (index ^ 7)) throw Error('int32 bitwise');
           }
-          if (mask(2.5) !== 2) throw Error('fraction fallback');
-          if (mask(4294967296) !== 0) throw Error('range fallback');
-          if (mask('13') !== 5) throw Error('coercion fallback');
+          if (mask(2.5) !== (2 ^ 7)) throw Error('fraction fallback');
+          if (mask(4294967296) !== 7) throw Error('range fallback');
+          if (mask(4294967295) !== (-1 ^ 7)) throw Error('unsigned range fallback');
+          if (mask(NaN) !== 7) throw Error('non-finite fallback');
+          if (mask('13') !== 10) throw Error('coercion fallback');
           let bigintThrew = false;
           try { mask(13n); } catch (error) { bigintThrew = error instanceof TypeError; }
           if (!bigintThrew) throw Error('bigint fallback');
