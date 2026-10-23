@@ -1,0 +1,16 @@
+richards            y8192: rss 3280/3428 sc 1219  y4096: rss 2864/3300 sc 1333
+richards      --jit y8192: rss 3408/3480 sc 1389  y4096: rss 3116/3152 sc 1408
+deltablue           y8192: rss 3316/3480 sc 1108  y4096: rss 3164/3324 sc 956
+deltablue     --jit y8192: rss 3548/3580 sc 1010  y4096: rss 3292/3316 sc 884
+crypto              y8192: rss 3688/3792 sc 2210  y4096: rss 3456/3612 sc 2151
+crypto        --jit y8192: rss 3920/4004 sc 4509  y4096: rss 3844/3880 sc 4437
+raytrace            y8192: rss 3448/3744 sc 2148  y4096: rss 3228/3532 sc 1854
+raytrace      --jit y8192: rss 3500/3500 sc 2019  y4096: rss 3260/3272 sc 1822
+regexp              y8192: rss 6516/6628 sc 2109  y4096: rss 6212/6272 sc 1809
+regexp        --jit y8192: rss 6596/6712 sc 2065  y4096: rss 6260/6368 sc 1819
+earley-boyer        y8192: rss 6860/6976 sc 3192  y4096: rss 6668/6796 sc 2920
+earley-boyer  --jit y8192: rss 6928/7052 sc 3158  y4096: rss 6768/6816 sc 2895
+splay               y8192: rss 31552/31692 sc 3470  y4096: rss 31560/31636 sc 3919
+splay         --jit y8192: rss 31588/31700 sc 3565  y4096: rss 31596/31608 sc 3712
+navier-stokes       y8192: rss 4524/4528 sc 2484  y4096: rss 4188/4312 sc 2417
+navier-stokes --jit y8192: rss 7468/7552 sc 24114  y4096: rss 7460/7496 sc 24347
