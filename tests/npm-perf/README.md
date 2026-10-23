@@ -482,7 +482,15 @@ The short screen measured 308.3 renders/s / 25.95 MB versus 335.7 / 27.75 MB
 for the same-run control. The full 11-round paired run confirmed a smaller
 regression: 313.2 / 27.22 MB versus 327.0 / 27.68 MB (-4.2% speed, -1.7% RSS).
 Output matched at 24,980,000 bytes/checksum 414318; the implementation was
-reverted. Next is a guarded adjacent own-field pair, based on the 2.91M dynamic
-`GetField → GetField` transitions in the 500-render profile. Reports:
+reverted. A guarded adjacent own-field pair was then screened from the 2.91M
+dynamic `GetField → GetField` transitions in the 500-render profile. The full
+11-round run measured 320.1 renders/s / 26.9 MB versus 317.7 / 27.6 MB for the
+paired control (+0.8% speed, -2.5% RSS). Output matched at 24,980,000
+bytes/checksum 414318. The small speed gain did not clear the experiment's
+noise margin, so the implementation was reverted. Reports:
 `work/react-perf/react-exact-small-fill-screen-3.json` and
-`work/react-perf/react-exact-small-fill-11.json`.
+`work/react-perf/react-exact-small-fill-11.json`,
+`work/react-perf/react-adjacent-field-pair-screen-3.json`, and
+`work/react-perf/react-adjacent-field-pair-11.json`. Next, investigate a narrow
+`Move → Call` argument-window specialization from the 5.57M dynamic transitions;
+the current profile shows the moved value most often supplies argument 0.
