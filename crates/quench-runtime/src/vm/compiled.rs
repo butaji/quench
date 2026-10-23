@@ -6800,6 +6800,10 @@ impl<H: Host> Vm<H> {
         let function_id = self.frames[frame].function;
         let function = program.function_get(function_id as usize)?;
         let facts = self.programs.js_entry_facts(program_id, function_id)?;
+        // Most entries are of functions no entry path can claim; diagnostics still count them.
+        if !facts.enters && !self.programs.js_jit_diagnostics_enabled() {
+            return None;
+        }
         let numeric_find_candidate = facts.numeric_find.filter(|_| jit_numeric_find_enabled());
         if let Some(candidate) = numeric_find_candidate
             && let Some(result) = self.js_jit_numeric_find_at_entry(program, frame, candidate)

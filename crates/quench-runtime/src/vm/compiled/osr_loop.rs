@@ -875,6 +875,14 @@ struct Fact {
     bound: Bound,
 }
 
+/// An element index as an access uses it: a 64-bit index scaled by the element size, plus a
+/// constant byte displacement.
+#[derive(Clone, Copy)]
+struct ElementIndex {
+    wide: ir::Value,
+    displacement: i32,
+}
+
 /// A counted loop of a region: a loop whose body, header to backward jump, is one path but
 /// for the test that leaves it, and whose test compares an induction variable with a bound
 /// the body leaves unchanged. Every arrival at its header from outside it runs the proof of
@@ -928,8 +936,9 @@ fn counted_loops(
     (region.header..=region.backedge)
         .filter_map(|backedge| {
             let instruction = region.instructions[(backedge - region.header) as usize];
+            (instruction.op() == Op::Jump).then_some(())?;
             let header = instruction.jump_target();
-            (instruction.op() == Op::Jump && (region.header..backedge).contains(&header)).then_some(())?;
+            (region.header..backedge).contains(&header).then_some(())?;
             counted_loop(region, webs, representations, captures, header, backedge)
         })
         .collect()
@@ -1298,6 +1307,31 @@ struct Lowering<'a, 'b> {
     /// The Number each canonical encoding read from memory unboxes to, mapped to the bits as
     /// read: boxing the Number gives those bits back, so a store of it stores them.
     encodings: std::collections::HashMap<ir::Value, ir::Value>,
+    /// Per region PC, whether control reaches its instruction only by falling through from
+    /// the one before (`straight_pcs`), so its block continues that one's chain.
+    straight: Vec<bool>,
+}
+
+/// Per region PC, whether the instruction before it is its only predecessor: no jump
+/// targets it, and it is neither the header nor a counted loop's header, which the entry
+/// and preheaders reach.
+fn straight_pcs(region: &LoopRegion, counted: &[CountedLoop]) -> Vec<bool> {
+    let count = region.instructions.len();
+    let mut predecessors = vec![Vec::new(); count];
+    for pc in region.header..=region.backedge {
+        for successor in successors(region, pc) {
+            if (region.header..=region.backedge).contains(&successor) {
+                predecessors[(successor - region.header) as usize].push(pc);
+            }
+        }
+    }
+    (region.header..=region.backedge)
+        .map(|pc| {
+            pc != region.header
+                && !counted.iter().any(|counted| counted.header == pc)
+                && predecessors[(pc - region.header) as usize] == [pc - 1]
+        })
+        .collect()
 }
 
 fn flags() -> ir::MemFlagsData {
@@ -1327,6 +1361,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         builder.switch_to_block(start);
         let (registers, entry) = (builder.block_params(start)[0], builder.block_params(start)[1]);
         let blocks = (region.header..=region.backedge).map(|_| builder.create_block()).collect();
+        let straight = straight_pcs(region, &counted);
         let preheaders = counted.iter().map(|_| builder.create_block()).collect();
         let proved_blocks = counted
             .iter()
@@ -1365,6 +1400,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             chains: std::collections::HashMap::new(),
             exact: std::collections::BTreeMap::new(),
             encodings: std::collections::HashMap::new(),
+            straight,
             registers,
             entry,
             interrupt: None,
@@ -1380,7 +1416,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.enter()?;
         for pc in self.region.header..=self.region.backedge {
             let block = self.block(pc)?;
-            self.builder.switch_to_block(block);
+            self.enter_instruction(pc, block);
             self.pc = pc;
             self.instruction(pc)?;
         }
@@ -1388,7 +1424,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.copy = Some(index);
             let (header, backedge) = (self.counted[index].header, self.counted[index].backedge);
             for pc in header..=backedge {
-                self.builder.switch_to_block(self.proved_blocks[index][(pc - header) as usize]);
+                self.enter_instruction(pc, self.proved_blocks[index][(pc - header) as usize]);
                 self.pc = pc;
                 self.instruction(pc)?;
             }
@@ -1399,6 +1435,17 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.builder.seal_all_blocks();
         self.builder.finalize(frontend);
         Some(self.widenings)
+    }
+
+    /// Switches to the block of the instruction at `pc`: one only the instruction before it
+    /// reaches has all its predecessors, so it is sealed and continues that one's chain.
+    fn enter_instruction(&mut self, pc: u32, block: ir::Block) {
+        if self.straight[(pc - self.region.header) as usize] {
+            self.continue_chain(block);
+            self.builder.seal_block(block);
+        } else {
+            self.builder.switch_to_block(block);
+        }
     }
 
     fn block(&self, pc: u32) -> Option<ir::Block> {
@@ -1712,11 +1759,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let integral_block = self.cold_block();
         let join = if cold { self.cold_block() } else { self.builder.create_block() };
         self.builder.append_block_param(join, types::I64);
+        let tested = self.builder.current_block().expect("lowering inside a block");
         self.builder.ins().brif(integral, integral_block, &[], fractional_block, &[]);
         self.builder.switch_to_block(fractional_block);
+        self.builder.seal_block(fractional_block);
         let fractional = self.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
         self.builder.ins().jump(join, &[ir::BlockArg::Value(fractional)]);
         self.builder.switch_to_block(integral_block);
+        self.builder.seal_block(integral_block);
         let integer = self.builder.ins().fcvt_to_sint_sat(types::I32, number);
         let back = self.builder.ins().fcvt_from_sint(types::F64, integer);
         let back_bits = self.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), back);
@@ -1729,7 +1779,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let canonical = self.builder.ins().iconst(types::I64, ValueLayout::CANONICAL_NAN as i64);
         let integral = self.builder.ins().select(nan, canonical, integral);
         self.builder.ins().jump(join, &[ir::BlockArg::Value(integral)]);
+        // Both arms return from the test's block, so the join continues its chain.
+        let chain = self.chain(tested);
+        self.chains.insert(join, chain);
         self.builder.switch_to_block(join);
+        self.builder.seal_block(join);
         self.builder.block_params(join)[0]
     }
 
@@ -1963,33 +2017,63 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// The element index `key` names in an array of `length` elements, exiting at `pc`
     /// unless it is an integral Number below the length; an `i32` key a proof covers is.
-    fn index(&mut self, pc: u32, key: Typed, length: ir::Value) -> ir::Value {
-        let index = match key.representation {
-            // A negative index zero-extends past every length (`MAX_INDEXED_LENGTH`).
-            Representation::Int32 => self.builder.ins().uextend(types::I64, key.value),
+    fn index(&mut self, pc: u32, key: Typed, length: ir::Value) -> ElementIndex {
+        let (index, element) = match key.representation {
+            // Every `i32` sum the region computes is exact (guarded or proved), so a key that
+            // is a root plus constants is the root's sign extension plus their total, which
+            // an access folds into its displacement. A negative key extends below zero,
+            // which compares unsigned past every length (`MAX_INDEXED_LENGTH`).
+            Representation::Int32 => {
+                let (root, offset) = self.int32_root(key.value);
+                let wide = self.builder.ins().sextend(types::I64, root);
+                let index = self.builder.ins().iadd_imm_s(wide, offset);
+                match i32::try_from(offset * i64::from(WORD_BYTES)) {
+                    Ok(displacement) => (index, ElementIndex { wide, displacement }),
+                    Err(_) => (index, ElementIndex { wide: index, displacement: 0 }),
+                }
+            }
             Representation::Float64 => {
                 let index = self.builder.ins().fcvt_to_sint_sat(types::I64, key.value);
                 let back = self.builder.ins().fcvt_from_sint(types::F64, index);
                 let fractional = self.builder.ins().fcmp(FloatCC::NotEqual, back, key.value);
                 self.guard(pc, fractional);
-                index
+                (index, ElementIndex { wide: index, displacement: 0 })
             }
         };
         if !self.proved(pc) {
             let beyond = self.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, length);
             self.guard(pc, beyond);
         }
-        index
+        element
     }
 
-    fn element_address(&mut self, elements: ir::Value, index: ir::Value) -> ir::Value {
-        let offset = self.builder.ins().imul_imm_u(index, i64::from(WORD_BYTES));
+    /// The value an `i32` is a constant sum from, and that sum: the chain of constant
+    /// additions ending at `value`.
+    fn int32_root(&self, value: ir::Value) -> (ir::Value, i64) {
+        let dfg = &self.builder.func.dfg;
+        let (mut value, mut offset) = (dfg.resolve_aliases(value), 0i64);
+        loop {
+            let ir::ValueDef::Result(instruction, 0) = dfg.value_def(value) else { break };
+            let ir::InstructionData::Binary { opcode: ir::Opcode::Iadd, args } = dfg.insts[instruction] else { break };
+            let (left, right) = (dfg.resolve_aliases(args[0]), dfg.resolve_aliases(args[1]));
+            match (self.int32_constant(left), self.int32_constant(right)) {
+                (_, Some(constant)) => (value, offset) = (left, offset + constant),
+                (Some(constant), None) => (value, offset) = (right, offset + constant),
+                (None, None) => break,
+            }
+        }
+        (value, offset)
+    }
+
+    /// The address of an element with the byte displacement its access carries.
+    fn element_address(&mut self, elements: ir::Value, index: ElementIndex) -> (ir::Value, i32) {
+        let offset = self.builder.ins().imul_imm_u(index.wide, i64::from(WORD_BYTES));
         let offset = if self.pointer == types::I64 {
             offset
         } else {
             self.builder.ins().ireduce(self.pointer, offset)
         };
-        self.builder.ins().iadd(elements, offset)
+        (self.builder.ins().iadd(elements, offset), index.displacement)
     }
 
     /// ToInt32 of `value`. A Float converts saturating, which is ToInt32 for NaN (zero) and
@@ -2023,6 +2107,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
     ) -> ir::Value {
         let current = self.builder.current_block().expect("lowering inside a block");
         let chain = self.chain(current);
+        // A variable read where a join's parameter proved trivial is an alias of its value.
+        let (left, right) = (self.builder.func.dfg.resolve_aliases(left), self.builder.func.dfg.resolve_aliases(right));
         if let Some((result, computed)) = self.exact.get(&(operator, left, right)) {
             if *computed == chain {
                 return *result;
@@ -2033,6 +2119,50 @@ impl<'a, 'b> Lowering<'a, 'b> {
         result
     }
 
+    /// `left ± c` for a constant `c`, whose `i32` result overflows exactly when `left` lies
+    /// beyond the bound `c` leaves: the guard compares `left` with that bound before the
+    /// sum, which needs no overflow flag.
+    fn int32_offset(
+        &mut self,
+        pc: u32,
+        operator: FloatOperator,
+        register: Register,
+        left: ir::Value,
+        right: ir::Value,
+    ) -> Option<ir::Value> {
+        let (value, offset) = match operator {
+            FloatOperator::Add => match (self.int32_constant(left), self.int32_constant(right)) {
+                (_, Some(offset)) => (left, offset),
+                (Some(offset), None) => (right, offset),
+                (None, None) => return None,
+            },
+            FloatOperator::Subtract => (left, -self.int32_constant(right)?),
+            FloatOperator::Multiply | FloatOperator::Divide => return None,
+        };
+        if !self.proved(pc) && offset != 0 {
+            let (condition, bound) = if offset > 0 {
+                (IntCC::SignedGreaterThan, i64::from(i32::MAX) - offset)
+            } else {
+                (IntCC::SignedLessThan, i64::from(i32::MIN) - offset)
+            };
+            let overflow = self.builder.ins().icmp_imm_s(condition, value, bound);
+            self.guard_int32(pc, overflow, Widening::Register(register));
+        }
+        Some(self.builder.ins().iadd_imm_s(value, offset))
+    }
+
+    /// The value of an `i32` constant operand.
+    fn int32_constant(&self, value: ir::Value) -> Option<i64> {
+        let dfg = &self.builder.func.dfg;
+        let ir::ValueDef::Result(instruction, _) = dfg.value_def(dfg.resolve_aliases(value)) else {
+            return None;
+        };
+        match dfg.insts[instruction] {
+            ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } => Some(i64::from(imm.bits() as i32)),
+            _ => None,
+        }
+    }
+
     fn int32_arithmetic_guarded(
         &mut self,
         pc: u32,
@@ -2041,6 +2171,15 @@ impl<'a, 'b> Lowering<'a, 'b> {
         left: ir::Value,
         right: ir::Value,
     ) -> ir::Value {
+        if let Some(result) = self.int32_offset(pc, operator, register, left, right) {
+            return result;
+        }
+        // A proof covers a sum's exactness, so it needs no overflow flag.
+        match operator {
+            FloatOperator::Add if self.proved(pc) => return self.builder.ins().iadd(left, right),
+            FloatOperator::Subtract if self.proved(pc) => return self.builder.ins().isub(left, right),
+            _ => {}
+        }
         let (result, overflow) = match operator {
             FloatOperator::Add => self.builder.ins().sadd_overflow(left, right),
             FloatOperator::Subtract => self.builder.ins().ssub_overflow(left, right),
@@ -2227,18 +2366,18 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let (elements, length) = self.arrays[&base];
                 let key = self.operand(instruction.operand_c())?;
                 let index = self.index(pc, key, length);
-                let address = self.element_address(elements, index);
+                let (address, displacement) = self.element_address(elements, index);
                 // A hole is tagged, so unboxing sends it to the general path too. A Float64
                 // element loads straight into a float register.
                 let representation = element_representation(&instruction, self.observation);
                 let value = match representation {
                     Representation::Int32 => {
-                        let bits = self.builder.ins().load(types::I64, flags(), address, 0);
+                        let bits = self.builder.ins().load(types::I64, flags(), address, displacement);
                         let widen = self.widen_block(pc, Widening::Elements(base));
                         self.unbox(bits, representation, widen)
                     }
                     Representation::Float64 => {
-                        let double = self.builder.ins().load(types::F64, flags(), address, 0);
+                        let double = self.builder.ins().load(types::F64, flags(), address, displacement);
                         let exit = self.exit_block(pc);
                         self.unbox_float64(double, exit)
                     }
@@ -2250,14 +2389,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let (elements, length) = self.arrays[&instruction.register_b()];
                 let key = self.register(instruction.register_c());
                 let index = self.index(pc, key, length);
-                let address = self.element_address(elements, index);
-                let old = self.builder.ins().load(types::I64, flags(), address, 0);
+                let (address, displacement) = self.element_address(elements, index);
+                let old = self.builder.ins().load(types::I64, flags(), address, displacement);
                 let tag = self.builder.ins().band_imm_u(old, ValueLayout::TAG_MASK as i64);
                 let hole = self.builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::DELETED_TAG as i64);
                 self.guard(pc, hole);
                 let value = self.register(instruction.register_a());
                 let bits = self.encoding(value);
-                self.builder.ins().store(flags(), bits, address, 0);
+                self.builder.ins().store(flags(), bits, address, displacement);
                 self.fall_through(pc)
             }
             Op::Jump => self.jump(pc, instruction.jump_target()),
@@ -2277,10 +2416,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 };
                 let taken = self.builder.create_block();
                 let not_taken = self.builder.create_block();
+                let tested = self.builder.current_block().expect("lowering inside a block");
                 self.builder.ins().brif(holds, not_taken, &[], taken, &[]);
+                // Each arm's only predecessor is the test's block.
                 self.builder.switch_to_block(taken);
+                self.builder.seal_block(taken);
                 self.jump(pc, instruction.jump_target())?;
+                let chain = self.chain(tested);
+                self.chains.insert(not_taken, chain);
                 self.builder.switch_to_block(not_taken);
+                self.builder.seal_block(not_taken);
                 self.fall_through(pc)
             }
             _ => None,

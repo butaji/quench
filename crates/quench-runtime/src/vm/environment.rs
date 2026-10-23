@@ -2101,11 +2101,13 @@ impl<H: Host> Vm<H> {
 
     /// The value an intrinsic name (`bytecode::intrinsic_name_native`, or the RegExp
     /// intrinsic) stands for, which no binding can shadow.
-    pub(super) fn intrinsic_name_value(&self, name: &str) -> Option<Value> {
+    pub(super) fn intrinsic_name_value(&mut self, atom: Atom) -> Option<Value> {
+        let name = self.atom_name(atom);
         if name == crate::bytecode::INTRINSIC_REGEXP_BINDING {
             return Some(self.regexp_intrinsic_constructor());
         }
-        crate::bytecode::intrinsic_name_native(name).map(|native| self.native_value(native))
+        let native = crate::bytecode::intrinsic_name_native(name)?;
+        Some(self.native_value(native))
     }
 
     fn load_name_without_with(
@@ -2117,8 +2119,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let internal = self.atom_class(atom).contains(AtomClass::INTERNAL);
         if internal {
-            let name = self.atom_name(atom);
-            if let Some(value) = self.intrinsic_name_value(name) {
+            if let Some(value) = self.intrinsic_name_value(atom) {
                 return Ok(value);
             }
         }

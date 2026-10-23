@@ -342,7 +342,7 @@ impl<H: Host> Vm<H> {
 
         let realm = match self.heap.function(wrapper) {
             Some(FunctionRecord { realm, .. })
-                if *realm == self.realm.globals || !self.shared_natives.contains(&wrapper) =>
+                if *realm == self.realm.globals || !self.is_shared_native(wrapper) =>
             {
                 *realm
             }
