@@ -1322,7 +1322,7 @@ impl<H: Host> Vm<H> {
                 if self.function_caller_is_restricted(this) {
                     Err(self.type_error(p, "restricted function caller access".into()))
                 } else {
-                    Ok(self.function_caller(this))
+                    self.function_caller_value(this)
                 }
             }
             Native::CallSiteConstructor => self.call_site_constructor(p),
