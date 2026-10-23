@@ -3226,6 +3226,17 @@ pub(crate) fn initialize_read_stream(
 /// the module defines them.
 const LIBRARY_POLICY_MEMBERS: [&str; 4] = ["Dirent", "glob", "globSync", "readdirSync"];
 
+/// Builds the members of `fs`'s lazy groups (`MODULE_MEMBERS`, then `LIBRARY_POLICY_MEMBERS`),
+/// as Node's `fs` defines them all as it loads: a startup snapshot that preloads `fs` builds
+/// them at the snapshot point (`startup_snapshot::preload`), where each process had built them
+/// at its first use of a member other than `readFileSync` (8.7M instructions for an
+/// `existsSync`, x86_64, 2026-10-23).
+pub(crate) fn materialize(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let module = crate::host::shared_vm::commonjs::fs_module(context)?;
+    let (first_member, _) = MODULE_MEMBERS[0];
+    context.materialize_lazy_data_property_rooted(module, first_member)
+}
+
 /// Install Node's own glob, directory reader and `Dirent` when a script first observes one of
 /// them: loading `lib/fs.js` builds Buffer, util and their dependencies, which reading a file
 /// does not need. Node's promises module is likewise loaded only when requested; in particular
