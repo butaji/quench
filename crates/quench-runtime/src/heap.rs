@@ -14,6 +14,8 @@ mod cell;
 mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
+mod environment_trace;
+pub(crate) use environment_trace::{ClosureReadSource, EnvironmentTrace};
 mod external;
 mod memory_stats;
 pub use memory_stats::HeapMemoryComposition;
@@ -1708,7 +1710,7 @@ impl Heap {
     }
     #[cfg(test)]
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
-        self.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, true)
+        self.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, None, true)
     }
     /// Whether a collection requested as `full` traces and sweeps the whole heap. Records
     /// and legacy cells share one generation rule: survivors stay marked (old), the write
@@ -1722,6 +1724,7 @@ impl Heap {
         roots: impl IntoIterator<Item = Value>,
         mut object_roots: impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
+        closure_reads: Option<&dyn ClosureReadSource>,
         full: bool,
     ) -> Vec<(Value, Value)> {
         let full = self.collection_is_full(full);
@@ -1807,6 +1810,8 @@ impl Heap {
             self.gc_profile.roots += work.len() as u64;
             self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
         }
+        // A full collection traces closure environments through what closures can read.
+        let mut environments = EnvironmentTrace::new(closure_reads.filter(|_| full), self.slots.len());
         {
             let mut ephemerons = weak::EphemeronWork::default();
             if !full {
@@ -1846,18 +1851,20 @@ impl Heap {
                 parallel_object_roots,
                 &mut ephemerons,
                 GcTraceKind::Collection,
+                &mut environments,
             );
         }
         #[cfg(debug_assertions)]
         {
             if full {
-                self.debug_verify_full(&verify_roots, &mut object_roots);
+                self.debug_verify_full(&verify_roots, &mut object_roots, closure_reads);
             } else {
                 let mut pinned = verify_old_records.unwrap_or_default();
                 pinned.extend(verify_remembered_records);
                 self.debug_verify_minor(&verify_roots, &pinned, &mut object_roots);
             }
         }
+        self.clear_unread_environment_slots(environments);
         let finalization_jobs = self.prune_weak_entries(full);
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
@@ -2356,17 +2363,20 @@ impl Heap {
         parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
         ephemerons: &mut weak::EphemeronWork,
         trace_kind: GcTraceKind,
+        environments: &mut EnvironmentTrace<'_>,
     ) {
         if self.has_direct_records() {
-            self.mark_work(work, object_roots, ephemerons, trace_kind);
+            self.mark_work(work, object_roots, ephemerons, trace_kind, environments);
             return;
         }
         if self.slots.len() < PARALLEL_MARK_MINIMUM_SLOTS {
-            self.mark_work(work, object_roots, ephemerons, trace_kind);
+            self.mark_work(work, object_roots, ephemerons, trace_kind, environments);
             return;
         }
+        // Without function records, closures are boxed cells (`Cell::Function`), whose
+        // environments the parallel trace marks whole.
         let Some(pool) = parallel_mark_pool() else {
-            self.mark_work(work, object_roots, ephemerons, trace_kind);
+            self.mark_work(work, object_roots, ephemerons, trace_kind, environments);
             return;
         };
 
@@ -2516,6 +2526,7 @@ impl Heap {
         &mut self,
         roots: &[Value],
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+        closure_reads: Option<&dyn ClosureReadSource>,
     ) {
         let parallel_marks = Self::snapshot_marks(&self.marks);
         let parallel_record_marks = self.snapshot_record_marks();
@@ -2532,6 +2543,7 @@ impl Heap {
             object_roots,
             &mut ephemerons,
             GcTraceKind::VerifyFull,
+            &mut EnvironmentTrace::new(closure_reads, self.slots.len()),
         );
         let sequential_marks = Self::snapshot_marks(&self.marks);
         let sequential_record_marks = self.snapshot_record_marks();
@@ -2583,6 +2595,7 @@ impl Heap {
             object_roots,
             &mut ephemerons,
             GcTraceKind::VerifyFull,
+            &mut EnvironmentTrace::new(None, 0),
         );
         let verified_record_marks = self.snapshot_record_marks();
         let marked = |marks: &[u64], id: RecordId| {
@@ -2626,9 +2639,18 @@ impl Heap {
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         ephemerons: &mut weak::EphemeronWork,
         trace_kind: GcTraceKind,
+        environments: &mut EnvironmentTrace<'_>,
     ) {
         let mut last_proto = Value::UNDEFINED;
-        while let Some(value) = work.pop() {
+        loop {
+            if work.is_empty() {
+                if !environments.has_pending() {
+                    break;
+                }
+                self.trace_environment_edges(environments, work);
+                continue;
+            }
+            let value = work.pop().expect("work is not empty");
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.work_items += 1;
@@ -2712,6 +2734,7 @@ impl Heap {
                     trace_kind,
                     &mut last_proto,
                 );
+                environments.closure(function.env, &function.kind, work);
                 let mark_bits = mark_bits!(self);
                 ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
             } else if let Some(record_id) = value.direct_iterator_index() {
@@ -2796,7 +2819,16 @@ impl Heap {
                 let Some(slot) = self.slots.get_mut(index) else {
                     continue;
                 };
-                if slot.cell.is_none() || !Self::mark_serial(&self.marks, index) {
+                if slot.cell.is_none() {
+                    continue;
+                }
+                // A full collection traces environments by what their readers read.
+                if let Some(Cell::Environment { function, .. }) = &slot.cell
+                    && environments.whole(value, index as u32, *function)
+                {
+                    continue;
+                }
+                if !Self::mark_serial(&self.marks, index) {
                     continue;
                 }
                 let cell = slot.cell.as_ref().unwrap();
@@ -3630,7 +3662,8 @@ impl Heap {
             trace_kind,
             last_proto,
         );
-        work.extend([function.env, function.realm]);
+        // The environment edge is the caller's (`EnvironmentTrace::closure`).
+        work.push(function.realm);
     }
     pub(super) fn cell_kind(cell: &Cell) -> CellKind {
         match cell {

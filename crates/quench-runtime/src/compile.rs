@@ -2707,6 +2707,23 @@ impl<'a> Compiler<'a> {
         let facts = std::mem::take(&mut self.function_facts);
         let dynamic = capture_layout::dynamic_name_resolution(&facts);
         let reachable = capture_layout::dynamic_name_scopes(&facts, &dynamic);
+        // A replay compiles one function and records no facts; it keeps no program. A class
+        // constructor runs its instance initializer on its own environment
+        // (`Vm::initialize_this_binding`); a released constructor's link is not at hand.
+        let closure_reads = (facts.len() == functions.len()).then(|| {
+            let initializers: Vec<capture_layout::InstanceInitializer> = functions
+                .iter()
+                .enumerate()
+                .map(|(id, function)| match function {
+                    Some(function) => capture_layout::InstanceInitializer::Known(function.instance_initializer),
+                    None if released.get(&id).is_some_and(|released| released.header.is_class_constructor) => {
+                        capture_layout::InstanceInitializer::Unknown
+                    }
+                    None => capture_layout::InstanceInitializer::Known(None),
+                })
+                .collect();
+            std::rc::Rc::new(capture_layout::closure_reads(&facts, &reachable, &initializers))
+        });
         self.resolve_name_bindings(&mut functions, &reachable);
         let mut layout_inputs = capture_layout::inputs(&facts, &dynamic, |id| {
             functions[id].as_ref().and_then(capture_layout::mapped_arguments)
@@ -2872,6 +2889,7 @@ impl<'a> Compiler<'a> {
             }),
             encoded_records: None,
             validated: Default::default(),
+            closure_reads,
         };
         #[cfg(feature = "profile-aggregate")]
         debug_assert!(crate::profile::instruction_word_domains_fit(&program));
