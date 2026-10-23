@@ -123,3 +123,78 @@ rejected experiment. Fewer static instructions did not predict faster execution.
 Raw reports: `zod-callmeta-nojit-11.json`, `zod-callmeta-jit-11.json`,
 `zod-callmeta-nojit-confirm-11.json`, `zod-callmeta-jit-confirm-11.json`,
 `zod-callmeta-long-nojit-11.json`, and `zod-callmeta-long-jit-11.json`.
+
+## Zod-only LLVM PGO ceiling screen
+
+To test broader code layout, I reused the existing instrumentation build,
+trained it for 15,000 Zod workload rounds plus 750 warmups, merged one 8.1 MiB
+profile, then built a temporary production binary with profile use and indirect
+call promotion disabled. In paired 11-round screens this profile-guided binary
+was about 33% faster than the clean control in both modes; paired ratios were
+above 1.0 in all 11 rounds. Its RSS was about 19% lower no-JIT and 20% lower
+JIT than the control.
+
+| Mode | Quench PGO ops/s / RSS MiB | Node ops/s / RSS MiB | Bun ops/s / RSS MiB |
+| --- | ---: | ---: | ---: |
+| No-JIT | 60,060 / 25.66 | 152,672 / 47.82 | 110,497 / 34.27 |
+| JIT | 64,309 / 19.66 | 512,821 / 49.47 | 645,161 / 40.98 |
+
+This is a useful partial gain, but still far from the 20% throughput advantage
+over both runtimes. No-JIT RSS clears the 20% margin over Bun; JIT clears it by
+a wide margin. The profile was trained only on Zod, so the binary is a ceiling
+screen and could regress other workloads. I did not retain it or change the
+general production PGO recipe. Raw reports: `zod-pgo-nojit-11.json` and
+`zod-pgo-jit-11.json`.
+
+## Balanced npm workload LLVM PGO screen
+
+To check whether the Zod-only PGO gain generalized, I trained one temporary
+LLVM profile with seven installed workloads (Fastify HTTP, Fastify inject,
+Pino JSON logging, React SSR, Undici pool, WebSocket echo, and Zod parse) in
+both modes. Each training run used 1,000 workload operations plus 100 warmups.
+The profile had 14 workload/mode inputs. I built a temporary production
+candidate with `-Cprofile-use` and indirect-call promotion disabled, then ran
+it interleaved with the unchanged production control.
+
+The longer no-JIT comparisons used 11 repetitions for Fastify HTTP, Fastify
+inject, Pino, React, and Zod; WebSocket used five repetitions because its
+request/response workload is substantially slower in Quench. The JIT screen
+used five repetitions at 500 operations plus 50 warmups for Fastify HTTP,
+Fastify inject, Pino, React, and WebSocket; Zod used 11 repetitions at the
+runner's 5,000-operation default. All measurements are Linux diagnostics, not
+qualification measurements.
+
+| Workload | Mode | PGO Quench op/s | Clean Quench op/s | Node op/s | Bun op/s |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Fastify HTTP | No-JIT | 517 | 485 | 2,732 | 2,370 |
+| Fastify inject | No-JIT | 2,809 | 2,110 | 4,831 | 4,854 |
+| Pino JSON | No-JIT | 26,316 | 23,810 | 76,923 | 66,667 |
+| React SSR | No-JIT | 781 | 653 | 1,961 | 1,883 |
+| WebSocket echo | No-JIT | 4,032 | 3,086 | 13,158 | 50,000 |
+| Zod parse | No-JIT | 57,143 | 46,948 | 151,515 | 106,952 |
+| Fastify HTTP | JIT | 742 | 639 | 3,677 | 4,000 |
+| Fastify inject | JIT | 2,222 | 1,812 | 4,808 | 8,197 |
+| Pino JSON | JIT | 21,739 | 17,241 | 100,000 | 100,000 |
+| React SSR | JIT | 688 | 559 | 14,286 | 8,772 |
+| WebSocket echo | JIT | 3,846 | 2,591 | 14,286 | 62,500 |
+| Zod parse | JIT | 54,645 | 45,455 | 512,821 | 666,667 |
+
+The balanced profile improved Quench throughput over its clean control on all
+these sampled workloads, with paired median gains of about 6–33% in no-JIT and
+16–49% in the short JIT screens. It still did not beat Node and Bun on any
+workload. Zod-only PGO was faster than the balanced profile on Zod, so profile
+specialization is material; neither profile closes the throughput gap. This
+remains a rejected production change and does not modify `tools/pgo-build.sh`.
+
+Node's `--jitless` removes the `WebAssembly` global in this environment.
+Undici 7.30.1 uses its bundled llhttp WebAssembly parser with no JavaScript
+fallback, so its Node no-JIT row fails before the workload starts. The
+workload can still be run on Quench, Bun, and Node JIT, but that is not a
+comparable no-JIT four-engine result. Bun's sampled RSS for Pino and WebSocket
+was implausibly low (under 2 MiB); treat those Bun RSS samples as invalid. The
+remaining Linux RSS values are diagnostics only.
+
+Raw paired reports are the matching `balanced-pgo-*-no-jit.json` and
+`balanced-pgo-*-jit.json` files, plus
+`balanced-pgo-zod-parse-no-jit-11.json` and
+`balanced-pgo-zod-parse-jit-11.json`.
