@@ -11101,6 +11101,58 @@ fn js_jit_lowers_multiple_guarded_this_field_reads_into_arithmetic() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_compiles_guarded_field_bitwise_boolean_regions() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function isHeldOrSuspended() {
+            return (this.state & 1) !== 0 || this.state === 2;
+          }
+          for (let index = 0; index < 48; index++) {
+            const state = index % 3;
+            const receiver = {state};
+            const expected = (state & 1) !== 0 || state === 2;
+            if (isHeldOrSuspended.call(receiver) !== expected) throw Error('field bitwise result');
+          }
+          let reads = 0;
+          const accessor = {get state() { reads++; return 1; }};
+          if (isHeldOrSuspended.call(accessor) !== true || reads !== 1) throw Error('accessor fallback');
+          if (isHeldOrSuspended.call({state: 1.5}) !== true) throw Error('fractional fallback');
+          if (isHeldOrSuspended.call({state: '1'}) !== true) throw Error('coercion fallback');
+        "#,
+        "js-jit-field-bitwise-boolean.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "isHeldOrSuspended")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function_id)
+    else {
+        panic!("guarded field predicate should compile\n{}", program.disassemble());
+    };
+    assert_eq!(compiled.numeric_field_inputs().len(), 2);
+    assert!(compiled.native_entries() >= 8);
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_field_reject_resumes_interpreter_on_match_and_accessor() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
