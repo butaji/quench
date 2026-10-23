@@ -293,6 +293,7 @@ impl<H: Host> Vm<H> {
             gc_root_count: _,
             gc_owned_root_count: _,
             frame_pool: _,
+            pending_call_stacks: _,
             lane_stack: _,
             execution_mode: _,
             execution_interrupt: _,
