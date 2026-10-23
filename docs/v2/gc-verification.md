@@ -54,18 +54,15 @@ runtime trades memory for speed. A runtime chooses it once, at startup
 | Young minimum / maximum | 2^16 / 2^17 | 2^13 / 2^17 |
 | Full-collection minimum | 2^18 | 384 |
 | Allocation-cap back-off after unproductive fulls | up to 2 doublings | none |
-| Pages returned at release points | no | read-only and free heap pages |
+| Pages returned at collection boundaries | no | read-only and free heap pages |
 
 The throughput table is the JetStream lane's. The other lanes' measurements
 (npm, Score, web) bound each of its values; the doc comments on the constants
 cite them. The runtime passes the policy to `Host::at_collection_boundary`, and
 the Node host returns pages only when
-`MemoryPolicy::returns_resident_pages` says so. The same predicate gates its
-other read-only releases (after library loads, at compile phases, before output
-and at teardown), which follow their own intervals under `MemoryFirst`. Under
-`Throughput` each of them only refaulted the run's code (path-parse npm
-scenario: 33.3 -> 26.7 ms, peak RSS 12.7 -> 18.5 MB). Every policy counts the
-collection for the release before output.
+`MemoryPolicy::returns_pages_at_collections` says so. Every policy counts the
+collection for the release before output. Releases after library loads, at
+compile phases and at teardown follow their own intervals under both policies.
 A restored snapshot paces under the restoring runtime's policy.
 
 `quench-node` selects one policy per process, because the pages a policy
