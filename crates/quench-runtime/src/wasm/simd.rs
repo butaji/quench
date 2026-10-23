@@ -413,20 +413,20 @@ fn swizzle(bits: u128, indices: u128) -> u128 {
     )
 }
 pub(crate) fn shuffle(left: u128, right: u128, indices: [u8; V128_BYTES]) -> u128 {
-    let a = left.to_le_bytes();
-    let b = right.to_le_bytes();
-    u128::from_le_bytes(indices.map(|index| {
-        if (index as usize) < V128_BYTES {
-            a[index as usize]
-        } else {
-            b[index as usize - V128_BYTES]
-        }
-    }))
+    // Both operands' bytes in index order: validation keeps every index below their count
+    // (`shuffle_indices_valid`), which the mask restates without a branch.
+    let mut both = [0u8; SHUFFLE_SOURCE_BYTES];
+    both[..V128_BYTES].copy_from_slice(&left.to_le_bytes());
+    both[V128_BYTES..].copy_from_slice(&right.to_le_bytes());
+    u128::from_le_bytes(indices.map(|index| both[usize::from(index) & (SHUFFLE_SOURCE_BYTES - 1)]))
 }
+/// The bytes a shuffle selects from: both operands'.
+const SHUFFLE_SOURCE_BYTES: usize = V128_BYTES * 2;
+const _: () = assert!(SHUFFLE_SOURCE_BYTES.is_power_of_two());
 pub(crate) fn shuffle_indices_valid(indices: &[u8; V128_BYTES]) -> bool {
     indices
         .iter()
-        .all(|&index| (index as usize) < V128_BYTES * 2)
+        .all(|&index| (index as usize) < SHUFFLE_SOURCE_BYTES)
 }
 
 #[derive(Clone, Copy)]

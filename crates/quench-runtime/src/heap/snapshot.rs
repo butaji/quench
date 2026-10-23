@@ -28,6 +28,9 @@ impl Heap {
         if self.await_records.live_count() != 0 {
             return Err(SnapshotError::unsupported("a suspended async function"));
         }
+        if self.v128_records.live_count() != 0 {
+            return Err(SnapshotError::unsupported("a Wasm vector"));
+        }
         write_records(writer, &self.iterator_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.string_records, |writer, record: &JsString| {
             record.write_snapshot(writer);
