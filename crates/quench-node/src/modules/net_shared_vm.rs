@@ -1091,6 +1091,9 @@ pub(crate) fn wait_ready(transport: &Transport, timeout: std::time::Duration) {
             descriptors.push(watch(fd, events));
         }
     }
+    if let Some(fd) = crate::modules::napi::wake_fd() {
+        descriptors.push(watch(fd, libc::POLLIN));
+    }
     if descriptors.is_empty() {
         std::thread::sleep(timeout);
         return;
@@ -1109,6 +1112,7 @@ pub(crate) fn wait_ready(transport: &Transport, timeout: std::time::Duration) {
             std::ptr::null(),
         );
     }
+    crate::modules::napi::drain_wake();
 }
 
 pub(crate) const fn poll_interval() -> std::time::Duration {
@@ -2123,7 +2127,7 @@ fn listener_path(transport: &Transport, id: u64) -> Option<&str> {
     }
 }
 
-pub(super) fn register_socket(
+pub(crate) fn register_socket(
     context: &mut NativeContext<'_, NodeHost>,
     socket: RootId,
     id: u64,

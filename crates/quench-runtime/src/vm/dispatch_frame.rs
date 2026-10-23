@@ -1209,18 +1209,6 @@ impl<H: Host> Vm<H> {
         self.with_stack.truncate(frame.with_base);
     }
 
-    /// Returns a finished activation's buffers to the pool without copying the frame again.
-    /// Moves a detached activation back into pooled frame storage for the frame stack.
-    pub(super) fn adopt_frame(&mut self, frame: Frame) -> Box<Frame> {
-        match self.frame_pool.pop() {
-            Some(mut slot) => {
-                *slot = frame;
-                slot
-            }
-            None => Box::new(frame),
-        }
-    }
-
     /// Return a Wasm frame the lane pushed to the pool. A Wasm activation
     /// touches only its locals and registers and runs no global lexical
     /// declarations, so only its register storage needs bounding.
