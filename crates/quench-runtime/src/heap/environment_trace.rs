@@ -150,28 +150,23 @@ pub(crate) struct EnvironmentTrace<'s> {
     /// What the edges traced so far read of each environment they reached, in the order
     /// they reached them.
     partial: Vec<PartialEnvironment>,
-    /// Each heap slot's entry in `partial`, plus one; `NO_ENTRY` for none. Dense, so marking
-    /// reads one word where a table would probe, and clearing walks the heap in order. It is
-    /// allocated, zeroed, with the first entry: a collection that makes none costs nothing,
-    /// and one that does touches only the pages its environments' words lie on.
-    entries: Vec<u32>,
-    heap_slots: usize,
+    /// Each reached environment's heap slot and its position in `partial`. Sized by the
+    /// environments closure edges reached, not the heap: a dense per-slot index touched a
+    /// page of it for nearly every environment, at each full collection's peak.
+    entries: rustc_hash::FxHashMap<u32, u32>,
     pending: Vec<EnvironmentEdge>,
     /// The last program whose table a closure edge read, which the next one most often reads.
     last_reads: Option<(u32, Option<&'s ClosureReads>)>,
 }
 
-/// An `EnvironmentTrace::entries` word for a slot the trace has no entry for.
-const NO_ENTRY: u32 = 0;
 
 impl<'s> EnvironmentTrace<'s> {
-    /// A trace through `source` of a heap of `heap_slots` legacy slots.
-    pub(crate) fn new(source: Option<&'s dyn ClosureReadSource>, heap_slots: usize) -> Self {
+    /// A trace through `source`.
+    pub(crate) fn new(source: Option<&'s dyn ClosureReadSource>) -> Self {
         Self {
             source,
             partial: Vec::new(),
-            entries: Vec::new(),
-            heap_slots,
+            entries: rustc_hash::FxHashMap::default(),
             pending: Vec::new(),
             last_reads: None,
         }
@@ -179,20 +174,15 @@ impl<'s> EnvironmentTrace<'s> {
 
     /// The position in `partial` of the entry for heap slot `index`.
     fn entry(&self, index: u32) -> Option<usize> {
-        match self.entries.get(index as usize).copied() {
-            None | Some(NO_ENTRY) => None,
-            Some(entry) => Some(entry as usize - 1),
-        }
+        self.entries.get(&index).map(|&entry| entry as usize)
     }
 
     /// Adds `partial` as the entry for heap slot `index`, at the position it returns.
     fn insert(&mut self, index: u32, partial: PartialEnvironment) -> usize {
-        if self.entries.is_empty() {
-            self.entries = vec![NO_ENTRY; self.heap_slots];
-        }
+        let position = self.partial.len();
         self.partial.push(partial);
-        self.entries[index as usize] = u32::try_from(self.partial.len()).expect("heap slots fit u32");
-        self.partial.len() - 1
+        self.entries.insert(index, u32::try_from(position).expect("heap slots fit u32"));
+        position
     }
 
     /// A function's edge to its closure environment `environment`.
@@ -442,13 +432,10 @@ impl Heap {
     /// Clears what no edge read of the environments the trace reached.
     pub(super) fn clear_unread_environment_slots(&mut self, trace: EnvironmentTrace<'_>) {
         let lexical_this = trace.source.map(|source| source.lexical_this());
-        for (index, entry) in trace.entries.iter().enumerate() {
-            if *entry == NO_ENTRY {
-                continue;
-            }
-            let partial = &trace.partial[*entry as usize - 1];
+        for (&index, &entry) in &trace.entries {
+            let partial = &trace.partial[entry as usize];
             let Some(Cell::Environment { slots, scope, .. }) =
-                self.slots.get_mut(index).and_then(|slot| slot.cell.as_mut())
+                self.slots.get_mut(index as usize).and_then(|slot| slot.cell.as_mut())
             else {
                 continue;
             };

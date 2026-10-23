@@ -422,6 +422,11 @@ pub(crate) struct Heap {
     uncharged_payload_bytes: usize,
     /// What the last full collection kept, which the generational pacing grows from.
     live_after_full: usize,
+    /// What the full collection that last traced closure environments through their reads
+    /// kept (`EnvironmentTrace`); `None` before one has. Slots it cleared stay cleared, so a
+    /// later one finds only what was captured since: it runs again once the live set has
+    /// grown by `ENVIRONMENT_TRIM_GROWTH` of that.
+    live_at_environment_trim: Option<usize>,
     /// The next collection traces the whole heap.
     full_due: bool,
     /// Selects the pacing table (`MemoryPolicy::pacing`); reset keeps it.
@@ -770,6 +775,11 @@ struct SparseElements {
     values: FxHashMap<usize, Value>,
     length: usize,
 }
+/// How much the live set grows past what the last environment-trimming full collection kept
+/// before another trims (`Heap::live_at_environment_trim`): one live set, so what closures
+/// over-capture since can at most double what a trimmed heap holds.
+const ENVIRONMENT_TRIM_GROWTH: pacing::Ratio = pacing::Ratio::new(1, 1);
+
 impl Heap {
     pub fn new() -> Self {
         Self {
@@ -1586,6 +1596,7 @@ impl Heap {
         self.allocations = 0;
         self.allocations_since_full = 0;
         self.live_after_full = 0;
+        self.live_at_environment_trim = None;
         self.full_due = false;
         self.pacing_state = pacing::PacingState::default();
         self.live_weight_after_previous = 0;
@@ -1715,6 +1726,13 @@ impl Heap {
     /// Whether a collection requested as `full` traces and sweeps the whole heap. Records
     /// and legacy cells share one generation rule: survivors stay marked (old), the write
     /// barriers log old owners they write, and a minor traces roots and that log only.
+    /// Whether this full collection traces closure environments through their reads
+    /// (`live_at_environment_trim`).
+    fn environment_trim_due(&self) -> bool {
+        self.live_at_environment_trim.is_none_or(|trimmed| {
+            self.live_after_full >= trimmed.saturating_add(ENVIRONMENT_TRIM_GROWTH.of(trimmed))
+        })
+    }
     pub(crate) fn collection_is_full(&self, full: bool) -> bool {
         full
     }
@@ -1810,8 +1828,13 @@ impl Heap {
             self.gc_profile.roots += work.len() as u64;
             self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
         }
-        // A full collection traces closure environments through what closures can read.
-        let mut environments = EnvironmentTrace::new(closure_reads.filter(|_| full), self.slots.len());
+        // A full collection traces closure environments through what closures can read, once
+        // the live set has grown since the last that did: environments over-captured since
+        // then are what grew it, and slots cleared before stay cleared. Between them the
+        // trace's per-environment state would only add to each full collection's peak
+        // (V8-v7 max RSS +50 to +156 KiB on most fixtures when every full collection traced).
+        let trims_environments = full && self.environment_trim_due();
+        let mut environments = EnvironmentTrace::new(closure_reads.filter(|_| trims_environments));
         {
             let mut ephemerons = weak::EphemeronWork::default();
             if !full {
@@ -1857,7 +1880,7 @@ impl Heap {
         #[cfg(debug_assertions)]
         {
             if full {
-                self.debug_verify_full(&verify_roots, &mut object_roots, closure_reads);
+                self.debug_verify_full(&verify_roots, &mut object_roots, closure_reads.filter(|_| trims_environments));
             } else {
                 let mut pinned = verify_old_records.unwrap_or_default();
                 pinned.extend(verify_remembered_records);
@@ -2120,6 +2143,9 @@ impl Heap {
         if full {
             self.live_after_full = live;
             self.live_weight_after_full = live_weight;
+        }
+        if trims_environments && closure_reads.is_some() {
+            self.live_at_environment_trim = Some(live);
         }
         let next = self.pacing().plan(
             &mut self.pacing_state,
@@ -2543,7 +2569,7 @@ impl Heap {
             object_roots,
             &mut ephemerons,
             GcTraceKind::VerifyFull,
-            &mut EnvironmentTrace::new(closure_reads, self.slots.len()),
+            &mut EnvironmentTrace::new(closure_reads),
         );
         let sequential_marks = Self::snapshot_marks(&self.marks);
         let sequential_record_marks = self.snapshot_record_marks();
@@ -2595,7 +2621,7 @@ impl Heap {
             object_roots,
             &mut ephemerons,
             GcTraceKind::VerifyFull,
-            &mut EnvironmentTrace::new(None, 0),
+            &mut EnvironmentTrace::new(None),
         );
         let verified_record_marks = self.snapshot_record_marks();
         let marked = |marks: &[u64], id: RecordId| {
