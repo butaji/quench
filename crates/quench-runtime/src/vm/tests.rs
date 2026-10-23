@@ -1608,6 +1608,41 @@ fn moved_shape_lookup_index_matches_the_derived_index() {
 }
 
 #[test]
+fn a_deletion_keeps_a_shared_shape_until_vacated_slots_outnumber_properties() {
+    let source = r#"
+      var first = { a: 1, b: 2, c: 3 };
+      var second = { a: 4, b: 5, c: 6 };
+      delete first.b;
+      delete second.b;
+      var emptied = { a: 1, b: 2 };
+      delete emptied.a;
+      delete emptied.b;
+      print([first.a + first.c + second.a + second.c, "b" in first, Object.keys(second)].join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "deletion-shapes.js").unwrap();
+    vm.execute(&program).unwrap();
+    let global = vm.realm.globals;
+    let shape_of = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        let object = vm.own_property(global, atom).expect("global binding exists");
+        vm.object_data(object).expect("object value").shape()
+    };
+    let (first, second, emptied) =
+        (shape_of(&mut vm, "first"), shape_of(&mut vm, "second"), shape_of(&mut vm, "emptied"));
+    // One vacated slot beside two properties: both objects share the deletion's shape.
+    assert!(!vm.shape_is_dictionary(first));
+    assert_eq!(first, second);
+    // Two vacated slots and no property: the object's storage is all holes.
+    assert_eq!(
+        vm.shapes[emptied as usize].dictionary_trigger,
+        Some(super::DictionaryTrigger::DeletionPattern)
+    );
+    assert_eq!(output.borrow().as_slice(), ["14 false a,c"]);
+}
+
+#[test]
 fn dictionary_shape_starts_when_property_slots_exceed_cache_encoding() {
     let mut vm = Vm::new(TestHost::default());
     vm.shapes[0].storage_len = super::object::FIELD_CACHE_SLOT_CAPACITY as u32;
