@@ -482,7 +482,45 @@ The short screen measured 308.3 renders/s / 25.95 MB versus 335.7 / 27.75 MB
 for the same-run control. The full 11-round paired run confirmed a smaller
 regression: 313.2 / 27.22 MB versus 327.0 / 27.68 MB (-4.2% speed, -1.7% RSS).
 Output matched at 24,980,000 bytes/checksum 414318; the implementation was
-reverted. Next is a guarded adjacent own-field pair, based on the 2.91M dynamic
-`GetField → GetField` transitions in the 500-render profile. Reports:
+reverted. A guarded adjacent own-field pair was then screened from the 2.91M
+dynamic `GetField → GetField` transitions in the 500-render profile. The full
+11-round run measured 320.1 renders/s / 26.9 MB versus 317.7 / 27.6 MB for the
+paired control (+0.8% speed, -2.5% RSS). Output matched at 24,980,000
+bytes/checksum 414318. The small speed gain did not clear the experiment's
+noise margin, so the implementation was reverted. Reports:
 `work/react-perf/react-exact-small-fill-screen-3.json` and
-`work/react-perf/react-exact-small-fill-11.json`.
+`work/react-perf/react-exact-small-fill-11.json`,
+`work/react-perf/react-adjacent-field-pair-screen-3.json`, and
+`work/react-perf/react-adjacent-field-pair-11.json`. The next `Move → Call`
+argument-window attempt used compiler forward-substitution for the one-argument
+form. It preserved output but failed the three-round screen: 285.1 renders/s /
+24.5 MB versus 308.3 / 24.7 MB for the paired control. It was reverted without
+a full run. Report: `work/react-perf/react-call-window-forward-screen-3.json`.
+A wide-aware `LoadCapture → Move` compiler rewrite was screened from the 2.73M
+dynamic transitions in the React profile. It preserved output but measured
+261.7 renders/s / 27.0 MB versus 325.8 / 27.6 MB for the paired control, so the
+compiler change was reverted without a full run. The build reused PGO data from
+before the rewrite-function change and reported a function hash mismatch; this
+limits attribution but does not provide a positive signal. Report:
+`work/react-perf/react-wide-capture-move-screen-3.json`. It was reverted.
+
+The next profile-ranked no-JIT candidate coalesces an exact plain local load
+with the following register/register integer-comparison branch. It keeps the
+branch record independently callable and sends non-integer operands to the
+existing generic relation handler. The full 11-round React SSR run measured
+331.1 renders/s / 26.90 MB versus the paired generic PGO control at 323.4 /
+27.14 (+2.4% throughput, -0.9% RSS), with matching 24,980,000 output bytes and
+checksum 414318. Node `--jitless` measured 1,696.1 / 36.18 MB and Bun no-JIT
+1,512.9 / 37.51 MB. Quench's RSS is over 20% below both, but throughput is
+still 5.1x behind Node and 4.6x behind Bun; this is a retained local
+improvement, not a package win. Report:
+`work/react-perf/react-loadlocal-jumpbinary-nojit-11.json`.
+
+The reverse-order `JumpBinaryFalse → LoadLocalPlain` pair had a misleadingly
+positive three-round screen when built with a stale profile: 333.6 renders/s /
+25.87 MB versus 326.9 / 27.48 for the paired control. Rebuilding with a fresh
+PGO training profile reversed the result: 307.8 / 26.26 MB versus 313.9 /
+26.58 (-2.0% throughput, -1.2% RSS), with matching output. The reverse-pair
+change was reverted. Reports:
+`work/react-perf/react-jumpbinary-loadlocal-screen-3.json` and
+`work/react-perf/react-jumpbinary-loadlocal-freshpgo-screen-3.json`.
