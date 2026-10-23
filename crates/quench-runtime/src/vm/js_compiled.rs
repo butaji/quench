@@ -2744,15 +2744,6 @@ fn branch_number_comparison(
     left: crate::bytecode::Operand,
     right: crate::bytecode::Operand,
 ) -> Option<ir::Value> {
-    let relation = super::operations::NumberRelation::from_operator(operator)?;
-    let code = match relation {
-        super::operations::NumberRelation::Equal => FloatCC::Equal,
-        super::operations::NumberRelation::NotEqual => FloatCC::NotEqual,
-        super::operations::NumberRelation::LessThan => FloatCC::LessThan,
-        super::operations::NumberRelation::LessEqual => FloatCC::LessThanOrEqual,
-        super::operations::NumberRelation::GreaterThan => FloatCC::GreaterThan,
-        super::operations::NumberRelation::GreaterEqual => FloatCC::GreaterThanOrEqual,
-    };
     let lhs = branch_numeric_operand(
         builder,
         variables,
@@ -2771,7 +2762,7 @@ fn branch_number_comparison(
         local_state,
         right,
     )?;
-    Some(builder.ins().fcmp(code, lhs, rhs))
+    super::compiled::emit_number_relation(builder, operator, lhs, rhs)
 }
 
 fn branch_numeric_operand(
@@ -2869,6 +2860,10 @@ fn compile_numeric_with_captures(
     // Registers are SSA values here. The validated plain activation places its
     // promoted parameter locals in registers 0..params.
     let mut registers = vec![None; usize::from(function.registers)];
+    // Plain locals can be represented by SSA values when the region is
+    // straight-line: every read must follow a compiled write. Missing writes
+    // reject the region so initialization and lexical semantics stay in the VM.
+    let mut locals = vec![None; usize::from(function.locals)];
     for (index, register) in registers.iter_mut().take(params).enumerate() {
         if numeric_field_inputs.as_ref().is_some_and(|inputs| {
             inputs.iter().any(|input| {
@@ -2949,6 +2944,28 @@ fn compile_numeric_with_captures(
                 let source = usize::from(instruction.register_b());
                 Some(*registers.get(source)?.as_ref()?)
             }
+            JsDenotation::PlainLocalStore => {
+                if instruction.returns_from_frame() || instruction.result_flags() != 0 {
+                    return None;
+                }
+                let value = *registers
+                    .get(usize::from(instruction.register_a()))?
+                    .as_ref()?;
+                *locals.get_mut(instruction.local_slot())? = Some(value);
+                if let Some(register) = instruction.optional_register_b() {
+                    *registers.get_mut(usize::from(register))? = Some(value);
+                }
+                None
+            }
+            JsDenotation::PlainLocalLoad => {
+                if instruction.returns_from_frame()
+                    || instruction.result_flags() != 0
+                    || instruction.numeric_local_target().is_some()
+                {
+                    return None;
+                }
+                Some(*locals.get(instruction.local_slot())?.as_ref()?)
+            }
             JsDenotation::CapturedValue => {
                 if instruction.returns_from_frame() || instruction.result_flags() != 0 {
                     return None;
@@ -2979,6 +2996,16 @@ fn compile_numeric_with_captures(
                     operand_value(&mut builder, program, instruction.operand_c(), &registers)?;
                 let value = match (instruction.op(), instruction.binary_operator()) {
                     (Op::Binary, op)
+                        if super::operations::NumberArithmetic::from_operator(op).is_some() =>
+                    {
+                        super::compiled::emit_number_arithmetic(
+                            &mut builder,
+                            op,
+                            left,
+                            right,
+                        )?
+                    }
+                    (Op::Binary, op)
                         if (op == BinaryOperator::BitwiseAnd as u32
                             || op == BinaryOperator::BitwiseOR as u32
                             || op == BinaryOperator::BitwiseXOR as u32)
@@ -2997,23 +3024,27 @@ fn compile_numeric_with_captures(
                         };
                         builder.ins().fcvt_from_sint(types::F64, value)
                     }
-                    (Op::Binary, op) if op == BinaryOperator::Addition as u32 => {
-                        builder.ins().fadd(left, right)
+                    (Op::NumericAdd, op)
+                        if super::operations::NumberArithmetic::from_operator(op)
+                            == Some(super::operations::NumberArithmetic::Add) =>
+                    {
+                        super::compiled::emit_number_arithmetic(
+                            &mut builder,
+                            op,
+                            left,
+                            right,
+                        )?
                     }
-                    (Op::Binary, op) if op == BinaryOperator::Subtraction as u32 => {
-                        builder.ins().fsub(left, right)
-                    }
-                    (Op::Binary, op) if op == BinaryOperator::Multiplication as u32 => {
-                        builder.ins().fmul(left, right)
-                    }
-                    (Op::Binary, op) if op == BinaryOperator::Division as u32 => {
-                        builder.ins().fdiv(left, right)
-                    }
-                    (Op::NumericAdd, op) if op == BinaryOperator::Addition as u32 => {
-                        builder.ins().fadd(left, right)
-                    }
-                    (Op::NumericMultiply, op) if op == BinaryOperator::Multiplication as u32 => {
-                        builder.ins().fmul(left, right)
+                    (Op::NumericMultiply, op)
+                        if super::operations::NumberArithmetic::from_operator(op)
+                            == Some(super::operations::NumberArithmetic::Multiply) =>
+                    {
+                        super::compiled::emit_number_arithmetic(
+                            &mut builder,
+                            op,
+                            left,
+                            right,
+                        )?
                     }
                     _ => return None,
                 };
@@ -3472,20 +3503,15 @@ fn compile_numeric_loop(
                 )?;
                 let operator = instruction.binary_operator();
                 let value = match (instruction.op(), operator) {
-                    (Op::Binary, value) if value == BinaryOperator::Addition as u32 => {
-                        let result = builder.ins().fadd(left, right);
-                        Some((NumericFlowKind::Number, result))
-                    }
-                    (Op::Binary, value) if value == BinaryOperator::Subtraction as u32 => {
-                        let result = builder.ins().fsub(left, right);
-                        Some((NumericFlowKind::Number, result))
-                    }
-                    (Op::Binary, value) if value == BinaryOperator::Multiplication as u32 => {
-                        let result = builder.ins().fmul(left, right);
-                        Some((NumericFlowKind::Number, result))
-                    }
-                    (Op::Binary, value) if value == BinaryOperator::Division as u32 => {
-                        let result = builder.ins().fdiv(left, right);
+                    (Op::Binary, value)
+                        if super::operations::NumberArithmetic::from_operator(value).is_some() =>
+                    {
+                        let result = super::compiled::emit_number_arithmetic(
+                            &mut builder,
+                            value,
+                            left,
+                            right,
+                        )?;
                         Some((NumericFlowKind::Number, result))
                     }
                     (Op::Binary, value)
@@ -3525,21 +3551,35 @@ fn compile_numeric_loop(
                         };
                         Some((NumericFlowKind::Number, result))
                     }
-                    (Op::NumericAdd, value) if value == BinaryOperator::Addition as u32 => {
-                        let result = builder.ins().fadd(left, right);
+                    (Op::NumericAdd, value)
+                        if super::operations::NumberArithmetic::from_operator(value)
+                            == Some(super::operations::NumberArithmetic::Add) =>
+                    {
+                        let result = super::compiled::emit_number_arithmetic(
+                            &mut builder,
+                            value,
+                            left,
+                            right,
+                        )?;
                         Some((NumericFlowKind::Number, result))
                     }
                     (Op::NumericMultiply, value)
-                        if value == BinaryOperator::Multiplication as u32 =>
+                        if super::operations::NumberArithmetic::from_operator(value)
+                            == Some(super::operations::NumberArithmetic::Multiply) =>
                     {
-                        let result = builder.ins().fmul(left, right);
+                        let result = super::compiled::emit_number_arithmetic(
+                            &mut builder,
+                            value,
+                            left,
+                            right,
+                        )?;
                         Some((NumericFlowKind::Number, result))
                     }
                     (Op::Binary, value)
                         if super::operations::NumberRelation::from_operator(value).is_some() =>
                     {
                         let condition =
-                            builder.ins().fcmp(numeric_relation_cc(value)?, left, right);
+                            super::compiled::emit_number_relation(&mut builder, value, left, right)?;
                         let one = builder.ins().iconst(types::I8, 1);
                         let zero = builder.ins().iconst(types::I8, 0);
                         let result = builder.ins().select(condition, one, zero);
@@ -3643,11 +3683,12 @@ fn compile_numeric_loop(
                     registers,
                     instruction.operand_c(),
                 )?;
-                let condition = builder.ins().fcmp(
-                    numeric_relation_cc(instruction.binary_operator_field())?,
+                let condition = super::compiled::emit_number_relation(
+                    &mut builder,
+                    instruction.binary_operator_field(),
                     left,
                     right,
-                );
+                )?;
                 let target = usize::try_from(instruction.jump_target()).ok()?;
                 emit_numeric_loop_conditional(
                     &mut builder,
@@ -3783,19 +3824,6 @@ fn numeric_to_i32(builder: &mut FunctionBuilder<'_>, value: ir::Value) -> ir::Va
     let reduced = builder.ins().fsub(value, product);
     let truncated = builder.ins().fcvt_to_sint_sat(types::I64, reduced);
     builder.ins().ireduce(types::I32, truncated)
-}
-
-fn numeric_relation_cc(operator: u32) -> Option<FloatCC> {
-    Some(
-        match super::operations::NumberRelation::from_operator(operator)? {
-            super::operations::NumberRelation::Equal => FloatCC::Equal,
-            super::operations::NumberRelation::NotEqual => FloatCC::NotEqual,
-            super::operations::NumberRelation::LessThan => FloatCC::LessThan,
-            super::operations::NumberRelation::LessEqual => FloatCC::LessThanOrEqual,
-            super::operations::NumberRelation::GreaterThan => FloatCC::GreaterThan,
-            super::operations::NumberRelation::GreaterEqual => FloatCC::GreaterThanOrEqual,
-        },
-    )
 }
 
 fn emit_numeric_loop_backedge_poll(
@@ -4158,16 +4186,16 @@ fn comparison(
     registers: &[cranelift_frontend::Variable],
     strings: &[Option<StringJitRegister>],
 ) -> Option<ir::Value> {
-    let relation = super::operations::NumberRelation::from_operator(instruction_binary_operator(
-        instruction,
-    )?)?;
-    let code = match relation {
-        super::operations::NumberRelation::LessThan => FloatCC::LessThan,
-        super::operations::NumberRelation::LessEqual => FloatCC::LessThanOrEqual,
-        super::operations::NumberRelation::GreaterThan => FloatCC::GreaterThan,
-        super::operations::NumberRelation::GreaterEqual => FloatCC::GreaterThanOrEqual,
-        _ => return None,
-    };
+    let operator = instruction_binary_operator(instruction)?;
+    if !matches!(
+        super::operations::NumberRelation::from_operator(operator)?,
+        super::operations::NumberRelation::LessThan
+            | super::operations::NumberRelation::LessEqual
+            | super::operations::NumberRelation::GreaterThan
+            | super::operations::NumberRelation::GreaterEqual
+    ) {
+        return None;
+    }
     let left = numeric_operand(
         builder,
         program,
@@ -4182,7 +4210,7 @@ fn comparison(
         registers,
         strings,
     )?;
-    Some(builder.ins().fcmp(code, left, right))
+    super::compiled::emit_number_relation(builder, operator, left, right)
 }
 
 fn numeric_operand(
