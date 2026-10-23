@@ -170,6 +170,13 @@ struct WasmTierState {
     compiled: Option<Rc<super::compiled::CompiledProgram>>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct JsTierEntryDecision {
+    tracked: bool,
+    promoted: bool,
+    compile: bool,
+}
+
 /// One sparse tier-state table per program. Frontend-specific transitions and
 /// artifacts stay typed, while JS and Wasm share the same state owner and
 /// avoid carrying a second empty hash-map header in every program entry.
@@ -186,6 +193,113 @@ impl Default for JitTierManager {
 }
 
 impl JitTierManager {
+    /// Apply JavaScript's bounded statistical promotion transition to the
+    /// manager-owned tier record. ProgramStore handles only global counters
+    /// and diagnostic side effects after this decision is complete.
+    fn note_js_entry(
+        &mut self,
+        function: u32,
+        numeric: bool,
+        first_entry_candidate: bool,
+        compiled_functions: usize,
+        can_track: bool,
+    ) -> JsTierEntryDecision {
+        let mut decision = JsTierEntryDecision::default();
+        if self.is_wasm() {
+            return decision;
+        }
+        if self.js(function).is_none() {
+            if !can_track {
+                return decision;
+            }
+            decision.tracked = true;
+            let initial = if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
+                JsTierState::Unsupported
+            } else if first_entry_candidate {
+                decision.promoted = true;
+                JsTierState::PromotionPending
+            } else {
+                JsTierState::Hot {
+                    observations: 1,
+                    numeric: u8::from(numeric),
+                }
+            };
+            let inserted = self.js_insert(function, initial);
+            debug_assert!(inserted);
+            decision.compile = decision.promoted;
+            return decision;
+        }
+
+        let Some(state) = self.js_mut(function) else {
+            return decision;
+        };
+        decision.compile = match state {
+            JsTierState::Hot {
+                observations,
+                numeric: numeric_entries,
+            } => {
+                *observations = observations.saturating_add(1);
+                *numeric_entries = numeric_entries.saturating_add(u8::from(numeric));
+                let promotion = numeric_promotion_decision(*numeric_entries, *observations);
+                if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
+                    *state = JsTierState::Unsupported;
+                    false
+                } else if first_entry_candidate {
+                    decision.promoted = true;
+                    true
+                } else if promotion == Some(true) {
+                    decision.promoted = true;
+                    if numeric {
+                        true
+                    } else {
+                        *state = JsTierState::PromotionPending;
+                        false
+                    }
+                } else {
+                    if promotion == Some(false) && *observations == u8::MAX {
+                        *state = JsTierState::Unsupported;
+                    }
+                    false
+                }
+            }
+            JsTierState::PromotionPending => {
+                if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
+                    *state = JsTierState::Unsupported;
+                    false
+                } else {
+                    numeric
+                }
+            }
+            JsTierState::Rejected { .. }
+            | JsTierState::Unsupported
+            | JsTierState::Compiled(_) => false,
+        };
+        decision
+    }
+
+    /// Advance the Wasm call-hotness state. Both the lane handoff and the
+    /// ordinary dispatcher call this transition owner, so the threshold and
+    /// one-shot attempt bit have one implementation.
+    fn note_wasm_entry(&mut self, function: u32, lane_handoff: bool) -> bool {
+        let Some(state) = self.wasm_mut_or_default(function) else {
+            return false;
+        };
+        if state.compiled.is_some() || state.hotness & 0x80 != 0 {
+            return false;
+        }
+        let count = state.hotness & 0x7f;
+        if lane_handoff && count.saturating_add(1) >= WASM_JIT_PROMOTION_ENTRIES {
+            return true;
+        }
+        let count = count.saturating_add(1);
+        state.hotness = count;
+        if count < WASM_JIT_PROMOTION_ENTRIES {
+            return false;
+        }
+        state.hotness |= 0x80;
+        true
+    }
+
     fn js(&self, function: u32) -> Option<&JsTierState> {
         match self {
             Self::JavaScript(functions) => functions.get(&function),
@@ -1129,22 +1243,7 @@ impl ProgramStore {
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
-        let Some(state) = entry.jit_tiers.wasm_mut_or_default(function) else {
-            return false;
-        };
-        if state.compiled.is_some() {
-            return false;
-        }
-        if state.hotness & 0x80 != 0 {
-            return false;
-        }
-        let count = (state.hotness & 0x7f).saturating_add(1);
-        state.hotness = count;
-        if count < WASM_JIT_PROMOTION_ENTRIES {
-            return false;
-        }
-        state.hotness |= 0x80;
-        true
+        entry.jit_tiers.note_wasm_entry(function, false)
     }
 
     /// Count a nonterminal `CallKnown` activation that stays in the fast
@@ -1164,18 +1263,7 @@ impl ProgramStore {
         {
             return false;
         }
-        let Some(state) = entry.jit_tiers.wasm_mut_or_default(function) else {
-            return false;
-        };
-        if state.compiled.is_some() || state.hotness & 0x80 != 0 {
-            return false;
-        }
-        let count = state.hotness & 0x7f;
-        if count.saturating_add(1) >= WASM_JIT_PROMOTION_ENTRIES {
-            return true;
-        }
-        state.hotness = count.saturating_add(1);
-        false
+        entry.jit_tiers.note_wasm_entry(function, true)
     }
 
     pub(super) fn wasm_tier(
@@ -1335,88 +1423,23 @@ impl ProgramStore {
     ) -> bool {
         let compiled_functions = self.jit_code_cache.js_functions;
         let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
-        let mut inserted = false;
-        let mut promoted = false;
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
-        if entry.jit_tiers.js(function).is_none() {
-            // A Wasm tier with the same index cannot be reinterpreted as a JS
-            // tier. Program kinds are disjoint today; retain a safe failure if
-            // that invariant changes.
-            if !can_track {
-                return false;
-            }
-            inserted = true;
-            let initial = if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
-                JsTierState::Unsupported
-            } else if first_entry_candidate {
-                promoted = true;
-                JsTierState::PromotionPending
-            } else {
-                JsTierState::Hot {
-                    observations: 1,
-                    numeric: u8::from(numeric),
-                }
-            };
-            let inserted_state = entry.jit_tiers.js_insert(function, initial);
-            debug_assert!(inserted_state);
-        }
-        if inserted {
+        let decision = entry.jit_tiers.note_js_entry(
+            function,
+            numeric,
+            first_entry_candidate,
+            compiled_functions,
+            can_track,
+        );
+        if decision.tracked {
             self.js_jit_tracked_functions += 1;
-            if promoted {
-                self.record_js_jit_promotion(id, function);
-            }
-            return promoted;
         }
-        let Some(state) = entry.jit_tiers.js_mut(function) else {
-            return false;
-        };
-        let should_compile = match state {
-            JsTierState::Hot {
-                observations,
-                numeric: numeric_entries,
-            } => {
-                *observations = observations.saturating_add(1);
-                *numeric_entries = numeric_entries.saturating_add(u8::from(numeric));
-                let decision = numeric_promotion_decision(*numeric_entries, *observations);
-                if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
-                    *state = JsTierState::Unsupported;
-                    false
-                } else if first_entry_candidate {
-                    promoted = true;
-                    true
-                } else if decision == Some(true) {
-                    promoted = true;
-                    if numeric {
-                        true
-                    } else {
-                        *state = JsTierState::PromotionPending;
-                        false
-                    }
-                } else {
-                    if decision == Some(false) && *observations == u8::MAX {
-                        *state = JsTierState::Unsupported;
-                    }
-                    false
-                }
-            }
-            JsTierState::PromotionPending => {
-                if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
-                    *state = JsTierState::Unsupported;
-                    false
-                } else {
-                    numeric
-                }
-            }
-            JsTierState::Rejected { .. }
-            | JsTierState::Unsupported
-            | JsTierState::Compiled(_) => false,
-        };
-        if promoted {
+        if decision.promoted {
             self.record_js_jit_promotion(id, function);
         }
-        should_compile
+        decision.compile
     }
 
     /// Memoize an unsupported bytecode shape separately from tier candidates.
@@ -2390,6 +2413,39 @@ mod jit_code_cache_tests {
         assert!(wasm_tiers.wasm_mut_or_default(4).is_some());
         assert!(!wasm_tiers.js_insert(3, super::JsTierState::Unsupported));
         assert_eq!(wasm_tiers.wasm_values().count(), 1);
+        assert_eq!(
+            wasm_tiers.note_js_entry(3, true, true, 0, true),
+            super::JsTierEntryDecision::default()
+        );
+    }
+
+    #[test]
+    fn jit_tier_manager_owns_frontend_promotion_transitions() {
+        let mut js_tiers = super::JitTierManager::default();
+        let first = js_tiers.note_js_entry(1, true, true, 0, true);
+        assert_eq!(
+            first,
+            super::JsTierEntryDecision {
+                tracked: true,
+                promoted: true,
+                compile: true,
+            }
+        );
+        assert!(matches!(
+            js_tiers.js(1),
+            Some(super::JsTierState::PromotionPending)
+        ));
+
+        let mut wasm_tiers = super::JitTierManager::default();
+        for _ in 1..super::WASM_JIT_PROMOTION_ENTRIES {
+            assert!(!wasm_tiers.note_wasm_entry(2, false));
+        }
+        assert!(wasm_tiers.note_wasm_entry(2, false));
+        assert!(!wasm_tiers.note_wasm_entry(2, false));
+        assert_eq!(
+            wasm_tiers.wasm(2).map(|state| state.hotness & 0x7f),
+            Some(super::WASM_JIT_PROMOTION_ENTRIES)
+        );
     }
 }
 
