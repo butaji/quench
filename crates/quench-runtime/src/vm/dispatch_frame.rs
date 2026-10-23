@@ -35,6 +35,10 @@ pub(super) struct PendingGeneralCall {
     pub(super) destination: Register,
     /// Set for an in-loop `new`; see `StepResult::PushFrame`.
     pub(super) construct_this: Option<Value>,
+    /// The rooted promise of an async callee pushed in place (`CallPlan::settles_in_loop`):
+    /// its return resolves the promise, which is then the call's value, and an abrupt
+    /// completion rejects it and resumes the caller after the call.
+    pub(super) settles: Option<crate::heap::RootId>,
     /// The call falls into a return of its result: the caller completes with the callee's
     /// value instead of storing it. Sloppy callers keep their frame (it stays visible to
     /// legacy `caller` reflection), so this chains returns rather than replacing frames.
@@ -228,6 +232,16 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<FrameOutcome, JsError> {
+        #[cfg(feature = "profile-lane-exits")]
+        if let Some(caller) = self.frames.last() {
+            super::lane_exits::call_target(
+                self.active_program.raw(),
+                caller.function,
+                caller.pc as u32,
+                context.callee().unwrap_or(Value::UNDEFINED),
+                id,
+            );
+        }
         self.run_user_frame(p, id, parent, this, args, context, false)
     }
 
@@ -258,9 +272,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<crate::stack::GuestCallGuard, JsError> {
         // An in-loop activation grows the frame stack, not the native stack, so it counts
         // against the live guest-call budget.
-        let call_guard = crate::stack::GuestCallGuard::enter()
-            .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?;
         let function = &p.function(id as usize);
+        let frame_storage_bytes = (usize::from(function.locals)
+            + usize::from(function.registers))
+        .saturating_mul(std::mem::size_of::<Value>());
+        let call_guard = crate::stack::GuestCallGuard::enter_with_storage(frame_storage_bytes)
+            .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?;
         let program = self.active_program;
         let with_base = self.with_stack.len();
         let mut frame = self
@@ -307,8 +324,15 @@ impl<H: Host> Vm<H> {
         caller: usize,
         id: u32,
         registers: &[Value],
-    ) {
-        debug_assert_eq!(p.function(id as usize).locals, 0);
+    ) -> crate::stack::GuestCallGuard {
+        let function = p.function(id as usize);
+        debug_assert_eq!(function.locals, 0);
+        let frame_storage_bytes = usize::from(function.registers)
+            .saturating_mul(std::mem::size_of::<Value>());
+        // Lane admission reserves these bytes before it stores the activation. Materializing
+        // the lane transfers that reservation to the frame's weighted guest-call guard.
+        let call_guard = crate::stack::GuestCallGuard::enter_with_storage(frame_storage_bytes)
+            .expect("lane Wasm activation storage was admitted before materialization");
         let program = self.active_program;
         let with_base = self.with_stack.len();
         let mut frame = self
@@ -331,6 +355,7 @@ impl<H: Host> Vm<H> {
         frame.with_base = with_base;
         frame.fixed_this = false;
         self.frames.push(frame);
+        call_guard
     }
 
     fn empty_frame(&self) -> Box<Frame> {
@@ -816,7 +841,7 @@ impl<H: Host> Vm<H> {
 
     /// The rest parameter's array of the arguments past the fixed parameters.
     #[inline(never)]
-    fn rest_parameter_array(&mut self, rest: &[Value]) -> Value {
+    pub(super) fn rest_parameter_array(&mut self, rest: &[Value]) -> Value {
         self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
@@ -842,7 +867,7 @@ impl<H: Host> Vm<H> {
             ),
         });
         self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
-        if mapped {
+        if function.arguments_alias_parameters() {
             let mapping = (0..function.params.min(args.len() as u16)).collect();
             if let Some(object) = self.object_data_mut(arguments) {
                 object.set_arguments_map(mapping);
@@ -1312,6 +1337,21 @@ impl<H: Host> Vm<H> {
         let mut executing_residual: *const ResidualProgram = entry_program;
         let mut frame = frame;
         let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
+        // The initial Wasm activation is allocated before the dispatch loop and has no
+        // caller guard. Account it here so root and reentrant Wasm entries obey the same
+        // frame-payload limit as Wasm calls pushed by the loop.
+        let _guest_frame = if p.kind == crate::bytecode::ProgramKind::Wasm {
+            let function = p.function(self.frames[frame].function as usize);
+            let frame_storage_bytes = (usize::from(function.locals)
+                + usize::from(function.registers))
+            .saturating_mul(std::mem::size_of::<Value>());
+            Some(
+                crate::stack::GuestCallGuard::enter_with_storage(frame_storage_bytes)
+                    .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?,
+            )
+        } else {
+            None
+        };
         let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
             crate::stack::StackGuard::enter()
                 .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
@@ -1347,6 +1387,32 @@ impl<H: Host> Vm<H> {
                 pc.saturating_sub(1) as u32,
                 error,
             )?;
+        }
+        // An error thrown at `throwing_pc` of the running frame: the loop resumes at the
+        // handler `unwind_general_loop` finds, popping in-loop activations without one.
+        macro_rules! unwind_at {
+            ($throwing_pc:expr, $error:expr) => {{
+                let mut executing = ExecutingProgram {
+                    id: executing_program,
+                    retained: current_program.take(),
+                };
+                let unwound = self.unwind_general_loop(
+                    entry_program,
+                    frame,
+                    pc,
+                    $throwing_pc,
+                    $error,
+                    &mut pending_calls,
+                    &mut cursor,
+                    &mut executing,
+                    fast_lane,
+                );
+                executing_program = executing.id;
+                current_program = executing.retained;
+                executing_residual = current_program.as_deref().unwrap_or(entry_program);
+                (frame, pc) = unwound?;
+                published_pc = &mut self.frames[frame].pc;
+            }};
         }
         loop {
             // SAFETY: `executing_residual` points at `entry_program`, borrowed for the whole
@@ -1426,7 +1492,7 @@ impl<H: Host> Vm<H> {
                         let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
                         super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
                     }
-                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName | Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField | Op::LoadNameCall | Op::PrivateIn) {
+                    if matches!(instruction.op(), Op::CloneEnv | Op::Return | Op::GetField | Op::GetIndex | Op::SetIndex | Op::LoadName | Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField | Op::LoadNameCall | Op::PrivateIn | Op::Binary | Op::JumpBinaryFalse) {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
@@ -1434,6 +1500,10 @@ impl<H: Host> Vm<H> {
                         // (`SHARED_UNCACHED_SITE`) from a polymorphic one.
                         let store = matches!(instruction.op(), Op::SetFieldStrict | Op::SetField | Op::SetThisFieldStrict | Op::SetThisField)
                             .then(|| format!(" site={} field={}", instruction.c(), &p.atoms[instruction.imm() as usize]))
+                            .or_else(|| {
+                                matches!(instruction.op(), Op::LoadName | Op::LoadNameCall)
+                                    .then(|| format!(" name={}", &p.atoms[instruction.imm() as usize]))
+                            })
                             .unwrap_or_default();
                         super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}{store}", instruction.op(), Self::lane_runs(cursor.lane, pc)));
                     }
@@ -1595,6 +1665,13 @@ impl<H: Host> Vm<H> {
                 instruction_pc,
             );
             let ins = cursor.instruction(pc);
+            if self.programs.js_jit_diagnostics_enabled() {
+                self.programs.record_js_jit_general_dispatch_opcode(
+                    cursor.program,
+                    cursor.function,
+                    ins.op(),
+                );
+            }
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::count_general(
                 || {
@@ -1607,6 +1684,7 @@ impl<H: Host> Vm<H> {
                     )
                 },
                 (cursor.program.raw(), cursor.function),
+                ins.op(),
             );
             pc += 1;
             #[cfg(feature = "profile-aggregate")]
@@ -1899,6 +1977,7 @@ impl<H: Host> Vm<H> {
                         self.programs
                             .record_js_jit_interpreter_completion(program, function, elapsed_ns);
                     }
+                    let mut settle_error = None;
                     loop {
                     if let Some(mut pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);
@@ -1931,6 +2010,15 @@ impl<H: Host> Vm<H> {
                             Some(this) if !self.is_object_like(value) => this,
                             _ => value,
                         };
+                        if let Some(root) = pending.settles {
+                            let promise = self.release_settled_call_root(root);
+                            // SAFETY: as for `p` at the top of the loop.
+                            let caller_code = unsafe { &*executing_residual };
+                            if let Err(error) = self.promise_resolve_value(caller_code, promise, value) {
+                                settle_error = Some((pending.call_pc, error));
+                            }
+                            value = promise;
+                        }
                         pc = self.frames[frame].pc;
                         cursor = pending.caller_cursor.unwrap_or_else(|| {
                             self.general_cursor(
@@ -1943,6 +2031,10 @@ impl<H: Host> Vm<H> {
                         });
                         published_pc = &mut self.frames[frame].pc;
                         drop(pending.call_guard);
+                        if let Some((call_pc, error)) = settle_error.take() {
+                            unwind_at!(call_pc, error);
+                            break;
+                        }
                         if pending.returns {
                             continue;
                         }
@@ -1959,6 +2051,7 @@ impl<H: Host> Vm<H> {
                     destination,
                     call_guard,
                     construct_this,
+                    settles,
                 }) => {
                     // A callee of another program became active when its frame was pushed;
                     // the loop executes that program until the callee returns.
@@ -1983,6 +2076,7 @@ impl<H: Host> Vm<H> {
                         call_pc: instruction_pc as u32,
                         destination,
                         construct_this,
+                        settles,
                         returns: ins.returns_from_frame(),
                         call_guard: Some(call_guard),
                         caller_program,
@@ -2047,28 +2141,7 @@ impl<H: Host> Vm<H> {
                         frame: None,
                     });
                 }
-                Err(error) => {
-                    let mut executing = ExecutingProgram {
-                        id: executing_program,
-                        retained: current_program.take(),
-                    };
-                    let unwound = self.unwind_general_loop(
-                        entry_program,
-                        frame,
-                        pc,
-                        instruction_pc as u32,
-                        error,
-                        &mut pending_calls,
-                        &mut cursor,
-                        &mut executing,
-                        fast_lane,
-                    );
-                    executing_program = executing.id;
-                    current_program = executing.retained;
-                    executing_residual = current_program.as_deref().unwrap_or(entry_program);
-                    (frame, pc) = unwound?;
-                    published_pc = &mut self.frames[frame].pc;
-                }
+                Err(error) => unwind_at!(instruction_pc as u32, error),
             }
         }
     }
@@ -2131,6 +2204,20 @@ impl<H: Host> Vm<H> {
                         Err(error) => error,
                         Ok(_) => unreachable!(),
                     };
+                    // An async callee's abrupt completion rejects its promise, which the
+                    // call yields; the caller resumes after the call.
+                    if let Some(root) = pending.settles {
+                        let promise = self.release_settled_call_root(root);
+                        let caller_residual = executing.retained.clone();
+                        let caller_code = caller_residual.as_deref().unwrap_or(entry_program);
+                        match self.reject_settled_call(caller_code, promise, error) {
+                            Ok(()) => {
+                                self.write(frame, pending.destination, promise);
+                                return Ok((frame, pc));
+                            }
+                            Err(next) => error = next,
+                        }
+                    }
                 }
             }
         }

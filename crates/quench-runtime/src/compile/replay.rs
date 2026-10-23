@@ -178,10 +178,13 @@ impl ProgramAtomIndex {
     }
 }
 
-/// The index of each constant a compilation added, by value. A replay finds every constant of
-/// the finished program by its key's hash, then compares the candidates' keys.
+/// The index of each constant a compilation added, by value: candidates found by their
+/// key's hash, then compared with the constants themselves, which are the one record of
+/// each value. At load the compiler's own constants back it; a replay finds every constant
+/// of the finished program.
 pub(super) enum ConstantIndex<'a> {
-    Owned(FxHashMap<super::ConstantKey, u32>),
+    /// Each key hash's constant indices, in index order.
+    Owned(FxHashMap<u64, smallvec::SmallVec<[u32; 1]>>),
     Replay {
         /// Each constant's key hash with its index, in hash then index order.
         hashes: &'a [(u64, u32)],
@@ -195,34 +198,40 @@ impl Default for ConstantIndex<'_> {
     }
 }
 
-fn constant_key_hash(key: &super::ConstantKey) -> u64 {
+fn constant_key_hash(key: super::ConstantKey<'_>) -> u64 {
     use std::hash::BuildHasher as _;
     rustc_hash::FxBuildHasher.hash_one(key)
 }
 
 impl ConstantIndex<'_> {
-    /// The first index of a constant whose key is `key`.
-    pub(super) fn get(&self, key: &super::ConstantKey) -> Option<u32> {
+    /// The first index of a constant whose key is `key`; `added` holds the constants the
+    /// compiler added, which an owned index names.
+    pub(super) fn get(
+        &self,
+        key: super::ConstantKey<'_>,
+        added: &SiteTable<'_, crate::bytecode::Constant>,
+    ) -> Option<u32> {
+        let hash = constant_key_hash(key);
+        let matches = |constant: &crate::bytecode::Constant| super::ConstantKey::from(constant) == key;
         match self {
-            Self::Owned(index) => index.get(key).copied(),
+            Self::Owned(index) => {
+                index.get(&hash)?.iter().copied().find(|index| matches(&added[*index as usize]))
+            }
             Self::Replay { hashes, constants } => {
-                let hash = constant_key_hash(key);
                 let start = hashes.partition_point(|(candidate, _)| *candidate < hash);
                 hashes[start..]
                     .iter()
                     .take_while(|(candidate, _)| *candidate == hash)
                     .map(|(_, index)| *index)
-                    .find(|index| super::ConstantKey::from(&constants[*index as usize]) == *key)
+                    .find(|index| matches(&constants[*index as usize]))
             }
         }
     }
 
     /// Records the first index of `key`. A replay adds no constant.
-    pub(super) fn insert(&mut self, key: super::ConstantKey, index: u32) {
+    pub(super) fn insert(&mut self, key: super::ConstantKey<'_>, index: u32) {
         match self {
-            Self::Owned(entries) => {
-                entries.insert(key, index);
-            }
+            Self::Owned(entries) => entries.entry(constant_key_hash(key)).or_default().push(index),
             Self::Replay { .. } => {
                 debug_assert!(false, "a replay adds no constant");
             }
@@ -235,7 +244,7 @@ fn constant_hashes(constants: &[crate::bytecode::Constant]) -> Vec<(u64, u32)> {
     let mut hashes: Vec<(u64, u32)> = constants
         .iter()
         .enumerate()
-        .map(|(index, constant)| (constant_key_hash(&super::ConstantKey::from(constant)), index as u32))
+        .map(|(index, constant)| (constant_key_hash(super::ConstantKey::from(constant)), index as u32))
         .collect();
     hashes.sort_unstable();
     hashes
@@ -526,6 +535,8 @@ pub(crate) struct ProgramReplay {
     pub(super) exits: Box<[TableCursors]>,
     /// The functions a replay can compile, by id.
     pub(super) functions: FxHashMap<u32, FunctionReplay>,
+    /// The cache sites the load shared by name (`Compiler::name_shared_cache_site`).
+    pub(super) name_shared_sites: super::NameSharedSiteMap,
     /// In verifying builds, the records of functions the load released, which their replays
     /// must equal.
     #[cfg(feature = "verify-replay")]
@@ -807,6 +818,7 @@ pub(crate) fn recompile(
         record: None,
     };
     compiler.replay_target = Some((id, &replay.exits));
+    compiler.name_shared_sites = super::NameSharedSites::Replay(&replay.name_shared_sites);
     compiler.seek(function_replay.entry);
     let made = match &function_replay.call {
         ReplayCall::Plain(context) => {

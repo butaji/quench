@@ -107,7 +107,7 @@ pub trait Host {
     /// process no longer needs resident (its read-only pages), which nothing observable
     /// depends on. At these boundaries the code about to run differs from the code that ran.
     /// The runtime's memory policy says whether it should
-    /// (`MemoryPolicy::returns_resident_pages`).
+    /// (`MemoryPolicy::returns_pages_at_collections`).
     fn at_collection_boundary(&mut self, _policy: crate::MemoryPolicy) {}
 
     /// A compiled host program kept across runs: the bytes `keep_compiled_program` was given

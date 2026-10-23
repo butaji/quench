@@ -614,9 +614,11 @@ impl<H: Host> Vm<H> {
                     year, ordinal, day as u32, &calendar, constrain,
                 )
                 .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
+                let native_temporal_plain_month_day =
+                    self.native_value(Native::TemporalPlainMonthDay);
                 return self.make_plain_month_day_from_iso_date(
                     p,
-                    self.native_value(Native::TemporalPlainMonthDay),
+                    native_temporal_plain_month_day,
                     date,
                     calendar,
                     constrain,
@@ -629,9 +631,10 @@ impl<H: Host> Vm<H> {
                 constrain,
             )
             .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
+            let native_temporal_plain_month_day = self.native_value(Native::TemporalPlainMonthDay);
             return self.make_plain_month_day(
                 p,
-                self.native_value(Native::TemporalPlainMonthDay),
+                native_temporal_plain_month_day,
                 reference.1,
                 reference.2,
                 calendar,

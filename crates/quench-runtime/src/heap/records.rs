@@ -16,6 +16,8 @@ pub(super) type FunctionRecordSpace = RecordSpace<FunctionRecord>;
 pub(super) type PromiseRecordSpace = RecordSpace<PromiseCell>;
 pub(super) type AwaitRecordSpace = RecordSpace<AwaitState>;
 pub(super) type IteratorRecordSpace = RecordSpace<IteratorRecord>;
+/// Wasm vectors: immutable leaves, so a record's bytes are its whole state.
+pub(super) type V128RecordSpace = RecordSpace<[u8; crate::wasm::V128_BYTES]>;
 /// Strings have no legacy-slot fallback, so their space holds as many records as the legacy
 /// slots do (`MAX_HEAP_CELLS`).
 pub(super) type StringRecordSpace = RecordSpace<JsString, STRING_RECORD_CAPACITY>;

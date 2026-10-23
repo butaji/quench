@@ -404,6 +404,13 @@ impl<H: Host> Vm<H> {
                 } else {
                     count.trunc() as usize
                 };
+                if receiver.len() == 0 {
+                    return Ok(if self.heap.is_string(this) {
+                        this
+                    } else {
+                        self.heap.alloc_string(receiver)
+                    });
+                }
                 let Some(size) = receiver.len().checked_mul(count) else {
                     return Err(self.range_error(p, "Invalid string length".into()));
                 };

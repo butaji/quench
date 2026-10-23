@@ -5,7 +5,7 @@
 //! can load its rooted constant and preserve ordinary frame unwinding.
 
 use crate::bytecode::{
-    Constant, FieldBase, FieldLookup, Function, Op, Operand, OperandKind, ProgramKind,
+    Constant, FieldBase, FieldLookup, Function, JsDenotation, Op, Operand, OperandKind, ProgramKind,
     RETURN_REGISTER, ResidualProgram, WideInstruction,
 };
 use cranelift_codegen::ir::{
@@ -2649,8 +2649,8 @@ fn compile_numeric_with_captures(
             return None;
         }
         let instruction = packed.as_wide();
-        let result = match instruction.op() {
-            Op::GetField => {
+        let result = match instruction.op().js_denotation() {
+            JsDenotation::GetField => {
                 let inputs = numeric_field_inputs.as_ref()?;
                 let (field_index, candidate) = inputs
                     .iter()
@@ -2685,7 +2685,7 @@ fn compile_numeric_with_captures(
                     field_offset,
                 ))
             }
-            Op::LoadConst => {
+            JsDenotation::LoadConst => {
                 if instruction.returns_from_frame() || instruction.result_flags() != 0 {
                     return None;
                 }
@@ -2696,14 +2696,14 @@ fn compile_numeric_with_captures(
                 };
                 Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
             }
-            Op::Move => {
+            JsDenotation::Move => {
                 if instruction.returns_from_frame() || instruction.result_flags() != 0 {
                     return None;
                 }
                 let source = usize::from(instruction.register_b());
                 Some(*registers.get(source)?.as_ref()?)
             }
-            Op::LoadCapture => {
+            JsDenotation::CapturedValue => {
                 if instruction.returns_from_frame() || instruction.result_flags() != 0 {
                     return None;
                 }
@@ -2720,7 +2720,7 @@ fn compile_numeric_with_captures(
                         .load(types::F64, ir::MemFlagsData::trusted(), arguments, offset),
                 )
             }
-            Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+            JsDenotation::NumericBinary => {
                 if instruction.numeric_local_target().is_some()
                     || (instruction.result_flags() != 0
                         && instruction.result_flags() != RETURN_REGISTER)
@@ -2782,7 +2782,7 @@ fn compile_numeric_with_captures(
                 }
                 Some(value)
             }
-            Op::Return => {
+            JsDenotation::Return => {
                 if instruction.result_flags() != 0 || pc + 1 != function.code.len() {
                     return None;
                 }
@@ -2793,7 +2793,7 @@ fn compile_numeric_with_captures(
                 returned = true;
                 None
             }
-            _ => return None,
+            JsDenotation::Unsupported => return None,
         };
         if let Some(value) = result {
             let destination = usize::from(instruction.result_register());

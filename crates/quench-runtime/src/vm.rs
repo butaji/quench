@@ -478,9 +478,14 @@ impl Frame {
     ) {
         debug_assert_eq!(self.locals.len(), usize::from(function.locals));
         debug_assert_eq!(self.registers.len(), usize::from(function.registers));
+        let rest = function.rest.then(|| function.params - 1);
         for entry in &function.local_registers {
-            // A promoted parameter starts as its argument and a promoted `var` as undefined.
-            let initial = if entry.local < function.params {
+            // A promoted parameter starts as its argument, a promoted rest parameter as the
+            // array its slot holds (`bind_activation_arguments`), and a promoted `var` as
+            // undefined.
+            let initial = if Some(entry.local) == rest {
+                self.locals[usize::from(entry.local)]
+            } else if entry.local < function.params {
                 args.get(usize::from(entry.local))
                     .copied()
                     .unwrap_or(Value::UNDEFINED)
@@ -984,6 +989,16 @@ struct InLoopCallTarget {
     program: ProgramId,
     function: u32,
     env: Value,
+    push: InLoopPush,
+}
+/// How the dispatch loop pushes an in-loop callee.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InLoopPush {
+    /// An ordinary body (`CallPlan::in_loop`), whose return is the call's value.
+    Body,
+    /// An async body that never suspends (`CallPlan::settles_in_loop`), whose completion
+    /// settles the promise the call returns; only a plain call pushes it.
+    Settles,
 }
 const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     callee: Value::UNDEFINED,
@@ -992,6 +1007,7 @@ const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     program: ProgramId::MAIN,
     function: 0,
     env: Value::UNDEFINED,
+    push: InLoopPush::Body,
 };
 const STRING_CONCAT_CACHE_SIZE: usize = 64;
 /// Slots of `Vm::string_atoms`, a power of two.
@@ -1212,6 +1228,11 @@ impl ShapeTransition {
         }
     }
 }
+/// Constructor layouts `instanceof` remembers (`Vm::instanceof_constructor_layouts`): a
+/// power of two that holds the few constructors a request's `instanceof` sites test
+/// (`Uint8Array`, `ReadableStream`, `Headers`, `Error`) without evicting one another.
+pub(crate) const INSTANCEOF_CONSTRUCTOR_LAYOUTS: usize = 4;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DictionaryTrigger {
     PropertyCount,
@@ -1467,6 +1488,9 @@ pub(super) enum StepResult {
         call_guard: crate::stack::GuestCallGuard,
         /// For `new`: the allocated receiver, the result unless the callee returns an object.
         construct_this: Option<Value>,
+        /// For an async callee pushed in place: its rooted promise
+        /// (`PendingGeneralCall::settles`).
+        settles: Option<crate::heap::RootId>,
     },
     Return(Value),
     Await {
@@ -1615,14 +1639,11 @@ pub(crate) struct Vm<H> {
     temporal_plain_time_proto: Value,
     temporal_plain_month_day_proto: Value,
     temporal_plain_year_month_proto: Value,
-    natives: Vec<(Native, Value)>,
+    natives: builtins::NativeTable,
     /// One shared string value per program atom a function name spells (`atom_string`):
     /// strings are immutable, so every closure of a plan can hold the same name value.
     /// Only program atoms and the anonymous name are kept, so the loaded program bounds it.
     atom_strings: FxHashMap<Atom, Value>,
-    /// The function values in `natives`. One native serves every realm, so it runs in the
-    /// realm of its caller rather than switching to the creator's.
-    shared_natives: FxHashSet<Value>,
     frames: Vec<Box<Frame>>,
     native_stack_frames: Vec<(usize, String)>,
     /// Emptied root lists of finished native calls, reused by the next `NativeContext`.
@@ -1691,6 +1712,11 @@ pub(crate) struct Vm<H> {
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
+    plain_copy_shapes: shape_memo::PlainCopyShapeMemo,
+    /// The final shapes of host records, by their names list (`create_embedding_record`).
+    embedding_record_shapes: FxHashMap<usize, u32>,
+    /// The geometry accessors typed array reads resolve to (`typed_array_geometry_read`).
+    typed_array_geometry: typed_array::TypedArrayGeometryProofs,
     function_name_shapes: provenance::FunctionNameShapes,
     symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
@@ -1750,10 +1776,10 @@ pub(crate) struct Vm<H> {
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,
-    /// A non-dictionary constructor shape verified to have no own `@@hasInstance` and a
-    /// data `prototype` at the paired slot; derived from shapes, so field-cache invalidation
-    /// clears it.
-    instanceof_constructor_layout: Option<(u32, usize)>,
+    /// Non-dictionary constructor shapes verified to have no own `@@hasInstance` and a
+    /// data `prototype` at the paired slot, direct-mapped by shape; derived from shapes, so
+    /// field-cache invalidation clears them.
+    instanceof_constructor_layouts: [Option<(u32, usize)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
     /// The shapes an ordinary closure's own properties step through, without and with a
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
@@ -1979,6 +2005,18 @@ impl<H: Host> Vm<H> {
     }
     pub(crate) fn release_root(&mut self, root: RootId) -> bool {
         self.heap.release_root(root)
+    }
+    pub(crate) fn root_scoped(&mut self, value: Value) -> RootId {
+        self.heap.root_scoped(value)
+    }
+    pub(crate) fn scoped_root_height(&self) -> usize {
+        self.heap.scoped_root_height()
+    }
+    pub(crate) fn release_root_scope(&mut self, height: usize) {
+        self.heap.release_root_scope(height);
+    }
+    pub(crate) fn release_root_scope_keeping(&mut self, height: usize, keep: &[RootId]) {
+        self.heap.release_root_scope_keeping(height, keep);
     }
     pub(super) fn instantiate_global_declarations(
         &mut self,
@@ -2400,7 +2438,15 @@ impl<H: Host> Vm<H> {
         let cell_counts = self.heap.cell_counts();
         let live_payload_bytes = self.heap.live_payload_bytes();
         let (live_property_values, live_property_capacity) = self.heap.live_property_stats();
+        let (
+            inline_property_values,
+            narrowable_inline_property_values,
+            out_of_line_property_values,
+            narrowable_out_of_line_property_values,
+        ) = self.heap.live_property_narrow_stats();
         let (array_elements, array_capacity) = self.heap.array_element_stats();
+        let (dense_array_values, narrowable_dense_array_values) =
+            self.heap.dense_array_element_narrow_stats();
         let megamorphic_field_entries: usize =
             self.megamorphic_fields.iter().map(FieldCacheSet::len).sum();
         let max_megamorphic_field_entries = self
@@ -2409,6 +2455,23 @@ impl<H: Host> Vm<H> {
             .map(FieldCacheSet::len)
             .max()
             .unwrap_or(0);
+        let active_field_caches = self
+            .field_caches
+            .iter()
+            .filter(|cache| cache.receiver != NO_FIELD_RECEIVER)
+            .count();
+        let mut field_add_cache_entries = 0usize;
+        let mut field_add_cache_depth_counts = [0usize; FIELD_ADD_CACHE_MAX_PROTO_DEPTH + 1];
+        for set in &self.field_add_sets {
+            for cache in &set.entries[..usize::from(set.len)] {
+                field_add_cache_entries += 1;
+                field_add_cache_depth_counts[usize::from(cache.prototype_depth)] += 1;
+            }
+        }
+        let mut field_add_set_occupancy = [0usize; FIELD_ADD_CACHE_WAYS + 1];
+        for set in &self.field_add_sets {
+            field_add_set_occupancy[usize::from(set.len)] += 1;
+        }
         let frame_bytes: usize = self
             .frames
             .iter()
@@ -2421,7 +2484,7 @@ impl<H: Host> Vm<H> {
         let field_add_cache_bytes = self.field_add_indices.capacity() * size_of::<u32>()
             + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>();
         eprintln!(
-            "{{\"kind\":\"quench-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
+            "{{\"kind\":\"quench-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"inline_property_values\":{inline_property_values},\"narrowable_inline_property_values\":{narrowable_inline_property_values},\"out_of_line_property_values\":{out_of_line_property_values},\"narrowable_out_of_line_property_values\":{narrowable_out_of_line_property_values},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"dense_array_values\":{dense_array_values},\"narrowable_dense_array_values\":{narrowable_dense_array_values},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"field_cache_sites\":{},\"field_cache_site_capacity\":{},\"active_field_caches\":{active_field_caches},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"field_cache_data_bytes\":{},\"megamorphic_field_index_bytes\":{},\"field_add_index_bytes\":{},\"field_add_set_bytes\":{},\"field_add_sets\":{},\"field_add_cache_entries\":{field_add_cache_entries},\"field_add_cache_depth_counts\":{field_add_cache_depth_counts:?},\"field_add_set_occupancy\":{field_add_set_occupancy:?},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
             self.shapes.len(),
             self.shapes.capacity(),
             self.transitions.len(),
@@ -2429,7 +2492,14 @@ impl<H: Host> Vm<H> {
             self.field_caches.capacity() * size_of::<FieldCache>()
                 + self.megamorphic_field_indices.capacity() * size_of::<u32>()
                 + field_add_cache_bytes,
+            self.field_caches.len(),
+            self.field_caches.capacity(),
             self.megamorphic_fields.len(),
+            self.field_caches.capacity() * size_of::<FieldCache>(),
+            self.megamorphic_field_indices.capacity() * size_of::<u32>(),
+            self.field_add_indices.capacity() * size_of::<u32>(),
+            self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>(),
+            self.field_add_sets.len(),
             self.method_caches.capacity() * size_of::<[MethodCache; 2]>(),
             self.megamorphic_methods.len(),
         );
@@ -2604,8 +2674,7 @@ impl<H: Host> Vm<H> {
         self.startup_intrinsics = Default::default();
         self.shared_async_waiters.clear();
         self.heap.reset();
-        self.natives.clear();
-        self.shared_natives.clear();
+        self.natives = Default::default();
         self.frames.clear();
         self.frame_pool.clear();
         self.realm.jobs.clear();
@@ -2624,6 +2693,8 @@ impl<H: Host> Vm<H> {
         self.shapes[0].last_child.set(NO_LAST_CHILD);
         self.transitions.clear();
         self.shape_slot_memo.clear();
+        self.plain_copy_shapes.clear();
+        self.embedding_record_shapes.clear();
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
@@ -2706,7 +2777,7 @@ impl<H: Host> Vm<H> {
         self.wasm_exported_functions.clear();
         self.private_homes.clear();
         self.programs.reset(program.clone());
-        self.instanceof_constructor_layout = None;
+        self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.closure_shapes = [None; 2];
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
@@ -2752,7 +2823,7 @@ impl<H: Host> Vm<H> {
         match constant {
             Constant::Number(v) => Value::number(*v),
             Constant::WasmBits64(bits) => self.encode_bits64(*bits),
-            Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(*bits)),
+            Constant::WasmV128(bits) => self.heap.alloc_v128(*bits),
             Constant::String(v) => self
                 .typeof_constant(v)
                 .unwrap_or_else(|| self.heap.alloc_string(v.clone().into())),
@@ -2991,8 +3062,10 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         target: Option<CallTarget>,
     ) -> Result<Value, JsError> {
-        // Guest code observes the frame stack.
-        self.materialize_deferred_lane();
+        // Guest code observes the frame stack; a native that runs beside activations does not.
+        if self.lane_deferred.is_some() && !self.callee_runs_beside_activations(callee) {
+            self.materialize_deferred_lane();
+        }
         if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
             return self.proxy_call(p, callee, this, args);
         }
