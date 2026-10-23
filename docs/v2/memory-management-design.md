@@ -317,6 +317,7 @@ measured on the same binary and lost.
 | allocator | The global allocator follows the policy: quench-alloc's size classes under Throughput, glibc under MemoryFirst; one reservation makes ownership an address compare, so frees route to the allocator that made the block | `tod167-policy-allocator-…` |
 | transients (warm-up) | Under MemoryFirst, first-call compile-phase releases may run 5 ms apart (not 100): V8-v7 no-JIT max RSS −124 to −516 KiB on six fixtures; npm under MemoryFirst +7 to +21% time | `tod137-first-call-release-…` |
 | start-up state (snapshot) | Startup intrinsic roots read from the sealed holders, not a copied list; `process.config` frozen natively | `tod21-startup-intrinsic-roots-…`, `tod21-native-config-freeze-…` |
+| retention (host weak roots) | A collected HTTP response releases its owner's weak root and async context whichever path retires it; keep-alive servers no longer keep one `WeakRef` cell per served response: hono-style 300K requests peak RSS 31–35 → 19.5 MB, wall −4% | `tod137-http-response-weak-root-…` |
 
 ### 8.2 Measured and rejected (same-binary A/B)
 
@@ -337,6 +338,7 @@ measured on the same binary and lost.
 | Trailing first-call release from a helper thread | Removes Richards' warm-up spike, but a later peak is as high; RayTrace +300 KiB | `tod137-trailing-release-rejected-…` |
 | Dense array growth 1.5× | Crypto −88/−100 KiB; DeltaBlue `--jit` +184, RayTrace `--jit` +128, RegExp +108 | `tod137-array-growth-rejected-…` |
 | Charge property-arena growth toward the next collection | Max RSS 0.619 → 0.617 of Throughput (RegExp −0.2 MB), Score −1.6% | branch `meas-gc-charge-arena`, TOD-137 comment |
+| Release the worker stack below the current frame at MemoryFirst collections | −148 to +216 KiB per row (5 runs, unbolted same-layout static builds): no consistent change; the stack is about 110 KiB resident and regrows to the same depth | branch `cand-gc-stack-release`, TOD-137 comment |
 
 ### 8.3 Where the peak is now (MemoryFirst, no JIT)
 

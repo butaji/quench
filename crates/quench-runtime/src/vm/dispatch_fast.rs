@@ -3810,11 +3810,14 @@ script_handler! {
 
 script_handler! {
     /// `lane_get_length_other` of a receiver other than a string: an arguments object's own
-    /// data `length` in its creation layout (`Vm::arguments_object_length`). Any other
-    /// receiver takes `lane_get_field`.
+    /// data `length` in its creation layout (`Vm::arguments_object_length`), or a user
+    /// function's own data `length` (`Vm::plain_function_length`), as a middleware stack
+    /// reads a handler's arity. Any other receiver takes `lane_get_field`.
     #[inline(never)]
     fn lane_get_length_arguments<>(cx, r, ip, i, view) {
-        let Some(length) = (unsafe { vm(cx) }).arguments_object_length(r.get(i.b)) else {
+        let vm = unsafe { vm(cx) };
+        let receiver = r.get(i.b);
+        let Some(length) = vm.arguments_object_length(receiver).or_else(|| vm.plain_function_length(receiver)) else {
             sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, length);
@@ -10238,9 +10241,9 @@ script_handler! {
     /// `arguments` binding is no forwarding one, in its frame's own lane run, as
     /// `Vm::read_arguments_binding` reads it: an unmaterialized binding answers its length
     /// and the indices it kept from the frame's values; a materialized object its own data
-    /// `length` in its creation layout (`Vm::arguments_object_length`). Any other read, an
-    /// element of a materialized object (which a mapped object aliases to the parameters)
-    /// among them, takes the general path.
+    /// `length` in its creation layout (`Vm::arguments_object_length`) and its stored
+    /// elements no parameter mapping reaches (`Vm::plain_arguments_element`). Any other read,
+    /// a mapped element (which aliases a parameter) among them, takes the general path.
     #[inline(never)]
     fn lane_frame_arguments<GET: bool>(cx, r, ip, i, view) {
         // Only a frame's own run reads its binding; no activation runs such a function.
@@ -10263,7 +10266,11 @@ script_handler! {
                 .and_then(|index| usize::try_from(index).ok())
                 .and_then(|index| kept.get(index).copied()),
             (false, false) => vm.arguments_object_length(binding),
-            (false, true) => None,
+            (false, true) => r
+                .get(i.b)
+                .as_int()
+                .and_then(|index| usize::try_from(index).ok())
+                .and_then(|index| vm.plain_arguments_element(binding, index)),
         };
         let Some(value) = value else {
             return exit(ip);
@@ -10494,15 +10501,26 @@ fn lane_activate_environment<H: Host>(
     if returns && !lane_returning_call_admitted(cx) {
         return Err(exit(ip));
     }
-    if argc > target.params || vm.with_scope_entered {
+    // SAFETY: the context's program outlives the lane run.
+    let rest = unsafe { &*(*cx).code }.function(target.function as usize).rest;
+    if argc > target.params && !rest || vm.with_scope_entered {
         return Err(exit(ip));
     }
+    // A rest body keeps every value passed, the room sized for its parameters and the rest.
+    let extra = usize::from(argc.saturating_sub(target.params));
     if vm.lane_stack.activations.len() >= vm.lane_stack.activation_limit.get()
         || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
-            < usize::from(target.room)
+            < usize::from(target.room) + extra
     {
         return Err(lane_script_call_frame::<H>(ip));
     }
+    // The rest array, made before the window is: the values past the other parameters,
+    // which the rest parameter's local holds (`lane_activate_keeping` gathers likewise).
+    let gathered = rest.then(|| {
+        let fixed = usize::from(target.params) - 1;
+        let passed = (fixed..usize::from(argc)).map(|index| r.get(arguments + index as u16));
+        vm.rest_parameter_array(&passed.collect::<smallvec::SmallVec<[Value; GATHERED_INLINE_VALUES]>>())
+    });
     // SAFETY: the program store keeps a derived view alive with its program, and an
     // environment target's view has a window (`ScriptCallTarget::entry`).
     let layout = unsafe { (*target.view).environment_window.unwrap_unchecked() };
@@ -10531,13 +10549,19 @@ fn lane_activate_environment<H: Host>(
         // The few values a call passes are copied in place: one pass writes each as its
         // parameter's local and, after the locals, as the value a frame keeps for legacy
         // reflection, with no library copy per run.
+        let bound = usize::from(argc.min(target.params));
         for slot in 0..usize::from(argc) {
             let value = r.get(arguments + slot as u16);
-            local.add(slot).write(value);
+            if slot < bound {
+                local.add(slot).write(value);
+            }
             local.add(locals + slot).write(value);
         }
-        for slot in usize::from(argc)..locals {
+        for slot in bound..locals {
             local.add(slot).write(Value::UNDEFINED);
+        }
+        if let Some(gathered) = gathered {
+            local.add(usize::from(target.params) - 1).write(gathered);
         }
         stack.values.set_len(window + held + locals + usize::from(argc));
         Registers(registers)
