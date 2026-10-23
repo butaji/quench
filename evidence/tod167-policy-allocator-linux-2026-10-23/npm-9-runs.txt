@@ -1,0 +1,8 @@
+ts.js      throughput   rss A 50440 B 52420  ms A 285 B 259
+eslint.js  throughput   rss A 31776 B 31856  ms A 233 B 238
+acorn.js   throughput   rss A 16928 B 17352  ms A 367 B 372
+ajv.js     throughput   rss A 14784 B 15100  ms A 126 B 130
+ts.js      memory-first rss A 47600 B 47516  ms A 314 B 307
+eslint.js  memory-first rss A 24888 B 24976  ms A 283 B 285
+acorn.js   memory-first rss A 15472 B 15368  ms A 420 B 460
+ajv.js     memory-first rss A 10052 B 9952  ms A 150 B 171

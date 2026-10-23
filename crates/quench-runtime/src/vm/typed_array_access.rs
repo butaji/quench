@@ -242,20 +242,19 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn typed_array_get(&mut self, object: Value, index: usize) -> Option<Value> {
-        let Some((buffer, start, kind)) = self.typed_array_element_place(object, index)? else {
-            return Some(Value::UNDEFINED);
-        };
-        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
+        let view = self.typed_array_view(object)?;
+        let kind = view.kind;
+        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(view.buffer) else {
             return Some(Value::UNDEFINED);
         };
         // The element's bytes, copied out so a BigInt result can be allocated.
         let mut element = [0; size_of::<u64>()];
         {
             let bytes = bytes.read();
-            let Some(source) = bytes.get(start..start + kind.width()) else {
+            let Some(start) = view.element(index, bytes.len()) else {
                 return Some(Value::UNDEFINED);
             };
-            element[..source.len()].copy_from_slice(source);
+            element[..kind.width()].copy_from_slice(&bytes[start..start + kind.width()]);
         }
         let bytes = &element;
         Some(match kind {
@@ -288,36 +287,6 @@ impl<H: Host> Vm<H> {
                 TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => unreachable!(),
             }),
         })
-    }
-
-    /// Where element `index` of the typed array `object` lies, from one read of its buffer:
-    /// `None` when `object` is no typed array, `Some(None)` for an element past the view's
-    /// length (`typed_array_length`'s rule) or its buffer, else the buffer, the element's
-    /// first byte and the element kind.
-    fn typed_array_element_place(
-        &self,
-        object: Value,
-        index: usize,
-    ) -> Option<Option<(Value, usize, TypedArrayKind)>> {
-        let Some(Cell::TypedArray { buffer, object, length, length_tracking, kind, .. }) =
-            self.heap.get(object)
-        else {
-            return None;
-        };
-        let (buffer, offset, kind, width) = (*buffer, object.offset, *kind, kind.width());
-        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(buffer) else {
-            return Some(None);
-        };
-        let bytes = bytes.len();
-        let length = if *length_tracking {
-            bytes.saturating_sub(offset) / width
-        } else if offset.saturating_add(length * width) > bytes {
-            0
-        } else {
-            *length
-        };
-        let in_bounds = index < length && offset.saturating_add(width * (index + 1)) <= bytes;
-        Some(in_bounds.then_some((buffer, offset + index * width, kind)))
     }
 
     pub(super) fn typed_array_length(&self, object: Value) -> Option<usize> {
@@ -505,10 +474,13 @@ impl<H: Host> Vm<H> {
         let Some(number) = value.as_number() else {
             return false;
         };
-        if self.typed_array_kind(object).is_none_or(TypedArrayKind::is_bigint) {
-            return false;
+        match self.typed_array_view(object) {
+            Some(view) if !view.kind.is_bigint() => {
+                self.typed_array_write_view(view, index, &TypedArrayElement::Number(number));
+                true
+            }
+            _ => false,
         }
-        self.typed_array_write_element(object, index, &TypedArrayElement::Number(number))
     }
 
     pub(super) fn typed_array_write_element(
@@ -517,19 +489,38 @@ impl<H: Host> Vm<H> {
         index: usize,
         value: &TypedArrayElement,
     ) -> bool {
-        let Some(place) = self.typed_array_element_place(object, index) else {
+        let Some(view) = self.typed_array_view(object) else {
             return false;
         };
-        // An element past the view's length or its buffer is no write.
-        let Some((buffer, start, kind)) = place else {
-            return true;
-        };
-        let encoded = Self::typed_array_element_bytes(kind, value);
-        if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) {
-            let mut bytes = bytes.make_mut();
-            bytes[start..start + kind.width()].copy_from_slice(&encoded[..kind.width()]);
-        }
+        self.typed_array_write_view(view, index, value);
         true
+    }
+
+    /// Writes element `index` of the typed array `view` describes; an index past its
+    /// current length, or a detached or shrunken buffer, writes nothing.
+    fn typed_array_write_view(&mut self, view: TypedArrayView, index: usize, value: &TypedArrayElement) {
+        let width = view.kind.width();
+        let encoded = Self::typed_array_element_bytes(view.kind, value);
+        if let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get_mut(view.buffer)
+            && let Some(start) = view.element(index, bytes.len())
+        {
+            bytes.make_mut()[start..start + width].copy_from_slice(&encoded[..width]);
+        }
+    }
+
+    /// What an element access reads of the typed array `object` before its buffer: one heap
+    /// read, where `typed_array_length` and the buffer checks would each make their own.
+    fn typed_array_view(&self, object: Value) -> Option<TypedArrayView> {
+        match self.heap.get(object) {
+            Some(Cell::TypedArray { kind, object, buffer, length, length_tracking }) => Some(TypedArrayView {
+                kind: *kind,
+                buffer: *buffer,
+                offset: object.offset,
+                length: *length,
+                length_tracking: *length_tracking,
+            }),
+            _ => None,
+        }
     }
 
     /// One element encoding serves indexed stores and validated bulk fills.
@@ -748,5 +739,33 @@ mod backing_address_tests {
         );
         assert_eq!(vm.heap.stats().5, accounted);
         vm.heap.release_root(root);
+    }
+}
+
+/// A typed array's view of its buffer, as an element access reads it (`Vm::typed_array_view`).
+#[derive(Clone, Copy)]
+struct TypedArrayView {
+    kind: TypedArrayKind,
+    buffer: Value,
+    offset: usize,
+    length: usize,
+    length_tracking: bool,
+}
+
+impl TypedArrayView {
+    /// The byte offset of element `index` in an attached buffer of `byte_length` bytes, or
+    /// `None` past the array's length as `Vm::typed_array_length` derives it: a
+    /// length-tracking view covers the buffer past its offset, a fixed one covers none of it
+    /// once the buffer shrank below its end.
+    fn element(self, index: usize, byte_length: usize) -> Option<usize> {
+        let width = self.kind.width();
+        let length = if self.length_tracking {
+            byte_length.saturating_sub(self.offset) / width
+        } else if self.offset.saturating_add(self.length * width) > byte_length {
+            0
+        } else {
+            self.length
+        };
+        (index < length).then(|| self.offset + index * width)
     }
 }

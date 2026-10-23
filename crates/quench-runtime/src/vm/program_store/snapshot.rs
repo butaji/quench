@@ -23,8 +23,7 @@ impl ProgramStore {
             js_jit_mapped_bytes: _,
             wasm_jit_tier_roots: _,
             wasm_jit_tier_mapped_bytes: _,
-            jit_compiled_artifacts: _,
-            jit_mapped_bytes: _,
+            jit_code_cache: _,
             js_jit_diagnostics: _,
             // Process configuration a restoring store reads again, and its diagnostics.
             js_jit_dataview_float64_enabled: _,

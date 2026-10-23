@@ -217,6 +217,24 @@ impl SlotArena {
         (index < self.len).then(|| unsafe { &mut *self.base().add(index) })
     }
 
+    pub(super) fn get_two_mut(
+        &mut self,
+        first: usize,
+        second: usize,
+    ) -> Option<(&mut Slot, &mut Slot)> {
+        if first == second || first >= self.len || second >= self.len {
+            return None;
+        }
+        let slots = self.occupied_mut();
+        if first < second {
+            let (before_second, after_second) = slots.split_at_mut(second);
+            Some((&mut before_second[first], &mut after_second[0]))
+        } else {
+            let (before_first, after_first) = slots.split_at_mut(first);
+            Some((&mut after_first[0], &mut before_first[second]))
+        }
+    }
+
     pub(super) unsafe fn get_unchecked(&self, index: usize) -> &Slot {
         debug_assert!(index < self.len);
         // SAFETY: the caller proves the index is below `len`.
@@ -325,6 +343,42 @@ impl SlotArena {
 
     pub(super) fn get_mut(&mut self, index: usize) -> Option<&mut Slot> {
         (index < self.len).then(|| &mut self.slabs[index / SLOTS_PER_SLAB][index % SLOTS_PER_SLAB])
+    }
+
+    pub(super) fn get_two_mut(
+        &mut self,
+        first: usize,
+        second: usize,
+    ) -> Option<(&mut Slot, &mut Slot)> {
+        if first == second || first >= self.len || second >= self.len {
+            return None;
+        }
+        let first_slab = first / SLOTS_PER_SLAB;
+        let second_slab = second / SLOTS_PER_SLAB;
+        let first_offset = first % SLOTS_PER_SLAB;
+        let second_offset = second % SLOTS_PER_SLAB;
+        if first_slab == second_slab {
+            let slab = &mut self.slabs[first_slab];
+            if first_offset < second_offset {
+                let (before_second, after_second) = slab.split_at_mut(second_offset);
+                Some((&mut before_second[first_offset], &mut after_second[0]))
+            } else {
+                let (before_first, after_first) = slab.split_at_mut(first_offset);
+                Some((&mut after_first[0], &mut before_first[second_offset]))
+            }
+        } else if first_slab < second_slab {
+            let (before_second, after_second) = self.slabs.split_at_mut(second_slab);
+            Some((
+                &mut before_second[first_slab][first_offset],
+                &mut after_second[0][second_offset],
+            ))
+        } else {
+            let (before_first, after_first) = self.slabs.split_at_mut(first_slab);
+            Some((
+                &mut after_first[0][first_offset],
+                &mut before_first[second_slab][second_offset],
+            ))
+        }
     }
 
     pub(super) unsafe fn get_unchecked(&self, index: usize) -> &Slot {

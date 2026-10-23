@@ -4,6 +4,61 @@ use super::*;
 
 use crate::compile::eval_context_source;
 
+/// Whether source contains only ECMAScript whitespace and comments. This is a
+/// useful fast path for eval's common comment-only inputs: parsing an empty
+/// Script has no bindings, side effects, or completion value other than
+/// `undefined`.
+fn only_trivia(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\t' | b'\n' | 0x0b | 0x0c | b'\r' | b' ' => index += 1,
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                index += 2;
+                while index < bytes.len() {
+                    if matches!(bytes[index], b'\n' | b'\r') {
+                        break;
+                    }
+                    if bytes[index..].starts_with(&[0xe2, 0x80])
+                        && matches!(bytes.get(index + 2), Some(0xa8 | 0xa9))
+                    {
+                        break;
+                    }
+                    let Some(character) = source[index..].chars().next() else {
+                        return false;
+                    };
+                    index += character.len_utf8();
+                }
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                let Some(end) = bytes[index + 2..]
+                    .windows(2)
+                    .position(|window| window == b"*/")
+                else {
+                    return false;
+                };
+                index += end + 4;
+            }
+            _ => {
+                let Some(character) = source[index..].chars().next() else {
+                    return false;
+                };
+                // ECMAScript WhiteSpace includes Unicode Space_Separator
+                // characters; Rust additionally treats NEL as whitespace.
+                if character != '\u{0085}'
+                    && (character == '\u{feff}' || character.is_whitespace())
+                {
+                    index += character.len_utf8();
+                } else {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
 
 /// Names a specialized script's parse goal in its compile-cache key, apart from a host
 /// script's and an application entry's (`Runtime::compile_entry`).
@@ -45,6 +100,9 @@ impl<H: Host> Vm<H> {
         source: &str,
         source_name: &str,
     ) -> Result<Value, JsError> {
+        if only_trivia(source) {
+            return Ok(Value::UNDEFINED);
+        }
         let residual =
             match crate::Engine::specialize_script_with_atom_prefix(source, source_name, &*self) {
                 Ok(residual) => residual,
@@ -131,16 +189,19 @@ impl<H: Host> Vm<H> {
             _ if let Some(value) = self.heap.string(source)  => value.clone(),
             _ => return Ok(source),
         };
-        let text = source_text.host_string().to_owned();
+        let cache_source = (!self.direct_eval).then(|| source_text.clone());
+        let text = source_text.host_string();
         let inherited_strict = self.direct_eval
             && (self.in_class_initializer(p)
                 || self.frames.last()
                     .and_then(|frame| p.function_get(frame.function as usize))
                     .is_some_and(|function| function.strict));
-        self.validate_eval_arguments_context(p, &text)?;
+        self.validate_eval_arguments_context(p, text)?;
+        if only_trivia(text) {
+            return Ok(Value::UNDEFINED);
+        }
         let source_name = format!("<Eval:{}>", self.programs.len());
-        let cache_source = (!self.direct_eval).then_some(source_text);
-        self.eval_global_script_with_cache(p, &text, inherited_strict, &source_name, cache_source, false)
+        self.eval_global_script_with_cache(p, text, inherited_strict, &source_name, cache_source, false)
     }
 
     pub(super) fn eval_global_script(
@@ -1053,5 +1114,18 @@ impl<H: Host> Vm<H> {
         );
         self.heap.release_root(value_root);
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::only_trivia;
+
+    #[test]
+    fn trivia_scanner_accepts_ecmascript_unicode_space_and_rejects_other_text() {
+        assert!(only_trivia("\u{FEFF}\u{2003}/* comment */\u{2028}// line comment"));
+        assert!(!only_trivia("\u{0085}"));
+        assert!(!only_trivia("/* unterminated"));
+        assert!(!only_trivia("1"));
     }
 }

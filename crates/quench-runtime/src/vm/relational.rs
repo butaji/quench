@@ -53,16 +53,24 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(object) {
             return Err(self.type_error(p, "right-hand side of 'in' is not an object".into()));
         }
-        // Accessor indices are stored as holes, so a present dense element is an own property.
+        // Array elements live outside the ordinary property table. Resolve both dense and
+        // sparse own elements directly, and avoid creating an atom for every absent index
+        // when the array and its prototype chain provably have no property there. This is
+        // especially important for methods such as `every` that perform HasProperty across
+        // long sparse ranges. Keep descriptors and exotic prototype chains on the general
+        // path so accessors, proxies and inherited indexed properties retain their behavior.
         if let Some(index) = self.array_index_key(key)
-            && self.heap.array(object).is_some_and(|array| {
-                array
-                    .elements()
-                    .get(index as usize)
-                    .is_some_and(|value| !value.is_deleted())
-            })
+            && self.heap.array(object).is_some()
         {
-            return Ok(true);
+            let index = index as usize;
+            if self.own_element_present(object, index) {
+                return Ok(true);
+            }
+            if self.array_descriptor_entry(object, index).is_none()
+                && self.inherited_index_absent(object, index)
+            {
+                return Ok(false);
+            }
         }
         self.with_call_roots([object, key], |vm| {
             let key = vm.to_property_key(p, key)?;
@@ -221,7 +229,7 @@ impl<H: Host> Vm<H> {
         if matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) {
             return None;
         }
-        let (shape, slot) = self.instanceof_constructor_layout?;
+        let (shape, slot) = self.instanceof_constructor_layouts[instanceof_layout_index(object.shape())]?;
         if shape != object.shape() || object.proto_link() != self.instanceof_has_instance_link {
             return None;
         }
@@ -267,7 +275,7 @@ impl<H: Host> Vm<H> {
         }
         let (shape, holder) = (object.shape(), object.proto());
         // The layout memo answers the `prototype` read from the cell already in hand.
-        let remembered = match self.instanceof_constructor_layout {
+        let remembered = match self.instanceof_constructor_layouts[instanceof_layout_index(shape)] {
             Some((cached, slot)) if cached == shape => Some(self.heap.property_get(object, slot)),
             _ => None,
         };
@@ -276,7 +284,7 @@ impl<H: Host> Vm<H> {
             None => {
                 let slot = self.instanceof_constructor_slot(constructor)?;
                 if !self.shape_is_dictionary(shape) {
-                    self.instanceof_constructor_layout = Some((shape, slot));
+                    self.instanceof_constructor_layouts[instanceof_layout_index(shape)] = Some((shape, slot));
                 }
                 self.heap.property_get(self.object_data(constructor)?, slot)?
             }
@@ -575,4 +583,10 @@ fn compare_positive_bigint_number(integer: BigInt, number: f64) -> Ordering {
     } else {
         (integer << (-exponent) as usize).cmp(&significand)
     }
+}
+
+/// The `Vm::instanceof_constructor_layouts` entry a constructor of `shape` takes.
+#[inline(always)]
+fn instanceof_layout_index(shape: u32) -> usize {
+    shape as usize % INSTANCEOF_CONSTRUCTOR_LAYOUTS
 }
