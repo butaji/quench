@@ -565,6 +565,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netServerClose" (1) => crate::modules::net_server_listen::close,
         method "netServerAddress" (0) => crate::modules::net_shared_vm::server_address_operation,
         method "httpCreateServer" (1) => crate::modules::http_shared_vm::create_server,
+        method "httpUpgradeSocket" (1) => crate::modules::http_shared_vm::upgrade_socket,
         method "httpServerListen" (2) => crate::modules::http_shared_vm::server_listen,
         method "httpServerAddress" (0) => crate::modules::http_shared_vm::server_address,
         method "httpServerClose" (0) => crate::modules::http_shared_vm::server_close,
