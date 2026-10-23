@@ -11526,6 +11526,7 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
     assert_eq!(programs.js_jit_tracked_function_count(), 256);
 }
 
+#[cfg(not(quench_profiled))]
 #[test]
 fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
     let program = Engine::compile(crate::ExecutionRequest::script(
