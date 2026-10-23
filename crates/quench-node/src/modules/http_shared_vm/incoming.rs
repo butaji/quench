@@ -14,16 +14,71 @@ const MESSAGE_HEAD_FIELDS: [&str; 10] = [
     "method", "url", "statusCode", "statusMessage", "httpVersion", "httpVersionMajor",
     "httpVersionMinor", "rawHeaders", "socket", "complete",
 ];
-/// `create`'s arguments past the head's fields: the body text, whether the body is still
-/// open, the exchange id and whether the exchange is a server's.
-const BODY_ARGUMENT: usize = MESSAGE_HEAD_FIELDS.len();
-const OPEN_ARGUMENT: usize = BODY_ARGUMENT + 1;
-const ID_ARGUMENT: usize = OPEN_ARGUMENT + 1;
-const SERVER_ARGUMENT: usize = ID_ARGUMENT + 1;
 /// The head field `_addHeaderLines` reads first.
 const RAW_HEADERS_FIELD: &str = "rawHeaders";
 /// The version a head without a parsable `major.minor` reports.
 const DEFAULT_VERSION: (u32, u32) = (1, 1);
+
+/// The factory of the IncomingMessage a parsed head makes (`create_function`): the library
+/// message, its header lines added, each defined head field assigned in
+/// `MESSAGE_HEAD_FIELDS` order (its parameters'), then the exchange id under its side's
+/// host-private key, the shared `_read` and `_destroy`, an EventEmitter prototype for a
+/// socket without `on`, and the body pushed, then its end unless it is still open. One
+/// guest call makes the whole message, so its steps run in the lane.
+const CREATE_FACTORY: &str = quench_js_check::checked_js!(
+    r#"(IncomingMessage, EventEmitter, read, destroy, serverKey, clientKey, setPrototypeOf, bodyBuffer) => {
+  'use strict';
+  return function create(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, body, open, id, server) {
+    const stream = new IncomingMessage(undefined);
+    stream._addHeaderLines(rawHeaders, rawHeaders.length);
+    if (method !== undefined) stream.method = method;
+    if (url !== undefined) stream.url = url;
+    if (statusCode !== undefined) stream.statusCode = statusCode;
+    if (statusMessage !== undefined) stream.statusMessage = statusMessage;
+    if (httpVersion !== undefined) stream.httpVersion = httpVersion;
+    if (httpVersionMajor !== undefined) stream.httpVersionMajor = httpVersionMajor;
+    if (httpVersionMinor !== undefined) stream.httpVersionMinor = httpVersionMinor;
+    if (rawHeaders !== undefined) stream.rawHeaders = rawHeaders;
+    if (socket !== undefined) stream.socket = socket;
+    if (complete !== undefined) stream.complete = complete;
+    if (open) stream.complete = false;
+    stream[server ? serverKey : clientKey] = id;
+    stream._read = read;
+    stream._destroy = destroy;
+    const peer = stream.socket;
+    if ((typeof peer === "object" && peer !== null || typeof peer === "function") && typeof peer.on !== "function") {
+      setPrototypeOf(peer, EventEmitter.prototype);
+    }
+    if (typeof body === "string" && body.length !== 0) stream.push(bodyBuffer(body));
+    if (!open) stream.push(null);
+    return stream;
+  };
+}"#
+);
+
+/// The guest function that makes an IncomingMessage from a parsed head's fields
+/// (`MessageHead::arguments`), then the body text, whether the body is still open, the
+/// exchange id and whether the exchange is a server's (`CREATE_FACTORY`).
+pub(super) fn create_function(
+    c: &mut Context<'_>,
+    configuration: [RootId; 6],
+) -> Result<RootId, RootedError> {
+    let factory = c.evaluate_script_rooted(CREATE_FACTORY, "node:http/incoming-message.js")?;
+    let global = c.global_root()?;
+    let reflect = get(c, global, "Reflect")?;
+    let set_prototype_of = get(c, reflect, "setPrototypeOf")?;
+    let body_buffer = c.host_function(crate::host::shared_vm::operation("httpIncomingBody"))?;
+    let undefined = c.undefined();
+    c.call_rooted(factory, undefined, &[configuration.as_slice(), &[set_prototype_of, body_buffer]].concat())
+}
+
+/// The Buffer of a body's text, one byte per code unit as the exchange read it.
+pub(crate) fn body(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let text = args.first().copied().unwrap_or(c.undefined());
+    let units = c.string_code_units(text)?.unwrap_or_default();
+    let bytes: Vec<_> = units.into_iter().map(|unit| unit as u8).collect();
+    crate::modules::buffer_shared_vm::from_bytes(c, &bytes)
+}
 
 /// A parsed message head: a server request's method and target, or a client response's
 /// status, with the version, raw header lines, the connection's socket object and whether
@@ -75,63 +130,6 @@ impl MessageHead {
     }
 }
 
-/// Indices of the factory's configuration (`operations`): the shared `_read` and
-/// `_destroy`, and the host-private keys a server request and a client response record
-/// their exchange under.
-const READ_FUNCTION: &str = "2";
-const DESTROY_FUNCTION: &str = "3";
-const SERVER_EXCHANGE_KEY: &str = "4";
-const CLIENT_EXCHANGE_KEY: &str = "5";
-pub(crate) fn create(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let configuration = c.host_function_data()?;
-    let constructor = get(c, configuration, "0")?;
-    let missing = c.undefined();
-    let argument = |index: usize| args.get(index).copied().unwrap_or(missing);
-    // The library supports an absent socket. The native exchange below owns
-    // actual byte production until a public native Socket is attached.
-    let stream = c.construct_rooted(constructor, constructor, &[missing])?;
-    let raw_index = MESSAGE_HEAD_FIELDS.iter().position(|name| *name == RAW_HEADERS_FIELD).expect("raw headers are a head field");
-    let raw = argument(raw_index);
-    let length = get(c, raw, "length")?;
-    call(c, stream, "_addHeaderLines", &[raw, length])?;
-    for (index, name) in MESSAGE_HEAD_FIELDS.into_iter().enumerate() {
-        let value = argument(index);
-        if c.rooted_value(value).is_none_or(|value| value.is_undefined()) { continue; }
-        c.assign_named_property_rooted(stream, name, value)?;
-    }
-    let open = argument(OPEN_ARGUMENT);
-    if c.truthy_rooted(open)? { let no = c.boolean(false); c.assign_named_property_rooted(stream, "complete", no)?; }
-    // The exchange id goes under the side's host-private key, which the shared `_read`
-    // and `_destroy` (`owner`) read back.
-    let id = argument(ID_ARGUMENT);
-    let server = argument(SERVER_ARGUMENT);
-    let key = if c.truthy_rooted(server)? { SERVER_EXCHANGE_KEY } else { CLIENT_EXCHANGE_KEY };
-    let key = get(c, configuration, key)?;
-    c.assign_property_rooted(stream, key, id)?;
-    for (name, function) in [("_read", READ_FUNCTION), ("_destroy", DESTROY_FUNCTION)] {
-        let function = get(c, configuration, function)?;
-        c.assign_named_property_rooted(stream, name, function)?;
-    }
-    let socket = get(c, stream, "socket")?;
-    if c.is_object_rooted(socket)? {
-        let on = get(c, socket, "on")?;
-        if !c.is_callable_rooted(on)? {
-            let emitter = get(c, configuration, "1")?;
-            let prototype = get(c, emitter, "prototype")?;
-            c.set_prototype_rooted(socket, prototype)?;
-        }
-    }
-    let body = argument(BODY_ARGUMENT);
-    if let Some(units) = c.string_code_units(body)? {
-        if !units.is_empty() {
-            let bytes: Vec<_> = units.into_iter().map(|unit| unit as u8).collect();
-            let buffer = crate::modules::buffer_shared_vm::from_bytes(c, &bytes)?;
-            call(c, stream, "push", &[buffer])?;
-        }
-    }
-    if !c.truthy_rooted(open)? { let eof = c.null(); call(c, stream, "push", &[eof])?; }
-    Ok(stream)
-}
 /// The message `receiver` is and its exchange: the id its side's host-private key holds
 /// (`create`), and whether that side is the server's.
 fn owner(c: &mut Context<'_>, receiver: RootId) -> Result<(RootId, bool, Option<u64>), RootedError> {

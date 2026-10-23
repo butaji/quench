@@ -92,6 +92,7 @@ impl Heap {
             await_records,
             iterator_records,
             string_records,
+            v128_records,
             marks,
             slots,
             young_weak,
@@ -106,6 +107,7 @@ impl Heap {
             await_records,
             iterator_records,
             string_records,
+            v128_records,
             marks,
         };
         let mut finalization_jobs = Vec::new();

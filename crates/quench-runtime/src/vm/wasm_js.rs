@@ -548,7 +548,8 @@ impl<H: Host> Vm<H> {
                 .heap
                 .alloc(Cell::Object(Self::empty_object(error_prototype)));
             self.install_error_class(program, native, name, prototype)?;
-            self.set_builtin_value_named(namespace, name, self.native_value(native))?;
+            let native_function = self.native_value(native);
+            self.set_builtin_value_named(namespace, name, native_function)?;
         }
         Ok(())
     }

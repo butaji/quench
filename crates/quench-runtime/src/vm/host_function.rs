@@ -16,6 +16,10 @@ impl HostEnvironmentSlot {
     const CONSTRUCTOR_COUNT: usize = Self::Constructible as usize + 1;
 }
 
+/// Arguments a host call roots without allocating their list: all but 12 of the 906 host
+/// operations `quench-node` declares take at most this many.
+const HOST_CALL_INLINE_ARGUMENTS: usize = 6;
+
 impl<H: Host> Vm<H> {
     /// A native function's private environment: traced slots outside any scope chain.
     pub(super) fn native_environment(&mut self, slots: Vec<Value>) -> Value {
@@ -301,7 +305,7 @@ impl<H: Host> Vm<H> {
         let arguments = args
             .iter()
             .map(|value| context.scoped_value(*value))
-            .collect::<Vec<_>>();
+            .collect::<smallvec::SmallVec<[_; HOST_CALL_INLINE_ARGUMENTS]>>();
         let result = callback(&mut context, receiver, &arguments);
         context.finish(result)
     }

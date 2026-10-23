@@ -1423,6 +1423,8 @@ impl<H: Host> Vm<H> {
             && left.is_heap()
             && let Some(value) = self.cached_concat(left, right)
         {
+            #[cfg(feature = "profile-aggregate")]
+            self.profile.concat_cache(true);
             return Ok(value);
         }
         if let Some(value) = self.number_binary(op, left, right) {
@@ -1819,6 +1821,17 @@ impl<H: Host> Vm<H> {
         Some(number_comparison(op, a, b))
     }
 
+    /// BigInt::add or BigInt::subtract of one to a BigInt `input`, which runs no guest code
+    /// and allocates the result; `None` for any other value.
+    pub(super) fn bigint_increment(&mut self, input: Value, decrement: bool) -> Option<Value> {
+        let Some(Cell::BigInt(integer)) = self.heap.get(input) else {
+            return None;
+        };
+        let integer: &num_bigint::BigInt = integer;
+        let next = if decrement { integer - 1_u8 } else { integer + 1_u8 };
+        Some(self.heap.alloc(Cell::bigint(next)))
+    }
+
     /// Shared numeric update after ToNumeric, used by bytecode and native hosts.
     pub(super) fn numeric_update(
         &mut self,
@@ -1827,10 +1840,8 @@ impl<H: Host> Vm<H> {
         decrement: bool,
     ) -> Result<Value, JsError> {
         let delta = if decrement { -1.0 } else { 1.0 };
-        if let Some(Cell::BigInt(integer)) = self.heap.get(input) {
-            let integer: &num_bigint::BigInt = integer;
-            let next = if decrement { integer - 1_u8 } else { integer + 1_u8 };
-            Ok(self.heap.alloc(Cell::bigint(next)))
+        if let Some(next) = self.bigint_increment(input, decrement) {
+            Ok(next)
         } else if let Some(integer) = input.as_int() {
             let next = if decrement {
                 integer.checked_sub(1)
@@ -1992,7 +2003,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-fn exponentiate(base: f64, exponent: f64) -> f64 {
+pub(super) fn exponentiate(base: f64, exponent: f64) -> f64 {
     if exponent.is_nan() {
         return f64::NAN;
     }

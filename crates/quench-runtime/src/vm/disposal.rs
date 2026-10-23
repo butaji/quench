@@ -116,11 +116,13 @@ impl<H: Host> Vm<H> {
             );
         }
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::AsyncDispose) {
+            let native_disposable_stack_dispose_async =
+                self.native_value(Native::DisposableStackDisposeAsync);
             self.set_index(
                 p,
                 prototype,
                 symbol,
-                self.native_value(Native::DisposableStackDisposeAsync),
+                native_disposable_stack_dispose_async,
             )?;
             self.set_property_attributes(
                 prototype,
@@ -135,15 +137,19 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
+        let native_disposable_stack_dispose_with_completion =
+            self.native_value(Native::DisposableStackDisposeWithCompletion);
         self.set_builtin_value_named(
             prototype,
             "\0quench:disposeWithCompletion",
-            self.native_value(Native::DisposableStackDisposeWithCompletion),
+            native_disposable_stack_dispose_with_completion,
         )?;
+        let native_disposable_stack_dispose_async_with_completion =
+            self.native_value(Native::DisposableStackDisposeAsyncWithCompletion);
         self.set_builtin_value_named(
             prototype,
             "\0quench:disposeAsyncWithCompletion",
-            self.native_value(Native::DisposableStackDisposeAsyncWithCompletion),
+            native_disposable_stack_dispose_async_with_completion,
         )?;
         self.install_builtin_to_string_tag(prototype, "DisposableStack")?;
         let disposed = self.native_value(Native::DisposableStackDisposed);
@@ -453,10 +459,12 @@ impl<H: Host> Vm<H> {
                 return Ok(promise);
             }
         };
+        let native_async_iterator_dispose_fulfilled =
+            self.native_value(Native::AsyncIteratorDisposeFulfilled);
         self.promise_then(
             p,
             awaited,
-            self.native_value(Native::AsyncIteratorDisposeFulfilled),
+            native_async_iterator_dispose_fulfilled,
             Value::UNDEFINED,
         )
     }

@@ -131,7 +131,7 @@ pub(super) fn complete_captured(mut captured: Vec<u16>, arguments: Option<(u16, 
 /// reads.
 pub(super) fn mapped_arguments(function: &Function) -> Option<(u16, u16)> {
     function
-        .arguments_are_mapped()
+        .arguments_alias_parameters()
         .then_some(function.arguments_slot)
         .flatten()
         .map(|slot| (slot, function.params))
