@@ -481,10 +481,49 @@ impl<H: Host> Vm<H> {
             .map(|value| self.array_relative_index(p, value, length))
             .transpose()?
             .unwrap_or(length);
+        if self.fill_plain_array_elements(object, start..end, value) {
+            return Ok(object);
+        }
         for index in start..end {
             self.set_index_mode(p, object, Value::number(index as f64), value, true)?;
         }
         Ok(object)
+    }
+
+    /// Stores `value` at every index of `indices`, all below the array's length, where each
+    /// Set is the plain element store: an extensible, unfrozen array whose elements carry
+    /// default attributes and whose prototypes hold no index (`prototypes_hold_no_index`), so
+    /// a present element is replaced and a hole defined in place. `false` leaves every index
+    /// to the generic Set, having stored none.
+    fn fill_plain_array_elements(
+        &mut self,
+        array: Value,
+        indices: std::ops::Range<usize>,
+        value: Value,
+    ) -> bool {
+        let Some(dense) = self.heap.array(array).map(|array| array.elements().len()) else {
+            return false;
+        };
+        let plain = self.object_data(array).is_some_and(|object| {
+            object.is_extensible()
+                && !object.is_frozen()
+                && !object.has_indexed_descriptors()
+                && !object.is_arguments_object()
+        }) && self.prototypes_hold_no_index(array);
+        if !plain {
+            return false;
+        }
+        let in_dense = indices.start..indices.end.min(dense);
+        if !in_dense.is_empty() {
+            let Some(array_object) = self.heap.array_store_mut(array, value) else {
+                unreachable!("matched an array above");
+            };
+            super::index::mutable_array_elements(array_object.elements_mut())[in_dense].fill(value);
+        }
+        for index in dense.max(indices.start)..indices.end {
+            self.store_validated_array_element(array, index, value);
+        }
+        true
     }
 
     pub(super) fn array_concat_native(
