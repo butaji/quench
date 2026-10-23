@@ -10472,6 +10472,52 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_compiles_straight_line_plain_local_temporaries() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function scaled(value) {
+            let temporary = value + 1;
+            return temporary * 2;
+          }
+          for (let index = 0; index < 40; index++) {
+            if (scaled(index) !== (index + 1) * 2) throw Error('local temporary result');
+          }
+          if (!Number.isNaN(scaled('x'))) throw Error('local temporary fallback');
+          let coercions = 0;
+          const boxed = { valueOf() { coercions++; return 5; } };
+          if (scaled(boxed) !== 12 || coercions !== 1) throw Error('effectful fallback');
+        "#,
+        "js-jit-plain-local.js",
+    ))
+    .unwrap();
+    let scaled = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "scaled")
+        })
+        .unwrap() as u32;
+    assert!(
+        super::js_compiled::compile(&program, scaled).is_some(),
+        "the generic numeric lowering should accept a straight-line plain local"
+    );
+
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, scaled),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_enters_compiled_known_callees_without_pushing_a_frame() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"

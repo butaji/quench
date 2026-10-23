@@ -2860,6 +2860,10 @@ fn compile_numeric_with_captures(
     // Registers are SSA values here. The validated plain activation places its
     // promoted parameter locals in registers 0..params.
     let mut registers = vec![None; usize::from(function.registers)];
+    // Plain locals can be represented by SSA values when the region is
+    // straight-line: every read must follow a compiled write. Missing writes
+    // reject the region so initialization and lexical semantics stay in the VM.
+    let mut locals = vec![None; usize::from(function.locals)];
     for (index, register) in registers.iter_mut().take(params).enumerate() {
         if numeric_field_inputs.as_ref().is_some_and(|inputs| {
             inputs.iter().any(|input| {
@@ -2939,6 +2943,28 @@ fn compile_numeric_with_captures(
                 }
                 let source = usize::from(instruction.register_b());
                 Some(*registers.get(source)?.as_ref()?)
+            }
+            JsDenotation::PlainLocalStore => {
+                if instruction.returns_from_frame() || instruction.result_flags() != 0 {
+                    return None;
+                }
+                let value = *registers
+                    .get(usize::from(instruction.register_a()))?
+                    .as_ref()?;
+                *locals.get_mut(instruction.local_slot())? = Some(value);
+                if let Some(register) = instruction.optional_register_b() {
+                    *registers.get_mut(usize::from(register))? = Some(value);
+                }
+                None
+            }
+            JsDenotation::PlainLocalLoad => {
+                if instruction.returns_from_frame()
+                    || instruction.result_flags() != 0
+                    || instruction.numeric_local_target().is_some()
+                {
+                    return None;
+                }
+                Some(*locals.get(instruction.local_slot())?.as_ref()?)
             }
             JsDenotation::CapturedValue => {
                 if instruction.returns_from_frame() || instruction.result_flags() != 0 {
