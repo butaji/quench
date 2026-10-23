@@ -1373,9 +1373,17 @@ impl ProtoLink {
     /// The object record this link names, if it names one.
     #[inline(always)]
     pub(crate) fn object_record_id(self) -> Option<u32> {
+        // The object range starts at a power of two above its own power-of-two span, so a
+        // link in it holds the record id in its low bits: a mask, which addresses the record
+        // without the subtracted base as a 64-bit displacement.
+        const _: () = assert!(
+            PROTO_OBJECT_RECORD_BASE.is_power_of_two()
+                && RECORD_SPACE_CAPACITY.is_power_of_two()
+                && RECORD_SPACE_CAPACITY as u32 <= PROTO_OBJECT_RECORD_BASE
+        );
         (PROTO_OBJECT_RECORD_BASE..PROTO_ARRAY_RECORD_BASE)
             .contains(&self.0)
-            .then(|| self.0 - PROTO_OBJECT_RECORD_BASE)
+            .then(|| self.0 & (RECORD_SPACE_CAPACITY as u32 - 1))
     }
 
     /// The prototype this link names, decoded (`Object::encode_proto`'s inverse).
