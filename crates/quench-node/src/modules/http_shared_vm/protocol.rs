@@ -5,6 +5,8 @@ pub(crate) struct RequestMessage {
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) raw_headers: Vec<(String, String)>,
     pub(crate) body: Result<Vec<u8>, RequestFramingError>,
+    pub(crate) upgrade: bool,
+    pub(crate) upgrade_head: Vec<u8>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -27,6 +29,7 @@ pub(crate) fn request(bytes: &[u8]) -> Option<RequestMessage> {
         Ok(()) => Ok(framed_body(bytes, head.body_start, &head.headers)?),
         Err(error) => Err(error),
     };
+    let upgrade = has_upgrade(&head.headers);
     Some(RequestMessage {
         method: head.first.first()?.to_owned(),
         target: head.first.get(1)?.to_owned(),
@@ -34,7 +37,25 @@ pub(crate) fn request(bytes: &[u8]) -> Option<RequestMessage> {
         headers: head.headers,
         raw_headers: head.raw_headers,
         body,
+        upgrade,
+        upgrade_head: if upgrade {
+            bytes.get(head.body_start..)?.to_vec()
+        } else {
+            Vec::new()
+        },
     })
+}
+
+fn has_upgrade(headers: &[(String, String)]) -> bool {
+    let upgrade = headers
+        .iter()
+        .any(|(name, value)| name == "upgrade" && !value.trim().is_empty());
+    let connection = headers
+        .iter()
+        .filter(|(name, _)| name == "connection")
+        .flat_map(|(_, value)| value.split(','))
+        .any(|token| token.trim().eq_ignore_ascii_case("upgrade"));
+    upgrade && connection
 }
 
 #[derive(Default)]
@@ -61,6 +82,7 @@ pub(crate) struct ResponseProgress {
     pub(crate) head: Option<ResponseMessage>,
     pub(crate) body_chunks: Vec<Vec<u8>>,
     pub(crate) complete: bool,
+    pub(crate) upgrade_head: Option<Vec<u8>>,
 }
 
 impl ResponseParser {
@@ -95,6 +117,7 @@ impl ResponseParser {
             head: None,
             body_chunks: Vec::new(),
             complete: false,
+            upgrade_head: None,
         };
         loop {
             match self.state {
@@ -122,6 +145,10 @@ impl ResponseParser {
                         headers: head.headers.clone(),
                         raw_headers: head.raw_headers,
                     });
+                    if status == 101 {
+                        progress.upgrade_head = Some(std::mem::take(&mut self.pending));
+                        self.state = ResponseState::Complete;
+                    } else {
                     self.state = if self.head_request || response_has_no_body(status) {
                         ResponseState::Complete
                     } else if has_chunked_encoding(&head.headers) {
@@ -135,6 +162,7 @@ impl ResponseParser {
                     } else {
                         ResponseState::UntilEof
                     };
+                    }
                 }
                 ResponseState::FixedLength(remaining) => {
                     let count = remaining.min(self.pending.len());
@@ -373,5 +401,38 @@ fn decode_chunked(bytes: &[u8]) -> Option<Vec<u8>> {
             return None;
         }
         cursor = end + 2;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ResponseParser, request};
+
+    #[test]
+    fn upgrade_request_preserves_bytes_after_the_head() {
+        let bytes = b"GET / HTTP/1.1\r\nConnection: keep-alive, Upgrade\r\nUpgrade: websocket\r\n\r\n\x81\x02hi";
+        let request = request(bytes).unwrap();
+        assert!(request.upgrade);
+        assert_eq!(request.method, "GET");
+        assert_eq!(request.upgrade_head, b"\x81\x02hi");
+    }
+
+    #[test]
+    fn ordinary_request_is_not_classified_as_upgrade() {
+        let request = request(b"GET / HTTP/1.1\r\nConnection: keep-alive\r\n\r\n").unwrap();
+        assert!(!request.upgrade);
+        assert!(request.upgrade_head.is_empty());
+    }
+
+    #[test]
+    fn switching_protocols_preserves_raw_bytes_after_the_head() {
+        let mut parser = ResponseParser::default();
+        let progress = parser
+            .push(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n\x81\x02hi")
+            .unwrap();
+        assert_eq!(progress.head.unwrap().status, 101);
+        assert!(progress.complete);
+        assert!(progress.body_chunks.is_empty());
+        assert_eq!(progress.upgrade_head.unwrap(), b"\x81\x02hi");
     }
 }
