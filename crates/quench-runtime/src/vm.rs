@@ -231,6 +231,8 @@ pub(crate) use value_serializer::{ReadHooks, WriteHooks};
 use wtf16::JsString;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod closure_retention_tests;
 #[derive(Clone)]
 pub(super) struct Frame {
     // Actual callable identity is distinct from the code ID and captured environment.
