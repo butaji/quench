@@ -653,8 +653,6 @@ impl Value {
     }
 }
 
-/// ToUint32's modulus, 2^32.
-const UINT32_MODULUS: f64 = 4_294_967_296.0;
 /// Magnitudes below 2^63 truncate exactly into an `i64`, whose low 32 bits are the value
 /// modulo 2^32.
 const EXACT_I64_TRUNCATION_LIMIT: f64 = 9_223_372_036_854_775_808.0;
@@ -669,8 +667,23 @@ pub(crate) fn number_to_u32(value: f64) -> u32 {
     if !value.is_finite() {
         return 0;
     }
-    value.trunc().rem_euclid(UINT32_MODULUS) as u32
+    // At or above 2^63 the value is an integer: its significand times a power of two of
+    // at least 2^11, whose low 32 bits are the significand's shifted, or none past 2^32.
+    let bits = value.to_bits();
+    let exponent = ((bits >> F64_FRACTION_BITS) & F64_EXPONENT_MASK) as i64
+        - i64::from(F64_EXPONENT_BIAS)
+        - i64::from(F64_FRACTION_BITS);
+    let significand = (bits & F64_FRACTION_MASK) | (1 << F64_FRACTION_BITS);
+    let low = if exponent >= i64::from(u32::BITS) { 0 } else { (significand << exponent) as u32 };
+    if value.is_sign_negative() { low.wrapping_neg() } else { low }
 }
+
+/// The explicit fraction bits of a binary64.
+const F64_FRACTION_BITS: u32 = f64::MANTISSA_DIGITS - 1;
+const F64_FRACTION_MASK: u64 = (1 << F64_FRACTION_BITS) - 1;
+/// The biased exponent field above the fraction, below the sign bit.
+const F64_EXPONENT_MASK: u64 = (1 << (u64::BITS - 1 - F64_FRACTION_BITS)) - 1;
+const F64_EXPONENT_BIAS: i32 = f64::MAX_EXP - 1;
 
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -692,6 +705,28 @@ impl fmt::Debug for Value {
 mod tests {
     use super::Value;
     use std::mem::size_of;
+
+    #[test]
+    fn to_uint32_of_large_magnitudes_is_the_value_modulo_two_to_the_32() {
+        const MODULUS: f64 = 4_294_967_296.0;
+        let reference = |value: f64| value.trunc().rem_euclid(MODULUS) as u32;
+        let mut bits: u64 = 0x2545_F491_4F6C_DD1D;
+        for _ in 0..100_000 {
+            bits ^= bits << 13;
+            bits ^= bits >> 7;
+            bits ^= bits << 17;
+            let value = f64::from_bits(bits);
+            if value.is_finite() && value.abs() >= 9_223_372_036_854_775_808.0 {
+                assert_eq!(super::number_to_u32(value), reference(value), "{value:e}");
+            }
+        }
+        for value in [9.223372036854776e18, -9.223372036854776e18, 1.8446744073709552e19, 3e19, -3e19, f64::MAX, -f64::MAX] {
+            assert_eq!(super::number_to_u32(value), reference(value), "{value:e}");
+        }
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(super::number_to_u32(value), 0);
+        }
+    }
 
     #[test]
     fn narrow_values_round_trip_exactly() {
