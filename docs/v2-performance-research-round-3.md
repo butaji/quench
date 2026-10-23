@@ -384,6 +384,38 @@ be the first before/after workloads. If native work dominates (notably sharp or
 esbuild), runtime changes cannot create a large package-level speedup until
 the JS wrapper or host-crossing share is measured.
 
+The fresh-branch source audit sharpened the storage lead: Quench already packs
+up to two narrowable inline properties into an object's payload; its
+out-of-line `ValueArena` still stores full-width `Value`s. That distinction
+should drive the first measurement rather than reworking inline object layout.
+Additional cross-cutting candidates from the heap audit:
+
+- **Pack dense-array elements into 32-bit lanes until promotion is needed.**
+  Count `Value::to_narrow` success in React child arrays and Zod arrays, then
+  prototype narrow backing with one-way promotion on the first wide value.
+  Measure promotion frequency, GC scan work, throughput, and RSS; preserve
+  copy-on-write and element identity. See Apple's discussion of [inline
+  storage](https://developer.apple.com/videos/play/wwdc2024/10217/?time=279).
+- **Remove the direct-record gate on parallel marking.** The current collector
+  falls back to serial marking when direct records are present. Prototype
+  read-only worker views and atomic mark claims, starting with object-heavy
+  React, Vite, and Zod collections. Measure pause time, duplicate enqueues,
+  worklist peak, and worker memory; enable only when the parallel work repays
+  that overhead.
+- **Claim references when enqueuing mark work.** Atomically mark a heap edge
+  before adding it to a worker queue so multiple parents cannot enqueue the
+  same child. Measure duplicate-edge ratio and worklist size, keeping
+  ephemeron processing separate.
+- **Bound property and collection slack after full collection.** `ValueArena`
+  compaction and `Map`/`Set` clears retain vector capacity. Add hysteresis and
+  test large-then-small request waves. This can lower a later RSS peak only if
+  reclamation happens before that peak; it cannot undo an earlier
+  high-water mark.
+- **Use a hybrid remembered set.** Keep the exact dirty-owner list when few
+  old objects are modified, and switch to a card bitmap when many nearby
+  owners are dirty. Measure minor-collection scan time versus metadata bytes
+  across low- and high-mutation workloads.
+
 - React and Next: [React server APIs](https://react.dev/reference/react-dom/server), [Next route handlers](https://nextjs.org/docs/app/getting-started/route-handlers), and [Next response caching](https://github.com/vercel/next.js/blob/canary/packages/next/src/server/response-cache/index.ts).
 - Vite: [dependency optimization](https://vite.dev/guide/dep-pre-bundling.html), [build](https://vite.dev/guide/build.html), and [plugin API](https://vite.dev/guide/api-plugin.html).
 - esbuild: [API](https://esbuild.github.io/api/) and [content types](https://esbuild.github.io/content-types/).
