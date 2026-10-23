@@ -228,6 +228,10 @@ fn accesses(instruction: WideInstruction, uninitialized_at_entry: &[bool], mut a
             }
         }
     }
+    // A field read fused onto a local (`rewrite::LocalField`) reads that local first.
+    if let Some(local) = instruction.local_field_base() {
+        access(usize::from(local), Access::Read);
+    }
     if instruction.op().immediate_role() == ImmediateRole::LocalSlot {
         let slot = instruction.local_slot();
         match instruction.op() {

@@ -823,7 +823,7 @@ impl<H: Host> Vm<H> {
             && !self.function_caller_is_restricted(object)
         {
             return match self.atom_name(atom) {
-                "caller" => Ok(self.function_caller(object)),
+                "caller" => self.function_caller_value(object),
                 "arguments" => self.function_arguments(object),
                 _ => unreachable!("legacy function reflection property"),
             };

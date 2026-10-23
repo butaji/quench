@@ -3726,6 +3726,21 @@ script_handler! {
 }
 
 script_handler! {
+    /// `lane_get_field_string` of a register base whose `String.prototype` entry answers
+    /// (`Vm::string_prototype_field_hit`): one tag test and the entry's shape before the
+    /// slot. Any other read takes `lane_get_field_string` out of line.
+    fn lane_get_field_string_register<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let base = r.get(i.b);
+        let Some(value) = vm.heap.is_string(base).then(|| vm.string_prototype_field_hit(i.c)).flatten() else {
+            sibling!(lane_get_field_string::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// `lane_get_field_holder` for a receiver in a heap cell rather than the object records
     /// (`Vm::cell_holder_field_hit`): a method read from a function, as `f.apply`. A miss
     /// moves the record on as `lane_get_field_miss` decides.
@@ -3847,13 +3862,11 @@ script_handler! {
 
 script_handler! {
     /// `lane_get_length` at a site that read a string's length (`lane_get_length_other`):
-    /// a string's length first, then an array's; any other receiver takes
-    /// `lane_get_length_arguments`.
+    /// a string's length here; any other receiver, an array's included, takes
+    /// `lane_get_length` out of line, which keeps this one's registers to the string.
     fn lane_get_length_string<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let receiver = r.get(i.b);
-        let Some(length) = vm.string_length(receiver).or_else(|| vm.own_array_length(receiver)) else {
-            sibling!(lane_get_length_arguments::<H>, r, ip, Carried::script(cx))
+        let Some(length) = (unsafe { vm(cx) }).string_length(r.get(i.b)) else {
+            sibling!(lane_get_length::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, Value::length(length));
         next!(cx, r, following(ip), Carried::script(cx))
@@ -3895,7 +3908,12 @@ script_handler! {
             // A string primitive reads `String.prototype`, whatever tier its entries name,
             // where the site admits that read; any other read of one is the general read's.
             _ if string_base && (unsafe { vm(cx) }).string_field_site_cacheable(code, i.imm()) => {
-                Some(lane_get_field_string::<H>)
+                Some(single_base_handler(
+                    i.b,
+                    lane_get_field_string::<H>,
+                    lane_get_field_string_register::<H>,
+                    lane_get_field_string::<H>,
+                ))
             }
             _ if string_base => Some(lane_get_field::<H>),
             FieldSiteTier::Nested => Some(lane_get_field_nested::<H>),
@@ -8399,14 +8417,22 @@ impl<H: Host> Vm<H> {
         program: ProgramId,
         env: Value,
     ) -> *const crate::heap::EnvironmentSlots {
-        // A frameless activation's function has no environment of its own.
-        let capture = match self.environment_capture_slots(env, false, 0) {
-            Some((slots, None)) => slots
-                .dense()
-                .map_or(std::ptr::null(), |slots| slots as *const crate::heap::EnvironmentSlots),
-            _ => return std::ptr::null(),
+        // A frameless activation's function has no environment of its own: its depth-0
+        // captures are the closure environment's dense slots (`Vm::environment_capture_slots`),
+        // read here with the facts the store tag needs from the same cell.
+        let Some(Cell::Environment { function, slots, scope, .. }) = self.heap.get(env) else {
+            return std::ptr::null();
         };
-        if !capture.is_null() && self.admits_every_direct_store(code, program, env) {
+        if *function == u32::MAX || *function == super::ROOT_FUNCTION_ID {
+            return std::ptr::null();
+        }
+        let Some(dense) = slots.dense() else {
+            return std::ptr::null();
+        };
+        let capture: *const crate::heap::EnvironmentSlots = dense;
+        if super::environment::direct_store_owner(code, program, *function, scope)
+            .is_some_and(super::environment::owner_admits_every_direct_store)
+        {
             self.heap.remember_cell(env);
             return capture.map_addr(|address| address | CAPTURE_STORES);
         }
@@ -8892,7 +8918,7 @@ script_handler! {
         let globals = vm.realm.globals;
         let value = match vm.cached_field_hit(code, globals, i.c) {
             super::object::FieldCacheProbe::Hit(value) => value,
-            probe => {
+            _ => {
                 if let Some(getter) = vm.cached_field_getter(globals, atom, vm.field_cache_index(i.c)) {
                     if !unsafe { (*cx).script_calls } {
                         return exit(ip);
@@ -8907,18 +8933,18 @@ script_handler! {
                         Err(next) => next,
                     };
                 }
-                // A global object no cache records (a dictionary shape) still answers a present
-                // data property through its shape walk. An absent name is `undefined` to
-                // `typeof` and raises on the general path otherwise.
+                // A present data property records the site's entry as the general path's read
+                // does (`Vm::field_miss_data_value`): the global object changes shape as Node's
+                // lazy globals materialize, and a site that only walked would miss from then
+                // on. Only a present one: that read answers an absent key as `[[Get]]` does,
+                // where the binding raises. A global object no cache records (a dictionary
+                // shape) still answers a present data property through its shape walk. An
+                // absent name is `undefined` to `typeof` and raises on the general path
+                // otherwise.
                 match vm.plain_global_lookup(atom) {
-                    Some(Some(value)) => {
-                        // A present binding the site's cache missed (the global object has
-                        // grown since) is recorded for the next load.
-                        if matches!(probe, super::object::FieldCacheProbe::OrdinaryMiss) {
-                            vm.field_miss_data_value(globals, atom, vm.field_cache_index(i.c));
-                        }
-                        value
-                    }
+                    Some(Some(value)) => vm
+                        .field_miss_data_value(globals, atom, vm.field_cache_index(i.c))
+                        .unwrap_or(value),
                     Some(None) if KIND == LOAD_NAME_TYPEOF => Value::UNDEFINED,
                     _ => return exit(ip),
                 }
@@ -11272,6 +11298,43 @@ lane_handler! {
     }
 }
 
+/// `lane_complete_activation`'s commonest completion: a JavaScript activation of the
+/// running program whose call keeps its result (`Completion::Plain`, a result register).
+/// It restores what that completion restores, without moving the activation out of the
+/// stack: the caller's registers, records, receiver and environments, and the call's
+/// result. `None` leaves every other completion to `lane_complete_activation`.
+#[inline(always)]
+fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
+    let vm = unsafe { vm(cx) };
+    let stack = &mut vm.lane_stack;
+    let top = stack.activations.last()?;
+    let ActivationKind::Script(script) = &top.kind else {
+        return None;
+    };
+    // SAFETY: the call record belongs to the caller's live view.
+    let destination = unsafe { (*top.call).a };
+    if script.completion != Completion::Plain || destination & crate::bytecode::RETURN_REGISTER != 0 {
+        return None;
+    }
+    let (call, caller_registers, caller_base, window) = (top.call, top.caller_registers, top.caller_base, top.window);
+    let (this, env, capture) = (script.caller_this, script.caller_env, script.caller_capture);
+    // SAFETY: a script activation holds no drop glue and no Wasm storage
+    // (`Activation::frame_storage_bytes`); its window starts within the values.
+    unsafe {
+        let len = stack.activations.len();
+        stack.activations.set_len(len - 1);
+        stack.values.set_len(window);
+        (*cx).registers = caller_registers;
+        (*cx).base = caller_base;
+        (*cx).memory = MemoryView::script(cx);
+        (*cx).this = this;
+        (*cx).env = env;
+        (*cx).capture = capture;
+    }
+    caller_registers.set(destination, value);
+    Some((caller_registers, following(call)))
+}
+
 /// Whether a call record that returns its callee's completion runs in the lane: from an
 /// activation, which completes in turn, or from the frame, which the general loop then
 /// completes with the value (`lane_frame_return`). A host permitting proper tail calls sends
@@ -11303,6 +11366,14 @@ fn lane_frame_return<H: Host>(vm: &mut Vm<H>, call: Ip, value: Value) -> Ip {
 /// runs: the running function is a VM frame.
 #[inline(always)]
 fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Value) -> Option<Resumed> {
+    if let Some((registers, next)) = lane_return_plain(cx, value) {
+        let view = Carried {
+            memory: MemoryView::script(cx),
+            integers: crate::value::IntegerEncoding::TAG,
+            acc: Slot::of(Value::UNDEFINED),
+        };
+        return Some(Resumed::At(registers, next, view));
+    }
     let vm = unsafe { vm(cx) };
     let mut activation = vm.lane_stack.pop_activation()?;
     loop {

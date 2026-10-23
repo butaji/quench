@@ -149,7 +149,7 @@ impl FlatUnits {
     }
 
     /// The unit at `index`, read from the representation without making a view.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn unit(&self, index: usize) -> Option<u16> {
         match self {
             Self::Short(text) => text.as_str().as_bytes().get(index).map(|byte| u16::from(*byte)),

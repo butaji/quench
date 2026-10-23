@@ -1153,6 +1153,17 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc_string(text.into()))
     }
 
+    /// Internal fast path for consumers that immediately encode JSON text as UTF-8.
+    /// `null` asks the caller to use the spec path; no guest code has run when we decline.
+    pub(super) fn json_stringify_utf8(&mut self, args: &[Value]) -> Result<Value, JsError> {
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let mut plain = JsonPlainWrite::new(self.intern_atom("toJSON"));
+        match self.json_write_plain(value, &mut plain) {
+            Some(true) => self.embedding_uint8_array_from(plain.output),
+            Some(false) | None => Ok(Value::NULL),
+        }
+    }
+
     /// SerializeJSONProperty of `value` with no replacer and no gap, for plain data whose
     /// serialization runs no guest code: primitives, dense hole-free arrays and ordinary
     /// objects of non-dictionary shapes with only data members, none of which a `toJSON`

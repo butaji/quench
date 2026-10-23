@@ -742,17 +742,20 @@ impl<H: Host> Vm<H> {
     /// property, so the definition always succeeds and is the element store itself. Other
     /// receivers take the full DefineOwnProperty path.
     fn create_plain_array_element(&mut self, target: Value, index: usize, value: Value) -> bool {
-        let plain = self.heap.array(target).is_some()
-            && index < MAX_ARRAY_LENGTH
-            && self.object_data(target).is_some_and(|object| {
-                object.is_extensible()
-                    && !object.has_indexed_descriptors()
-                    && !object.is_arguments_object()
-            })
-            && self
-                .descriptors
-                .get(&(target, PropertyKey::string(self.length_atom)))
-                .is_none_or(|length| length.writable);
+        let Some(object) = self.heap.array(target) else {
+            return false;
+        };
+        // An array's `length` keeps non-default attributes only as a recorded descriptor.
+        let length_descriptor = object.has_length_descriptor();
+        let plain = index < MAX_ARRAY_LENGTH
+            && object.is_extensible()
+            && !object.has_indexed_descriptors()
+            && !object.is_arguments_object()
+            && (!length_descriptor
+                || self
+                    .descriptors
+                    .get(&(target, PropertyKey::string(self.length_atom)))
+                    .is_none_or(|length| length.writable));
         plain && self.set_array_element(target, index, value)
     }
 

@@ -16,44 +16,301 @@ const ODD_INTEGER_PARITY: f64 = 1.0;
 /// The comparison operators occupy the binary operator discriminants up to this one.
 pub(super) const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
 
-/// The semantic relation shared by Number interpretation and guarded native
-/// lowering. Strict and non-strict equality coincide once both operands are
-/// known to be Numbers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum NumberRelation {
-    Equal,
-    NotEqual,
-    LessThan,
-    LessEqual,
-    GreaterThan,
-    GreaterEqual,
+/// A stage supplies the machine operation for each semantic Number relation.
+/// The relation table below is shared by interpreter values and native emitters.
+pub(super) trait NumberRelationStage<T> {
+    type Output;
+
+    fn equal(&mut self, left: T, right: T) -> Self::Output;
+    fn not_equal(&mut self, left: T, right: T) -> Self::Output;
+    fn less_than(&mut self, left: T, right: T) -> Self::Output;
+    fn less_equal(&mut self, left: T, right: T) -> Self::Output;
+    fn greater_than(&mut self, left: T, right: T) -> Self::Output;
+    fn greater_equal(&mut self, left: T, right: T) -> Self::Output;
 }
 
-impl NumberRelation {
-    pub(super) fn from_operator(op: u32) -> Option<Self> {
-        Some(match op {
-            value if value == BinaryOperator::Equality as u32
-                || value == BinaryOperator::StrictEquality as u32 => Self::Equal,
-            value if value == BinaryOperator::Inequality as u32
-                || value == BinaryOperator::StrictInequality as u32 => Self::NotEqual,
-            value if value == BinaryOperator::LessThan as u32 => Self::LessThan,
-            value if value == BinaryOperator::LessEqualThan as u32 => Self::LessEqual,
-            value if value == BinaryOperator::GreaterThan as u32 => Self::GreaterThan,
-            value if value == BinaryOperator::GreaterEqualThan as u32 => Self::GreaterEqual,
-            _ => return None,
-        })
-    }
+macro_rules! number_relations {
+    ($($relation:ident => [$($operator:ident),+ $(,)?], $stage_method:ident;)+) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub(super) enum NumberRelation { $($relation),+ }
+
+        impl NumberRelation {
+            pub(super) fn from_operator(op: u32) -> Option<Self> {
+                $(
+                    if $(op == BinaryOperator::$operator as u32)||+ {
+                        return Some(Self::$relation);
+                    }
+                )+
+                None
+            }
+
+            #[inline(always)]
+            pub(super) fn apply<T, S: NumberRelationStage<T>>(
+                self,
+                stage: &mut S,
+                left: T,
+                right: T,
+            ) -> S::Output {
+                match self {
+                    $(Self::$relation => stage.$stage_method(left, right)),+
+                }
+            }
+        }
+    };
+}
+
+number_relations! {
+    Equal => [Equality, StrictEquality], equal;
+    NotEqual => [Inequality, StrictInequality], not_equal;
+    LessThan => [LessThan], less_than;
+    LessEqual => [LessEqualThan], less_equal;
+    GreaterThan => [GreaterThan], greater_than;
+    GreaterEqual => [GreaterEqualThan], greater_equal;
+}
+
+/// The four IEEE Number arithmetic operations have one operator-to-method
+/// mapping. Interpreter values and native Cranelift values supply the stage.
+pub(super) trait NumberArithmeticStage<T> {
+    type Output;
+
+    fn add(&mut self, left: T, right: T) -> Self::Output;
+    fn subtract(&mut self, left: T, right: T) -> Self::Output;
+    fn multiply(&mut self, left: T, right: T) -> Self::Output;
+    fn divide(&mut self, left: T, right: T) -> Self::Output;
+}
+
+macro_rules! number_arithmetic {
+    ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident;)+) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub(super) enum NumberArithmetic { $($operation),+ }
+
+        impl NumberArithmetic {
+            pub(super) fn from_operator(operator: u32) -> Option<Self> {
+                $(
+                    if operator == BinaryOperator::$operator as u32 {
+                        return Some(Self::$operation);
+                    }
+                )+
+                None
+            }
+
+            #[inline(always)]
+            pub(super) fn apply<T, S: NumberArithmeticStage<T>>(
+                self,
+                stage: &mut S,
+                left: T,
+                right: T,
+            ) -> S::Output {
+                match self {
+                    $(Self::$operation => stage.$stage_method(left, right)),+
+                }
+            }
+
+            /// The Number arithmetic operation denoted by a JavaScript bytecode
+            /// and its operator. General `Binary` accepts every arithmetic row;
+            /// specialized bytecodes are accepted only for their corresponding
+            /// operator, as recorded in this table.
+            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
+                if instruction == Op::Binary {
+                    return Self::from_operator(operator);
+                }
+                $(number_arithmetic!(
+                    @specialized_instruction
+                    instruction,
+                    operator,
+                    Self::$operation,
+                    $operator,
+                    $specialized_instruction
+                );)+
+                None
+            }
+        }
+    };
+    (
+        @specialized_instruction
+        $instruction:ident,
+        $operator:ident,
+        $operation:expr,
+        $operator_name:ident,
+        None
+    ) => {};
+    (@specialized_instruction $instruction:ident, $operator:ident, $operation:expr, $operator_name:ident, $specialized_instruction:ident) => {
+        if $instruction == Op::$specialized_instruction
+            && $operator == BinaryOperator::$operator_name as u32
+        {
+            return Some($operation);
+        }
+    };
+}
+
+number_arithmetic! {
+    Add => Addition, add, NumericAdd;
+    Subtract => Subtraction, subtract, None;
+    Multiply => Multiplication, multiply, NumericMultiply;
+    Divide => Division, divide, None;
+}
+
+/// The int32 operations used by JavaScript bitwise expressions. Keeping their
+/// operator mapping and operation selection in one stage lets the interpreter
+/// and native emitters share the same signed/unsigned shift decisions.
+pub(super) trait NumberBitwiseStage<T> {
+    type Output;
+
+    fn and(&mut self, left: T, right: T) -> Self::Output;
+    fn or(&mut self, left: T, right: T) -> Self::Output;
+    fn xor(&mut self, left: T, right: T) -> Self::Output;
+    fn shift_left(&mut self, left: T, right: T) -> Self::Output;
+    fn shift_right(&mut self, left: T, right: T) -> Self::Output;
+    fn shift_right_unsigned(&mut self, left: T, right: T) -> Self::Output;
+}
+
+macro_rules! number_bitwise {
+    ($($operation:ident => $operator:ident, $stage_method:ident;)+) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub(super) enum NumberBitwise { $($operation),+ }
+
+        impl NumberBitwise {
+            pub(super) fn from_operator(operator: u32) -> Option<Self> {
+                $(
+                    if operator == BinaryOperator::$operator as u32 {
+                        return Some(Self::$operation);
+                    }
+                )+
+                None
+            }
+
+            /// Whether this operation produces a signed Int32 from signed Int32
+            /// inputs, which is the current entry guard's proof domain.
+            pub(super) const fn in_signed_int32_domain(self) -> bool {
+                matches!(self, Self::And | Self::Or | Self::Xor)
+            }
+
+            #[inline(always)]
+            pub(super) fn apply<T, S: NumberBitwiseStage<T>>(
+                self,
+                stage: &mut S,
+                left: T,
+                right: T,
+            ) -> S::Output {
+                match self {
+                    $(Self::$operation => stage.$stage_method(left, right)),+
+                }
+            }
+        }
+    };
+}
+
+number_bitwise! {
+    And => BitwiseAnd, and;
+    Or => BitwiseOR, or;
+    Xor => BitwiseXOR, xor;
+    ShiftLeft => ShiftLeft, shift_left;
+    ShiftRight => ShiftRight, shift_right;
+    ShiftRightUnsigned => ShiftRightZeroFill, shift_right_unsigned;
+}
+
+struct I32BitwiseStage;
+
+impl NumberBitwiseStage<i32> for I32BitwiseStage {
+    type Output = i32;
 
     #[inline(always)]
-    fn holds<T: PartialOrd>(self, left: T, right: T) -> bool {
-        match self {
-            Self::Equal => left == right,
-            Self::NotEqual => left != right,
-            Self::LessThan => left < right,
-            Self::LessEqual => left <= right,
-            Self::GreaterThan => left > right,
-            Self::GreaterEqual => left >= right,
-        }
+    fn and(&mut self, left: i32, right: i32) -> Self::Output {
+        left & right
+    }
+    #[inline(always)]
+    fn or(&mut self, left: i32, right: i32) -> Self::Output {
+        left | right
+    }
+    #[inline(always)]
+    fn xor(&mut self, left: i32, right: i32) -> Self::Output {
+        left ^ right
+    }
+    #[inline(always)]
+    fn shift_left(&mut self, left: i32, right: i32) -> Self::Output {
+        ((left as u32).wrapping_shl((right as u32) & 31)) as i32
+    }
+    #[inline(always)]
+    fn shift_right(&mut self, left: i32, right: i32) -> Self::Output {
+        left >> ((right as u32) & 31)
+    }
+    #[inline(always)]
+    fn shift_right_unsigned(&mut self, left: i32, right: i32) -> Self::Output {
+        ((left as u32) >> ((right as u32) & 31)) as i32
+    }
+}
+
+#[inline(always)]
+fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) -> f64 {
+    let bits = operation.apply(&mut I32BitwiseStage, left, right);
+    if operation == NumberBitwise::ShiftRightUnsigned {
+        f64::from(bits as u32)
+    } else {
+        f64::from(bits)
+    }
+}
+
+#[inline(always)]
+fn number_bitwise_result(operation: NumberBitwise, left: i32, right: i32) -> Value {
+    Value::number(number_bitwise_f64_result(operation, left, right))
+}
+
+struct NumberF64Stage;
+
+impl NumberArithmeticStage<f64> for NumberF64Stage {
+    type Output = f64;
+
+    #[inline(always)]
+    fn add(&mut self, left: f64, right: f64) -> Self::Output {
+        left + right
+    }
+    #[inline(always)]
+    fn subtract(&mut self, left: f64, right: f64) -> Self::Output {
+        left - right
+    }
+    #[inline(always)]
+    fn multiply(&mut self, left: f64, right: f64) -> Self::Output {
+        left * right
+    }
+    #[inline(always)]
+    fn divide(&mut self, left: f64, right: f64) -> Self::Output {
+        left / right
+    }
+}
+
+#[inline(always)]
+fn number_arithmetic_result(operation: NumberArithmetic, left: f64, right: f64) -> f64 {
+    operation.apply(&mut NumberF64Stage, left, right)
+}
+
+struct PartialOrderStage;
+
+impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
+    type Output = bool;
+
+    #[inline(always)]
+    fn equal(&mut self, left: T, right: T) -> Self::Output {
+        left == right
+    }
+    #[inline(always)]
+    fn not_equal(&mut self, left: T, right: T) -> Self::Output {
+        left != right
+    }
+    #[inline(always)]
+    fn less_than(&mut self, left: T, right: T) -> Self::Output {
+        left < right
+    }
+    #[inline(always)]
+    fn less_equal(&mut self, left: T, right: T) -> Self::Output {
+        left <= right
+    }
+    #[inline(always)]
+    fn greater_than(&mut self, left: T, right: T) -> Self::Output {
+        left > right
+    }
+    #[inline(always)]
+    fn greater_equal(&mut self, left: T, right: T) -> Self::Output {
+        left >= right
     }
 }
 
@@ -63,7 +320,7 @@ impl NumberRelation {
 fn number_comparison<T: PartialOrd>(op: u32, a: T, b: T) -> bool {
     NumberRelation::from_operator(op)
         .expect("comparison operators end at GreaterEqualThan")
-        .holds(a, b)
+        .apply(&mut PartialOrderStage, a, b)
 }
 
 const FIRST_NUMERIC_BINARY_OPERATOR: u32 = BinaryOperator::Addition as u32;
@@ -86,29 +343,19 @@ const NUMERIC_BINARY_OPERATORS: [BinaryOperator; NUMERIC_BINARY_OPERATOR_COUNT] 
 ];
 
 /// Binary operator `op` of two integers where the integers alone decide its result: a
-/// comparison's boolean, or the integer operators' result (`numeric_integer_result`); `None`
-/// for any other operator and for a result the integer case leaves to Numbers. One match, so
-/// the common operators take one branch.
+/// comparison's boolean through the shared relation definition, or the integer operators'
+/// result (`numeric_integer_result`); `None` for any other operator and for a result the
+/// integer case leaves to Numbers.
 #[inline(always)]
 pub(super) fn integer_binary(op: u32, left: i32, right: i32) -> Option<Value> {
-    const EQUALITY: u32 = BinaryOperator::Equality as u32;
-    const STRICT_EQUALITY: u32 = BinaryOperator::StrictEquality as u32;
-    const INEQUALITY: u32 = BinaryOperator::Inequality as u32;
-    const STRICT_INEQUALITY: u32 = BinaryOperator::StrictInequality as u32;
-    const LESS_THAN: u32 = BinaryOperator::LessThan as u32;
-    const LESS_EQUAL: u32 = BinaryOperator::LessEqualThan as u32;
-    const GREATER_THAN: u32 = BinaryOperator::GreaterThan as u32;
-    const GREATER_EQUAL: u32 = BinaryOperator::GreaterEqualThan as u32;
-    let boolean = |holds: bool| if holds { Value::TRUE } else { Value::FALSE };
-    Some(match op {
-        EQUALITY | STRICT_EQUALITY => boolean(left == right),
-        INEQUALITY | STRICT_INEQUALITY => boolean(left != right),
-        LESS_THAN => boolean(left < right),
-        LESS_EQUAL => boolean(left <= right),
-        GREATER_THAN => boolean(left > right),
-        GREATER_EQUAL => boolean(left >= right),
-        _ => return numeric_integer_result(numeric_binary_operator(op)?, left, right),
-    })
+    if let Some(relation) = NumberRelation::from_operator(op) {
+        return Some(if relation.apply(&mut PartialOrderStage, left, right) {
+            Value::TRUE
+        } else {
+            Value::FALSE
+        });
+    }
+    numeric_integer_result(numeric_binary_operator(op)?, left, right)
 }
 
 /// `number_relation` of two integers alone: `None` for any other pair. Few values stay live,
@@ -151,32 +398,57 @@ fn is_numeric_binary_operator(immediate: u32) -> bool {
 
 #[inline(always)]
 fn numeric_number_result(operator: BinaryOperator, left: f64, right: f64) -> f64 {
+    if let Some(operation) = NumberArithmetic::from_operator(operator as u32) {
+        return number_arithmetic_result(operation, left, right);
+    }
+    if let Some(operation) = NumberBitwise::from_operator(operator as u32) {
+        let left = number_to_u32(left) as i32;
+        let right = number_to_u32(right) as i32;
+        return number_bitwise_f64_result(operation, left, right);
+    }
     match operator {
-        BinaryOperator::Addition => left + right,
-        BinaryOperator::Subtraction => left - right,
-        BinaryOperator::Multiplication => left * right,
-        BinaryOperator::Division => left / right,
         BinaryOperator::Remainder => left % right,
         BinaryOperator::Exponential => exponentiate(left, right),
-        BinaryOperator::ShiftLeft => {
-            ((number_to_u32(left) as i32) << (number_to_u32(right) & 31)) as f64
-        }
-        BinaryOperator::ShiftRight => {
-            ((number_to_u32(left) as i32) >> (number_to_u32(right) & 31)) as f64
-        }
-        BinaryOperator::ShiftRightZeroFill => {
-            (number_to_u32(left) >> (number_to_u32(right) & 31)) as f64
-        }
-        BinaryOperator::BitwiseOR => {
-            ((number_to_u32(left) as i32) | (number_to_u32(right) as i32)) as f64
-        }
-        BinaryOperator::BitwiseXOR => {
-            ((number_to_u32(left) as i32) ^ (number_to_u32(right) as i32)) as f64
-        }
-        BinaryOperator::BitwiseAnd => {
-            ((number_to_u32(left) as i32) & (number_to_u32(right) as i32)) as f64
-        }
         _ => unreachable!("numeric operator table only contains numeric operators"),
+    }
+}
+
+#[cfg(test)]
+mod numeric_instruction_tests {
+    use super::{NumberArithmetic, Op};
+    use oxc_ast::ast::BinaryOperator;
+
+    #[test]
+    fn arithmetic_bytecode_denotations_come_from_the_operation_table() {
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(Op::Binary, BinaryOperator::Addition as u32),
+            Some(NumberArithmetic::Add)
+        );
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(Op::NumericAdd, BinaryOperator::Addition as u32),
+            Some(NumberArithmetic::Add)
+        );
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(
+                Op::NumericMultiply,
+                BinaryOperator::Multiplication as u32
+            ),
+            Some(NumberArithmetic::Multiply)
+        );
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(
+                Op::NumericAdd,
+                BinaryOperator::Multiplication as u32
+            ),
+            None
+        );
+        assert_eq!(
+            NumberArithmetic::from_js_instruction(
+                Op::NumericMultiply,
+                BinaryOperator::Addition as u32
+            ),
+            None
+        );
     }
 }
 
@@ -211,34 +483,6 @@ pub(super) const SUBTRACTION: u32 = BinaryOperator::Subtraction as u32;
 pub(super) const MULTIPLICATION: u32 = BinaryOperator::Multiplication as u32;
 pub(super) const DIVISION: u32 = BinaryOperator::Division as u32;
 
-/// One of the four arithmetic operators `OP` on Numbers, with the path it took; `None` for a
-/// non-Number operand. Shared by `number_binary` and the lane's operator-specialized records.
-#[inline(always)]
-pub(super) fn number_operator<const OP: u32>(
-    left: Value,
-    right: Value,
-) -> Option<(Value, crate::profile::BinaryValuePath)> {
-    match OP {
-        ADDITION => number_arithmetic(left, right, numeric_integer_add_result, |l, r| l + r),
-        SUBTRACTION => {
-            number_arithmetic(left, right, numeric_integer_subtract_result, |l, r| l - r)
-        }
-        MULTIPLICATION => {
-            number_arithmetic(left, right, numeric_integer_multiply_result, |l, r| l * r)
-        }
-        // `Value::number` keeps an exact quotient an integer, which is all the integer case
-        // would add.
-        DIVISION => {
-            let (left, right) = Value::number_pair(left, right)?;
-            Some((
-                Value::number(left / right),
-                crate::profile::BinaryValuePath::NumberFastPath,
-            ))
-        }
-        _ => None,
-    }
-}
-
 pub(super) const REMAINDER: u32 = BinaryOperator::Remainder as u32;
 pub(super) const SHIFT_LEFT: u32 = BinaryOperator::ShiftLeft as u32;
 pub(super) const SHIFT_RIGHT: u32 = BinaryOperator::ShiftRight as u32;
@@ -271,21 +515,25 @@ pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Opti
 }
 
 #[inline(always)]
-fn number_arithmetic(
+fn number_arithmetic_values(
+    operation: NumberArithmetic,
     left: Value,
     right: Value,
-    integer: fn(i32, i32) -> Value,
-    number: fn(f64, f64) -> f64,
 ) -> Option<(Value, crate::profile::BinaryValuePath)> {
-    if let Some((left, right)) = Value::int_pair(left, right) {
-        return Some((
-            integer(left, right),
-            crate::profile::BinaryValuePath::IntegerFastPath,
-        ));
+    if operation != NumberArithmetic::Divide
+        && let Some((left, right)) = Value::int_pair(left, right)
+    {
+        let value = match operation {
+            NumberArithmetic::Add => numeric_integer_add_result(left, right),
+            NumberArithmetic::Subtract => numeric_integer_subtract_result(left, right),
+            NumberArithmetic::Multiply => numeric_integer_multiply_result(left, right),
+            NumberArithmetic::Divide => unreachable!("division uses its Number fast path"),
+        };
+        return Some((value, crate::profile::BinaryValuePath::IntegerFastPath));
     }
     let (left, right) = Value::number_pair(left, right)?;
     Some((
-        Value::number(number(left, right)),
+        Value::number(number_arithmetic_result(operation, left, right)),
         crate::profile::BinaryValuePath::NumberFastPath,
     ))
 }
@@ -318,20 +566,12 @@ fn numeric_integer_result(operator: BinaryOperator, left: i32, right: i32) -> Op
             }
         }
         BinaryOperator::Exponential => return None,
-        BinaryOperator::ShiftLeft => Value::integer(left.wrapping_shl((right as u32) & 31)),
-        BinaryOperator::ShiftRight => Value::integer(left >> ((right as u32) & 31)),
-        BinaryOperator::ShiftRightZeroFill => {
-            let result = (left as u32) >> ((right as u32) & 31);
-            if result <= i32::MAX as u32 {
-                Value::integer(result as i32)
-            } else {
-                Value::number(f64::from(result))
-            }
-        }
-        BinaryOperator::BitwiseOR => Value::integer(left | right),
-        BinaryOperator::BitwiseXOR => Value::integer(left ^ right),
-        BinaryOperator::BitwiseAnd => Value::integer(left & right),
-        _ => unreachable!("numeric operator table only contains numeric operators"),
+        _ => number_bitwise_result(
+            NumberBitwise::from_operator(operator as u32)
+                .expect("numeric operator table contains supported bitwise operations"),
+            left,
+            right,
+        ),
     })
 }
 
@@ -881,6 +1121,7 @@ impl<H: Host> Vm<H> {
             | Native::ReflectConstruct => self.call_reflect_native(p, native, args),
             Native::JsonParse => self.json_parse(p, args),
             Native::JsonStringify => self.json_stringify(p, args),
+            Native::JsonStringifyUtf8 => self.json_stringify_utf8(args),
             Native::JsonRawJson => self.json_raw_json(p, args),
             Native::JsonIsRawJson => self.json_is_raw_json(args),
             Native::GlobalIsNaN | Native::GlobalIsFinite => {
@@ -1322,7 +1563,7 @@ impl<H: Host> Vm<H> {
                 if self.function_caller_is_restricted(this) {
                     Err(self.type_error(p, "restricted function caller access".into()))
                 } else {
-                    Ok(self.function_caller(this))
+                    self.function_caller_value(this)
                 }
             }
             Native::CallSiteConstructor => self.call_site_constructor(p),
@@ -1364,16 +1605,13 @@ impl<H: Host> Vm<H> {
     /// An arithmetic, bitwise or shift operator applied to two numbers: the integer fast path
     /// when both are integers, otherwise the IEEE 754 result. Any other operand pair, and
     /// every other operator, is left to `binary`. The four arithmetic operators match the
-    /// immediate directly; the rest go through the operator table.
+    /// shared arithmetic stage; the rest go through the numeric operator table.
     #[inline(always)]
     pub(super) fn number_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
-        let (value, path) = match op {
-            ADDITION => number_operator::<ADDITION>(left, right)?,
-            SUBTRACTION => number_operator::<SUBTRACTION>(left, right)?,
-            MULTIPLICATION => number_operator::<MULTIPLICATION>(left, right)?,
-            DIVISION => number_operator::<DIVISION>(left, right)?,
-            _ => return self.tabled_number_binary(op, left, right),
+        let Some(operation) = NumberArithmetic::from_operator(op) else {
+            return self.tabled_number_binary(op, left, right);
         };
+        let (value, path) = number_arithmetic_values(operation, left, right)?;
         self.record_binary_value_path(op, left, right, path);
         Some(value)
     }

@@ -270,7 +270,7 @@ fn selective_layout_is_safe(function: &Function, id: usize, inputs: &LayoutInput
         && !function.derived_constructor
         && !function.class_initializer
         // A rest list binding directly names each parameter's own slot, as a simple one does.
-        && (function.simple_parameters || function.rest && function.parameters_bind_directly(|atom| atoms.get(atom)))
+        && function.parameters_own_their_slots(|atom| atoms.get(atom))
         && !function.has_dynamic_scope_access()
 }
 
