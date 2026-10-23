@@ -74,7 +74,7 @@ const TRIM_THRESHOLD_VARIABLE: &str = "MALLOC_TRIM_THRESHOLD_";
 /// max RSS (static x86_64, unbolted, 2026-10-18, KiB): Crypto 4272 -> 4640, Richards 3716 ->
 /// 4064, RayTrace 3884 -> 4128, DeltaBlue 3840 -> 4120, RegExp 7612 -> 7980. Blocks the system
 /// allocator handed out before the selection stay its own (`quench_alloc::owns`).
-fn apply_process_policy(policy: MemoryPolicy) {
+fn apply_allocator_policy(policy: MemoryPolicy) {
     #[cfg(unix)]
     if policy == MemoryPolicy::Throughput {
         quench_alloc::QuenchAlloc::enable();
@@ -115,7 +115,7 @@ fn select_memory_policy(chosen: Option<&str>) -> Result<MemoryPolicy, String> {
         ),
         (None, None) => return Ok(*PROCESS_MEMORY_POLICY.get_or_init(|| {
             let policy = MemoryPolicy::default();
-            apply_process_policy(policy);
+            apply_allocator_policy(policy);
             policy
         })),
     };
@@ -123,7 +123,7 @@ fn select_memory_policy(chosen: Option<&str>) -> Result<MemoryPolicy, String> {
         format!("{source}: unknown memory policy '{name}' (expected {})", memory_policy_names())
     })?;
     Ok(*PROCESS_MEMORY_POLICY.get_or_init(|| {
-        apply_process_policy(policy);
+        apply_allocator_policy(policy);
         policy
     }))
 }
