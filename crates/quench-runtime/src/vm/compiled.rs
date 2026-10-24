@@ -2403,8 +2403,9 @@ pub(super) fn compile_js_general_dispatch(
 /// Canonical, owner-free description of the inputs that affect GeneralDispatch
 /// code generation. Keep this in lockstep with compile_js_general_dispatch:
 /// emitted instructions depend on decoded bytecode, frame layout, static-name
-/// mode, and numeric constant bits/kinds. Other constant payloads are loaded
-/// from the current program at runtime and therefore need only their kind.
+/// mode, and referenced constant variants/payloads. The key records the full
+/// payload for values that lowering can embed and only the variant for payloads
+/// that the generated code reads from the active program at runtime.
 pub(super) fn js_general_dispatch_cache_key(
     program: &ResidualProgram,
     function_id: u32,
