@@ -11317,6 +11317,8 @@ impl<H: Host> Vm<H> {
             Some(super::program_store::JsTierState::Hot { .. })
             | Some(super::program_store::JsTierState::PromotionPending)
             | None => {
+                let general_candidate =
+                    self.js_general_tier_takes(program, function_id, facts);
                 if !self.programs.note_js_function_entry(
                     program_id,
                     function_id,
@@ -11331,7 +11333,7 @@ impl<H: Host> Vm<H> {
                         || (!capture_arguments.is_empty() && captures_numeric)
                         || string_hash_units.is_some()
                         || string_transform_units.is_some(),
-                    facts.general_acyclic,
+                    general_candidate,
                 ) || (!numeric
                     && !(field_reject_candidate && arguments.len() == 1)
                     && string_hash_units.is_none()

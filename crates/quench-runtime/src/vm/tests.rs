@@ -13967,10 +13967,10 @@ fn js_jit_general_baseline_waits_until_entries_pay_for_its_compile() {
         assert_eq!(vm.own_property(vm.realm.globals, name).unwrap(), expected);
         vm.programs.js_tier(super::program_store::ProgramId::MAIN, function)
     };
-    // Hot, but a short run has not paid for the compile; and a body this small saves less
-    // per entry than the baseline's entry costs, so no run pays (`general_promotion_due`).
+    // This body is too small to pay for the general baseline through entries. It must not
+    // enter GeneralPromotionPending, because that path has no backedges to accrue work.
     for calls in [48, 20_000] {
-        assert!(matches!(state(calls), Some(super::program_store::JsTierState::GeneralPromotionPending { .. })));
+        assert!(!matches!(state(calls), Some(super::program_store::JsTierState::GeneralPromotionPending { .. })));
     }
 }
 
