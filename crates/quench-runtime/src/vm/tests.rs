@@ -12984,6 +12984,27 @@ fn set_iteration_copies_only_while_the_intrinsics_iterate() {
       check(show(Array.from(new Set([1]))), 'proto', 'patched @@iterator');
       Set.prototype[Symbol.iterator] = method;
       check(Math.max(...new Set([4, 7])), 7, 'spread call');
+      check(show([...new Set([3, 3, -0, NaN, NaN])]), '3,0,NaN', 'Set constructor canonicalizes');
+      check(Object.is([...new Set([-0])][0], 0), true, 'Set constructor stores -0 as +0');
+      const add = Set.prototype.add;
+      let added = 0;
+      Set.prototype.add = function (value) { added++; return add.call(this, value); };
+      check(new Set([1, 2]).size + added, 4, 'patched add');
+      Set.prototype.add = add;
+      const map = new Map([[1, 'a'], [1, 'b'], [-0, 'z'], [[2], 'c']]);
+      check(map.get(1) + map.get(0) + map.size, 'bz3', 'Map constructor');
+      check(new Map([[1]]).get(1), undefined, 'short entry');
+      Array.prototype[1] = 'inherited';
+      check(new Map([[1]]).get(1), 'inherited', 'short entry reads the prototype');
+      delete Array.prototype[1];
+      const entry = [5];
+      Object.defineProperty(entry, 1, { get() { return 'got'; } });
+      check(new Map([entry]).get(5), 'got', 'entry getter');
+      let threw = false;
+      try { new Map([1]); } catch (error) { threw = error instanceof TypeError; }
+      check(threw, true, 'non-object entry');
+      check(new Map(new Map([[7, 8]])).get(7), 8, 'Map from Map');
+      check(new Map(Object.entries({ k: 1 })).get('k'), 1, 'Map from entries');
     "#;
     for program in [Engine::compile(crate::ExecutionRequest { source, name: "set-iteration.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "set-iteration.js").unwrap()] {
         Vm::new(TestHost::default()).execute(&program).unwrap();
