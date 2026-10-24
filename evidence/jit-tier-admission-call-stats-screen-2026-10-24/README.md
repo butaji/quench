@@ -55,3 +55,11 @@ target/production/quench-bench \
   --bun /workspace/bun-cache-1.4.4/bun-linux-x64/bun --qjs /bin/true \
   --out target/jit-tier-admission-call-stats-screen-2026-10-24/callsite-diagnostics.json
 ```
+
+## Backedge-work diagnosis
+
+A second one-round diagnostic used the production runtime rebuilt from the instrumented working tree (runner source revision `0c720dbdc7a9fdb5300c61297b00a0f27f028f3b`, `source_dirty=true`; do not treat it as a clean-source score). It isolated `hash-map` and added the cumulative observed GeneralDispatch backedge work and its exact compile-payback threshold.
+
+For the benchmark's `run` function, the diagnostic recorded 3,631 work units against a 342,400-unit priced threshold. Its four statically admitted OSR sites saw 154 backward jumps total, with zero OSR compile attempts or native region runs. `LOOP_TIER_THRESHOLD` is 1,000 taken edges per site, so this workload never reaches loop compilation. The wrapper `runIteration` also stayed interpreted: its one GeneralDispatch compile attempt was rejected as `unsupported-lowering-shape-or-codegen-failure`.
+
+The one-round screen produced a valid, output-equal hash-map result: Quench score 20.91, Node 285.18, Bun 293.71; Quench RSS was 39.7 MiB. This is diagnostic context only. The next experiment should lower the shared, benchmark-independent loop-tier threshold and remeasure loop compile success, JetStream score, and correctness before changing the whole-function payback policy.
