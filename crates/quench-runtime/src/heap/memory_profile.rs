@@ -600,7 +600,6 @@ impl Heap {
     /// Counts narrowable values in inline versus out-of-line named object properties. This
     /// profile-only scan estimates whether a compact `ValueArena` representation can repay
     /// its conversion and fallback costs on a real workload.
-    #[cfg(feature = "profile-memory")]
     pub(crate) fn live_property_narrow_stats(&self) -> (usize, usize, usize, usize) {
         let mut stats = (0, 0, 0, 0);
         self.for_each_live_value(|identity| {
