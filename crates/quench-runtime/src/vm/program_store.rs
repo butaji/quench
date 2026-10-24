@@ -71,16 +71,61 @@ const JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION: u64 = 640;
 const JS_JIT_GENERAL_SAVED_SHARE: (u64, u64) = (1, 2);
 
 /// Whether `entries` of a function of `instructions` bytecode instructions have paid for
-/// its general baseline, taking an entry to run its instructions once (a loop hot within
-/// one entry is OSR's to compile) and the savings of the entries so far to stand for
-/// those still to come.
+/// its general baseline, taking an entry to run its instructions once and the savings of
+/// the entries so far to stand for those still to come. Backedge observations use their
+/// independently accumulated work in `general_dispatch_work_due`.
 fn general_promotion_due(entries: u32, instructions: usize) -> bool {
     let instructions = u64::try_from(instructions.max(1)).unwrap_or(u64::MAX);
+    general_dispatch_work_due(
+        u64::from(entries).saturating_mul(instructions),
+        instructions,
+        true,
+    )
+}
+
+/// Whether observed bytecode work has paid for one complete-semantics native
+/// baseline. An unpriced experiment still waits for 32 whole-function work
+/// units, matching the established general-tier entry floor.
+fn general_dispatch_work_due(work: u64, instructions: u64, priced: bool) -> bool {
+    let instructions = instructions.max(1);
+    if !priced {
+        return work >= instructions.saturating_mul(u64::from(JS_JIT_GENERAL_PROMOTION_ENTRIES));
+    }
     let (saved, of) = JS_JIT_GENERAL_SAVED_SHARE;
-    u64::from(entries).saturating_mul(instructions).saturating_mul(saved)
+    work.saturating_mul(saved)
         >= JS_JIT_GENERAL_COMPILE_FIXED_COST
             .saturating_add(JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION.saturating_mul(instructions))
             .saturating_mul(of)
+}
+
+fn accumulate_general_dispatch_work(accumulated_work: &mut u64, work: usize) {
+    *accumulated_work = accumulated_work
+        .saturating_add(u64::try_from(work).unwrap_or(u64::MAX));
+}
+
+/// Promote an eligible state once accumulated work reaches the selected
+/// pricing floor. Other tier states keep their established ownership.
+fn promote_general_dispatch_if_paid(
+    state: &mut JsTierState,
+    accumulated_work: u64,
+    instructions: usize,
+    priced: bool,
+) -> bool {
+    if !matches!(
+        state,
+        JsTierState::Hot { .. }
+            | JsTierState::Rejected { .. }
+            | JsTierState::GeneralPromotionPending { .. }
+            | JsTierState::Unsupported
+    ) || !general_dispatch_work_due(
+        accumulated_work,
+        u64::try_from(instructions.max(1)).unwrap_or(u64::MAX),
+        priced,
+    ) {
+        return false;
+    }
+    *state = JsTierState::GeneralCompileDue;
+    true
 }
 const JS_JIT_MAX_FUNCTIONS: usize = 64;
 // Tier observations include dynamically generated functions across all retained
@@ -607,6 +652,9 @@ pub(crate) struct ProgramStore {
     /// a fixed entry count promoted short runs into compile cost (npm p51, TOD-138) until
     /// promotion weighs size and compile cost.
     js_jit_general_dispatch_enabled: bool,
+    /// Per-program, per-function estimated work from opt-in JS backedges.
+    /// Both map levels are allocated only after the first eligible observation.
+    js_general_dispatch_work: Option<FxHashMap<u32, FxHashMap<u32, u64>>>,
     js_jit_dataview_float64_enabled: bool,
     js_jit_dataview_float64_get_entries: u64,
     js_jit_dataview_float64_set_entries: u64,
@@ -630,6 +678,7 @@ impl Default for ProgramStore {
                 .then(FxHashMap::default),
             js_jit_general_dispatch_enabled: std::env::var_os("QUENCH_JS_JIT_GENERAL_DISPATCH")
                 .is_some_and(|value| value == "1"),
+            js_general_dispatch_work: None,
             js_jit_dataview_float64_enabled:
                 std::env::var_os("QUENCH_JS_JIT_DATAVIEW_FLOAT64")
                     .is_none_or(|value| value != "0"),
@@ -791,6 +840,15 @@ impl ProgramStore {
         );
         self.unchecked_reclaimable = pending;
         if !reclaimed.is_empty() {
+            let drop_work_map = self.js_general_dispatch_work.as_mut().is_some_and(|work| {
+                for id in &reclaimed {
+                    work.remove(&id.raw());
+                }
+                work.is_empty()
+            });
+            if drop_work_map {
+                self.js_general_dispatch_work = None;
+            }
             let programs = &self.programs;
             self.global_eval_programs.retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
             self.owned_scripts.retain(|source, _| programs.get(source.index()).is_some_and(Option::is_some));
@@ -806,6 +864,7 @@ impl ProgramStore {
         self.js_jit_tracked_functions = 0;
         self.js_jit_rejected_functions = 0;
         self.jit_code_cache = JitCodeCacheBudget::default();
+        self.js_general_dispatch_work = None;
         if let Some(diagnostics) = &mut self.js_jit_diagnostics {
             diagnostics.clear();
         }
@@ -1509,6 +1568,10 @@ impl ProgramStore {
         self.js_jit_diagnostics.is_some()
     }
 
+    pub(super) fn js_jit_general_dispatch_enabled(&self) -> bool {
+        self.js_jit_general_dispatch_enabled
+    }
+
     pub(super) fn js_jit_dataview_float64_enabled(&self) -> bool {
         self.js_jit_dataview_float64_enabled
     }
@@ -1641,6 +1704,62 @@ impl ProgramStore {
             self.record_js_jit_promotion(id, function);
         }
         false
+    }
+
+    /// Accumulate estimated bytecode work from a hot backward edge. The
+    /// function must already have an eligible JS tier record, and this path is
+    /// available only to the opt-in complete-semantics dispatcher.
+    pub(super) fn note_js_general_dispatch_backedge(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        work: usize,
+        instructions: usize,
+    ) -> bool {
+        if !self.js_jit_general_dispatch_enabled || work == 0 {
+            return false;
+        }
+        // A zero-byte admission probe checks count and aggregate artifact
+        // ceilings before this accounting path can request compilation.
+        if self.jit_code_cache.js_functions >= JS_JIT_MAX_FUNCTIONS
+            || !self.jit_code_cache.can_retain(JitArtifactKind::JsFunction, 0)
+        {
+            return false;
+        }
+        let priced = self.general_baseline_priced;
+        if !self.entry(id).is_some_and(|entry| {
+            !entry.jit_tiers.is_wasm()
+                && matches!(
+                    entry.jit_tiers.js(function),
+                    Some(
+                        JsTierState::Hot { .. }
+                            | JsTierState::Rejected { .. }
+                            | JsTierState::GeneralPromotionPending { .. }
+                            | JsTierState::Unsupported
+                    )
+                )
+        }) {
+            return false;
+        }
+        let work_by_program = self.js_general_dispatch_work.get_or_insert_with(FxHashMap::default);
+        let accumulated_work = work_by_program
+            .entry(id.raw())
+            .or_default()
+            .entry(function)
+            .or_default();
+        accumulate_general_dispatch_work(accumulated_work, work);
+        let accumulated_work = *accumulated_work;
+        let Some(entry) = self.entry_mut(id) else {
+            return false;
+        };
+        let Some(state) = entry.jit_tiers.js_mut(function) else {
+            return false;
+        };
+        let due = promote_general_dispatch_if_paid(state, accumulated_work, instructions, priced);
+        if due {
+            self.record_js_jit_promotion(id, function);
+        }
+        due
     }
 
     /// Count only an explicit pre-native guard rejection by an installed
@@ -2664,8 +2783,61 @@ mod jit_code_cache_tests {
     use super::{
         JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS,
         JS_JIT_MAX_MAPPED_BYTES, JitArtifactKind, JitCodeCacheBudget,
+        JsTierState,
         WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS,
     };
+
+    #[test]
+    fn general_dispatch_backedge_unpriced_mode_waits_for_work_floor() {
+        let mut state = JsTierState::Hot { observations: 1, numeric: 0 };
+        let mut work = 0;
+        super::accumulate_general_dispatch_work(&mut work, 31 * 64);
+        assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 64, false));
+        assert!(matches!(state, JsTierState::Hot { .. }));
+        super::accumulate_general_dispatch_work(&mut work, 64);
+        assert!(super::promote_general_dispatch_if_paid(&mut state, work, 64, false));
+        assert!(matches!(state, JsTierState::GeneralCompileDue));
+    }
+
+    #[test]
+    fn general_dispatch_backedge_priced_mode_uses_existing_compile_cost() {
+        let mut state = JsTierState::Rejected { entries: 8, reason: "test" };
+        let mut work = 0;
+        // 100 instructions cost 16,000 + 640*100 units. The 50% savings
+        // assumption requires twice that much observed bytecode work.
+        super::accumulate_general_dispatch_work(&mut work, 159_999);
+        assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 100, true));
+        super::accumulate_general_dispatch_work(&mut work, 1);
+        assert!(super::promote_general_dispatch_if_paid(&mut state, work, 100, true));
+        assert!(matches!(state, JsTierState::GeneralCompileDue));
+    }
+
+    #[test]
+    fn general_dispatch_backedge_work_saturates_and_promotes_once() {
+        let mut state = JsTierState::GeneralPromotionPending { entries: 1 };
+        let mut work = u64::MAX - 3;
+        super::accumulate_general_dispatch_work(&mut work, 10);
+        assert_eq!(work, u64::MAX);
+        assert!(super::promote_general_dispatch_if_paid(&mut state, work, 1, false));
+        super::accumulate_general_dispatch_work(&mut work, usize::MAX);
+        assert_eq!(work, u64::MAX);
+        assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 1, false));
+        assert!(matches!(state, JsTierState::GeneralCompileDue));
+    }
+
+    #[test]
+    fn general_dispatch_backedge_is_disabled_without_opt_in() {
+        let mut store = super::ProgramStore::default();
+        store.js_jit_general_dispatch_enabled = false;
+        assert!(!store.js_jit_general_dispatch_enabled());
+        assert!(!store.note_js_general_dispatch_backedge(
+            super::ProgramId::MAIN,
+            1,
+            usize::MAX,
+            usize::MAX,
+        ));
+        assert!(store.js_general_dispatch_work.is_none());
+    }
 
     #[test]
     fn shared_jit_cache_budget_tracks_mixed_artifacts() {
