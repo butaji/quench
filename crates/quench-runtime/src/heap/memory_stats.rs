@@ -203,7 +203,8 @@ impl Heap {
             if let Some(value) = self.string(identity) {
                 other_cell_payload_bytes += payload_bytes.saturating_sub(value.capacity());
                 let (units, host) = value.memory_parts();
-                if string_identities.insert(units.0) {
+                // Inline text (`Short`) owns no buffer of its own.
+                if units.1 > 0 && string_identities.insert(units.0) {
                     string_buffers_bytes += units.1;
                     string_buffer_count += 1;
                 }
