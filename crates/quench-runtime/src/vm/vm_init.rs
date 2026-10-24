@@ -140,6 +140,7 @@ impl<H: Host> Vm<H> {
             inherited_field_caches: vec![],
             field_add_indices: Default::default(),
             field_add_sets: vec![],
+            keyed_adds: Box::new([FieldAddCache::EMPTY; KEYED_ADD_ENTRIES]),
             megamorphic_field_indices: Default::default(),
             field_cache_writes: Some(Vec::new()),
             megamorphic_fields: vec![],
