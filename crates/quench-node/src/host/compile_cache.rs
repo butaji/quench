@@ -124,13 +124,16 @@ pub(crate) fn remove_other_builds(builds: &std::path::Path) {
     let Ok(entries) = std::fs::read_dir(builds) else {
         return;
     };
+    // Entries are classified by their own type, never a link's target, and a build directory
+    // is removed with `remove_dir_all`, which removes links without following them: nothing
+    // outside `builds` is removed. An entry another process removes first is skipped.
     let mut kept = Vec::new();
     for entry in entries.flatten() {
-        let Ok(metadata) = entry.metadata() else {
+        let Ok(file_type) = entry.file_type() else {
             continue;
         };
-        if metadata.is_dir() {
-            if let Ok(modified) = metadata.modified() {
+        if file_type.is_dir() {
+            if let Ok(modified) = entry.metadata().and_then(|metadata| metadata.modified()) {
                 kept.push((modified, entry.path()));
             }
         } else {
@@ -217,7 +220,16 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         std::fs::write(root.join("legacy.qbc"), b"").unwrap();
+        // A link out of the cache, to a directory and to a file, loses only the link.
+        let outside = std::env::temp_dir().join(format!("quench-compile-outside-{}", std::process::id()));
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("keep"), b"").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("linked-directory")).unwrap();
+        std::os::unix::fs::symlink(outside.join("keep"), root.join("linked-file")).unwrap();
         remove_other_builds(&root);
+        assert!(outside.join("keep").exists());
+        assert!(std::fs::symlink_metadata(root.join("linked-directory")).is_err());
+        std::fs::remove_dir_all(&outside).unwrap();
         let kept = builds.iter().filter(|build| build.exists()).collect::<Vec<_>>();
         assert_eq!(kept, builds.iter().rev().take(KEPT_BUILDS).rev().collect::<Vec<_>>());
         assert!(!root.join("legacy.qbc").exists());
