@@ -122,3 +122,12 @@ babel-wtb's peak is now its bundle's compilation at load (78 MiB at 640 ms; stea
 65 MiB): the OXC tree of the 5.6 MB source is 36.6 MB of it (VmRSS by compile phase: start
 16.5, parsed 53.1, semantic 61.2, emitted 66.1, tree dropped 29.7 MB). Scores are within the
 host's noise (babel median 9.06 → 9.49 over 5 paired rounds; callgrind −2.6% instructions).
+
+## Paired sweep at ad48589e4 (2026-10-24)
+
+Same method and host, nothing else running. Raw rows `paired-ad48589e-raw.txt`, ratios
+`paired-ad48589e-ratios.txt`. Geomean score **0.839×** Bun no-JIT (3a7eaaf0f: 0.845), max RSS
+**1.59×** smaller (1.58); 8/34 tests at ≥1.2× score, 27/34 at ≥1.2× smaller RSS (babel-minify
+1.20 joins). Both engines scored lower than in the 3a7eaaf0f run (Bun web-ssr 68.4 → 62.8,
+doxbee-async 150.0 → 136.5), so the score ratios are within that run's spread. RSS:
+babel 1.08 → 1.15, postcss 1.12 → 1.18, babel-minify 1.15 → 1.20.
