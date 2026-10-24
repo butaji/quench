@@ -1491,7 +1491,7 @@ pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RegisterRoots {
     covered: bool,
-    masks: std::cell::OnceCell<Box<[crate::compile::liveness::RegisterSet]>>,
+    masks: std::cell::OnceCell<crate::compile::liveness::RegisterMasks>,
 }
 
 impl RegisterRoots {
@@ -1506,7 +1506,7 @@ impl RegisterRoots {
     /// The masks a collection derived so far; none until one finds the function running.
     #[cfg(feature = "profile-memory")]
     pub(crate) fn capacity_bytes(&self) -> usize {
-        self.masks.get().map_or(0, |masks| size_of_val::<[crate::compile::liveness::RegisterSet]>(masks))
+        self.masks.get().map_or(0, crate::compile::liveness::RegisterMasks::bytes)
     }
 }
 
@@ -3296,12 +3296,12 @@ impl ResidualProgram {
 
     /// The registers live at `pc` in `function`, when liveness covers it.
     pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<crate::compile::liveness::RegisterSet> {
-        self.register_root_masks(function)?.get(pc).copied()
+        self.register_root_masks(function)?.get(pc)
     }
 
     /// `function`'s live register masks by pc, one past its last instruction included, when
     /// liveness covers it.
-    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&[crate::compile::liveness::RegisterSet]> {
+    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&crate::compile::liveness::RegisterMasks> {
         let function = self.function_get(function as usize)?;
         if !function.register_roots.covered {
             return None;
@@ -3316,8 +3316,8 @@ impl ResidualProgram {
                     &self.field_sites,
                     &self.superinstructions,
                 )
+                .map(crate::compile::liveness::RegisterMasks::new)
                 .expect("a covered function's liveness is derivable")
-                .into_boxed_slice()
             });
         Some(masks)
     }
