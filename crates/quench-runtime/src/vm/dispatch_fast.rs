@@ -9898,8 +9898,24 @@ fn lane_function_call_activation<H: Host>(
     args: &[Value],
 ) -> Result<(Registers, Ip), Ip> {
     let vm = unsafe { vm(cx) };
-    // A callee of another program activates as `lane_script_call_cross` activates one: a plain
-    // activation its cross-program cache holds, which `lane_script_target`'s resolution fills.
+    let Some(target) = lane_passed_target(cx, callee, args.len()) else {
+        return Err(lane_forwarded_frame_call(cx, r, ip, i, callee, receiver, args));
+    };
+    // `call_this_value` without its boxing of primitives, which allocates.
+    let Some(this) = lane_call_this(vm, &target, receiver) else {
+        return Err(exit(ip));
+    };
+    lane_activate_passed(cx, r, ip, &target, args, this)
+}
+
+/// The frameless target a forwarded or applied call of `callee` with `passed` values
+/// activates: one of the running program (`lane_script_target`), another program's plain,
+/// keeping or environment activation (`cross_call_entry`), or the running program's
+/// environment target, which `lane_script_target` leaves to plain calls; an environment
+/// target only when it binds each value to a parameter (`lane_activate_environment`).
+#[inline(never)]
+fn lane_passed_target<H: Host>(cx: *mut LaneContext<H>, callee: Value, passed: usize) -> Option<ScriptCallTarget> {
+    let vm = unsafe { vm(cx) };
     let target = lane_script_target(cx, callee)
         .or_else(|| {
             if lane_constructing(vm, callee) {
@@ -9911,36 +9927,37 @@ fn lane_function_call_activation<H: Host>(
                 target.entry.activates_across() || target.entry == CallEntry::Environment
             })
         })
-        // The running program's environment target, which `lane_script_target` leaves to
-        // plain calls.
         .or_else(|| {
             vm.script_call_target(callee).filter(|target| {
                 target.entry == CallEntry::Environment && target.program == vm.active_program
             })
-        });
-    let Some(target) = target else {
-        return Err(lane_forwarded_frame_call(cx, r, ip, i, callee, receiver, args));
-    };
-    // `call_this_value` without its boxing of primitives, which allocates.
-    let Some(this) = lane_call_this(vm, &target, receiver) else {
-        return Err(exit(ip));
-    };
-    if target.entry == CallEntry::Environment {
-        // An environment activation binds each value passed to a parameter
-        // (`lane_activate_environment`).
-        let code = vm.programs.residual(target.program).map(std::ptr::from_ref);
-        // SAFETY: the program store keeps the residual for the lane run.
-        if code.is_some_and(|code| {
-            args.len() > usize::from(target.params) && !unsafe { &*code }.function(target.function as usize).rest
-        }) {
-            return Err(lane_forwarded_frame_call(cx, r, ip, i, callee, receiver, args));
-        }
-        return lane_activate_environment(cx, r, ip, &target, args, this);
+        })?;
+    if target.entry == CallEntry::Environment
+        && passed > usize::from(target.params)
+        && !vm.programs.residual(target.program)?.function(target.function as usize).rest
+    {
+        return None;
     }
-    let arguments = ActivationArguments::Kept(args.as_ptr(), args.len());
-    // The target may be another program's (`cross_call_entry`), which the activation enters
-    // and completes as `Completion::Cross`.
-    lane_activate_keeping::<H, true>(cx, r, ip, target, arguments, this, false, None)
+    Some(target)
+}
+
+/// The activation of a `lane_passed_target` with receiver `this` and the `passed` values:
+/// an environment activation, or a keeping one, which keeps them and may enter another
+/// program (`Completion::Cross`).
+#[inline(always)]
+fn lane_activate_passed<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    passed: &[Value],
+    this: Value,
+) -> Result<(Registers, Ip), Ip> {
+    if target.entry == CallEntry::Environment {
+        return lane_activate_environment(cx, r, ip, target, passed, this);
+    }
+    let arguments = ActivationArguments::Kept(passed.as_ptr(), passed.len());
+    lane_activate_keeping::<H, true>(cx, r, ip, *target, arguments, this, false, None)
 }
 
 /// `lane_function_call` of a forwarded `callee` with no frameless target: a user function
@@ -10121,14 +10138,8 @@ fn lane_list_activation<H: Host>(
     if listed && !dense(vm) {
         return None;
     }
-    let target = lane_script_target(cx, callee).or_else(|| {
-        if lane_constructing(vm, callee) {
-            return None;
-        }
-        // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
-        Some(unsafe { *vm.cross_call_entry(callee)? }).filter(|target| target.entry.activates_across())
-    });
-    let Some(target) = target else {
+    let length = if listed { vm.heap.array(list).map_or(0, |array| array.elements().len()) } else { 0 };
+    let Some(target) = lane_passed_target(cx, callee, length) else {
         // A user function that needs a frame takes it in place (`lane_passed_frame_call`), with
         // the elements copied out first: making the caller's
         // activations frames moves no heap array, but the callee may change the list.
@@ -10144,8 +10155,7 @@ fn lane_list_activation<H: Host>(
     };
     // Read after the resolution above, which runs no guest code but may allocate.
     let elements: &[Value] = if listed { vm.heap.array_elements(list)?.as_slice() } else { &[] };
-    let arguments = ActivationArguments::Kept(elements.as_ptr(), elements.len());
-    Some(lane_activate_keeping::<H, true>(cx, r, ip, target, arguments, this, false, None))
+    Some(lane_activate_passed(cx, r, ip, &target, elements, this))
 }
 
 script_handler! {
@@ -11662,7 +11672,7 @@ fn lane_activate_environment<H: Host>(
     // which the rest parameter's local holds (`lane_activate_keeping` gathers likewise).
     let gathered = rest.then(|| {
         let fixed = usize::from(target.params) - 1;
-        vm.rest_parameter_array(&passed[fixed..])
+        vm.rest_parameter_array(passed.get(fixed..).unwrap_or_default())
     });
     // SAFETY: the program store keeps a derived view alive with its program, and an
     // environment target's view has a window (`ScriptCallTarget::entry`).
