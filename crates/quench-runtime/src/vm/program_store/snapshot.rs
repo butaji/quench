@@ -18,6 +18,7 @@ impl ProgramStore {
             unchecked_reclaimable,
             // Compiled code is never in a snapshot: its budgets and memos start over.
             js_jit_tracked_functions: _,
+            js_jit_tracking_exhaustions: _,
             js_jit_rejected_functions: _,
             jit_code_cache: _,
             js_jit_diagnostics: _,
