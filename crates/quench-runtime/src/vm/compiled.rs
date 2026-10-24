@@ -9305,16 +9305,77 @@ impl<H: Host> Vm<H> {
         legacy_candidate || js_general_dispatch_candidate(program, body)
     }
 
+    /// Whether the general tier holds `function`: pending, due or compiled.
+    pub(super) fn js_tier_holds_for_general(&self, id: ProgramId, function: u32) -> bool {
+        match self.programs.js_tier(id, function) {
+            Some(
+                super::program_store::JsTierState::GeneralPromotionPending { .. }
+                | super::program_store::JsTierState::GeneralCompileDue,
+            ) => true,
+            Some(super::program_store::JsTierState::Compiled(compiled)) => compiled.is_general_dispatch(),
+            _ => false,
+        }
+    }
+
     /// Whether a lane-entered frame must hand control to the general frame
     /// loop so a pending or installed generic native region can run there.
     pub(super) fn js_tier_needs_general_entry(&self, id: ProgramId, function: u32) -> bool {
         match self.programs.js_tier(id, function) {
-            Some(super::program_store::JsTierState::GeneralPromotionPending { .. }) => true,
+            Some(super::program_store::JsTierState::GeneralCompileDue) => true,
             Some(super::program_store::JsTierState::Compiled(compiled)) => {
                 compiled.is_general_dispatch()
             }
             _ => false,
         }
+    }
+
+    /// Notes an entry of `function` with the general tier where the tier observes it: a
+    /// general candidate, and for a legacy candidate only once its numeric profile has
+    /// declined. Returns whether it is a general candidate and whether the general baseline
+    /// is due to run or compile at this entry (`ProgramStore::note_js_general_dispatch_entry`).
+    fn js_tier_note_general_entry(
+        &mut self,
+        program: &ResidualProgram,
+        program_id: ProgramId,
+        function: u32,
+    ) -> (bool, bool) {
+        let general_candidate = program.function_get(function as usize).is_some_and(|body| {
+            if !js_general_dispatch_candidate(program, body) {
+                return false;
+            }
+            if !super::js_compiled::function_candidate(body, program) {
+                return true;
+            }
+            if js_general_dispatch_acyclic_candidate(program, body) {
+                return true;
+            }
+            match self.programs.js_tier(program_id, function) {
+                Some(
+                    super::program_store::JsTierState::GeneralPromotionPending { .. }
+                    | super::program_store::JsTierState::GeneralCompileDue
+                    | super::program_store::JsTierState::Rejected { .. },
+                ) => true,
+                Some(super::program_store::JsTierState::Compiled(compiled)) => {
+                    compiled.is_general_dispatch()
+                }
+                _ => false,
+            }
+        });
+        let Some(body) = program.function_get(function as usize).filter(|_| general_candidate) else {
+            return (false, false);
+        };
+        let observes = !super::js_compiled::function_candidate(body, program)
+            || matches!(
+                self.programs.js_tier(program_id, function),
+                Some(
+                    super::program_store::JsTierState::Rejected { .. }
+                        | super::program_store::JsTierState::GeneralPromotionPending { .. }
+                        | super::program_store::JsTierState::GeneralCompileDue
+                )
+            );
+        // The tier manager prices the baseline against the entries so far.
+        let due = observes && self.programs.note_js_general_dispatch_entry(program_id, function, body.code.len());
+        (true, due)
     }
 
     /// The JavaScript tier at the entry of a frameless lane activation of `function`, as
@@ -9409,27 +9470,6 @@ impl<H: Host> Vm<H> {
         }
         let function = self.frames[frame].function;
         let program_id = self.frames[frame].program;
-        let general_candidate = program.function_get(function as usize).is_some_and(|body| {
-            if !js_general_dispatch_candidate(program, body) {
-                return false;
-            }
-            if !super::js_compiled::function_candidate(body, program) {
-                return true;
-            }
-            if js_general_dispatch_acyclic_candidate(program, body) {
-                return true;
-            }
-            match self.programs.js_tier(program_id, function) {
-                Some(
-                    super::program_store::JsTierState::GeneralPromotionPending { .. }
-                    | super::program_store::JsTierState::Rejected { .. },
-                ) => true,
-                Some(super::program_store::JsTierState::Compiled(compiled)) => {
-                    compiled.is_general_dispatch()
-                }
-                _ => false,
-            }
-        });
         let entry = self.frames.get(frame).filter(|record| record.pc == 0).and_then(|record| {
             let params = program.function_get(record.function as usize)?.params;
             Some(TierEntry {
@@ -9441,25 +9481,7 @@ impl<H: Host> Vm<H> {
                 allocates: true,
             })
         });
-        let legacy_candidate = program
-            .function_get(function as usize)
-            .is_some_and(|body| super::js_compiled::function_candidate(body, program));
-        let state = self.programs.js_tier(program_id, function);
-        let observes_general = general_candidate
-            && (!legacy_candidate
-                || matches!(
-                    state,
-                    Some(
-                        super::program_store::JsTierState::Rejected { .. }
-                            | super::program_store::JsTierState::GeneralPromotionPending { .. }
-                    )
-                ));
-        // The tier manager prices the baseline against the entries so far.
-        let promote_general = observes_general
-            && program.function_get(function as usize).is_some_and(|body| {
-                self.programs
-                    .note_js_general_dispatch_entry(program_id, function, body.code.len())
-            });
+        let (general_candidate, promote_general) = self.js_tier_note_general_entry(program, program_id, function);
         if let Some((return_pc, return_register, value)) = entry
             .as_ref()
             .and_then(|entry| self.js_jit_at_entry(program, entry))
@@ -10112,7 +10134,8 @@ impl<H: Host> Vm<H> {
             Some(
                 super::program_store::JsTierState::Unsupported
                 | super::program_store::JsTierState::Rejected { .. }
-                | super::program_store::JsTierState::GeneralPromotionPending { .. },
+                | super::program_store::JsTierState::GeneralPromotionPending { .. }
+                | super::program_store::JsTierState::GeneralCompileDue,
             ) => return None,
             Some(super::program_store::JsTierState::Hot { .. })
             | Some(super::program_store::JsTierState::PromotionPending)

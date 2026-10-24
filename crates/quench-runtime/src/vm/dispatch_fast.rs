@@ -10878,8 +10878,10 @@ fn lane_tier_enter<H: Host>(
         }
         return Some(entered);
     }
-    if !vm.js_tier_may_claim(code, program, function)
-        && let Some(own) = own
+    // The general baseline runs only from a VM frame (`Vm::js_tier_frame_entry`), so a
+    // function the general tier holds gains nothing from frameless claims either.
+    if let Some(own) = own
+        && (vm.js_tier_holds_for_general(program, function) || !vm.js_tier_may_claim(code, program, function))
     {
         own.release_from_tier();
     }

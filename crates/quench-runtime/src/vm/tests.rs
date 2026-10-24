@@ -10720,7 +10720,10 @@ fn js_jit_compiles_forward_numeric_decision_trees() {
         Some(super::program_store::JsTierState::PromotionPending) => {
             panic!("the Number decision tree remained promotion-pending");
         }
-        Some(super::program_store::JsTierState::GeneralPromotionPending { .. }) => {
+        Some(
+            super::program_store::JsTierState::GeneralPromotionPending { .. }
+            | super::program_store::JsTierState::GeneralCompileDue,
+        ) => {
             panic!("the numeric decision tree was sent to the general baseline");
         }
         Some(super::program_store::JsTierState::Unsupported) => {
@@ -10760,7 +10763,10 @@ fn js_jit_compiles_forward_numeric_decision_trees() {
         Some(super::program_store::JsTierState::PromotionPending) => {
             panic!("the Number join remained promotion-pending");
         }
-        Some(super::program_store::JsTierState::GeneralPromotionPending { .. }) => {
+        Some(
+            super::program_store::JsTierState::GeneralPromotionPending { .. }
+            | super::program_store::JsTierState::GeneralCompileDue,
+        ) => {
             panic!("the numeric join was sent to the general baseline");
         }
         Some(super::program_store::JsTierState::Unsupported) => {
@@ -12324,6 +12330,7 @@ fn js_jit_general_baseline_waits_until_entries_pay_for_its_compile() {
         let mut interpreter = Vm::new(TestHost::default());
         interpreter.execute(&program).unwrap();
         let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_general_dispatch();
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
         vm.execute(&program).unwrap();
         let name = interpreter.intern_atom("last");
