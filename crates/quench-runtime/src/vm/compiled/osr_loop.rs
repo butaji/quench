@@ -79,6 +79,8 @@ pub(crate) enum Widening {
     Register(Register),
     /// A capture, by its index in the region's capture order.
     Capture(u16),
+    /// A Number field, by its index in the region's fields (`LoopRegion::fields`).
+    Field(u16),
     /// The elements the region reads from the array in this register.
     Elements(Register),
     /// A register the region never writes, held as exactly 1 so that multiplying or
@@ -90,7 +92,8 @@ pub(crate) enum Widening {
 const WIDEN_REGISTER: u64 = 1 << u16::BITS;
 const WIDEN_CAPTURE: u64 = WIDEN_REGISTER << 1;
 const WIDEN_UNIT: u64 = WIDEN_CAPTURE << 1;
-const _: () = assert!(WIDEN_UNIT <= u32::MAX as u64);
+const WIDEN_FIELD: u64 = WIDEN_UNIT << 1;
+const _: () = assert!(WIDEN_FIELD <= u32::MAX as u64);
 const WIDEN_PAYLOAD: u64 = WIDEN_REGISTER - 1;
 
 impl Widening {
@@ -101,6 +104,7 @@ impl Widening {
             Self::Register(register) => (WIDEN_REGISTER | u64::from(register)) as u32,
             Self::Capture(index) => (WIDEN_CAPTURE | u64::from(index)) as u32,
             Self::Unit(register) => (WIDEN_UNIT | u64::from(register)) as u32,
+            Self::Field(index) => (WIDEN_FIELD | u64::from(index)) as u32,
             Self::Elements(_) => 0,
         }
     }
@@ -113,6 +117,8 @@ impl Widening {
             Some(Self::Capture(payload))
         } else if word & WIDEN_UNIT != 0 {
             Some(Self::Unit(payload))
+        } else if word & WIDEN_FIELD != 0 {
+            Some(Self::Field(payload))
         } else {
             None
         }
@@ -1059,13 +1065,12 @@ impl LoopEntry {
     }
 
     /// The value of the region's `index`th field as pushed: its word follows the captures
-    /// and the fields before it. A Number field reads back as its double's Number.
+    /// and the fields before it.
     pub(crate) fn field_value(&self, region: &LoopRegion, index: usize) -> Value {
         let word = ENTRY_CAPTURES + region.captures.len() + index;
         debug_assert!(word < self.length);
         // SAFETY: the caller pushed the field, after the captures and the fields before it.
-        let bits = unsafe { self.words[word].assume_init() };
-        if region.fields[index].tagged { Value::from_bits(bits) } else { Value::number(f64::from_bits(bits)) }
+        Value::from_bits(unsafe { self.words[word].assume_init() })
     }
 
     /// An inlining region's last word: its scratch registers' address.
@@ -1084,9 +1089,10 @@ impl LoopEntry {
         Value::from_bits(unsafe { self.scratch[usize::from(register - inlining.caller_registers)].assume_init() })
     }
 
+    /// A field's value; a Number field's must be a Number.
     pub(crate) fn push_field(&mut self, value: Value, tagged: bool) -> Option<()> {
-        let bits = if tagged { value.to_bits() } else { value.as_number()?.to_bits() };
-        self.push(bits);
+        (tagged || value.as_number().is_some()).then_some(())?;
+        self.push(value.to_bits());
         Some(())
     }
 }
@@ -1493,7 +1499,15 @@ pub(crate) struct Observation<'a> {
     /// Whether the array in a register looks to hold `i32` elements.
     pub(crate) int32_elements: &'a dyn Fn(Register) -> bool,
     pub(crate) captures: &'a [Value],
+    /// The fields' values at the entry the compilation follows, in the region's order.
+    pub(crate) fields: &'a [Value],
     pub(crate) widened: &'a std::collections::BTreeSet<Widening>,
+}
+
+/// How native code holds the values the entry record carries, by their record order.
+struct EntryRepresentations {
+    captures: Vec<Representation>,
+    fields: Vec<Representation>,
 }
 
 /// A definition of a Number register in a region: the value it holds at entry, by its
@@ -1692,15 +1706,16 @@ fn int32_number(number: f64) -> bool {
     Value::number(number).as_int().is_some()
 }
 
-/// Each web's and capture's representation: an `i32` where every definition in the web
-/// yields one (an entry value observed as one, an instruction's result from `i32` operands)
-/// and no widening names its register; the least fixpoint from that start, widening a web
-/// any definition gives an `f64`. Indexed by definition, meaningful at each web's root.
+/// Each web's, capture's and field's representation: an `i32` where every definition in
+/// the web yields one (an entry value observed as one, an instruction's result from `i32`
+/// operands) and no widening names it; the least fixpoint from that start, widening a web
+/// any definition gives an `f64`. Webs are indexed by definition, meaningful at each web's
+/// root.
 fn representations(
     region: &LoopRegion,
     webs: &Webs,
     observation: &Observation<'_>,
-) -> (Vec<Representation>, Vec<Representation>) {
+) -> (Vec<Representation>, EntryRepresentations) {
     let of = |value: Value, widening: Widening| {
         if value.as_int().is_some() && !observation.widened.contains(&widening) {
             Representation::Int32
@@ -1714,6 +1729,19 @@ fn representations(
             of(value, Widening::Capture(index as u16))
         })
         .collect();
+    let fields: Vec<Representation> = region
+        .fields
+        .iter()
+        .enumerate()
+        .map(|(index, field)| {
+            if field.tagged {
+                return Representation::Tagged;
+            }
+            let value = observation.fields.get(index).copied().unwrap_or(Value::UNDEFINED);
+            of(value, Widening::Field(index as u16))
+        })
+        .collect();
+    let entry = EntryRepresentations { captures, fields };
     let mut webs_representation = vec![Representation::Int32; webs.parent.len()];
     for (entry, register) in region.entry_registers().enumerate() {
         let representation = if region.tagged.contains(&register) {
@@ -1731,7 +1759,7 @@ fn representations(
             let pc = region.header + offset as u32;
             let read = |register: Register| webs_representation[webs.read(region, pc, register)];
             let Some((register, representation)) =
-                definition(region, instruction, &read, &captures, observation)
+                definition(region, offset as u32, instruction, &read, &entry, observation)
             else {
                 continue;
             };
@@ -1754,7 +1782,7 @@ fn representations(
             }
         }
         if !changed {
-            return (webs_representation, captures);
+            return (webs_representation, entry);
         }
     }
 }
@@ -1762,9 +1790,10 @@ fn representations(
 /// The register an instruction defines and the representation its result has.
 fn definition(
     region: &LoopRegion,
+    offset: u32,
     instruction: &WideInstruction,
     registers: &dyn Fn(Register) -> Representation,
-    captures: &[Representation],
+    entry: &EntryRepresentations,
     observation: &Observation<'_>,
 ) -> Option<(Register, Representation)> {
     if let Some(result) = instruction.defined_register()
@@ -1798,7 +1827,7 @@ fn definition(
         Op::LoadCapture => {
             let slot = instruction.capture_slot();
             let index = region.captures.iter().position(|capture| *capture == slot)?;
-            captures[index]
+            entry.captures[index]
         }
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
             match arithmetic(instruction.op(), instruction.binary_operator())? {
@@ -1815,7 +1844,7 @@ fn definition(
             Unary::BitwiseNot => Representation::Int32,
         },
         Op::GetIndex => element_representation(instruction, observation),
-        Op::GetField => Representation::Float64,
+        Op::GetField => entry.fields[*region.field_reads.get(&offset)?],
         _ => return None,
     };
     Some((instruction.result_register(), representation))
@@ -2256,8 +2285,8 @@ pub(super) fn lower(
         signature,
     );
     let webs = webs(region);
-    let (representations, captures) = representations(region, &webs, observation);
-    let counted = counted_loops(region, &webs, &representations, &captures);
+    let (representations, entry) = representations(region, &webs, observation);
+    let counted = counted_loops(region, &webs, &representations, &entry.captures);
     let mut context = FunctionBuilderContext::new();
     let builder = FunctionBuilder::new(&mut native, &mut context);
     let widenings = Lowering::new(
@@ -2267,7 +2296,7 @@ pub(super) fn lower(
         pointer,
         webs,
         representations,
-        captures,
+        entry,
         counted,
         poll,
         track_backedges,
@@ -2307,7 +2336,7 @@ struct Lowering<'a, 'b> {
     captures: Vec<Typed>,
     /// Numeric cached field values, loaded from the guarded entry record.
     fields: Vec<Typed>,
-    capture_representations: Vec<Representation>,
+    entry_representations: EntryRepresentations,
     blocks: Vec<ir::Block>,
     /// The region's counted loops; each has a preheader block, which every arrival at its
     /// header from outside it takes, and a proved copy of its body's blocks.
@@ -2392,7 +2421,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         pointer: ir::Type,
         webs: Webs,
         representations: Vec<Representation>,
-        capture_representations: Vec<Representation>,
+        entry_representations: EntryRepresentations,
         counted: Vec<CountedLoop>,
         poll: Option<i64>,
         track_backedges: bool,
@@ -2433,7 +2462,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             units,
             captures: Vec::new(),
             fields: Vec::new(),
-            capture_representations,
+            entry_representations,
             blocks,
             counted,
             preheaders,
@@ -2714,22 +2743,21 @@ impl<'a, 'b> Lowering<'a, 'b> {
         }
         for index in 0..self.region.captures.len() {
             let bits = self.word(ENTRY_CAPTURES + index);
-            let representation = self.capture_representations[index];
+            let representation = self.entry_representations.captures[index];
             let otherwise = self.not_entered(Some(Widening::Capture(index as u16)));
             let value = self.unbox(bits, representation, otherwise);
             self.captures.push(Typed { value, representation });
         }
         for index in 0..self.region.fields.len() {
             let bits = self.word(fields_start + index);
-            let value = if self.region.fields[index].tagged {
-                Typed { value: bits, representation: Representation::Tagged }
+            let representation = self.entry_representations.fields[index];
+            let value = if representation == Representation::Tagged {
+                bits
             } else {
-                Typed {
-                    value: self.body.builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits),
-                    representation: Representation::Float64,
-                }
+                let otherwise = self.not_entered(Some(Widening::Field(index as u16)));
+                self.unbox(bits, representation, otherwise)
             };
-            self.fields.push(value);
+            self.fields.push(Typed { value, representation });
         }
         if let Some(inlining) = &self.region.inlining {
             // The scratch registers' address follows the arrays; each inlined callee is still
