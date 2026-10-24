@@ -603,9 +603,9 @@ pub(crate) struct ProgramStore {
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
     /// Whether ordinary JS functions promote to the general native dispatch tier
-    /// (`note_js_general_dispatch_entry`). Off unless `QUENCH_JS_JIT_GENERAL_DISPATCH=1`:
-    /// a fixed entry count promoted short runs into compile cost (npm p51, TOD-138) until
-    /// promotion weighs size and compile cost.
+    /// (`note_js_general_dispatch_entry`). Off unless `QUENCH_JS_JIT_GENERAL_DISPATCH=1`;
+    /// the memory policy still decides whether the tier compiles
+    /// (`general_dispatch_compiles`).
     js_jit_general_dispatch_enabled: bool,
     js_jit_dataview_float64_enabled: bool,
     js_jit_dataview_float64_get_entries: u64,
@@ -1507,6 +1507,12 @@ impl ProgramStore {
 
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {
         self.js_jit_diagnostics.is_some()
+    }
+
+    /// Whether the general baseline tier's switch is on. The memory policy's own
+    /// admission (`general_dispatch_compiles`) applies on top of this switch.
+    pub(super) fn js_general_dispatch_enabled(&self) -> bool {
+        self.js_jit_general_dispatch_enabled
     }
 
     pub(super) fn js_jit_dataview_float64_enabled(&self) -> bool {

@@ -14604,3 +14604,31 @@ fn set_iteration_copies_only_while_the_intrinsics_iterate() {
         Vm::new(TestHost::default()).execute(&program).unwrap();
     }
 }
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_tier_claims_general_candidates_only_when_the_tier_is_admitted() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "function build(seed) { return { value: seed, tag: 'x' }; } build(1);",
+        "js-tier-claim-admission.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    let id = vm.programs.insert(program.clone()).unwrap();
+    let general_only = (0..program.functions.len())
+        .find_map(|function| {
+            let facts = vm.programs.js_entry_facts(id, function as u32)?;
+            (facts.general && !facts.candidate).then_some(function as u32)
+        })
+        .expect("fixture must contain a general-only function");
+    assert!(
+        !vm.js_tier_may_claim(&program, id, general_only),
+        "a general-only function must not pay the claim while the general tier is off"
+    );
+    vm.programs.enable_js_general_dispatch();
+    assert!(
+        vm.js_tier_may_claim(&program, id, general_only),
+        "the admitted general tier claims its candidates"
+    );
+}

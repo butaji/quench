@@ -9799,7 +9799,18 @@ impl<H: Host> Vm<H> {
         // Keep bounded candidates on a frame entry until the shared tier has
         // settled. Lane target caches otherwise preserve a frameless route
         // across the later promotion and no longer consult tiering.
-        facts.candidate || facts.general
+        //
+        // A claim is only useful when a tier can take the activation: a
+        // specialized candidate, or the general baseline where its own
+        // admission admits it under this memory policy. A general-only
+        // function must not pay the tier prologue while that tier is off.
+        if facts.candidate {
+            return true;
+        }
+        facts.general
+            && (self.js_tier_holds_for_general(id, function)
+                || (self.programs.js_general_dispatch_enabled()
+                    && super::compiled::general_dispatch_compiles(self.memory_policy())))
     }
 
     /// Whether the general tier holds `function`: pending, due or compiled.
