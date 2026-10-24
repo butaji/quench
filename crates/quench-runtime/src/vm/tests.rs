@@ -13210,6 +13210,95 @@ fn js_jit_general_dispatch_speculates_number_relations_and_falls_back_exactly() 
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_reads_live_dense_array_elements_and_falls_back_exactly() {
+    let source = r#"
+      function readIndex(array, key) { return array[key]; }
+      const first = [10, 20];
+      const second = [30, 40];
+      for (let index = 0; index < 48; index++) {
+        const array = index % 2 === 0 ? first : second;
+        if (readIndex(array, 0) !== (index % 2 === 0 ? 10 : 30)) throw Error('alternating receiver');
+      }
+
+      const copy = first.slice();
+      copy[0] = 11;
+      if (readIndex(copy, 0) !== 11 || readIndex(first, 0) !== 10) throw Error('copy-on-write backing');
+      first[1] = 21;
+      if (readIndex(first, 1) !== 21) throw Error('live backing value');
+
+      let getterCalls = 0;
+      const inherited = [1, 2];
+      delete inherited[1];
+      Object.setPrototypeOf(inherited, { get 1() { getterCalls++; return 50; } });
+      if (readIndex(inherited, 1) !== 50 || getterCalls !== 1) throw Error('hole prototype getter');
+
+      let proxyCalls = 0;
+      const proxy = new Proxy([60], { get(target, key, receiver) {
+        if (key === '0') proxyCalls++;
+        return Reflect.get(target, key, receiver);
+      } });
+      if (readIndex(proxy, 0) !== 60 || proxyCalls !== 1) throw Error('proxy fallback');
+
+      let coercions = 0;
+      const key = { toString() { coercions++; return '0'; } };
+      if (readIndex(second, key) !== 30 || coercions !== 1) throw Error('key coercion fallback');
+
+      let accessorCalls = 0;
+      const accessor = [];
+      Object.defineProperty(accessor, 0, { get() { accessorCalls++; return 70; } });
+      if (readIndex(accessor, 0) !== 70 || accessorCalls !== 1) throw Error('accessor fallback');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-dense-array-index.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "readIndex")
+        })
+        .unwrap() as u32;
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("readIndex should use the general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let body = program.function(function as usize);
+    let get_index_pcs = body
+        .code
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, packed)| {
+            (super::dispatch_fast::decoded_instruction(body, *packed).op()
+                == crate::bytecode::Op::GetIndex)
+                .then_some(pc)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(get_index_pcs.len(), 1);
+    assert!(native.general_dispatch_pc_is_native(get_index_pcs[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
     let source = r#"
       const captured = { value: 2 };
