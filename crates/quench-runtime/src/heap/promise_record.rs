@@ -20,12 +20,40 @@ pub(crate) enum PromiseState {
     Rejected,
 }
 
+/// An `Option<HostExecutionContext>` a promise record keeps in one word, where the option's
+/// tag would take a second: hosts number their contexts below `NO_HOST_CONTEXT`
+/// (`Host::create_promise_context`, `Host::capture_job_context`), which stands for none. A
+/// promise and each of its reactions keep one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StoredHostContext(u64);
+
+/// The `StoredHostContext` of no context; hosts never number one so.
+const NO_HOST_CONTEXT: u64 = u64::MAX;
+
+impl StoredHostContext {
+    pub(crate) fn get(self) -> Option<HostExecutionContext> {
+        (self.0 != NO_HOST_CONTEXT).then_some(HostExecutionContext(self.0))
+    }
+}
+
+impl From<Option<HostExecutionContext>> for StoredHostContext {
+    fn from(context: Option<HostExecutionContext>) -> Self {
+        match context {
+            Some(HostExecutionContext(number)) => {
+                assert_ne!(number, NO_HOST_CONTEXT, "host contexts are numbered below NO_HOST_CONTEXT");
+                Self(number)
+            }
+            None => Self(NO_HOST_CONTEXT),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PromiseReaction {
     pub(crate) on_fulfilled: Value,
     pub(crate) on_rejected: Value,
     pub(crate) next: Value,
-    pub(crate) execution_context: Option<HostExecutionContext>,
+    pub(crate) execution_context: StoredHostContext,
 }
 /// A pending promise's reactions. Most promises gain one `then` before they settle, which
 /// is stored inline in the record's box instead of in an allocation of its own.
@@ -39,7 +67,7 @@ pub(crate) struct PromiseRecord {
     pub(crate) rejection: PromiseRejectionState,
     /// Set once the host is told of the rejection; identifiers start at one.
     pub(crate) rejection_id: Option<std::num::NonZeroU64>,
-    pub(crate) host_context: Option<HostExecutionContext>,
+    pub(crate) host_context: StoredHostContext,
     /// A module's async evaluation waits on this promise: settling it makes module
     /// advancement due (`PromiseRuntime::async_module_settled`).
     pub(crate) module_evaluation: bool,
@@ -78,7 +106,7 @@ impl PromiseRecord {
     /// The host job contexts its pending reactions hold, which the host releases when the
     /// promise dies with them unrun.
     pub(crate) fn reaction_job_contexts(&self) -> impl Iterator<Item = HostExecutionContext> + '_ {
-        self.reactions.iter().filter_map(|reaction| reaction.execution_context)
+        self.reactions.iter().filter_map(|reaction| reaction.execution_context.get())
     }
 }
 
@@ -96,7 +124,7 @@ impl AbandonedHostContexts {
     /// The contexts a dead promise's record held.
     pub(crate) fn abandon(&mut self, record: &PromiseRecord) {
         self.jobs.extend(record.reaction_job_contexts());
-        self.promises.extend(record.host_context);
+        self.promises.extend(record.host_context.get());
     }
 
     pub(crate) fn append(&mut self, other: Self) {
