@@ -19,6 +19,8 @@ For each of the 10 npm workloads, in both no-JIT and JIT modes, Quench must be a
 - Steps 1–3 complete. Ten generic JIT commits are synced. The runtime suite passed 942 tests. The clean production build used only general runtime training.
 - Step 4 complete: all 22 workload/mode reports are present with output parity. Node's no-JIT mode cannot run the Vite and Undici paths because Node 24.19.0 removes the required WebAssembly global under `--jitless`; those rows compare Quench and Bun.
 - Step 5 complete diagnostically: 0 of 22 rows pass both throughput gates. The throughput margins range from -3.0% to -99.4%. RSS sampling is explicitly marked diagnostic in every report and cannot qualify the memory gate yet.
-- Steps 6–7 remain. The current branch and reports must be synchronized, then optimization should focus on interpreter dispatch and function-call fallback overhead, which remain prominent in the shared-tier profiles.
+- Step 6 is complete: commit `be9bf963f` is pushed to `v2-zod`, and TOD-173 records the unmet gates.
+- Step 7 profiling narrows the next shared-tier slice: Zod, React, and Pino field-cache read probes hit 80–95% of the time, but those hits still cross the VM callback. The callback-only field candidate was rejected for lack of a reliable end-to-end gain. Implement a native site-local guard and slot read with exact-PC fallback, then screen React, Zod, and Pino before repeating the full matrix. See `profile.md`.
+- The goal remains unmet: all 22 rows fail the throughput gate, and the current RSS method is diagnostic only.
 
 See `scorecard.md` and the per-row JSON files for exact measurements and reproduction inputs.
