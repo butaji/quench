@@ -199,6 +199,28 @@ number_unary! {
     Negate => UnaryNegation, negate;
 }
 
+/// A stage supplies predicate operations for the shared JavaScript Number ToBoolean
+/// denotation. Interpreter and codegen stages use the same nonzero-and-not-NaN formula.
+pub(super) trait NumberTruthinessStage<T> {
+    type Predicate;
+
+    fn zero(&mut self) -> T;
+    fn equal(&mut self, left: T, right: T) -> Self::Predicate;
+    fn not_equal(&mut self, left: T, right: T) -> Self::Predicate;
+    fn and(&mut self, left: Self::Predicate, right: Self::Predicate) -> Self::Predicate;
+}
+
+#[inline(always)]
+pub(super) fn number_truthiness<T: Copy, S: NumberTruthinessStage<T>>(
+    stage: &mut S,
+    value: T,
+) -> S::Predicate {
+    let zero = stage.zero();
+    let nonzero = stage.not_equal(value, zero);
+    let not_nan = stage.equal(value, value);
+    stage.and(nonzero, not_nan)
+}
+
 /// The int32 operations used by JavaScript bitwise expressions. Keeping their
 /// operator mapping and operation selection in one stage lets the interpreter
 /// and native emitters share the same signed/unsigned shift decisions.
@@ -367,6 +389,35 @@ impl NumberUnaryStage<f64> for NumberF64Stage {
     }
 }
 
+impl NumberTruthinessStage<f64> for NumberF64Stage {
+    type Predicate = bool;
+
+    #[inline(always)]
+    fn zero(&mut self) -> f64 {
+        0.0
+    }
+
+    #[inline(always)]
+    fn equal(&mut self, left: f64, right: f64) -> Self::Predicate {
+        left == right
+    }
+
+    #[inline(always)]
+    fn not_equal(&mut self, left: f64, right: f64) -> Self::Predicate {
+        left != right
+    }
+
+    #[inline(always)]
+    fn and(&mut self, left: Self::Predicate, right: Self::Predicate) -> Self::Predicate {
+        left && right
+    }
+}
+
+#[inline(always)]
+pub(crate) fn number_is_truthy(value: f64) -> bool {
+    number_truthiness(&mut NumberF64Stage, value)
+}
+
 #[inline(always)]
 pub(super) fn number_unary_result(operator: u32, value: f64) -> Option<f64> {
     Some(NumberUnary::from_operator(operator)?.apply(&mut NumberF64Stage, value))
@@ -509,7 +560,7 @@ fn numeric_number_result(operator: BinaryOperator, left: f64, right: f64) -> f64
 
 #[cfg(test)]
 mod numeric_instruction_tests {
-    use super::{NumberArithmetic, NumberBitwise, NumberUnary, Op};
+    use super::{NumberArithmetic, NumberBitwise, NumberUnary, Op, number_is_truthy};
     use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
     #[test]
@@ -599,6 +650,21 @@ mod numeric_instruction_tests {
             NumberUnary::from_js_instruction(Op::Binary, UnaryOperator::UnaryNegation as u32),
             None
         );
+    }
+
+    #[test]
+    fn number_to_boolean_uses_nonzero_and_not_nan_for_both_signs_and_infinities() {
+        for (value, expected) in [
+            (0.0, false),
+            (-0.0, false),
+            (f64::NAN, false),
+            (f64::INFINITY, true),
+            (f64::NEG_INFINITY, true),
+            (f64::MIN_POSITIVE, true),
+            (-1.0, true),
+        ] {
+            assert_eq!(number_is_truthy(value), expected);
+        }
     }
 }
 
