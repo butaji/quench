@@ -4266,19 +4266,23 @@ unsafe extern "C" fn js_step_callout<H: Host>(
             .checked_add(1)
             .ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
 
-        if vm.frames[dispatch.frame].registers.len() != dispatch.register_count {
-            return Err(JsError::validation(
-                "native JS frame register layout changed".into(),
-            ));
+        let frame = &mut vm.frames[dispatch.frame];
+        if frame.registers.len() != dispatch.register_count
+            || frame.registers.as_mut_ptr() != dispatch.native_registers
+        {
+            // A prior resumable callback changed the frame storage. Leave this
+            // instruction untouched and finish through the ordinary dispatcher.
+            frame.pc = pc;
+            frame.pc_is_resume = true;
+            vm.active_registers = frame.registers.as_mut_ptr();
+            return Ok(JsCalloutStep::Stop(JsNativeStep {
+                instruction_pc: pc,
+                next_pc: pc,
+                result: Ok(super::StepResult::Continue),
+            }));
         }
-        let native_registers = unsafe {
-            std::slice::from_raw_parts(dispatch.native_registers, dispatch.register_count)
-        };
-        vm.frames[dispatch.frame]
-            .registers
-            .copy_from_slice(native_registers);
-        vm.frames[dispatch.frame].pc = pc;
-        vm.frames[dispatch.frame].pc_is_resume = false;
+        frame.pc = pc;
+        frame.pc_is_resume = false;
         if let Err(error) = vm.check_execution_interrupt() {
             return Ok(JsCalloutStep::Stop(JsNativeStep {
                 instruction_pc: pc,
@@ -4329,15 +4333,18 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                         JsError::validation("native JS field result register is invalid".into())
                     })?;
                 *destination = value;
-                let native_registers = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        dispatch.native_registers,
-                        dispatch.register_count,
-                    )
-                };
-                native_registers.copy_from_slice(&frame.registers);
                 frame.pc = next_pc;
                 frame.pc_is_resume = true;
+                if frame.registers.len() != dispatch.register_count
+                    || frame.registers.as_mut_ptr() != dispatch.native_registers
+                {
+                    vm.active_registers = frame.registers.as_mut_ptr();
+                    return Ok(JsCalloutStep::Stop(JsNativeStep {
+                        instruction_pc: pc,
+                        next_pc,
+                        result: Ok(super::StepResult::Continue),
+                    }));
+                }
                 return Ok(JsCalloutStep::Continue(next_pc));
             }
         }
@@ -4375,6 +4382,16 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                 let frame = &mut vm.frames[dispatch.frame];
                 frame.pc = next_pc;
                 frame.pc_is_resume = true;
+                if frame.registers.len() != dispatch.register_count
+                    || frame.registers.as_mut_ptr() != dispatch.native_registers
+                {
+                    vm.active_registers = frame.registers.as_mut_ptr();
+                    return Ok(JsCalloutStep::Stop(JsNativeStep {
+                        instruction_pc: pc,
+                        next_pc,
+                        result: Ok(super::StepResult::Continue),
+                    }));
+                }
                 return Ok(JsCalloutStep::Continue(next_pc));
             }
         }
@@ -4400,15 +4417,22 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                         )),
                     }));
                 }
-                let native_registers = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        dispatch.native_registers,
-                        dispatch.register_count,
-                    )
-                };
-                native_registers.copy_from_slice(&vm.frames[dispatch.frame].registers);
-                vm.frames[dispatch.frame].pc = next;
-                vm.frames[dispatch.frame].pc_is_resume = true;
+                let frame = &mut vm.frames[dispatch.frame];
+                frame.pc = next;
+                frame.pc_is_resume = true;
+                if frame.registers.len() != dispatch.register_count
+                    || frame.registers.as_mut_ptr() != dispatch.native_registers
+                {
+                    // The operation ran once. Stop native execution and resume
+                    // the interpreter at its already-computed successor.
+                    frame.js_jit_skip_entry_once = next == 0;
+                    vm.active_registers = frame.registers.as_mut_ptr();
+                    return Ok(JsCalloutStep::Stop(JsNativeStep {
+                        instruction_pc: pc,
+                        next_pc: next,
+                        result: Ok(super::StepResult::Continue),
+                    }));
+                }
                 Ok(JsCalloutStep::Continue(next))
             }
             result => Ok(JsCalloutStep::Stop(JsNativeStep {
@@ -4727,19 +4751,20 @@ impl CompiledJsFunction {
         context.program = program;
         context.callout = js_step_callout::<H> as Callout as usize;
         let dispatch_frame = unsafe { (*payload.cast::<JsStepDispatch>()).frame };
-        let mut native_registers = smallvec::SmallVec::<[Value; 32]>::new();
-        let register_count = unsafe {
-            let vm = &*vm.cast::<Vm<H>>();
-            let frame = vm.frames.get(dispatch_frame)?;
-            native_registers.extend_from_slice(&frame.registers);
-            frame.registers.len()
+        let (native_registers, register_count) = unsafe {
+            let vm = &mut *vm.cast::<Vm<H>>();
+            let frame = vm.frames.get_mut(dispatch_frame)?;
+            (frame.registers.as_mut_ptr(), frame.registers.len())
         };
         unsafe {
             let dispatch = &mut *payload.cast::<JsStepDispatch>();
-            dispatch.native_registers = native_registers.as_mut_ptr();
+            dispatch.native_registers = native_registers;
             dispatch.register_count = register_count;
         }
-        let arguments = native_registers.as_mut_ptr().cast::<u64>();
+        // The frame is the canonical tagged register home and remains rooted
+        // while native code runs. Callouts keep only this raw pointer; they
+        // must not hold a Rust slice across `Vm::step` or any re-entrant call.
+        let arguments = native_registers.cast::<u64>();
         let mut word = 0u64;
         // SAFETY: the function's bytecode, frame and adapter payload outlive
         // the native dispatch. The callout writes only `word` and its payload.
@@ -4771,10 +4796,14 @@ impl CompiledJsFunction {
             2 => {
                 let vm = unsafe { &mut *vm.cast::<Vm<H>>() };
                 let frame = vm.frames.get_mut(dispatch_frame)?;
-                if frame.registers.len() != native_registers.len() {
-                    return None;
+                if frame.registers.len() != register_count
+                    || frame.registers.as_mut_ptr() != native_registers
+                {
+                    frame.pc = word as usize;
+                    frame.pc_is_resume = true;
+                    frame.js_jit_skip_entry_once = word == 0;
+                    vm.active_registers = frame.registers.as_mut_ptr();
                 }
-                frame.registers.copy_from_slice(&native_registers);
                 Some(JsNativeDispatchResult::Resume(word as usize))
             }
             _ => None,
@@ -9192,6 +9221,10 @@ impl<H: Host> Vm<H> {
         allow_inline_calls: bool,
     ) -> JsTierFrameEntry {
         if self.execution_mode != ExecutionMode::Compiled {
+            return JsTierFrameEntry::Interpreter;
+        }
+        if self.frames[frame].js_jit_skip_entry_once {
+            self.frames[frame].js_jit_skip_entry_once = false;
             return JsTierFrameEntry::Interpreter;
         }
         if allow_inline_calls
