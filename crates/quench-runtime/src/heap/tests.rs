@@ -11,6 +11,44 @@ fn collect_minor(heap: &mut Heap, roots: impl IntoIterator<Item = Value>) -> Vec
 }
 
 #[test]
+#[cfg(not(feature = "profile-aggregate"))]
+fn direct_array_record_base_resolves_the_current_live_array_value() {
+    let mut heap = Heap::new();
+    assert!(heap.array_record_base().is_none());
+
+    let array = heap.alloc(Cell::Array {
+        object: ArrayObject::new(plain_object(), vec![Value::integer(7)]),
+    });
+    let id = array
+        .direct_array_index()
+        .expect("ordinary array uses a direct record");
+    let base = heap
+        .array_record_base()
+        .expect("direct array allocation reserves its record range");
+    // SAFETY: `array` is a live direct-array Value owned by `heap`; its ID resolves within
+    // the base returned by that same heap.
+    let record = unsafe { &*base.add(id as usize) };
+    assert!(std::ptr::eq(record, heap.array(array).expect("live array record")));
+
+    let shared_elements = heap
+        .array_elements(array)
+        .expect("array elements")
+        .clone();
+    let shared = heap.alloc(Cell::Array {
+        object: ArrayObject::new(plain_object(), shared_elements),
+    });
+    heap.array_elements_mut(array)
+        .expect("array elements")
+        .make_mut()
+        .push(Value::integer(9));
+    // Growing the elements may move the backing or keep it (the allocator decides); the
+    // record range stays put and each array sees its own elements.
+    assert_eq!(heap.array_record_base(), Some(base));
+    assert_eq!(heap.array(array).unwrap().elements().as_slice(), &[Value::integer(7), Value::integer(9)][..]);
+    assert_eq!(heap.array(shared).unwrap().elements().as_slice(), &[Value::integer(7)][..]);
+}
+
+#[test]
 fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
     let mut heap = Heap::new();
     let owner = heap.alloc(Cell::Array {

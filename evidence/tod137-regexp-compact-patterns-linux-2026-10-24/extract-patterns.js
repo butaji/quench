@@ -1,0 +1,11 @@
+const acorn=require('/home/user/quench/tests/node/deps/acorn/acorn/dist/acorn.js');
+const src=require('fs').readFileSync(process.argv[2],'utf8');
+const out=[];
+acorn.full ? 0:0;
+const walk=n=>{ if(!n||typeof n.type!=='string')return; if(n.type==='Literal'&&n.regex)out.push(n.regex);
+ if(n.type==='NewExpression'&&n.callee.name==='RegExp'&&n.arguments[0]&&n.arguments[0].type==='Literal')out.push({pattern:String(n.arguments[0].value),flags:n.arguments[1]?n.arguments[1].value:'',dyn:1});
+ for(const k in n){const v=n[k]; if(Array.isArray(v))v.forEach(walk); else if(v&&typeof v.type==='string')walk(v);} };
+walk(acorn.parse(src,{ecmaVersion:2022}));
+const uniq=new Map(out.map(r=>[r.pattern+'/'+r.flags,r]));
+console.error('total',out.length,'unique',uniq.size);
+require('fs').writeFileSync(process.argv[3],JSON.stringify([...uniq.values()]));

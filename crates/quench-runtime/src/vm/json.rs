@@ -310,8 +310,6 @@ const JSON_INLINE_NUMBER_LENGTH: usize = 64;
 /// digits gives the exact value the decimal conversion would.
 const JSON_EXACT_INTEGER_DIGITS: usize = 15;
 
-/// A code unit a JSON text is scanned in: a byte of an ASCII string, which is its UTF-16
-/// unit, or a UTF-16 unit.
 /// Whether a string's unescaped run ends at `unit`: its closing quote, an escape, or a
 /// control unit, which a JSON string may not hold unescaped.
 #[inline(always)]
@@ -330,7 +328,11 @@ const STRING_RUN_ENDS: [bool; 1 << u8::BITS] = {
     ends
 };
 
+/// A code unit a JSON text is scanned in: a byte of an ASCII string, which is its UTF-16
+/// unit, a UTF-16 unit, or a byte of UTF-8 text (`Utf8Byte`).
 trait JsonUnit: Copy {
+    /// The unit the structure reads: JSON's punctuation, literals, numbers and whitespace
+    /// are ASCII, which every form spells as its UTF-16 unit.
     fn unit(self) -> u16;
     /// `ends_string_run` of this unit.
     #[inline(always)]
@@ -338,7 +340,9 @@ trait JsonUnit: Copy {
         ends_string_run(self.unit())
     }
     /// `units` as a run of string units.
-    fn run(units: &[Self]) -> Units<'_>;
+    fn run(units: &[Self]) -> JsonStringUnits<'_>;
+    /// Appends the string units of `units`, a run no escape, quote or control unit ends.
+    fn extend_units(units: &[Self], output: &mut Vec<u16>);
 }
 
 impl JsonUnit for u8 {
@@ -349,8 +353,11 @@ impl JsonUnit for u8 {
     fn ends_string_run(self) -> bool {
         STRING_RUN_ENDS[usize::from(self)]
     }
-    fn run(units: &[u8]) -> Units<'_> {
-        Units::Ascii(units)
+    fn run(units: &[u8]) -> JsonStringUnits<'_> {
+        JsonStringUnits::Run(Units::Ascii(units))
+    }
+    fn extend_units(units: &[u8], output: &mut Vec<u16>) {
+        output.extend(units.iter().map(|&unit| u16::from(unit)));
     }
 }
 
@@ -358,31 +365,81 @@ impl JsonUnit for u16 {
     fn unit(self) -> u16 {
         self
     }
-    fn run(units: &[u16]) -> Units<'_> {
-        Units::Wide(units)
+    fn run(units: &[u16]) -> JsonStringUnits<'_> {
+        JsonStringUnits::Run(Units::Wide(units))
+    }
+    fn extend_units(units: &[u16], output: &mut Vec<u16>) {
+        output.extend_from_slice(units);
     }
 }
 
-/// A JSON string's units: a run of the text when it has no escapes, else what its escapes
-/// make.
+/// A byte of UTF-8 text, the host text of decoded text whose units are not made
+/// (`JsString::unflattened_host`), which a parse reads without making them. A byte past
+/// ASCII is part of a character only a string may hold, and no ASCII terminator falls
+/// inside one, so each run a string's terminators bound is whole UTF-8 text.
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+struct Utf8Byte(u8);
+
+impl Utf8Byte {
+    /// The bytes of `text` as UTF-8 units.
+    fn of(text: &str) -> &[Self] {
+        // SAFETY: `Utf8Byte` is a transparent `u8`.
+        unsafe { std::slice::from_raw_parts(text.as_ptr().cast::<Self>(), text.len()) }
+    }
+
+    /// The text of a run of whole UTF-8 characters.
+    fn text(units: &[Self]) -> &str {
+        // SAFETY: `Utf8Byte` is a transparent `u8`.
+        let bytes = unsafe { std::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len()) };
+        std::str::from_utf8(bytes).expect("a run bounded by ASCII terminators is whole UTF-8 text")
+    }
+}
+
+impl JsonUnit for Utf8Byte {
+    fn unit(self) -> u16 {
+        u16::from(self.0)
+    }
+    #[inline(always)]
+    fn ends_string_run(self) -> bool {
+        STRING_RUN_ENDS[usize::from(self.0)]
+    }
+    fn run(units: &[Self]) -> JsonStringUnits<'_> {
+        let text = Self::text(units);
+        if text.is_ascii() {
+            JsonStringUnits::Run(Units::Ascii(text.as_bytes()))
+        } else {
+            JsonStringUnits::Made(text.encode_utf16().collect())
+        }
+    }
+    fn extend_units(units: &[Self], output: &mut Vec<u16>) {
+        output.extend(Self::text(units).encode_utf16());
+    }
+}
+
+/// A JSON string's units: a run of the text when it has no escapes and needs no decoding,
+/// else the units its escapes or its UTF-8 make.
 enum JsonStringUnits<'a> {
     Run(Units<'a>),
-    Escaped(Vec<u16>),
+    Made(Vec<u16>),
 }
 
 impl JsonStringUnits<'_> {
     fn units(&self) -> Units<'_> {
         match self {
             Self::Run(units) => *units,
-            Self::Escaped(units) => Units::Wide(units),
+            Self::Made(units) => Units::Wide(units),
         }
     }
 }
 
-/// Parses `text` with `builder`, in the units the string holds: an ASCII string's bytes
-/// need no widening.
-fn parse_json_text<B: JsonBuilder>(text: Units<'_>, builder: &mut B) -> Result<B::Value, JsonParseError> {
-    match text {
+/// Parses `text` with `builder`, in the form the string holds: an ASCII string's bytes need
+/// no widening, and decoded text whose units are not made parses from its UTF-8.
+fn parse_json_text<B: JsonBuilder>(text: &JsString, builder: &mut B) -> Result<B::Value, JsonParseError> {
+    if let Some(host) = text.unflattened_host() {
+        return JsonParser::new(Utf8Byte::of(host)).parse(builder);
+    }
+    match text.units() {
         Units::Ascii(bytes) => JsonParser::new(bytes).parse(builder),
         Units::Wide(units) => JsonParser::new(units).parse(builder),
     }
@@ -648,7 +705,7 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
             }
             _ => return Err("expected JSON value".into()),
         };
-        Ok(builder.primitive(primitive, T::run(&self.units[start..self.index])))
+        Ok(builder.primitive(primitive, T::run(&self.units[start..self.index]).units()))
     }
 
     fn literal<B: JsonBuilder>(
@@ -678,14 +735,17 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
             && units[start + length].unit() == JSON_QUOTE
         {
             self.index = start + length + 1;
-            return Ok(JsonStringUnits::Run(T::run(&units[start..start + length])));
+            return Ok(T::run(&units[start..start + length]));
         }
         let mut output = Vec::new();
         loop {
+            let run = &units[self.index..];
+            let length = run.iter().position(|unit| unit.ends_string_run()).unwrap_or(run.len());
+            T::extend_units(&run[..length], &mut output);
+            self.index += length;
             match self.take() {
-                Some(JSON_QUOTE) => return Ok(JsonStringUnits::Escaped(output)),
+                Some(JSON_QUOTE) => return Ok(JsonStringUnits::Made(output)),
                 Some(JSON_ESCAPE) => self.escape(&mut output)?,
-                Some(unit) if unit >= JSON_UNESCAPED_START => output.push(unit),
                 _ => return Err("unterminated JSON string".into()),
             }
         }
@@ -963,11 +1023,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let text = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         let reviver = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let units = text.units();
         if !self.is_function(reviver) {
             // Nothing revisits the parse, so values go straight to the heap.
             let mut builder = JsonHeapBuilder::new(self);
-            let parsed = parse_json_text(units, &mut builder);
+            let parsed = parse_json_text(&text, &mut builder);
             let built = builder.finish(parsed);
             return match built {
                 Ok(value) => Ok(value),
@@ -980,7 +1039,7 @@ impl<H: Host> Vm<H> {
                 Err(JsonBuildError::Runtime(error)) => Err(error),
             };
         }
-        let parsed = match parse_json_text(units, &mut JsonTreeBuilder) {
+        let parsed = match parse_json_text(&text, &mut JsonTreeBuilder) {
             Ok(parsed) => parsed,
             Err(JsonParseError::Syntax(error)) => return self.syntax_error_result(p, &error),
             Err(JsonParseError::StackExhausted) => return Err(self.stack_exhaustion_error()),

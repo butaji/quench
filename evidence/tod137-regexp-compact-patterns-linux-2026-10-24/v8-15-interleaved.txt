@@ -1,0 +1,6 @@
+regexp             qv2 med 5984 max 6056 min 5856 s 2090 | qrx med 5728 max 5856 min 5668 s 2066
+regexp        jit  qv2 med 6008 max 6168 min 5908 s 2198 | qrx med 5880 max 5956 min 5668 s 2266
+crypto             qv2 med 3152 max 3272 min 2916 s 2447 | qrx med 3176 max 3304 min 3080 s 2435
+crypto        jit  qv2 med 3200 max 3360 min 2960 s 2275 | qrx med 3196 max 3272 min 3116 s 2261
+earley-boyer       qv2 med 6392 max 6600 min 6384 s 3683 | qrx med 6388 max 6516 min 6288 s 3559
+earley-boyer  jit  qv2 med 6532 max 6860 min 6380 s 3572 | qrx med 6552 max 6844 min 6408 s 3477

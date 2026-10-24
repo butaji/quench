@@ -596,6 +596,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             .is_none_or(|rest| matches!(rest.rest.argument, BindingPattern::BindingIdentifier(_)))
     }
 
+    /// Whether a list binding its names apart (`binds_parameters_directly` fails) keeps each
+    /// argument in a hidden slot a register can hold: no rest list, and patterns and defaults
+    /// that reach no parameter scope (`early::parameters_reach_no_scope`).
+    pub(super) fn arguments_promotable_apart(params: &oxc_ast::ast::FormalParameters<'_>) -> bool {
+        params.rest.is_none()
+            && super::early::parameters_reach_no_scope(params, &Self::parameter_bound_names(params))
+    }
+
     pub(super) fn has_non_simple_parameters(params: &oxc_ast::ast::FormalParameters<'_>) -> bool {
         params.rest.is_some()
             || params.items.iter().any(|item| {
