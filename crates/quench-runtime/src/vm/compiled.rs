@@ -2067,6 +2067,84 @@ pub(super) fn compile_js_general_dispatch(
             continue;
         }
 
+        // Value-producing Number relations use the same guarded tagged-number
+        // domain as arithmetic. The VM remains responsible for string order,
+        // coercion, and any effectful or throwing non-number comparisons.
+        let relation = numeric_binary
+            .then(|| {
+                super::operations::NumberRelation::from_operator(instruction.binary_operator())
+            })
+            .flatten();
+        let relation_result = numeric_binary
+            && relation.is_some()
+            && instruction.numeric_local_target().is_none()
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && register_offset(instruction.result_register()).is_some()
+            && operands.is_some_and(|(left, right)| {
+                js_tagged_operand_supported(program, left, &register_offset)
+                    && js_tagged_operand_supported(program, right, &register_offset)
+            });
+        if let (true, Some(next), Some(_relation), Some((left_operand, right_operand))) =
+            (relation_result, next, relation, operands)
+        {
+            let fallback = builder.create_block();
+            let destination = register_offset(instruction.result_register())
+                .expect("prevalidated JS relation destination");
+            let left_bits = read_js_tagged_operand(
+                &mut builder,
+                program,
+                left_operand,
+                arguments,
+                &register_offset,
+            )
+            .expect("prevalidated JS relation left operand");
+            let left = emit_js_tagged_number(&mut builder, left_bits, fallback);
+            let right_bits = read_js_tagged_operand(
+                &mut builder,
+                program,
+                right_operand,
+                arguments,
+                &register_offset,
+            )
+            .expect("prevalidated JS relation right operand");
+            let right = emit_js_tagged_number(&mut builder, right_bits, fallback);
+            let holds = emit_number_relation(
+                &mut builder,
+                instruction.binary_operator(),
+                left,
+                right,
+                NumberRelationDomain::Float64,
+            )
+            .expect("prevalidated JavaScript Number relation");
+            let true_value = builder.ins().iconst(types::I64, Value::TRUE.to_bits() as i64);
+            let false_value = builder
+                .ins()
+                .iconst(types::I64, Value::FALSE.to_bits() as i64);
+            let encoded = builder.ins().select(holds, true_value, false_value);
+            builder.ins().store(
+                MemFlagsData::trusted(),
+                encoded,
+                arguments,
+                destination,
+            );
+            builder.ins().jump(next, &[]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(
+                &mut builder,
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            );
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+
         emit_js_step_fallback(
             &mut builder,
             context,
