@@ -9309,7 +9309,7 @@ impl<H: Host> Vm<H> {
     /// loop so a pending or installed generic native region can run there.
     pub(super) fn js_tier_needs_general_entry(&self, id: ProgramId, function: u32) -> bool {
         match self.programs.js_tier(id, function) {
-            Some(super::program_store::JsTierState::GeneralPromotionPending) => true,
+            Some(super::program_store::JsTierState::GeneralPromotionPending { .. }) => true,
             Some(super::program_store::JsTierState::Compiled(compiled)) => {
                 compiled.is_general_dispatch()
             }
@@ -9421,7 +9421,7 @@ impl<H: Host> Vm<H> {
             }
             match self.programs.js_tier(program_id, function) {
                 Some(
-                    super::program_store::JsTierState::GeneralPromotionPending
+                    super::program_store::JsTierState::GeneralPromotionPending { .. }
                     | super::program_store::JsTierState::Rejected { .. },
                 ) => true,
                 Some(super::program_store::JsTierState::Compiled(compiled)) => {
@@ -9451,13 +9451,15 @@ impl<H: Host> Vm<H> {
                     state,
                     Some(
                         super::program_store::JsTierState::Rejected { .. }
-                            | super::program_store::JsTierState::GeneralPromotionPending
+                            | super::program_store::JsTierState::GeneralPromotionPending { .. }
                     )
                 ));
-        let mut promote_general = observes_general
-            && self
-                .programs
-                .note_js_general_dispatch_entry(program_id, function);
+        // The tier manager prices the baseline against the entries so far.
+        let promote_general = observes_general
+            && program.function_get(function as usize).is_some_and(|body| {
+                self.programs
+                    .note_js_general_dispatch_entry(program_id, function, body.code.len())
+            });
         if let Some((return_pc, return_register, value)) = entry
             .as_ref()
             .and_then(|entry| self.js_jit_at_entry(program, entry))
@@ -9467,10 +9469,6 @@ impl<H: Host> Vm<H> {
             self.frames[frame].registers[usize::from(return_register)] = value;
             return JsTierFrameEntry::ContinueAt(return_pc);
         }
-        promote_general |= matches!(
-            self.programs.js_tier(program_id, function),
-            Some(super::program_store::JsTierState::GeneralPromotionPending)
-        );
         if allow_inline_calls && general_candidate {
             if let Some(outcome) = self.js_jit_general_dispatch_at_entry(
                 program, frame, true, promote_general,
@@ -9515,12 +9513,7 @@ impl<H: Host> Vm<H> {
             | super::program_store::JsTierState::Unsupported) => return None,
             _ => {
                 let function = program.function_get(function_id as usize)?;
-                if !js_general_dispatch_candidate(program, function)
-                    || !promote
-                    || !self
-                    .programs
-                    .note_js_general_dispatch_entry(program_id, function_id)
-                {
+                if !js_general_dispatch_candidate(program, function) || !promote {
                     return None;
                 }
                 let compile_started = self
@@ -10119,7 +10112,7 @@ impl<H: Host> Vm<H> {
             Some(
                 super::program_store::JsTierState::Unsupported
                 | super::program_store::JsTierState::Rejected { .. }
-                | super::program_store::JsTierState::GeneralPromotionPending,
+                | super::program_store::JsTierState::GeneralPromotionPending { .. },
             ) => return None,
             Some(super::program_store::JsTierState::Hot { .. })
             | Some(super::program_store::JsTierState::PromotionPending)
