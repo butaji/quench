@@ -5479,8 +5479,42 @@ script_handler! {
         let site = i.loop_site();
         // SAFETY: the site records the distance to a validated jump target.
         let header = unsafe { ip.byte_offset(site.jump) };
+        // SAFETY: the region carries its validated header and latch PCs, and
+        // every instruction record remains contiguous in this lane view.
+        let at = |pc: u32| unsafe { header.offset(pc as isize - site.region.header as isize) };
         if below_floor() {
             return lane_safepoint::<H>(ip, header);
+        }
+        // Keep the ordinary interpreter and JIT-off lane free of tier metadata
+        // lookups. Only the opt-in shared JS baseline observes loop work here.
+        let runtime = unsafe { vm(cx) };
+        if runtime.js_tier_runs()
+            && runtime.programs.js_jit_general_dispatch_enabled()
+            && unsafe { &*(*cx).code }.kind != crate::bytecode::ProgramKind::Wasm
+        {
+            let loop_header = usize::try_from(site.region.header).unwrap_or(usize::MAX);
+            let loop_backedge = usize::try_from(site.region.backedge).unwrap_or(usize::MAX);
+            let loop_work = loop_backedge
+                .saturating_sub(loop_header)
+                .saturating_add(1);
+            let (program_id, frame_id, code) = unsafe {
+                let context = &*cx;
+                (context.program, context.frame, &*context.code)
+            };
+            let function = runtime.frames[frame_id].function;
+            let instruction_count = code
+                .function_get(function as usize)
+                .map_or(0, |body| body.code.len());
+            if runtime.programs.note_js_general_dispatch_backedge(
+                program_id,
+                function,
+                loop_work,
+                instruction_count,
+            ) {
+                // The shared whole-function CFG starts at this exact loop header
+                // after run_fast_lane hands control back to the dispatcher.
+                return exit(at(site.region.header));
+            }
         }
         if site.taken.get() < LOOP_TIER_THRESHOLD {
             site.taken.set(site.taken.get() + 1);
@@ -5497,8 +5531,6 @@ script_handler! {
         };
         // The tier's state is borrowed only here, so the dispatch below holds no borrow.
         let continuation = lane_loop_run(cx, r, site, &entry);
-        // SAFETY: native code returns PCs of the function, whose records are contiguous.
-        let at = |pc: u32| unsafe { header.offset(pc as isize - site.region.header as isize) };
         match continuation {
             LoopContinuation::Jump => next!(cx, r, header, Carried::script(cx)),
             LoopContinuation::Resume(pc) => next!(cx, r, at(pc), Carried::script(cx)),
@@ -5665,9 +5697,9 @@ fn lane_loop_entry<H: Host>(
             entry.push_array(elements.as_ptr().cast_mut(), elements.len())?;
         }
     }
-    // These regions cannot run calls or field writes; indexed writes are rejected when a
-    // cached field is present. Thus a hit on an ordinary data field stays valid for the
-    // whole native run. Any miss, accessor, private name, or non-Number exits before native
+    // These regions cannot run calls or field writes, and their element stores replace
+    // existing elements in bounds, which changes no named property. Thus a hit on an
+    // ordinary data field stays valid for the whole native run. Any miss, accessor, private name, or non-Number exits before native
     // code can alter a register.
     let code = unsafe { &*(*cx).code };
     for field in &region.fields {

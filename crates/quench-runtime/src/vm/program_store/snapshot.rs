@@ -25,6 +25,8 @@ impl ProgramStore {
             // Process configuration a restoring store reads again, and its diagnostics.
             general_baseline_priced: _,
             js_jit_general_dispatch_enabled: _,
+            // Hotness counters are process-local and start fresh after restore.
+            js_general_dispatch_work: _,
             js_jit_dataview_float64_enabled: _,
             js_jit_dataview_float64_get_entries: _,
             js_jit_dataview_float64_set_entries: _,
