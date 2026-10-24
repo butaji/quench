@@ -2477,68 +2477,72 @@ mod tests {
             }],
         )
         .unwrap();
-        let mut vm = Vm::new(crate::SystemHost);
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        let instance = vm.instantiate_wasm_module(&module).unwrap();
-        let promotion_entries = super::super::program_store::WASM_JIT_PROMOTION_ENTRIES;
-        for _ in 0..promotion_entries {
+        // The target's `unreachable` keeps it out of the eager artifact only below its size
+        // bound; with the bound at zero it is the uncompiled target this test promotes.
+        super::super::compiled::with_jit_unreachable_bytecodes_limit_for_test(0, || {
+            let mut vm = Vm::new(crate::SystemHost);
+            vm.set_execution_mode(crate::ExecutionMode::Compiled);
+            let instance = vm.instantiate_wasm_module(&module).unwrap();
+            let promotion_entries = super::super::program_store::WASM_JIT_PROMOTION_ENTRIES;
+            for _ in 0..promotion_entries {
+                assert_eq!(
+                    vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
+                    Some(crate::WasmTrap::Unreachable)
+                );
+            }
+
+            let program = vm
+                .programs
+                .find_shared(&module.program)
+                .expect("registered Wasm program");
+            let baseline = vm
+                .programs
+                .compiled(program)
+                .flatten()
+                .expect("indirect caller installed the eager artifact");
+            let tier = vm
+                .programs
+                .wasm_tier(program, 0)
+                .expect("hot indirect target received a root tier");
+            assert_eq!(baseline.native_entries(1), Some(promotion_entries as u64));
+            assert_eq!(tier.native_entries(0), Some(1));
+            assert_eq!(tier.direct_reference_entries(0), Some(0));
+            // The promoted target belongs to a separate artifact, so the caller
+            // must keep using the resolver instead of retaining its code pointer.
+            assert!(!baseline.reference_fast_cache_matches_target(0, 0));
             assert_eq!(
                 vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
                 Some(crate::WasmTrap::Unreachable)
             );
-        }
+            assert_eq!(tier.native_entries(0), Some(2));
+            assert_eq!(tier.direct_reference_entries(0), Some(1));
+            assert_eq!(
+                vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
+                Some(crate::WasmTrap::Unreachable)
+            );
+            assert_eq!(tier.native_entries(0), Some(3));
+            assert_eq!(tier.direct_reference_entries(0), Some(2));
 
-        let program = vm
-            .programs
-            .find_shared(&module.program)
-            .expect("registered Wasm program");
-        let baseline = vm
-            .programs
-            .compiled(program)
-            .flatten()
-            .expect("indirect caller installed the eager artifact");
-        let tier = vm
-            .programs
-            .wasm_tier(program, 0)
-            .expect("hot indirect target received a root tier");
-        assert_eq!(baseline.native_entries(1), Some(promotion_entries as u64));
-        assert_eq!(tier.native_entries(0), Some(1));
-        assert_eq!(tier.direct_reference_entries(0), Some(0));
-        // The promoted target belongs to a separate artifact, so the caller
-        // must keep using the resolver instead of retaining its code pointer.
-        assert!(!baseline.reference_fast_cache_matches_target(0, 0));
-        assert_eq!(
-            vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
-            Some(crate::WasmTrap::Unreachable)
-        );
-        assert_eq!(tier.native_entries(0), Some(2));
-        assert_eq!(tier.direct_reference_entries(0), Some(1));
-        assert_eq!(
-            vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
-            Some(crate::WasmTrap::Unreachable)
-        );
-        assert_eq!(tier.native_entries(0), Some(3));
-        assert_eq!(tier.direct_reference_entries(0), Some(2));
-
-        // The call-site cache has warmed with the exact table target. It must
-        // notice replacement before entering native code, then cache the new
-        // identity. Null still takes the authoritative resolver's trap path.
-        let table = vm.wasm_table(&instance, 0).unwrap();
-        let original = vm.wasm_function(&instance, 0).unwrap();
-        assert_eq!(baseline.reference_call_cache_target(0), Some(original));
-        assert!(baseline.reference_cache_hits() > 0);
-        let replacement = vm.wasm_function(&instance, 2).unwrap();
-        vm.wasm_table_fill(table, 0, replacement, 1).unwrap();
-        assert_eq!(
-            vm.invoke_wasm(&instance, 1, &[]).unwrap(),
-            Some(crate::WasmValue::I32(9))
-        );
-        assert_eq!(baseline.reference_call_cache_target(0), Some(replacement));
-        vm.wasm_table_fill(table, 0, Value::NULL, 1).unwrap();
-        assert_eq!(
-            vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
-            Some(crate::WasmTrap::UninitializedElement)
-        );
+            // The call-site cache has warmed with the exact table target. It must
+            // notice replacement before entering native code, then cache the new
+            // identity. Null still takes the authoritative resolver's trap path.
+            let table = vm.wasm_table(&instance, 0).unwrap();
+            let original = vm.wasm_function(&instance, 0).unwrap();
+            assert_eq!(baseline.reference_call_cache_target(0), Some(original));
+            assert!(baseline.reference_cache_hits() > 0);
+            let replacement = vm.wasm_function(&instance, 2).unwrap();
+            vm.wasm_table_fill(table, 0, replacement, 1).unwrap();
+            assert_eq!(
+                vm.invoke_wasm(&instance, 1, &[]).unwrap(),
+                Some(crate::WasmValue::I32(9))
+            );
+            assert_eq!(baseline.reference_call_cache_target(0), Some(replacement));
+            vm.wasm_table_fill(table, 0, Value::NULL, 1).unwrap();
+            assert_eq!(
+                vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
+                Some(crate::WasmTrap::UninitializedElement)
+            );
+        });
     }
 
     #[test]
@@ -5499,31 +5503,20 @@ mod tests {
             .compiled(program)
             .flatten()
             .expect("default Wasm compilation installed");
-        assert_eq!(compiled.native_entries(0), None);
-        assert_eq!(vm.programs.wasm_tier_entry_count(program, 0), Some(1));
-
-        for _ in 0..(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES as usize - 2) {
+        // A small function's `unreachable` lowers to a native trap: the eager artifact holds
+        // it, so no tier promotion follows.
+        assert_eq!(compiled.native_entries(0), Some(1));
+        for _ in 0..usize::from(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES) {
             assert_eq!(
                 vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
                 Some(crate::WasmTrap::Unreachable)
             );
         }
         assert_eq!(
-            vm.programs.wasm_tier_entry_count(program, 0),
-            Some(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES - 1)
+            compiled.native_entries(0),
+            Some(1 + u64::from(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES))
         );
-        assert_eq!(vm.programs.wasm_tier_attempted(program, 0), Some(false));
         assert!(vm.programs.wasm_tier(program, 0).is_none());
-        assert_eq!(
-            vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
-            Some(crate::WasmTrap::Unreachable)
-        );
-        let tier = vm
-            .programs
-            .wasm_tier(program, 0)
-            .expect("hot Wasm root is tiered after the entry threshold");
-        assert_eq!(tier.native_entries(0), Some(1));
-        assert_eq!(vm.programs.wasm_tier_attempted(program, 0), Some(true));
 
         let mut root_vm = Vm::new(crate::SystemHost);
         assert_eq!(

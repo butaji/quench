@@ -489,6 +489,9 @@ pub(super) enum ArgumentsUse {
     /// Only `arguments.length` and `arguments[key]` reads: no call through, write to,
     /// `delete` of or escape of the object.
     Reads,
+    /// Such reads, and the object itself as a value (`f(arguments)`): what receives it may
+    /// write its elements, but no call through or write to it in the body.
+    Passes,
     /// Any other reference.
     Escapes,
 }
@@ -504,6 +507,12 @@ pub(super) struct FixedRegisterLocalFacts {
     /// Promotion is sound but for the body's `arguments` use, which `arguments` states.
     pub(super) safe: bool,
     pub(super) arguments: ArgumentsUse,
+    /// Where the body first passes `arguments` as a value (`ArgumentsUse::Passes`), when no
+    /// loop repeats it and no destructuring evaluates a default or key after its source, so
+    /// that source order is evaluation order around it.
+    first_pass: Option<u32>,
+    /// Each name's last reference in source order.
+    last_references: rustc_hash::FxHashMap<String, u32>,
     /// Every name the body declares or assigns, at any depth: a parameter among them may be
     /// rebound.
     pub(super) bound_names: FxHashSet<String>,
@@ -522,6 +531,11 @@ pub(super) fn fixed_register_local_facts(
         arguments: ArgumentsUse,
         bound_names: FxHashSet<String>,
         nested_written_names: FxHashSet<String>,
+        first_pass: Option<u32>,
+        /// A pass inside a loop, or a destructuring pattern, leaves `first_pass` unordered.
+        unordered: bool,
+        loops: u32,
+        last_references: rustc_hash::FxHashMap<String, u32>,
     }
 
     impl Facts {
@@ -570,7 +584,11 @@ pub(super) fn fixed_register_local_facts(
             identifier: &oxc_ast::ast::IdentifierReference<'a>,
         ) {
             if identifier.name == ARGUMENTS {
-                self.use_arguments(ArgumentsUse::Escapes);
+                self.use_arguments(ArgumentsUse::Passes);
+                self.unordered |= self.loops != 0;
+                self.first_pass.get_or_insert(identifier.span.start);
+            } else {
+                self.last_references.insert(identifier.name.to_string(), identifier.span.start);
             }
         }
 
@@ -645,6 +663,7 @@ pub(super) fn fixed_register_local_facts(
             if let Some(init) = &statement.init {
                 self.visit_for_statement_init(init);
             }
+            self.loops += 1;
             if let Some(test) = &statement.test {
                 self.visit_expression(test);
             }
@@ -654,10 +673,57 @@ pub(super) fn fixed_register_local_facts(
                 self.visit_expression(update);
             }
             self.visit_statement(&statement.body);
+            self.loops -= 1;
         }
 
         fn visit_with_statement(&mut self, _: &oxc_ast::ast::WithStatement<'a>) {
             self.safe = false;
+        }
+
+        fn visit_while_statement(&mut self, statement: &oxc_ast::ast::WhileStatement<'a>) {
+            self.loops += 1;
+            walk::walk_while_statement(self, statement);
+            self.loops -= 1;
+        }
+
+        fn visit_do_while_statement(&mut self, statement: &oxc_ast::ast::DoWhileStatement<'a>) {
+            self.loops += 1;
+            walk::walk_do_while_statement(self, statement);
+            self.loops -= 1;
+        }
+
+        fn visit_for_in_statement(&mut self, statement: &oxc_ast::ast::ForInStatement<'a>) {
+            self.loops += 1;
+            walk::walk_for_in_statement(self, statement);
+            self.loops -= 1;
+        }
+
+        fn visit_for_of_statement(&mut self, statement: &oxc_ast::ast::ForOfStatement<'a>) {
+            self.loops += 1;
+            walk::walk_for_of_statement(self, statement);
+            self.loops -= 1;
+        }
+
+        // A destructuring target or binding evaluates its defaults and computed keys after
+        // the value it takes apart.
+        fn visit_array_assignment_target(&mut self, target: &oxc_ast::ast::ArrayAssignmentTarget<'a>) {
+            self.unordered = true;
+            walk::walk_array_assignment_target(self, target);
+        }
+
+        fn visit_object_assignment_target(&mut self, target: &oxc_ast::ast::ObjectAssignmentTarget<'a>) {
+            self.unordered = true;
+            walk::walk_object_assignment_target(self, target);
+        }
+
+        fn visit_array_pattern(&mut self, pattern: &oxc_ast::ast::ArrayPattern<'a>) {
+            self.unordered = true;
+            walk::walk_array_pattern(self, pattern);
+        }
+
+        fn visit_object_pattern(&mut self, pattern: &oxc_ast::ast::ObjectPattern<'a>) {
+            self.unordered = true;
+            walk::walk_object_pattern(self, pattern);
         }
 
         fn visit_unary_expression(&mut self, expression: &UnaryExpression<'a>) {
@@ -696,6 +762,10 @@ pub(super) fn fixed_register_local_facts(
         arguments: ArgumentsUse::None,
         bound_names: FxHashSet::default(),
         nested_written_names: FxHashSet::default(),
+        first_pass: None,
+        unordered: false,
+        loops: 0,
+        last_references: rustc_hash::FxHashMap::default(),
     };
     for statement in body {
         facts.visit_statement(statement);
@@ -706,8 +776,28 @@ pub(super) fn fixed_register_local_facts(
     FixedRegisterLocalFacts {
         safe: facts.safe,
         arguments: facts.arguments,
+        first_pass: facts.first_pass.filter(|_| !facts.unordered),
+        last_references: facts.last_references,
         bound_names: facts.bound_names,
         nested_written_names: facts.nested_written_names,
+    }
+}
+
+impl FixedRegisterLocalFacts {
+    /// Whether a sloppy body that rebinds no parameter cannot observe its `arguments`
+    /// mapping: it only reads the object, or it passes the object on after its last
+    /// reference to any parameter, so what writes the object's elements finds no parameter
+    /// read after it.
+    pub(super) fn arguments_mapping_unobserved(&self, parameters: impl Iterator<Item = impl AsRef<str>>) -> bool {
+        match self.arguments {
+            ArgumentsUse::Reads => true,
+            ArgumentsUse::Passes => self.first_pass.is_some_and(|pass| {
+                parameters.into_iter().all(|parameter| {
+                    self.last_references.get(parameter.as_ref()).is_none_or(|&reference| reference < pass)
+                })
+            }),
+            ArgumentsUse::None | ArgumentsUse::Escapes => false,
+        }
     }
 }
 

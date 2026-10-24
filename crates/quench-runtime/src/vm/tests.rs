@@ -11591,6 +11591,58 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_indexes_arrays_that_field_reads_give() {
+    // Each iteration reads the arrays from fields of `this` and of an argument, then reads
+    // and stores their elements: the arrays are those the fields held at entry.
+    let source = r#"
+      function B(n) { this.arr = []; for (var k = 0; k < n; k++) this.arr.push(k & 255); }
+      B.prototype.mix = function mix(w, n) {
+        var s = 0;
+        for (var i = 0; i < n; i++) {
+          var a = this.arr;
+          var b = w.arr;
+          s = (s + a[i] * 3 + b[i]) | 0;
+          b[i] = (a[i] + i) & 1023;
+        }
+        return s;
+      };
+      var x = new B(3000), y = new B(3000), t = 0;
+      for (var r = 0; r < 300; r++) t = (t + x.mix(y, 3000)) | 0;
+      print(t + " " + y.arr[17] + " " + y.arr[2999]);
+    "#;
+    let program = Engine::specialize(source, "osr-field-arrays.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "mix"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+
+        assert_eq!(compiled_output.borrow().as_slice(), ["804092460 34 110"], "{policy:?}");
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(std::cell::OnceCell::get)
+            .expect("hot mix loop lane view")
+            .osr_diagnostics();
+        // Loop sites are analyzed only where the JavaScript tiers run (`JS_FUNCTION_TIERS`).
+        let analyzes = super::compiled::js_function_tiers_compile(policy);
+        assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-array loop admission under {policy:?}");
+        let compiles = super::compiled::loop_tier_compiles(policy);
+        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field-array loop native code under {policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -13681,14 +13733,18 @@ fn js_jit_general_dispatch_promotes_a_single_activation_hot_loop() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_prices_work_inside_compiled_osr_regions() {
+    // Each taken backedge counts one unit of work. The first call's loop runs well past the
+    // priced general-baseline floor for this small body (fixed plus per-instruction compile
+    // cost, over the saved share), wherever its native runs end; the second call's entry
+    // then compiles the due baseline. The handoff does not depend on the exact constants.
     let source = r#"
       function sum(count) {
         let total = 0;
         for (let index = 0; index < count; index++) total += index;
         return total;
       }
-      var result = sum(100000);
-      if (result !== 4999950000) throw Error('OSR priced handoff result');
+      var result = sum(1000000) + sum(1000000);
+      if (result !== 999999000000) throw Error('OSR priced handoff result');
     "#;
     let program = Engine::compile(crate::ExecutionRequest::script(
         source,
@@ -13775,13 +13831,11 @@ fn js_jit_general_baseline_waits_until_entries_pay_for_its_compile() {
         assert_eq!(vm.own_property(vm.realm.globals, name).unwrap(), expected);
         vm.programs.js_tier(super::program_store::ProgramId::MAIN, function)
     };
-    // Hot, but a short run has not paid for the compile.
-    assert!(matches!(state(48), Some(super::program_store::JsTierState::GeneralPromotionPending { .. })));
-    // A long run has.
-    let Some(super::program_store::JsTierState::Compiled(native)) = state(16_000) else {
-        panic!("the general baseline compiles once its entries pay for it");
-    };
-    assert!(native.is_general_dispatch());
+    // Hot, but a short run has not paid for the compile; and a body this small saves less
+    // per entry than the baseline's entry costs, so no run pays (`general_promotion_due`).
+    for calls in [48, 20_000] {
+        assert!(matches!(state(calls), Some(super::program_store::JsTierState::GeneralPromotionPending { .. })));
+    }
 }
 
 #[cfg(not(quench_profiled))]

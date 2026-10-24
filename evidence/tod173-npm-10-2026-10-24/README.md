@@ -73,3 +73,67 @@ The six paired reports beginning with `activation-` are in this directory.
 ## Raw reports
 
 All package and phase reports are the `*-no-jit-11.json` and `*-jit-11.json` files in this directory.
+
+## Post-sync production PGO cohort (`dc4fe3b1d`)
+
+After syncing `v2-zod` to `v2-merged` at `dc4fe3b1d`, I rebuilt with
+`tools/pgo-build.sh production`. The general training corpus excludes these
+scored npm workloads. Quench binary SHA-256:
+`f26d139642a99cd12107f866cfe7078d961f6449838a38ae03c2997f99764776`.
+Host: Linux x86_64, five logical CPUs; Node `v24.19.0`, Bun `1.4.4`. Each
+report uses 11 interleaved rounds and matching output checksums. Standard rows
+use 5,000 operations; Next route generation, WebSocket echo, and Pino use
+50,000; Zod JIT uses 100,000 to let the RSS sampler observe short peer runs.
+
+The speed ratio is Quench throughput divided by the faster available peer. The
+RSS ratio is Quench's median per-run maximum divided by the lower peer median.
+Ratios use separate metrics; throughput is not inferred from RSS. `Vite` and
+`Undici` Node `--jitless` cells are unavailable because Node removes the
+WebAssembly global those dependencies require. Their no-JIT ratios are versus
+Bun only. All Linux RSS uses 50 ms process-tree sampling and remains diagnostic,
+not host qualification.
+
+| Workload | Mode | Quench ops/s | Faster peer ops/s | Speed ratio | Quench RSS MiB | RSS ratio |
+|---|---|---:|---:|---:|---:|---:|
+| React SSR | no-JIT | 1,357 | 3,240 | 0.42× | 37.66 | 1.11× |
+| React SSR | JIT | 1,189 | 42,017 | 0.03× | 24.20 | 0.50× |
+| Next route generation | no-JIT | 15,713 | 238,095 | 0.07× | 140.19 | 3.35× |
+| Next route generation | JIT | 14,164 | 632,911 | 0.02× | 122.79 | 2.39× |
+| Vite transform | no-JIT | 19,920 | 26,596¹ | 0.75× | 56.32 | 0.89×¹ |
+| Vite transform | JIT | 19,763 | 67,568 | 0.29× | 53.79 | 0.75× |
+| esbuild transform | no-JIT | 417 | 1,673 | 0.25× | 57.75 | 0.90× |
+| esbuild transform | JIT | 416 | 1,840 | 0.23× | 57.63 | 0.77× |
+| sharp concurrent resize | no-JIT | 898 | 913 | 0.98× | 50.46 | 0.77× |
+| sharp concurrent resize | JIT | 897 | 900 | 1.00× | 50.98 | 0.70× |
+| Fastify HTTP | no-JIT | 204 | 4,333 | 0.05× | 49.11 | 1.05× |
+| Fastify HTTP | JIT | 194 | 29,070 | 0.01× | 49.50 | 0.65× |
+| Fastify inject | no-JIT | 5,580 | 7,519 | 0.74× | 49.45 | 1.11× |
+| Fastify inject | JIT | 5,208 | 64,103 | 0.08× | 47.71 | 0.58× |
+| Undici pool | no-JIT | 4,266 | 5,081¹ | 0.84× | 48.84 | 1.04×¹ |
+| Undici pool | JIT | 3,888 | 43,103 | 0.09× | 40.54 | 0.47× |
+| WebSocket echo | no-JIT | 9,068 | 104,384 | 0.09× | 32.67 | 0.88× |
+| WebSocket echo | JIT | 8,593 | 193,050 | 0.04× | 27.34 | 0.54× |
+| Pino JSON logger | no-JIT | 59,453 | 133,690 | 0.44× | 33.39 | 1.13× |
+| Pino JSON logger | JIT | 55,249 | 609,756 | 0.09× | 19.61 | 0.47× |
+| Zod parse | no-JIT | 106,952 | 243,902 | 0.44× | 26.68 | 0.78× |
+| Zod parse | JIT | 96,246 | 2,020,202 | 0.05× | 24.43 | 0.37× |
+
+¹ Node `--jitless` is unavailable for this no-JIT workload; the ratio uses Bun,
+the only available peer. Across the refreshed matrix, no package/mode reaches
+the required 1.20× throughput and 0.80× RSS margins together. Sharp resize is
+closest on speed, reaching parity in JIT and 0.98× of the faster peer no-JIT;
+it still lacks the required 20% lead. React and Zod have lower JIT RSS but
+remain much slower. This cohort is diagnostic and does not qualify a package
+win.
+
+The exact reports are the files ending `dc4fe3b1d-11.json` in this directory;
+50k/100k work sizes are included in the corresponding filenames. The updated
+JIT counters are in
+[`jit-coverage-react-zod-pino-dc4fe3b1d.json`](jit-coverage-react-zod-pino-dc4fe3b1d.json).
+On the same production binary, React had 0 native entries across 58 tracked
+functions (5 compile attempts, 0 successes), and Zod had 0 across 214 (3
+attempts, 0 successes). Pino had 26,219 native entries from
+`node:diagnostics_channel/channel.js`'s `get hasSubscribers`; its hot
+`logRequest` had no successful compile. The remaining broad React/Zod/Pino JIT
+gap still belongs to shared field/call lowering under TOD-186, not a
+package-specific JIT fast path.
