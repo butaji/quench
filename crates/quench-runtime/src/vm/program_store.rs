@@ -56,6 +56,10 @@ pub(super) const JS_JIT_PROMOTION_LOOKS: [(u8, u8); 4] =
 /// baseline (`GeneralPromotionPending`); unlike the optimizing tier, the baseline needs
 /// no numeric arguments or bytecode-shape candidate.
 const JS_JIT_GENERAL_PROMOTION_ENTRIES: u8 = 32;
+/// A specialized artifact that repeatedly rejects entry values is useful only
+/// for its matching profile. Eight confirmed misses cap this experiment before
+/// paying for the complete-semantics baseline.
+pub(super) const JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD: u8 = 8;
 /// The general baseline's compile cost in interpreted-instruction units: a fixed part
 /// and a part per bytecode instruction. Measured on Linux x86_64 (requiring jackspeak
 /// with `QUENCH_JS_JIT_STATS`): a compile takes about 0.8 ms plus 32 µs per instruction,
@@ -1637,6 +1641,54 @@ impl ProgramStore {
             self.record_js_jit_promotion(id, function);
         }
         false
+    }
+
+    /// Count only an explicit pre-native guard rejection by an installed
+    /// specialized artifact. Each such entry runs in the interpreter, so it is
+    /// paid evidence for GeneralDispatch. Completed native values and native
+    /// exits never reach this transition.
+    pub(super) fn note_js_specialized_guard_miss(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        instructions: usize,
+    ) -> bool {
+        if !self.js_jit_general_dispatch_enabled {
+            return false;
+        }
+        let priced = self.general_baseline_priced;
+        let Some(entry) = self.entry_mut(id) else {
+            return false;
+        };
+        if entry.jit_tiers.is_wasm() {
+            return false;
+        }
+        let Some(state) = entry.jit_tiers.js_mut(function) else {
+            return false;
+        };
+        let (misses, mapped_bytes) = match state {
+            JsTierState::Compiled(compiled) if !compiled.is_general_dispatch() => {
+                let misses = compiled.note_specialized_guard_miss(
+                    JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD,
+                );
+                if misses < JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD {
+                    return false;
+                }
+                (misses, compiled.mapped_bytes())
+            }
+            _ => return false,
+        };
+        let entries = u32::from(misses);
+        let compile_due = !priced || general_promotion_due(entries, instructions);
+        *state = if compile_due {
+            JsTierState::GeneralCompileDue
+        } else {
+            JsTierState::GeneralPromotionPending { entries }
+        };
+        self.jit_code_cache
+            .release(JitArtifactKind::JsFunction, 1, mapped_bytes);
+        self.record_js_jit_promotion(id, function);
+        compile_due
     }
 
     /// Memoize an unsupported bytecode shape separately from tier candidates.

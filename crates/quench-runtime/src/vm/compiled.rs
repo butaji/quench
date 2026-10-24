@@ -4451,6 +4451,9 @@ pub(super) struct CompiledJsFunction {
     capture_argument: Option<super::js_compiled::JsJitCaptureArgument>,
     capture_arguments: Vec<super::js_compiled::JsJitCaptureArgument>,
     general_dispatch_native_pcs: Vec<u8>,
+    /// Confirmed entry guards that rejected a completed specialized artifact.
+    /// This is distinct from `call` returning `None`, which can mean an interrupt.
+    specialized_guard_misses: std::cell::Cell<u8>,
     #[cfg(test)]
     native_entries: std::cell::Cell<u64>,
     #[cfg(test)]
@@ -5105,6 +5108,7 @@ impl CompiledJsFunction {
             capture_argument,
             capture_arguments,
             general_dispatch_native_pcs,
+            specialized_guard_misses: std::cell::Cell::new(0),
             #[cfg(test)]
             native_entries: std::cell::Cell::new(0),
             #[cfg(test)]
@@ -5137,6 +5141,19 @@ impl CompiledJsFunction {
 
     pub(super) fn is_general_dispatch(&self) -> bool {
         matches!(self.entry, CompiledJsEntry::GeneralDispatch(_))
+    }
+
+    /// Record an entry rejected by a specialized artifact's explicit guard.
+    /// The returned value is bounded and saturates at the promotion threshold.
+    pub(super) fn note_specialized_guard_miss(&self, threshold: u8) -> u8 {
+        let misses = self.specialized_guard_misses.get().saturating_add(1).min(threshold);
+        self.specialized_guard_misses.set(misses);
+        misses
+    }
+
+    #[cfg(test)]
+    pub(super) fn specialized_guard_misses(&self) -> u8 {
+        self.specialized_guard_misses.get()
     }
 
     #[cfg(test)]
@@ -9785,9 +9802,21 @@ impl<H: Host> Vm<H> {
             captures: TierCaptures::Environment(env),
             allocates: false,
         };
-        let entered = self.js_jit_at_entry(program, &entry);
+        let mut specialized_guard_miss = false;
+        let entered = self.js_jit_at_entry(program, &entry, &mut specialized_guard_miss);
         if entered.is_none() {
-            self.js_tier_note_general_entry(program, id, function);
+            if specialized_guard_miss {
+                let instructions = program
+                    .function_get(function as usize)
+                    .map_or(0, |body| body.code.len());
+                self.programs.note_js_specialized_guard_miss(
+                    id,
+                    function,
+                    instructions,
+                );
+            } else {
+                self.js_tier_note_general_entry(program, id, function);
+            }
             self.programs.record_js_jit_fallback_entry(id, function);
         }
         entered
@@ -9856,17 +9885,29 @@ impl<H: Host> Vm<H> {
                 allocates: true,
             })
         });
-        let (general_candidate, promote_general) = self.js_tier_note_general_entry(program, program_id, function);
-        if let Some((return_pc, return_register, value)) = entry
-            .as_ref()
-            .and_then(|entry| self.js_jit_at_entry(program, entry))
-        {
+        let (general_candidate, mut promote_general) =
+            self.js_tier_note_general_entry(program, program_id, function);
+        let mut specialized_guard_miss = false;
+        let compiled_entry = entry.as_ref().and_then(|entry| {
+            self.js_jit_at_entry(program, entry, &mut specialized_guard_miss)
+        });
+        if let Some((return_pc, return_register, value)) = compiled_entry {
             // The frame's own register file: a lane frame call reaches here before
             // `active_registers` names the frame (`lane_enter_script_frame`).
             self.frames[frame].registers[usize::from(return_register)] = value;
             return JsTierFrameEntry::ContinueAt(return_pc);
         }
-        if allow_inline_calls && general_candidate {
+        if specialized_guard_miss {
+            let instructions = program
+                .function_get(function as usize)
+                .map_or(0, |body| body.code.len());
+            promote_general |= self.programs.note_js_specialized_guard_miss(
+                program_id,
+                function,
+                instructions,
+            );
+        }
+        if allow_inline_calls && (general_candidate || promote_general) {
             if let Some(outcome) = self.js_jit_general_dispatch_at_entry(
                 program, frame, true, promote_general,
             ) {
@@ -10126,6 +10167,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         program: &ResidualProgram,
         entry: &TierEntry,
+        specialized_guard_miss: &mut bool,
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
         if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm {
             return None;
@@ -10515,6 +10557,9 @@ impl<H: Host> Vm<H> {
                     || (compiled.is_string_transform() && string_transform_units.is_none())
                     || (compiled.is_capture_number() && capture_number.is_none())
                 {
+                    if !compiled.is_general_dispatch() {
+                        *specialized_guard_miss = true;
+                    }
                     return None;
                 }
                 compiled
@@ -10614,6 +10659,9 @@ impl<H: Host> Vm<H> {
                 .first()
                 .is_some_and(|value| super::js_compiled::is_i32_number(*value))
         {
+            if !compiled.is_general_dispatch() {
+                *specialized_guard_miss = true;
+            }
             return None;
         }
 
