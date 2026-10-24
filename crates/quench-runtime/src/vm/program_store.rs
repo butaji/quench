@@ -727,7 +727,14 @@ impl Default for ProgramStore {
             js_jit_tracking_exhaustions: 0,
             js_jit_rejected_functions: 0,
             jit_code_cache: JitCodeCacheBudget::default(),
-            general_baseline_priced: true,
+            // TOD-191's correctness oracle may force hot candidates past the
+            // payback model so guarded exits can be tested independently of
+            // profitability. This is diagnostic-only and never set by score
+            // harnesses.
+            general_baseline_priced: !std::env::var_os(
+                "QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH",
+            )
+            .is_some_and(|value| value == "1"),
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
