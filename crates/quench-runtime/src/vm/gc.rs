@@ -774,9 +774,7 @@ impl<H: Host> Vm<H> {
                         .enumerate()
                         .filter_map(move |(register, value)| {
                             register_mask
-                                .is_none_or(|mask| {
-                                    register < u64::BITS as usize && mask & (1 << register) != 0
-                                })
+                                .is_none_or(|mask| crate::compile::liveness::register_in(mask, register))
                                 .then_some(*value)
                         }),
                 )

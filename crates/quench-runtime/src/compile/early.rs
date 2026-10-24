@@ -409,6 +409,59 @@ pub(super) fn function_may_reference(
     references.found
 }
 
+/// Whether a parameter list's patterns and defaults evaluate without reaching its parameter
+/// scope: no nested function or class, which would capture its bindings, no direct eval,
+/// which could name them, no `arguments`, and no reference to a binding of the list itself,
+/// whose dead zone a reference could reach (`bound` names them). Each argument's hidden slot
+/// then holds a value only the list's own bindings read, as a register can.
+pub(super) fn parameters_reach_no_scope(params: &FormalParameters<'_>, bound: &[String]) -> bool {
+    struct Reach<'n> {
+        bound: &'n [String],
+        reaches: bool,
+    }
+    impl<'a> Visit<'a> for Reach<'_> {
+        fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
+            self.reaches |= identifier.name == "arguments" || self.bound.iter().any(|name| identifier.name == name.as_str());
+        }
+        fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+            self.reaches |= is_direct_eval_call(call);
+            walk::walk_call_expression(self, call);
+        }
+        fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {
+            self.reaches = true;
+        }
+        fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {
+            self.reaches = true;
+        }
+        fn visit_class(&mut self, _: &oxc_ast::ast::Class<'a>) {
+            self.reaches = true;
+        }
+    }
+    let mut reach = Reach { bound, reaches: false };
+    reach.visit_formal_parameters(params);
+    !reach.reaches
+}
+
+/// Whether evaluating `expression` makes a function or class, whose closure captures the
+/// activation that runs it.
+pub(super) fn expression_makes_function(expression: &Expression<'_>) -> bool {
+    struct Makes(bool);
+    impl<'a> Visit<'a> for Makes {
+        fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {
+            self.0 = true;
+        }
+        fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {
+            self.0 = true;
+        }
+        fn visit_class(&mut self, _: &oxc_ast::ast::Class<'a>) {
+            self.0 = true;
+        }
+    }
+    let mut makes = Makes(false);
+    makes.visit_expression(expression);
+    makes.0
+}
+
 pub(super) fn parameters_contain_direct_eval(params: &FormalParameters<'_>) -> bool {
     let mut finder = DirectEvalFinder(false);
     finder.visit_formal_parameters(params);

@@ -1750,6 +1750,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
         function: 0,
         pc: 0,
         pc_is_resume: true,
+        js_jit_skip_entry_once: false,
         source_field: None,
         binding_site_pc: None,
         env: Value::NULL,
@@ -4759,6 +4760,7 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
         function: 0,
         pc: 0,
         pc_is_resume: true,
+        js_jit_skip_entry_once: false,
         source_field: None,
         binding_site_pc: None,
         env: Value::NULL,
@@ -7035,6 +7037,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 function: 0,
                 pc: 0,
                 pc_is_resume: true,
+                js_jit_skip_entry_once: false,
                 source_field: None,
                 binding_site_pc: None,
                 env,
@@ -10717,6 +10720,12 @@ fn js_jit_compiles_forward_numeric_decision_trees() {
         Some(super::program_store::JsTierState::PromotionPending) => {
             panic!("the Number decision tree remained promotion-pending");
         }
+        Some(
+            super::program_store::JsTierState::GeneralPromotionPending { .. }
+            | super::program_store::JsTierState::GeneralCompileDue,
+        ) => {
+            panic!("the numeric decision tree was sent to the general baseline");
+        }
         Some(super::program_store::JsTierState::Unsupported) => {
             panic!("the Number decision tree was marked unsupported");
         }
@@ -10753,6 +10762,12 @@ fn js_jit_compiles_forward_numeric_decision_trees() {
         }) => panic!("the Number join remained hot: {observations} observations, {numeric} numeric"),
         Some(super::program_store::JsTierState::PromotionPending) => {
             panic!("the Number join remained promotion-pending");
+        }
+        Some(
+            super::program_store::JsTierState::GeneralPromotionPending { .. }
+            | super::program_store::JsTierState::GeneralCompileDue,
+        ) => {
+            panic!("the numeric join was sent to the general baseline");
         }
         Some(super::program_store::JsTierState::Unsupported) => {
             panic!("the Number join was marked unsupported");
@@ -11298,6 +11313,89 @@ fn shared_osr_compiles_numeric_truthiness_branches() {
     if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
         assert!(diagnostics.compile_successes > 0, "loop OSR compilation did not succeed");
         assert!(diagnostics.native_region_runs > 0, "loop OSR code never ran");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function seed() { return 0; }
+          function countNull(value) {
+            let count = seed();
+            let hits = 0;
+            let current = value;
+            while (count < 4) {
+              if (current === null) {
+                hits++;
+                current = value;
+              } else {
+                current = null;
+              }
+              count++;
+            }
+            return current === null ? hits + 10 : hits;
+          }
+          let result = 0;
+          for (let call = 0; call < 400; call++) {
+            result += countNull(call % 2 ? null : {});
+          }
+          print(result);
+          print(countNull(undefined));
+          print(countNull({}));
+        "#,
+        "osr-strict-null-identity.js",
+    ))
+    .unwrap();
+    let _disassembly = program.disassemble();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "countNull")
+        })
+        .expect("strict null loop function");
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
+    interpreter.execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["3200", "2", "2"]);
+
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["3200", "2", "2"]);
+
+    let views = vm
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot strict null loop lane view");
+    let diagnostics = view.osr_diagnostics();
+    assert_eq!(
+        diagnostics.currently_compiled_sites,
+        1,
+        "OSR diagnostics: plain={}, admitted={}, attempts={}, successes={}, native={}, rejects={:?}",
+        diagnostics.plain_backward_jump_sites,
+        diagnostics.admitted_sites,
+        diagnostics.compile_attempts,
+        diagnostics.compile_successes,
+        diagnostics.native_region_runs,
+        diagnostics.analysis_rejections,
+    );
+    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+        assert!(
+            diagnostics.native_region_runs > 0,
+            "native OSR region never ran; diagnostics: {:?}",
+            diagnostics.analysis_rejections
+        );
     }
 }
 
@@ -11947,28 +12045,369 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
     let mut programs = super::program_store::ProgramStore::default();
     let id = programs.insert(program).unwrap();
     for function in 0..512 {
-        assert!(!programs.note_js_function_entry(id, function, false, false));
+        assert!(!programs.note_js_function_entry(id, function, false, false, false));
     }
     assert_eq!(programs.js_jit_tracked_function_count(), 256);
 }
 
 #[cfg(not(quench_profiled))]
 #[test]
-fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
+    let source = r#"
+      function read(target, key) {
+        try { return target[key]; } catch (error) { return error; }
+      }
+      function write(target, key, value) {
+        try { target[key] = value; return target[key]; } catch (error) { return error; }
+      }
+      function writeFixed(target, value) {
+        try { target.fallback = value; return target.fallback; } catch (error) { return error; }
+      }
+      function strictWriteGetter(target) {
+        'use strict';
+        try { target.value = 99; return false; }
+        catch (error) { return error instanceof TypeError; }
+      }
+      function readFixed(target) {
+        try { return target.fallback; } catch (error) { return error; }
+      }
+      function readFixedGetter(target) {
+        try { return target.value; } catch (error) { return error; }
+      }
+      let getterCalls = 0;
+      const marker = {};
+      const target = {
+        get value() { getterCalls++; return getterCalls; },
+        get throwing() { throw marker; },
+        fallback: 0
+      };
+      for (let index = 1; index <= 48; index++) {
+        if (read(target, 'value') !== index * 2 - 1) throw Error('getter result');
+        if (write(target, 'fallback', index) !== index) throw Error('dynamic write result');
+        if (readFixed(target) !== index) throw Error('cached field result');
+        if (writeFixed(target, index + 100) !== index + 100) throw Error('cached own store result');
+        if (readFixedGetter(target) !== index * 2) throw Error('cached getter result');
+        if (!strictWriteGetter(target)) throw Error('strict getter-only store fallback');
+      }
+      if (getterCalls !== 96 || target.fallback !== 148) throw Error('dynamic property effects');
+      if (read(target, 'throwing') !== marker) throw Error('caught getter throw');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-general.js"))
+        .unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+
+    for name in ["read", "write", "writeFixed", "readFixed", "readFixedGetter"] {
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should use the general JavaScript dispatch compiler");
+        };
+        assert!(native.is_general_dispatch(), "{name} should not need a source shape");
+        assert!(native.native_entries() > 0, "{name} should enter its native CFG");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_lowers_tagged_plain_local_accesses() {
+    let source = r#"
+      function transfer() { return this.invoke.apply(this, arguments); }
+      const values = [{marker: 1}, undefined, NaN, 'tagged', true];
+      const receiver = {invoke(value) { return value; }};
+      let result;
+      for (let index = 0; index < 64; index++) {
+        result = transfer.call(receiver, values[index % values.length]);
+      }
+      if (result !== values[3]) throw Error('plain local tagged value changed');
+    "#;
     let program = Engine::compile(crate::ExecutionRequest::script(
-        "function add(a, b) { return a + b; } add(1, 2);",
+        source,
+        "js-jit-general-locals.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|body| {
+            body.header()
+                .name
+                .or(body.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "transfer")
+        })
+        .unwrap();
+    let body = program.function_get(function).unwrap();
+    assert!(body
+        .code
+        .iter()
+        .map(|packed| packed.as_wide().op().js_denotation())
+        .any(|denotation| denotation == crate::bytecode::JsDenotation::PlainLocalLoad));
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function as u32)
+    else {
+        panic!("transfer should use the shared general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly() {
+    let source = r#"
+      function combine(left, right) {
+        try { return left + right; }
+        catch (error) { return error instanceof TypeError; }
+      }
+      function negate(value) {
+        try { return -value; }
+        catch (error) { return error instanceof TypeError; }
+      }
+      function positive(value) {
+        try { return +value; }
+        catch (error) { return error instanceof TypeError; }
+      }
+      for (let index = 0; index < 48; index++) {
+        if (combine(index, 0.5) !== index + 0.5) throw Error('number result');
+        if (negate(index) !== -index) throw Error('unary minus');
+        if (positive(index) !== index) throw Error('unary plus');
+      }
+      if (!Object.is(combine(-0, -0), -0)) throw Error('negative zero');
+      if (combine(2147483647, 1) !== 2147483648) throw Error('integer boundary');
+      if (combine('left', 'right') !== 'leftright') throw Error('string fallback');
+      if (combine(Symbol('value'), 1) !== true) throw Error('throw fallback');
+      if (!Number.isNaN(combine(NaN, 1))) throw Error('NaN result');
+      if (!Object.is(negate(0), -0) || !Object.is(negate(-0), 0)) {
+        throw Error('unary zero signs');
+      }
+      if (negate(Symbol('value')) !== true || positive(Symbol('value')) !== true) {
+        throw Error('unary throw fallback');
+      }
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-arithmetic.js",
+    ))
+    .unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+
+    for name in ["combine", "negate", "positive"] {
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should use the general JavaScript dispatch compiler");
+        };
+        assert!(native.is_general_dispatch());
+        assert!(native.native_entries() > 0);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
+    let source = r#"
+      function sum(values) {
+        let total = 0;
+        let index = 0;
+        while (index < values.length) {
+          try { total += values[index]; }
+          catch (error) { total += 0; }
+          index++;
+        }
+        return total;
+      }
+      var result = 0;
+      for (let run = 0; run < 48; run++) result = sum([1, 2, 3, 4]);
+      if (result !== 10) throw Error('loop result');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-loop.js",
+    ))
+    .unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "sum")
+        })
+        .unwrap() as u32;
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("loop function should use the general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let name = compiled.intern_atom("result");
+    let result = compiled.own_property(compiled.realm.globals, name).unwrap();
+    assert_eq!(result, Value::number(10.0));
+}
+
+#[cfg(not(quench_profiled))]
+#[test]
+fn js_jit_general_baseline_waits_until_entries_pay_for_its_compile() {
+    let state = |calls: u32| {
+        let source = format!(
+            "function add(a, b) {{ return a + b; }} for (let i = 0; i < {calls}; i++) globalThis.last = add('s', i);"
+        );
+        let program = Engine::compile(crate::ExecutionRequest::script(&source, "js-jit-priced.js")).unwrap();
+        let function = program
+            .functions
+            .iter()
+            .position(|body| {
+                body.header()
+                    .name
+                    .or(body.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == "add")
+            })
+            .unwrap() as u32;
+        let mut interpreter = Vm::new(TestHost::default());
+        interpreter.execute(&program).unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_general_dispatch();
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.execute(&program).unwrap();
+        let name = interpreter.intern_atom("last");
+        let expected = interpreter.own_property(interpreter.realm.globals, name).unwrap();
+        let name = vm.intern_atom("last");
+        assert_eq!(vm.own_property(vm.realm.globals, name).unwrap(), expected);
+        vm.programs.js_tier(super::program_store::ProgramId::MAIN, function)
+    };
+    // Hot, but a short run has not paid for the compile.
+    assert!(matches!(state(48), Some(super::program_store::JsTierState::GeneralPromotionPending { .. })));
+    // A long run has.
+    let Some(super::program_store::JsTierState::Compiled(native)) = state(16_000) else {
+        panic!("the general baseline compiles once its entries pay for it");
+    };
+    assert!(native.is_general_dispatch());
+}
+
+#[cfg(not(quench_profiled))]
+#[test]
+fn js_jit_rejected_functions_promote_to_general_dispatch_and_keep_frames() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "function add(a, b) { return a + b; } for (let i = 0; i < 48; i++) globalThis.last = add('s', i);",
         "js-jit-rejected-lane.js",
     ))
     .unwrap();
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    let id = vm.programs.insert(program.clone()).unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|body| {
+            body.header()
+                .name
+                .or(body.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "add")
+        })
+        .unwrap() as u32;
 
-    assert!(vm.js_tier_may_claim(&program, id, 1));
-    vm.programs
-        .reject_js_function(id, 1, "unsupported-shape");
-    assert!(vm.programs.js_tier_declined(id, 1));
-    assert!(!vm.js_tier_may_claim(&program, id, 1));
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.programs.enable_js_general_dispatch();
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.compile_general_baseline_when_hot();
+    vm.execute(&program).unwrap();
+
+    let Some(super::program_store::JsTierState::Compiled(native)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("the rejected numeric candidate should promote to the general JavaScript tier");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let name = vm.intern_atom("last");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, name)
+        .unwrap();
+    let actual = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(actual, expected);
+
+    let mut exhausted = Vm::new(TestHost::default());
+
+    exhausted.programs.enable_js_general_dispatch();
+    exhausted.set_execution_mode(crate::ExecutionMode::Compiled);
+    exhausted.programs.compile_general_baseline_when_hot();
+    let exhausted_id = exhausted.programs.insert(program.clone()).unwrap();
+    for _ in 0..32 {
+        exhausted
+            .programs
+            .note_js_function_entry(exhausted_id, function, false, false, true);
+    }
+    exhausted
+        .programs
+        .install_js_tier(exhausted_id, function, None);
+    assert!(
+        !exhausted.js_tier_may_claim(&program, exhausted_id, function),
+        "code-cache or codegen exhaustion remains terminal"
+    );
 }
 
 #[test]
@@ -11978,7 +12417,7 @@ fn js_jit_promotion_requires_a_confident_numeric_profile() {
     let mut programs = super::program_store::ProgramStore::default();
     let id = programs.insert(program).unwrap();
     for observation in 0..16 {
-        assert!(!programs.note_js_function_entry(id, 1, observation < 15, false));
+        assert!(!programs.note_js_function_entry(id, 1, observation < 15, false, true));
     }
     assert!(matches!(
         programs.js_tier(id, 1),
@@ -12024,15 +12463,38 @@ fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
     let mut programs = super::program_store::ProgramStore::default();
     let id = programs.insert(program).unwrap();
     for observation in 0..31 {
-        assert!(!programs.note_js_function_entry(id, 1, observation != 0, false));
+        assert!(!programs.note_js_function_entry(id, 1, observation != 0, false, true));
     }
-    assert!(programs.note_js_function_entry(id, 1, true, false));
+    assert!(programs.note_js_function_entry(id, 1, true, false, true));
     assert!(matches!(
         programs.js_tier(id, 1),
         Some(super::program_store::JsTierState::Hot {
             observations: 32,
             numeric: 31
         })
+    ));
+}
+
+#[cfg(not(quench_profiled))]
+#[test]
+fn js_jit_failed_numeric_look_promotes_general_dispatch_at_32_entries() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "void 0",
+        "js-jit-general-profile-gate.js",
+    ))
+    .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+    for observation in 0..31 {
+        assert!(
+            !programs.note_js_function_entry(id, 1, false, false, true),
+            "entry {observation} must not promote before the first profile look"
+        );
+    }
+    assert!(!programs.note_js_function_entry(id, 1, false, false, true));
+    assert!(matches!(
+        programs.js_tier(id, 1),
+        Some(super::program_store::JsTierState::GeneralPromotionPending { .. })
     ));
 }
 
@@ -12046,14 +12508,14 @@ fn js_jit_keeps_promotion_pending_until_a_numeric_entry() {
     let mut programs = super::program_store::ProgramStore::default();
     let id = programs.insert(program).unwrap();
     for _ in 0..31 {
-        assert!(!programs.note_js_function_entry(id, 1, true, false));
+        assert!(!programs.note_js_function_entry(id, 1, true, false, true));
     }
-    assert!(!programs.note_js_function_entry(id, 1, false, false));
+    assert!(!programs.note_js_function_entry(id, 1, false, false, true));
     assert!(matches!(
         programs.js_tier(id, 1),
         Some(super::program_store::JsTierState::PromotionPending)
     ));
-    assert!(programs.note_js_function_entry(id, 1, true, false));
+    assert!(programs.note_js_function_entry(id, 1, true, false, true));
 }
 
 #[cfg(quench_profiled)]

@@ -2,6 +2,7 @@ use super::*;
 use crate::bytecode::{
     FieldLayout, ImmediateRole, InstructionField, Superinstruction, WideInstruction,
 };
+use super::liveness::{RegisterSet, register_bit};
 
 #[derive(Clone, Copy)]
 struct Rule {
@@ -216,7 +217,7 @@ fn remove_dead_moves(
         .local_registers
         .iter()
         .filter(|entry| entry.local < function.params)
-        .fold(0_u64, |mask, entry| mask | register_bit(entry.register));
+        .fold(0, |mask, entry| mask | register_bit(entry.register));
     let mut changed = Vec::new();
     for pc in 0..function.code.len() {
         let mov = function.code[pc];
@@ -255,12 +256,15 @@ fn hand_on(
 }
 
 /// Drops every `Nop`, relocating jumps, handlers and source positions onto the instruction
-/// that followed it. The transfer masks of the instructions that stay are handed on with them.
+/// that followed it. The transfer masks of the instructions that stay are handed on with them,
+/// and so are their live sets: a `Nop` passes its successor's live set through unchanged, so
+/// only the handler roots `add_suspended_exception_roots` adds after a call move, to the
+/// instruction that now follows it.
 fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
-    let mut transfers = match liveness.take() {
-        Some(CodeFacts::Live(analysis)) => Some(analysis.transfers),
-        Some(CodeFacts::Transfers(transfers)) => Some(transfers),
-        None => None,
+    let (mut transfers, mut live) = match liveness.take() {
+        Some(CodeFacts::Live(analysis)) => (Some(analysis.transfers), Some(analysis.live)),
+        Some(CodeFacts::Transfers(transfers)) => (Some(transfers), None),
+        None => (None, None),
     };
     let old = std::mem::take(&mut function.code);
     let mut code = Vec::with_capacity(old.len());
@@ -271,14 +275,17 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
             if let Some(transfers) = &mut transfers {
                 transfers[code.len()] = transfers[pc];
             }
+            if let Some(live) = &mut live {
+                live[code.len()] = live[pc];
+            }
             code.push(instruction);
         }
     }
-    if let Some(mut transfers) = transfers {
-        transfers.truncate(code.len());
-        *liveness = Some(CodeFacts::Transfers(transfers));
-    }
     map[old.len()] = code.len();
+    if let Some(live) = &mut live {
+        live[code.len()] = live[old.len()];
+        live.truncate(code.len() + 1);
+    }
     relocate(
         &mut code,
         &mut function.wide,
@@ -290,13 +297,29 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
         &old,
     );
     function.code = code;
+    *liveness = match (transfers, live) {
+        (Some(mut transfers), Some(mut live)) => {
+            transfers.truncate(function.code.len());
+            liveness::add_suspended_exception_roots(function, &mut live);
+            debug_assert!(
+                liveness::analyze_transfers(function, &transfers) == live,
+                "liveness handed past dropped Nops matches the code"
+            );
+            Some(CodeFacts::Live(CodeLiveness { transfers, live }))
+        }
+        (Some(mut transfers), None) => {
+            transfers.truncate(function.code.len());
+            Some(CodeFacts::Transfers(transfers))
+        }
+        _ => None,
+    };
 }
 
 /// The liveness of a function's code as it stands: each instruction's transfer masks and the
 /// registers live before it.
 struct CodeLiveness {
-    transfers: Vec<(u64, u64)>,
-    live: Vec<u64>,
+    transfers: Vec<(RegisterSet, RegisterSet)>,
+    live: Vec<RegisterSet>,
 }
 
 /// What a pass hands the next about the code as it stands. A pass that leaves the code
@@ -305,7 +328,7 @@ struct CodeLiveness {
 /// updated for the instructions it changed, so the next pass derives only the live sets.
 enum CodeFacts {
     Live(CodeLiveness),
-    Transfers(Vec<(u64, u64)>),
+    Transfers(Vec<(RegisterSet, RegisterSet)>),
 }
 
 impl CodeLiveness {
@@ -333,6 +356,35 @@ impl CodeLiveness {
         Some(Self { transfers, live })
     }
 
+    /// The liveness of the code after `coalesce_distant_producer_moves` coalesced `spans`. A
+    /// span is a block (one entry, falling through, no handler) where nothing between the
+    /// producer and the move touches either register, so only the live sets after the producer
+    /// change: `src` is no longer read there and `dst` holds the value instead, live up to the
+    /// move exactly when it is live after it. The producer's own live set is unchanged.
+    fn coalesced(
+        self,
+        spans: &[CoalescedSpan],
+        changed: &[usize],
+        function: &BcFunction,
+        methods: &(impl liveness::MethodArguments + ?Sized),
+        field_sites: &[FieldSite],
+        superinstructions: &[Superinstruction],
+    ) -> CodeFacts {
+        let mut live = self.live;
+        for span in spans {
+            for live in &mut live[span.producer + 1..=span.target] {
+                *live = (*live & !span.source) | span.destination_out;
+            }
+        }
+        let mut transfers = self.transfers;
+        update_transfers(&mut transfers, changed, function, methods, field_sites, superinstructions);
+        debug_assert!(
+            liveness::analyze_transfers(function, &transfers) == live,
+            "coalesced liveness matches the code"
+        );
+        CodeFacts::Live(Self { transfers, live })
+    }
+
     /// The facts to hand on after the instructions at `changed` were rewritten in place.
     fn rewritten(
         self,
@@ -343,11 +395,23 @@ impl CodeLiveness {
         superinstructions: &[Superinstruction],
     ) -> CodeFacts {
         let mut transfers = self.transfers;
-        for &pc in changed {
-            let instruction = fixed_width(function.code[pc], &function.wide);
-            transfers[pc] = liveness::transfer(instruction, methods, field_sites, superinstructions);
-        }
+        update_transfers(&mut transfers, changed, function, methods, field_sites, superinstructions);
         CodeFacts::Transfers(transfers)
+    }
+}
+
+/// Re-derives the transfer masks of the instructions at `changed`, which were rewritten in place.
+fn update_transfers(
+    transfers: &mut [(RegisterSet, RegisterSet)],
+    changed: &[usize],
+    function: &BcFunction,
+    methods: &(impl liveness::MethodArguments + ?Sized),
+    field_sites: &[FieldSite],
+    superinstructions: &[Superinstruction],
+) {
+    for &pc in changed {
+        let instruction = fixed_width(function.code[pc], &function.wide);
+        transfers[pc] = liveness::transfer(instruction, methods, field_sites, superinstructions);
     }
 }
 
@@ -453,9 +517,10 @@ fn coalesce_distant_producer_moves(
     let storage = function
         .local_registers
         .iter()
-        .fold(0_u64, |mask, entry| mask | register_bit(entry.register));
+        .fold(0, |mask, entry| mask | register_bit(entry.register));
     let mut claimed_until = 0;
     let mut changed = Vec::new();
+    let mut spans = Some(Vec::new());
     for target in 0..function.code.len() {
         let mov = function.code[target];
         if mov.op() != Op::Move || mov.is_wide() || protected[target] {
@@ -463,10 +528,12 @@ fn coalesce_distant_producer_moves(
         }
         let (source, destination) = (mov.register_b(), mov.result_register());
         let pair = register_bit(source) | register_bit(destination);
-        // A move of a register onto itself changes nothing anything could observe.
+        // A move of a register onto itself changes nothing anything could observe. Its read
+        // may have kept the register live upstream, so the liveness is derived anew.
         if source == destination {
             function.code[target] = Instr::new(Op::Nop, 0, 0, 0, 0);
             changed.push(target);
+            spans = None;
             continue;
         }
         if pair.count_ones() != 2
@@ -518,8 +585,31 @@ fn coalesce_distant_producer_moves(
         function.code[target] = Instr::new(Op::Nop, 0, 0, 0, 0);
         claimed_until = target + 1;
         changed.extend([producer, target]);
+        if let Some(spans) = &mut spans {
+            spans.push(CoalescedSpan {
+                producer,
+                target,
+                source: register_bit(source),
+                destination_out: register_bit(destination) & live[target + 1],
+            });
+        }
     }
-    hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
+    match spans {
+        Some(spans) if !changed.is_empty() => {
+            *current = Some(analysis.coalesced(&spans, &changed, function, methods, field_sites, superinstructions));
+            true
+        }
+        _ => hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current),
+    }
+}
+
+/// A `src = producer; ...; dst = Move src` that `coalesce_distant_producer_moves` turned into
+/// `dst = producer; ...; Nop`, with the bit of `src` and the bit of `dst` if live after the move.
+struct CoalescedSpan {
+    producer: usize,
+    target: usize,
+    source: RegisterSet,
+    destination_out: RegisterSet,
 }
 
 /// Lets the instruction after a `Move` read the move's source in place of its destination when
@@ -558,7 +648,7 @@ fn forward_move_sources(
     let storage = function
         .local_registers
         .iter()
-        .fold(0_u64, |mask, entry| mask | register_bit(entry.register));
+        .fold(0, |mask, entry| mask | register_bit(entry.register));
     let in_handler = |pc: usize| {
         function
             .handlers
@@ -691,9 +781,6 @@ fn fuses(first: Op, second: Op, recipe: impl Fn(Recipe) -> bool) -> bool {
         .any(|rule| rule.pattern == [first, second] && recipe(rule.recipe))
 }
 
-fn register_bit(register: Register) -> u64 {
-    1_u64.checked_shl(u32::from(register)).unwrap_or(0)
-}
 
 struct SuperRule {
     pattern: &'static [Op],
@@ -1406,7 +1493,7 @@ mod tests {
         assert_eq!(fused[0].op(), Op::JumpBinaryFalse);
         assert_eq!(fused[0].jump_target(), 2);
         assert_eq!(fused.len(), dead_branch.len() - 1);
-        assert_rewrite_preserves_code(dead_branch, u64::BITS as u16 + 1);
+        assert_rewrite_preserves_code(dead_branch, super::super::liveness::ROOT_MAP_REGISTERS + 1);
     }
 
     #[test]

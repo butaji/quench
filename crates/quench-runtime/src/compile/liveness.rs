@@ -3,37 +3,54 @@ use crate::bytecode::{
     ImmediateRole, Instr, InstructionField, Op, Operand, Register, Superinstruction, WideInstruction,
 };
 
-/// The registers a root mask covers: one bit each.
-pub(crate) const ROOT_MAP_REGISTERS: u16 = u64::BITS as u16;
+/// A set of registers, one bit each: the uses, definitions and live registers liveness
+/// derives, and the root masks a collection reads.
+pub(crate) type RegisterSet = u128;
+/// The registers a `RegisterSet` covers. Liveness, and with it root maps, register promotion
+/// and move coalescing, covers only functions whose registers fit.
+pub(crate) const ROOT_MAP_REGISTERS: u16 = RegisterSet::BITS as u16;
+
+/// Whether `register` is in `set`; a register past the set's width never is.
+#[inline(always)]
+pub(crate) fn register_in(set: RegisterSet, register: usize) -> bool {
+    register < RegisterSet::BITS as usize && set & (1 << register) != 0
+}
+
+/// Whether `set`, a live set, proves `register` dead: it covers the register and leaves it
+/// out. A register past the set's width may be live.
+#[inline(always)]
+pub(crate) fn register_dead(set: RegisterSet, register: usize) -> bool {
+    register < RegisterSet::BITS as usize && !register_in(set, register)
+}
 
 pub(crate) type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
 
 /// The argument registers of each method site, by site index: the compiler's site specs, or
 /// a finished program's site table.
 pub(crate) trait MethodArguments {
-    fn arguments(&self, site: usize) -> u64;
+    fn arguments(&self, site: usize) -> RegisterSet;
 }
 
 impl MethodArguments for [MethodSite] {
-    fn arguments(&self, site: usize) -> u64 {
-        self[site].2.iter().copied().fold(0, |mask, register| mask | bit(register))
+    fn arguments(&self, site: usize) -> RegisterSet {
+        self[site].2.iter().copied().fold(0, |mask, register| mask | register_bit(register))
     }
 }
 
 impl MethodArguments for super::SiteTable<'_, MethodSite> {
-    fn arguments(&self, site: usize) -> u64 {
+    fn arguments(&self, site: usize) -> RegisterSet {
         self.as_slice().arguments(site)
     }
 }
 
 impl MethodArguments for crate::bytecode::ResidualProgram {
-    fn arguments(&self, site: usize) -> u64 {
+    fn arguments(&self, site: usize) -> RegisterSet {
         let site = &self.method_sites[site];
         let start = site.argument_start as usize;
         self.method_arguments[start..start + usize::from(site.argument_count)]
             .iter()
             .copied()
-            .fold(0, |mask, register| mask | bit(register))
+            .fold(0, |mask, register| mask | register_bit(register))
     }
 }
 
@@ -56,7 +73,7 @@ pub(crate) fn analyze(
     methods: &(impl MethodArguments + ?Sized),
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
-) -> Option<Vec<u64>> {
+) -> Option<Vec<RegisterSet>> {
     let transfers = transfers(function, methods, fields, superinstructions)?;
     Some(analyze_transfers(function, &transfers))
 }
@@ -68,7 +85,7 @@ pub(super) fn transfers(
     methods: &(impl MethodArguments + ?Sized),
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
-) -> Option<Vec<(u64, u64)>> {
+) -> Option<Vec<(RegisterSet, RegisterSet)>> {
     if function.registers > ROOT_MAP_REGISTERS {
         return None;
     }
@@ -86,7 +103,7 @@ pub(super) fn transfer(
     methods: &(impl MethodArguments + ?Sized),
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
-) -> (u64, u64) {
+) -> (RegisterSet, RegisterSet) {
     (
         uses(instruction, methods, fields, superinstructions),
         definitions(instruction, superinstructions),
@@ -97,7 +114,7 @@ pub(super) fn transfer(
 /// successors all follow it, so only code with a backward successor iterates to a fixed point.
 /// Each instruction's successors are enumerated once, into `successors[starts[pc]..starts[pc
 /// + 1]]`, which every pass then reads.
-pub(super) fn analyze_transfers(function: &Function, transfers: &[(u64, u64)]) -> Vec<u64> {
+pub(super) fn analyze_transfers(function: &Function, transfers: &[(RegisterSet, RegisterSet)]) -> Vec<RegisterSet> {
     let length = function.code.len();
     let mut starts = Vec::with_capacity(length + 1);
     let mut successors = Vec::with_capacity(length);
@@ -136,10 +153,10 @@ pub(super) fn analyze_transfers(function: &Function, transfers: &[(u64, u64)]) -
 
 pub(super) fn live_out(
     function: &Function,
-    live: &[u64],
+    live: &[RegisterSet],
     pc: usize,
     instruction: WideInstruction,
-) -> u64 {
+) -> RegisterSet {
     let mut output = 0;
     function.for_each_successor(pc, instruction, |successor, _| {
         output |= live.get(successor).copied().unwrap_or(0);
@@ -154,7 +171,7 @@ fn resumes_into_handler(op: Op) -> bool {
     op.control_flow_layout() == ControlFlowLayout::Call || matches!(op, Op::Await | Op::Yield | Op::YieldStar)
 }
 
-fn add_suspended_exception_roots(function: &Function, live: &mut [u64]) {
+pub(super) fn add_suspended_exception_roots(function: &Function, live: &mut [RegisterSet]) {
     for (pc, instruction) in function.instructions().enumerate() {
         if !resumes_into_handler(instruction.op()) {
             continue;
@@ -172,7 +189,7 @@ pub(super) fn uses(
     methods: &(impl MethodArguments + ?Sized),
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
-) -> u64 {
+) -> RegisterSet {
     let field_reads = InstructionField::ALL
         .iter()
         .copied()
@@ -180,7 +197,7 @@ pub(super) fn uses(
             mask | field_uses(instruction, field, fields)
         });
     let result = if instruction.op().result_layout().reads_result_register() {
-        bit(instruction.result_register())
+        register_bit(instruction.result_register())
     } else {
         0
     };
@@ -193,7 +210,7 @@ pub(super) fn uses(
         }
         ImmediateLayout::RegisterPair => {
             let (first, second) = instruction.register_pair();
-            bit(first) | bit(second)
+            register_bit(first) | register_bit(second)
         }
         _ => 0,
     };
@@ -204,7 +221,7 @@ pub(super) fn uses(
         .code
         .iter()
         .fold(0, |mask, nested| {
-            mask | nested_member(*nested).map_or(u64::MAX, |nested| {
+            mask | nested_member(*nested).map_or(RegisterSet::MAX, |nested| {
                 uses(nested, methods, fields, superinstructions)
             })
         }),
@@ -213,14 +230,14 @@ pub(super) fn uses(
     field_reads | result | packed_uses | indexed_uses
 }
 
-fn field_uses(instruction: WideInstruction, field: InstructionField, fields: &[FieldSite]) -> u64 {
+fn field_uses(instruction: WideInstruction, field: InstructionField, fields: &[FieldSite]) -> RegisterSet {
     let layout = instruction.op().field_layout(field);
     match layout {
         FieldLayout::RegisterWindowBase => {
             let window = instruction.register_window();
             range(window.base, window.count)
         }
-        layout if layout.reads_register() => bit(field_register(instruction, field)),
+        layout if layout.reads_register() => register_bit(field_register(instruction, field)),
         layout if layout.is_operand_field() => {
             let input_operand = match field {
                 InstructionField::B => instruction.operand_b(),
@@ -230,12 +247,12 @@ fn field_uses(instruction: WideInstruction, field: InstructionField, fields: &[F
             operand(input_operand.0, fields)
         }
         FieldLayout::FieldBase => field_base(instruction, fields),
-        FieldLayout::OptionalReadRegister => instruction.optional_register_b().map_or(0, bit),
+        FieldLayout::OptionalReadRegister => instruction.optional_register_b().map_or(0, register_bit),
         FieldLayout::ConstructArguments => match instruction.construct_arguments() {
             crate::bytecode::ConstructArguments::Registers(window) => {
                 range(window.base, window.count)
             }
-            crate::bytecode::ConstructArguments::Array(register) => bit(register),
+            crate::bytecode::ConstructArguments::Array(register) => register_bit(register),
         },
         _ => 0,
     }
@@ -244,12 +261,12 @@ fn field_uses(instruction: WideInstruction, field: InstructionField, fields: &[F
 pub(super) fn definitions(
     instruction: WideInstruction,
     superinstructions: &[Superinstruction],
-) -> u64 {
+) -> RegisterSet {
     let result = if instruction.op().has_result_register()
         && !instruction.returns_from_frame()
         && !instruction.writes_numeric_local()
     {
-        bit(instruction.result_register())
+        register_bit(instruction.result_register())
     } else {
         0
     };
@@ -262,7 +279,7 @@ pub(super) fn definitions(
     let packed_definitions = match instruction.op().immediate_layout() {
         ImmediateLayout::RegisterPair => {
             let (first, second) = instruction.register_pair();
-            bit(first) | bit(second)
+            register_bit(first) | register_bit(second)
         }
         _ => 0,
     };
@@ -279,14 +296,14 @@ pub(super) fn definitions(
     result | field_writes | packed_definitions | indexed_definitions
 }
 
-fn field_definitions(instruction: WideInstruction, field: InstructionField) -> u64 {
+fn field_definitions(instruction: WideInstruction, field: InstructionField) -> RegisterSet {
     let layout = instruction.op().field_layout(field);
     match layout {
-        layout if layout.writes_register() => bit(field_register(instruction, field)),
-        FieldLayout::OptionalRegister => instruction.optional_register_b().map_or(0, bit),
+        layout if layout.writes_register() => register_bit(field_register(instruction, field)),
+        FieldLayout::OptionalRegister => instruction.optional_register_b().map_or(0, register_bit),
         FieldLayout::NumericLocalTarget => instruction
             .numeric_local_store_target()
-            .map_or(0, |target| bit(target.register)),
+            .map_or(0, |target| register_bit(target.register)),
         _ => 0,
     }
 }
@@ -295,32 +312,32 @@ fn field_register(instruction: WideInstruction, field: InstructionField) -> Regi
     instruction.field_value(field)
 }
 
-fn field_base(instruction: WideInstruction, fields: &[FieldSite]) -> u64 {
+fn field_base(instruction: WideInstruction, fields: &[FieldSite]) -> RegisterSet {
     match instruction.field_lookup() {
         None => 0,
         Some(FieldLookup::Site(index)) => fields
             .get(index)
             .and_then(|site| site.base.register_index())
-            .map_or(0, bit),
-        Some(FieldLookup::Atom { base, .. }) => base.register_index().map_or(0, bit),
+            .map_or(0, register_bit),
+        Some(FieldLookup::Atom { base, .. }) => base.register_index().map_or(0, register_bit),
     }
 }
 
-fn operand(value: u16, fields: &[FieldSite]) -> u64 {
+fn operand(value: u16, fields: &[FieldSite]) -> RegisterSet {
     let operand = Operand(value);
     if let Some(register) = operand.register_index() {
-        return bit(register);
+        return register_bit(register);
     }
     if operand.kind() == Some(crate::bytecode::OperandKind::Field) {
         return fields
             .get(operand.payload() as usize)
             .and_then(|site| site.base.register_index())
-            .map_or(0, bit);
+            .map_or(0, register_bit);
     }
     0
 }
 
-fn method_arguments(instruction: WideInstruction, methods: &(impl MethodArguments + ?Sized)) -> u64 {
+fn method_arguments(instruction: WideInstruction, methods: &(impl MethodArguments + ?Sized)) -> RegisterSet {
     methods.arguments(instruction.method_site_index())
 }
 
@@ -331,12 +348,13 @@ fn nested_member(member: Instr) -> Option<WideInstruction> {
     (!member.is_wide()).then(|| member.as_wide())
 }
 
-fn range(base: u16, count: u16) -> u64 {
-    (0..count).fold(0, |mask, offset| mask | bit(base + offset))
+fn range(base: u16, count: u16) -> RegisterSet {
+    (0..count).fold(0, |mask, offset| mask | register_bit(base + offset))
 }
 
-fn bit(register: u16) -> u64 {
-    if u32::from(register) < u64::BITS {
+/// The set of `register` alone; empty past the set's width.
+pub(crate) fn register_bit(register: u16) -> RegisterSet {
+    if u32::from(register) < RegisterSet::BITS {
         1 << register
     } else {
         0
@@ -414,9 +432,9 @@ mod tests {
             initial_register: Default::default(),
         };
         let roots = analyze(&function, NO_METHODS, &[], &[]).unwrap();
-        assert_eq!(roots[3], bit(1));
-        assert_eq!(roots[1], bit(1));
-        assert_eq!(roots[1] & bit(0), 0);
+        assert_eq!(roots[3], register_bit(1));
+        assert_eq!(roots[1], register_bit(1));
+        assert_eq!(roots[1] & register_bit(0), 0);
     }
 
     #[test]
@@ -432,8 +450,8 @@ mod tests {
             Op::WasmAtomicAccess,
         ] {
             let instruction = Instr::new(op, 0, 1, 3, 0);
-            assert_eq!(uses(instruction.as_wide(), NO_METHODS, &[], &[]), bit(1) | bit(2) | bit(3));
-            assert_eq!(definitions(instruction.as_wide(), &[]), bit(0));
+            assert_eq!(uses(instruction.as_wide(), NO_METHODS, &[], &[]), register_bit(1) | register_bit(2) | register_bit(3));
+            assert_eq!(definitions(instruction.as_wide(), &[]), register_bit(0));
             assert_eq!(uses(Instr::new(op, 0, 0, 0, 0).as_wide(), NO_METHODS, &[], &[]), 0);
         }
     }
@@ -448,7 +466,7 @@ mod tests {
             1,
             0,
         );
-        assert_eq!(uses(append.as_wide(), NO_METHODS, &[], &[]), bit(1) | bit(2));
+        assert_eq!(uses(append.as_wide(), NO_METHODS, &[], &[]), register_bit(1) | register_bit(2));
         assert_eq!(definitions(append.as_wide(), &[]), 0);
         // A store's optional register receives a copy of the stored value.
         let store = Instr::new(
@@ -458,8 +476,8 @@ mod tests {
             0,
             0,
         );
-        assert_eq!(uses(store.as_wide(), NO_METHODS, &[], &[]), bit(1));
-        assert_eq!(definitions(store.as_wide(), &[]), bit(3));
+        assert_eq!(uses(store.as_wide(), NO_METHODS, &[], &[]), register_bit(1));
+        assert_eq!(definitions(store.as_wide(), &[]), register_bit(3));
     }
 
     #[test]
