@@ -311,6 +311,7 @@ impl<H: Host> Vm<H> {
             lane_returned,
             active_layout: _,
             active_constants: _,
+            active_field_entries: _,
             active_program: _,
             profile: _,
             shapes,
