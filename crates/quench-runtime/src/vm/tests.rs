@@ -11401,7 +11401,9 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
             .and_then(std::cell::OnceCell::get)
             .expect("hot sum loop lane view");
         let osr = view.osr_diagnostics();
-        assert_eq!(osr.admitted_sites, 1, "OSR analysis rejected the field loop under {policy:?}");
+        // Loop sites are analyzed only where the JavaScript tiers run (`JS_FUNCTION_TIERS`).
+        let analyzes = super::compiled::js_function_tiers_compile(policy);
+        assert_eq!(osr.admitted_sites, usize::from(analyzes), "field loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
         assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field loop native code under {policy:?}");
     }
@@ -14603,4 +14605,17 @@ fn set_iteration_copies_only_while_the_intrinsics_iterate() {
     for program in [Engine::compile(crate::ExecutionRequest { source, name: "set-iteration.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "set-iteration.js").unwrap()] {
         Vm::new(TestHost::default()).execute(&program).unwrap();
     }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_function_tiers_follow_the_memory_policy() {
+    for policy in crate::MemoryPolicy::ALL {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_memory_policy(policy);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        assert_eq!(vm.js_tier_runs(), super::compiled::js_function_tiers_compile(policy), "{policy:?}");
+    }
+    assert!(super::compiled::js_function_tiers_compile(crate::MemoryPolicy::Throughput));
+    assert!(!super::compiled::js_function_tiers_compile(crate::MemoryPolicy::MemoryFirst));
 }
