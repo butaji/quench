@@ -11242,11 +11242,17 @@ fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
           function countNull(value) {
             let count = seed();
             let hits = 0;
+            let current = value;
             while (count < 4) {
-              if (null === value) hits++;
+              if (current === null) {
+                hits++;
+                current = value;
+              } else {
+                current = null;
+              }
               count++;
             }
-            return hits;
+            return current === null ? hits + 10 : hits;
           }
           let result = 0;
           for (let call = 0; call < 400; call++) {
@@ -11273,13 +11279,13 @@ fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
     let interpreted_output = Rc::new(RefCell::new(Vec::new()));
     let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
     interpreter.execute(&program).unwrap();
-    assert_eq!(interpreted_output.borrow().as_slice(), ["800", "0", "0"]);
+    assert_eq!(interpreted_output.borrow().as_slice(), ["3200", "2", "2"]);
 
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), ["800", "0", "0"]);
+    assert_eq!(output.borrow().as_slice(), ["3200", "2", "2"]);
 
     let views = vm
         .programs
