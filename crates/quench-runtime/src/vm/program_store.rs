@@ -1634,6 +1634,12 @@ impl ProgramStore {
         self.js_jit_general_dispatch_enabled
     }
 
+    /// Records the counters `QUENCH_JS_JIT_STATS` enables, for a test to read.
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn enable_js_jit_diagnostics(&mut self) {
+        self.js_jit_diagnostics.get_or_insert_with(FxHashMap::default);
+    }
+
     pub(super) fn js_jit_dataview_float64_enabled(&self) -> bool {
         self.js_jit_dataview_float64_enabled
     }
@@ -1690,6 +1696,22 @@ impl ProgramStore {
     /// overhead. A loop-free body that cannot is not counted toward it at all.
     pub(super) fn general_baseline_may_pay(&self, instructions: usize) -> bool {
         !self.general_baseline_priced || general_saved_per_entry(instructions).is_some()
+    }
+
+    /// Whether the general baseline may ever take a body of `instructions` under `policy`:
+    /// the tier is switched on, the memory policy compiles JS tiers, and the body could
+    /// pay. An `acyclic` body pays only through its entries (`general_baseline_may_pay`);
+    /// one with loops may also pay through its backedge work (`general_dispatch_work_due`).
+    /// A function it may not take is neither claimed for the tier nor counted toward it.
+    pub(super) fn general_tier_admits(
+        &self,
+        instructions: usize,
+        acyclic: bool,
+        policy: crate::MemoryPolicy,
+    ) -> bool {
+        self.js_jit_general_dispatch_enabled
+            && super::compiled::js_function_tiers_compile(policy)
+            && (!acyclic || self.general_baseline_may_pay(instructions))
     }
 
     /// Compile a hot function's general baseline without pricing it, for tests of its

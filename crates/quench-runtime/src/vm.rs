@@ -734,6 +734,11 @@ const NO_INHERITED_FIELD: u32 = u32::MAX;
 // TypeScript and ESLint census, `field_add_cache_depth_counts`, 2026-10-23), so eight keeps
 // the streams' five with room and halves the sixteen an inherited read keeps.
 const FIELD_ADD_CACHE_MAX_PROTO_DEPTH: usize = 8;
+/// Bits of a keyed add's index into `Vm::keyed_adds`.
+const KEYED_ADD_INDEX_BITS: u32 = 6;
+/// Keyed adds the VM remembers, direct-mapped by source shape and key: express's JSON body
+/// path makes fifteen a request into header and parameter objects, whose shapes repeat.
+const KEYED_ADD_ENTRIES: usize = 1 << KEYED_ADD_INDEX_BITS;
 /// Source shapes one add site remembers; the oldest is evicted beyond this. Objects whose
 /// optional fields are assigned in varying order reach one add site with several shapes.
 const FIELD_ADD_CACHE_WAYS: usize = 4;
@@ -1862,6 +1867,10 @@ pub(crate) struct Vm<H> {
     accessor_field_caches: FxHashMap<usize, Vec<AccessorFieldCache>>,
     field_add_indices: site_table::SiteTable<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
+    /// Adds a keyed `[[Set]]` of a string naming an atom made (`Vm::keyed_add_hit`): a keyed
+    /// site's keys vary, so the entries are shared, indexed by source shape and atom
+    /// (`keyed_add_index`); cleared with the field caches.
+    keyed_adds: Box<[FieldAddCache; KEYED_ADD_ENTRIES]>,
     megamorphic_field_indices: site_table::SiteTable<u32>,
     /// The cache sites whose per-site entries (`field_caches`, `megamorphic_field_indices`,
     /// `field_add_indices`, `inherited_field_indices`) were written since the last
@@ -2859,6 +2868,7 @@ impl<H: Host> Vm<H> {
         self.inherited_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.field_add_sets.clear();
+        self.keyed_adds.fill(FieldAddCache::EMPTY);
         self.megamorphic_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.megamorphic_fields.clear();
         self.length_atom = self.intern_atom("length");
@@ -2923,7 +2933,7 @@ impl<H: Host> Vm<H> {
             Constant::WasmV128(bits) => self.heap.alloc_v128(*bits),
             Constant::String(v) => self
                 .typeof_constant(v)
-                .unwrap_or_else(|| self.heap.alloc_string(v.clone().into())),
+                .unwrap_or_else(|| self.heap.alloc_string(JsString::from_shared_text(v))),
             Constant::StringUnits(v) => self.heap.alloc_string(JsString::from_units(v)),
             Constant::BigInt(v) => self.heap.alloc(Cell::bigint(v.clone())),
             Constant::Boolean(true) => Value::TRUE,

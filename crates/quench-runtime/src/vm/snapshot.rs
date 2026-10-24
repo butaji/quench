@@ -355,6 +355,7 @@ impl<H: Host> Vm<H> {
             accessor_field_caches: _,
             field_add_indices: _,
             field_add_sets: _,
+            keyed_adds: _,
             megamorphic_field_indices: _,
             field_cache_writes: _,
             megamorphic_fields: _,
