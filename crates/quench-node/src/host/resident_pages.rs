@@ -69,10 +69,98 @@ pub fn release_read_only_pages_after_load() {
     }
 }
 
+/// Whether a release point returns resident pages now: once the process's memory policy is
+/// selected, when its `MemoryPolicy::resident_release_interval` has passed since the last
+/// return. The pace starts at the first release point after the selection.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn release_due(policy: quench_runtime::MemoryPolicy) -> bool {
+    let interval = policy.resident_release_interval();
+    let Ok(mut last) = LAST_RELEASE.lock() else {
+        return false;
+    };
+    match *last {
+        Some(at) => at.elapsed() >= interval,
+        None => {
+            *last = Some(std::time::Instant::now());
+            interval.is_zero()
+        }
+    }
+}
+
+/// `release_due` under the process's memory policy, if one is selected.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn process_release_due() -> bool {
+    crate::shared_run::process_memory_policy().is_some_and(release_due)
+}
+
+/// Unmaps the read-only pages above from the resident set when a release is due
+/// (`process_release_due`); the next touch of each refaults it from its file. Between due
+/// releases it still unmaps the tracked mappings: the snapshot's and compile cache's records
+/// a run has decoded, which it reads again only for a function's first call, unlike the code
+/// a release refaults. Against keeping them until the next due release (plain x86_64 build,
+/// snapshot on, 9 runs, 2026-10-23), npm scenario peak RSS jsdom 82.8 -> 80.1 MB, lodash
+/// 19.1 -> 17.7, path-parse 16.8 -> 15.6, undici 32.0 -> 31.6, with as many page faults and
+/// wall time within noise.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_read_only_pages() {
+    if process_release_due() {
+        discard_read_only_pages();
+    } else {
+        discard_tracked_mappings();
+    }
+}
+
+/// A collection boundary's release under the runtime's `policy`: the read-only pages and the
+/// allocator's free pages, which the collection's sweep just freed, when a release is due
+/// (`release_due`). Every policy counts the collection for the release before output.
+pub fn release_at_collection(policy: quench_runtime::MemoryPolicy) {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    if release_due(policy) {
+        discard_read_only_pages();
+        release_free_heap_pages();
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    let _ = policy;
+    note_collection();
+}
+
+/// Releases the read-only pages around a native compilation: the code generator's pages are
+/// not the run's, and a native compilation is a short numeric program's peak (V8-v7 `--jit`
+/// max RSS, TOD-185: Crypto 11.6-13.2 -> 9.2-9.7 MB, NavierStokes 11.1 -> 9.1). The releases
+/// around the first compilation (`UNPACED_NATIVE_COMPILATION_RELEASES`) run under every
+/// policy; later ones when a release is due (`process_release_due`). A run that compiles
+/// many functions had refaulted the code it runs at each (npm scenarios `--jit`, plain
+/// x86_64 build, interleaved, 2026-10-24: whatwg-url 126 -> 102 ms CPU and 19.3K -> 9.4K
+/// faults at 19.3 -> 22.8 MB, axios 123 -> 113 ms, semver 121 -> 110, schema-utils 242 -> 222,
+/// node-fetch 51 -> 48, browserslist flat; V8-v7 `--jit` max RSS NavierStokes 12.3 -> 14.1 MB,
+/// Crypto 15.5 -> 16.3, RayTrace 12.6 -> 13.1, the rest within 0.2 MB, scores within noise).
+/// Releasing around the first eight compilations kept NavierStokes at 13.8 MB and lost the
+/// npm gains.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_at_native_compilation() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static RELEASES: AtomicU32 = AtomicU32::new(0);
+    let unpaced = RELEASES.fetch_add(1, Ordering::Relaxed) < UNPACED_NATIVE_COMPILATION_RELEASES;
+    if unpaced || process_release_due() {
+        discard_read_only_pages();
+    } else {
+        discard_tracked_mappings();
+    }
+}
+
+/// The native-compilation releases that run whatever the pace: the one before and the one
+/// after the first compilation (`Host::before_native_compilation`,
+/// `Host::after_native_compilation`).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const UNPACED_NATIVE_COMPILATION_RELEASES: u32 = 2;
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_at_native_compilation() {}
+
 /// Unmaps the read-only pages above from the resident set; the next touch of each refaults it
 /// from its file.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub fn release_read_only_pages() {
+fn discard_read_only_pages() {
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
@@ -84,6 +172,12 @@ pub fn release_read_only_pages() {
             libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
         }
     }
+    discard_tracked_mappings();
+}
+
+/// Unmaps the tracked mappings' pages (`TRACKED_MAPPINGS`) from the resident set.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn discard_tracked_mappings() {
     // Held while releasing, so no tracked mapping is unmapped meanwhile.
     if let Ok(mut mappings) = TRACKED_MAPPINGS.lock() {
         // Every tracked mapping is released below, deferred ranges with it.
@@ -308,7 +402,10 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
 /// it can drop or swap.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_code_and_data() {
-    release_read_only_pages();
+    if !process_release_due() {
+        return;
+    }
+    discard_read_only_pages();
     for (start, end) in loaded_segments(ReleasedSegment::LibraryData) {
         // SAFETY: paging out never changes a mapping's contents.
         unsafe {
@@ -357,10 +454,9 @@ impl CompileRelease {
 impl CompileRelease {
     /// How far apart this release's runs are kept.
     fn interval(self) -> std::time::Duration {
-        let returns_pages = crate::shared_run::process_memory_policy()
-            .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
+        let memory_first = crate::shared_run::process_memory_policy() == Some(quench_runtime::MemoryPolicy::MemoryFirst);
         match self {
-            Self::FirstCall if returns_pages => MEMORY_FIRST_FIRST_CALL_INTERVAL,
+            Self::FirstCall if memory_first => MEMORY_FIRST_FIRST_CALL_INTERVAL,
             Self::FirstCall | Self::CodeGeneration => LOAD_RELEASE_INTERVAL,
         }
     }
@@ -400,7 +496,7 @@ impl CompileRelease {
     /// the run's time (`BUDGET_RELEASE_TIME_DIVISOR`).
     fn over_budget(self) -> bool {
         let returns_pages = crate::shared_run::process_memory_policy()
-            .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
+            .is_some_and(|policy| policy.resident_release_interval().is_zero());
         if !matches!(self, Self::FirstCall) || !returns_pages {
             return false;
         }
@@ -668,7 +764,7 @@ static COLLECTIONS_AT_OUTPUT_RELEASE: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(u64::MAX);
 
 /// Records a collection boundary, after which the next output releases the read-only pages.
-pub fn note_collection() {
+fn note_collection() {
     COLLECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
