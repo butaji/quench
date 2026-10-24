@@ -10816,48 +10816,74 @@ script_handler! {
     #[inline(never)]
     fn lane_tier_prologue<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let (function, params, binds_this) = (i.imm(), i.a, i.b != 0);
+        let (function, params) = (i.imm(), usize::from(i.a));
         // SAFETY: the activation just set the context to its own function's.
-        let (code, program, base, this, env) =
-            unsafe { (&*(*cx).code, (*cx).program, (*cx).base, (*cx).this, (*cx).env) };
-        let receiver = (binds_this && !this.is_deleted()).then_some(this);
+        let (program, base) = unsafe { ((*cx).program, (*cx).base) };
         // SAFETY: the activation's registers hold its parameters from its first.
-        let parameters = unsafe { std::slice::from_raw_parts(r.0, usize::from(params)) };
+        let parameters = unsafe { std::slice::from_raw_parts(r.0, params) };
         // SAFETY: the program's views outlive the lane run.
         let own = unsafe { &*(*cx).views }.get(function as usize).and_then(std::cell::OnceCell::get);
-        // A compiled body that reads only its parameters runs directly, as kept.
-        if let Some(own) = own
-            && let Some(direct) = own.tier_direct.take()
-        {
-            let entered = vm.run_direct_tier_entry(&direct, program, parameters);
-            if !direct.retired() {
-                own.tier_direct.set(Some(direct));
-            }
-            if let Some((pc, register, value)) = entered {
-                r.set(register, value);
-                // SAFETY: the entry's `Return` is a record of the function.
-                next!(cx, r, unsafe { base.add(pc) }, Carried::script(cx))
-            }
-        }
-        if let Some((pc, register, value)) =
-            vm.js_tier_activation_entry(code, program, function, parameters, receiver, env)
-        {
+        let entered = own
+            .and_then(|own| lane_tier_direct(vm, own, program, parameters))
+            .or_else(|| lane_tier_enter(cx, function, i.b != 0, own, parameters));
+        if let Some((pc, register, value)) = entered {
             r.set(register, value);
-            if let Some(own) = own
-                && let Some(direct) = vm.direct_tier_entry(code, program, function)
-            {
-                own.tier_direct.set(Some(direct));
-            }
             // SAFETY: the tier returns a PC of the function, whose records are contiguous.
             next!(cx, r, unsafe { base.add(pc) }, Carried::script(cx))
         }
-        if !vm.js_tier_may_claim(code, program, function)
-            && let Some(own) = own
-        {
-            own.release_from_tier();
-        }
         next!(cx, r, base, Carried::script(cx))
     }
+}
+
+/// The tier prologue's run of the compiled body `own` keeps for a body that reads only its
+/// parameters (`LaneView::tier_direct`): the `Return` to continue at, its register and the
+/// result.
+#[inline(always)]
+fn lane_tier_direct<H: Host>(
+    vm: &mut Vm<H>,
+    own: &LaneView,
+    program: ProgramId,
+    parameters: &[Value],
+) -> Option<(usize, crate::bytecode::Register, Value)> {
+    let direct = own.tier_direct.take()?;
+    let entered = vm.run_direct_tier_entry(&direct, program, parameters);
+    if !direct.retired() {
+        own.tier_direct.set(Some(direct));
+    }
+    entered
+}
+
+/// The tier prologue's entry where no direct run completes the activation
+/// (`Vm::js_tier_activation_entry`). A completed entry keeps the direct run the
+/// compiled body admits; once the tier declines the function, its activations start at
+/// the first record again (`LaneView::release_from_tier`).
+#[cold]
+#[inline(never)]
+fn lane_tier_enter<H: Host>(
+    cx: *mut LaneContext<H>,
+    function: u32,
+    binds_this: bool,
+    own: Option<&LaneView>,
+    parameters: &[Value],
+) -> Option<(usize, crate::bytecode::Register, Value)> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the activation just set the context to its own function's.
+    let (code, program, this, env) = unsafe { (&*(*cx).code, (*cx).program, (*cx).this, (*cx).env) };
+    let receiver = (binds_this && !this.is_deleted()).then_some(this);
+    if let Some(entered) = vm.js_tier_activation_entry(code, program, function, parameters, receiver, env) {
+        if let Some(own) = own
+            && let Some(direct) = vm.direct_tier_entry(code, program, function)
+        {
+            own.tier_direct.set(Some(direct));
+        }
+        return Some(entered);
+    }
+    if !vm.js_tier_may_claim(code, program, function)
+        && let Some(own) = own
+    {
+        own.release_from_tier();
+    }
+    None
 }
 
 /// Whether activating `target` leaves the running program. Every activation tests it, so an
