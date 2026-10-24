@@ -1271,6 +1271,168 @@ fn emit_js_step_fallback(
     );
 }
 
+/// Continue native code only when one guard holds. All failures share the exact-PC
+/// VM fallback emitted after the direct path.
+fn emit_js_guard(
+    builder: &mut FunctionBuilder<'_>,
+    condition: ir::Value,
+    fallback: ir::Block,
+) {
+    let passed = builder.create_block();
+    builder.ins().brif(condition, passed, &[], fallback, &[]);
+    builder.switch_to_block(passed);
+    builder.seal_block(passed);
+}
+
+/// Lower a present dense own-array read. The receiver and key come from the
+/// canonical tagged frame on every execution; the record and its current
+/// backing are also reloaded per access so receiver changes and COW writes are
+/// visible. Every failed proof leaves the destination untouched and resumes
+/// `Vm::step` at this GetIndex PC.
+#[allow(clippy::too_many_arguments)]
+fn emit_js_dense_array_get(
+    builder: &mut FunctionBuilder<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    base_offset: i32,
+    key: ir::Value,
+    destination_offset: i32,
+    next: ir::Block,
+    context: ir::Value,
+    callout: ir::Value,
+    callout_signature: ir::SigRef,
+    result_pointer: ir::Value,
+    stopped_block: ir::Block,
+    continue_block: ir::Block,
+    pc: usize,
+) {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    use crate::value::ValueLayout;
+
+    let fallback = builder.create_block();
+    let base = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        arguments,
+        base_offset,
+    );
+    let family = builder
+        .ins()
+        .band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
+    let is_array = builder.ins().icmp_imm_u(
+        IntCC::Equal,
+        family,
+        ValueLayout::DIRECT_ARRAY_TAG as i64,
+    );
+    emit_js_guard(builder, is_array, fallback);
+
+    let index = builder.ins().ireduce(types::I32, key);
+    let key_tag = builder
+        .ins()
+        .band_imm_u(key, ValueLayout::TAG_MASK as i64);
+    let is_integer = builder
+        .ins()
+        .icmp_imm_u(IntCC::Equal, key_tag, ValueLayout::INT_TAG as i64);
+    emit_js_guard(builder, is_integer, fallback);
+    let nonnegative = builder
+        .ins()
+        .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, index, 0);
+    emit_js_guard(builder, nonnegative, fallback);
+
+    let record_id = builder.ins().ireduce(types::I32, base);
+    let record_id = builder.ins().uextend(types::I64, record_id);
+    let record_in_bounds = builder.ins().icmp_imm_u(
+        IntCC::UnsignedLessThan,
+        record_id,
+        i64::try_from(ARRAY.record_capacity).expect("array record capacity fits i64"),
+    );
+    emit_js_guard(builder, record_in_bounds, fallback);
+
+    let record_base_address = builder.ins().iadd_imm_s(
+        payload,
+        i64::try_from(std::mem::offset_of!(JsStepDispatch, array_record_base))
+            .expect("JS dispatch offset fits i64"),
+    );
+    let record_base = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        record_base_address,
+        0,
+    );
+    let base_is_present = builder
+        .ins()
+        .icmp_imm_u(IntCC::NotEqual, record_base, 0);
+    emit_js_guard(builder, base_is_present, fallback);
+
+    let record_size = i64::try_from(ARRAY.record_size).expect("array record size fits i64");
+    let record_offset = builder.ins().imul_imm_u(record_id, record_size);
+    let record = builder.ins().iadd(record_base, record_offset);
+    let elements = builder.ins().iadd_imm_s(
+        record,
+        i64::try_from(ARRAY.elements_offset).expect("array elements offset fits i64"),
+    );
+    let header = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        elements,
+        i32::try_from(ARRAY.elements_header_offset).expect("header pointer offset fits i32"),
+    );
+    let header_is_present = builder
+        .ins()
+        .icmp_imm_u(IntCC::NotEqual, header, 0);
+    emit_js_guard(builder, header_is_present, fallback);
+
+    let length = builder.ins().load(
+        types::I32,
+        MemFlagsData::trusted(),
+        header,
+        i32::try_from(ARRAY.header_length_offset).expect("array length offset fits i32"),
+    );
+    let index_is_present = builder
+        .ins()
+        .icmp(IntCC::UnsignedLessThan, index, length);
+    emit_js_guard(builder, index_is_present, fallback);
+
+    let value_offset = builder.ins().ishl_imm_u(index, 3);
+    let value_offset = builder.ins().uextend(types::I64, value_offset);
+    let values = builder.ins().iadd_imm_s(
+        header,
+        i64::try_from(ARRAY.header_values_offset).expect("array values offset fits i64"),
+    );
+    let value_address = builder.ins().iadd(values, value_offset);
+    let value = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        value_address,
+        0,
+    );
+    let is_present = builder.ins().icmp_imm_u(
+        IntCC::NotEqual,
+        value,
+        Value::DELETED.to_bits() as i64,
+    );
+    emit_js_guard(builder, is_present, fallback);
+
+    builder.ins().store(
+        MemFlagsData::trusted(),
+        value,
+        arguments,
+        destination_offset,
+    );
+    builder.ins().jump(next, &[]);
+    builder.switch_to_block(fallback);
+    emit_js_step_fallback(
+        builder,
+        context,
+        callout,
+        callout_signature,
+        result_pointer,
+        stopped_block,
+        continue_block,
+        pc,
+    );
+}
+
 /// Read the VM's atomic cancellation flag at a JS loop backedge. The caller
 /// sends a set flag to the exact-PC `Vm::step` callout, which reports the same
 /// interruption as the interpreter before consuming the branch.
@@ -1449,6 +1611,46 @@ pub(super) fn compile_js_general_dispatch(
             // accessor, and miss case resumes Vm::step at this exact PC.
             emit_js_step_fallback(
                 &mut builder,
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            );
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        if instruction.op() == Op::GetIndex
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && instruction.numeric_local_target().is_none()
+            && let Some(next) = next
+            && let Some(base_offset) = instruction
+                .operand_b()
+                .register_index()
+                .and_then(register_offset)
+            && js_tagged_operand_supported(program, instruction.operand_c(), &register_offset)
+            && let Some(destination_offset) = register_offset(instruction.result_register())
+        {
+            let key = read_js_tagged_operand(
+                &mut builder,
+                program,
+                instruction.operand_c(),
+                arguments,
+                &register_offset,
+            )
+            .expect("prevalidated tagged GetIndex key");
+            emit_js_dense_array_get(
+                &mut builder,
+                arguments,
+                payload,
+                base_offset,
+                key,
+                destination_offset,
+                next,
                 context,
                 callout,
                 callout_signature,
@@ -4904,6 +5106,9 @@ struct JsStepDispatch {
     local_count: usize,
     native_pcs: *const u8,
     native_pc_count: usize,
+    /// Stable base of this VM's direct-array record reservation. The field is
+    /// refreshed after VM callouts because the reservation may be lazy.
+    array_record_base: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -5194,6 +5399,10 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     dispatch.allow_inline_calls,
                 )
             };
+            dispatch.array_record_base = vm
+                .heap
+                .array_record_base()
+                .map_or(0, |base| base as usize);
             match step {
                 Ok(super::StepResult::Continue) => {
                     if next >= body.code.len() {
@@ -10433,6 +10642,7 @@ impl<H: Host> Vm<H> {
         promote: bool,
     ) -> Option<JsNativeDispatchResult> {
         if !self.js_tier_runs()
+            || !self.programs.js_jit_general_dispatch_enabled()
             || program.kind == crate::bytecode::ProgramKind::Wasm
             || start_pc >= program.function_get(self.frames.get(frame)?.function as usize)?.code.len()
         {
@@ -10507,6 +10717,10 @@ impl<H: Host> Vm<H> {
             local_count: 0,
             native_pcs: std::ptr::null(),
             native_pc_count: 0,
+            array_record_base: self
+                .heap
+                .array_record_base()
+                .map_or(0, |base| base as usize),
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]
