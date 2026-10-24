@@ -64,8 +64,19 @@ const UNARY_TYPEOF_TESTS: u32 = 2 * TYPEOF_NAMES.len() as u32;
 /// The `UNARY_TYPEOF_IS` operator testing `typeof x` against `name`, negated for an
 /// inequality; `None` when no value's `typeof` is `name`.
 pub(crate) fn typeof_test_operator(name: &str, negated: bool) -> Option<u32> {
-    let index = TYPEOF_NAMES.iter().position(|candidate| *candidate == name)? as u32;
+    let index = typeof_name_index(name)? as u32;
     Some(UNARY_TYPEOF_IS + index + if negated { TYPEOF_NAMES.len() as u32 } else { 0 })
+}
+
+/// The `Unary` operator giving the index in `TYPEOF_NAMES` of the name `typeof` yields for
+/// its operand, as an integer: `switch (typeof x)` with string cases compares it with each
+/// case's index (`FunctionCompiler::switch_statement`), as `typeof x === "name"` would
+/// compare the two strings, and like that comparison it needs neither string.
+pub(crate) const UNARY_TYPEOF_INDEX: u32 = UNARY_TYPEOF_IS + UNARY_TYPEOF_TESTS;
+
+/// The index in `TYPEOF_NAMES` of `name`, if some value's `typeof` is `name`.
+pub(crate) fn typeof_name_index(name: &str) -> Option<usize> {
+    TYPEOF_NAMES.iter().position(|candidate| *candidate == name)
 }
 
 /// The name index and negation a `UNARY_TYPEOF_IS` operator tests.
