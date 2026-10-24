@@ -246,8 +246,9 @@ impl GenerationalPacing {
 }
 
 /// How a runtime trades memory for speed (TOD-167): one choice per runtime, made at startup
-/// (`Runtime::set_memory_policy`), that selects the collection pacing table and whether the
-/// host returns pages at collection boundaries (`Host::at_collection_boundary`).
+/// (`Runtime::set_memory_policy`), that selects the collection pacing table, whether the
+/// host returns pages at collection boundaries (`Host::at_collection_boundary`), and the
+/// whether and how the loop tier compiles (`LOOP_TIER_OPT_LEVELS`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum MemoryPolicy {
     /// Fewer, larger collections, and pages stay resident across them (`THROUGHPUT_PACING`).

@@ -987,7 +987,7 @@ fn observes_nothing(initializer: &Expression<'_>) -> bool {
     }
 }
 
-fn class_field_value<'a>(field: ClassField<'a>) -> Option<&'a Expression<'a>> {
+pub(super) fn class_field_value<'a>(field: ClassField<'a>) -> Option<&'a Expression<'a>> {
     match field {
         ClassField::Property(field) => field.value.as_ref(),
         ClassField::AutoAccessor { accessor, .. } => accessor.value.as_ref(),
