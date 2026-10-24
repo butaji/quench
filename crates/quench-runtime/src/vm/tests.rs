@@ -14632,3 +14632,103 @@ fn js_tier_claims_general_candidates_only_when_the_tier_is_admitted() {
         "the admitted general tier claims its candidates"
     );
 }
+
+#[test]
+fn in_operator_decides_ordinary_objects_and_leaves_other_receivers_to_general_semantics() {
+    let source = r#"
+      function check(name, actual, expected) {
+        if (!Object.is(actual, expected)) {
+          throw new Error(name + ": " + String(actual) + " !== " + String(expected));
+        }
+      }
+      const proto = { inherited: 1 };
+      const object = Object.create(proto);
+      object.own = 2;
+      check("own", "own" in object, true);
+      check("absent", "absent" in object, false);
+      check("inherited", "inherited" in object, true);
+      check("Object.prototype", "toString" in object, true);
+      check("missing below Object.prototype", "nope" in object, false);
+      const present = "own" in object;
+      const missing = "nope" in object;
+      check("value form present", present, true);
+      check("value form absent", missing, false);
+      if (!("own" in object)) throw new Error("jump form present");
+      if ("nope" in object) throw new Error("jump form absent");
+
+      let getterReads = 0;
+      Object.defineProperty(object, "accessor", {
+        get() { getterReads += 1; return 3; },
+        configurable: true,
+      });
+      check("accessor", "accessor" in object, true);
+      check("getter not run", getterReads, 0);
+      const hidden = {};
+      Object.defineProperty(hidden, "secret", { value: 1, enumerable: false });
+      check("non-enumerable", "secret" in hidden, true);
+
+      check("number key", 1 in { 1: "one" }, true);
+      check("string number key", "1" in { 1: "one" }, true);
+      check("number key absent", 2 in { 1: "one" }, false);
+
+      const symbol = Symbol("s");
+      const keyed = { [symbol]: 1 };
+      check("symbol present", symbol in keyed, true);
+      check("symbol absent", Symbol("s") in keyed, false);
+      check("symbol inherited", symbol in Object.create(keyed), true);
+
+      const array = [1, 2];
+      check("array index", 0 in array, true);
+      check("array end index", 2 in array, false);
+      check("array length", "length" in array, true);
+      function named() {}
+      check("function prototype", "prototype" in named, true);
+
+      const bare = Object.create(null);
+      bare.x = 1;
+      check("null prototype own", "x" in bare, true);
+      check("null prototype absent", "y" in bare, false);
+
+      const dictionary = {};
+      for (let index = 0; index < 64; index += 1) dictionary["k" + index] = index;
+      delete dictionary.k0;
+      check("dictionary present", "k63" in dictionary, true);
+      check("dictionary deleted", "k0" in dictionary, false);
+
+      const primitives = [null, undefined, 1, 1.5, "text", true, 1n, Symbol("p")];
+      for (let index = 0; index < primitives.length; index += 1) {
+        let outcome = "no throw";
+        try { "x" in primitives[index]; }
+        catch (error) { outcome = error.name; }
+        check("primitive " + index, outcome, "TypeError");
+      }
+
+      let trapCalls = 0;
+      const proxy = new Proxy({ hidden: 1 }, {
+        has(target, key) {
+          trapCalls += 1;
+          return key === "ghost" || Reflect.has(target, key);
+        },
+      });
+      check("proxy ghost", "ghost" in proxy, true);
+      check("proxy own", "hidden" in proxy, true);
+      check("proxy absent", "none" in proxy, false);
+      check("proxy trap ran", trapCalls, 3);
+      const throwing = new Proxy({}, { has() { throw new RangeError("trap"); } });
+      let threw = "no throw";
+      try { "x" in throwing; }
+      catch (error) { threw = error.name; }
+      check("proxy throw", threw, "RangeError");
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "in-operator.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "in-operator.js").unwrap(),
+    ] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}

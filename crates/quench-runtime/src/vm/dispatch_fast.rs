@@ -2439,7 +2439,8 @@ script_handler! {
 }
 
 /// A `Binary` record's value where it runs no guest code: Number arithmetic and
-/// relations, then identity equality and an ordinary `instanceof`.
+/// relations, then identity equality, an ordinary `instanceof` and an `in` whose key
+/// and receiver (`Vm::plain_in`) need no guest code.
 ///
 /// # Safety
 /// `cx` is the running lane's context and `r` its registers.
@@ -2456,9 +2457,12 @@ unsafe fn lane_binary_value<H: Host>(
         Some(value) => Some(value),
         None if operator == super::operations::ADDITION => lane_concatenation(cx, left, right)
             .or_else(|| lane_bigint_value(cx, operator, left, right)),
-        // A comparison, or `instanceof` (`lane_relation_other`), decides from the operands;
-        // any other operator past Numbers may be a BigInt's.
-        None if operator <= super::operations::LAST_COMPARISON_OPERATOR || operator == INSTANCEOF_OPERATOR => {
+        // A comparison, `instanceof`, or an ordinary-object `in` (`lane_relation_other`),
+        // decides from the operands; any other operator past Numbers may be a BigInt's.
+        None if operator <= super::operations::LAST_COMPARISON_OPERATOR
+            || operator == INSTANCEOF_OPERATOR
+            || operator == IN_OPERATOR =>
+        {
             lane_relation::<H>(operator, left, right)
                 .map(|holds| if holds { Value::TRUE } else { Value::FALSE })
         }
@@ -5076,6 +5080,10 @@ script_handler! {
 
 /// The `instanceof` operator as a `Binary` immediate or a test's operator field.
 const INSTANCEOF_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::Instanceof as u32;
+
+/// The `in` operator as a `Binary` immediate; `Vm::plain_in` decides an ordinary-object
+/// HasProperty without running guest code and leaves every other case to the general path.
+const IN_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::In as u32;
 
 script_handler! {
     /// `Binary` `instanceof` of two registers, decoded when the view was derived
