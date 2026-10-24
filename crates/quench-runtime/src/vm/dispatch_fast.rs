@@ -2141,18 +2141,28 @@ fn lane_operand_value<H: Host>(
     }
 }
 
-/// A local operand of the running frame's function that is a plain slot, which the general
-/// loop reads as `LoadLocalPlain` does (`Vm::operand_value`): generators and other functions
-/// that keep frame locals compare and compute with them in place. A frameless activation has
-/// no locals; any other local is the general path's.
+/// A local operand of the running function that is a plain slot, which the general loop
+/// reads as `LoadLocalPlain` does (`Vm::operand_value`): generators and other functions that
+/// keep frame locals compare and compute with them in place, and an environment
+/// activation reads its window's local (`lane_load_window_local`). Any other frameless
+/// activation has no locals; any other local is the general path's.
 #[inline(never)]
 fn lane_plain_local_operand<H: Host>(cx: *mut LaneContext<H>, slot: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    if !vm.lane_stack.activations.is_empty() {
-        return None;
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    if let Some(activation) = vm.lane_stack.activations.last() {
+        activation.script().filter(|script| script.environment)?;
+        let body = code.function_get(activation.function as usize)?;
+        if !body.plain_local(code, usize::from(slot)) {
+            return None;
+        }
+        // SAFETY: the running function's registers, which its window's locals follow.
+        let value = unsafe { (*cx).registers }.get(body.registers + WINDOW_LOCALS + slot);
+        return (!value.is_deleted()).then_some(value);
     }
-    // SAFETY: the context's program outlives the lane run, and its frame is the running one.
-    let (code, frame) = unsafe { (&*(*cx).code, (*cx).frame) };
+    // SAFETY: its frame is the running one.
+    let frame = unsafe { (*cx).frame };
     let frame = vm.frames.get(frame)?;
     let slot = usize::from(slot);
     code.functions
@@ -8647,10 +8657,8 @@ impl<H: Host> Vm<H> {
             && self
                 .lane_view_any(program, function)
                 .is_some_and(|view| unsafe { &*view }.environment_window.is_some());
-        // Across programs only a plain or keeping activation runs frameless: an environment
-        // activation or a construction leaves its calls a frame.
+        // Across programs a construction leaves its calls a frame.
         let view = if !(plan.registers_only || environment)
-            || cross && environment
             || numeric
                 && body
                     .code
@@ -9081,8 +9089,9 @@ script_handler! {
         };
         #[cfg(feature = "profile-lane-exits")]
         profile_script_call_target(cx, ip, callee, target);
-        let arguments = ImmediateLayout::call_window_base(i.imm());
-        match lane_activate_environment(cx, r, ip, target, arguments, this) {
+        // SAFETY: the call's window is registers of the running function.
+        let passed = unsafe { lane_call_window(r, i) };
+        match lane_activate_environment(cx, r, ip, target, passed, this) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
             Err(next) => next,
         }
@@ -9139,7 +9148,7 @@ script_handler! {
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
         // A callee that needs a frame takes it as `lane_frame_call` pushes one.
-        if !target.entry.activates_across() {
+        if !target.entry.activates_across() && target.entry != CallEntry::Environment {
             sibling!(lane_frame_call::<H>, r, ip, Carried::script(cx))
         }
         #[cfg(feature = "profile-lane-exits")]
@@ -9148,7 +9157,10 @@ script_handler! {
             return exit(ip);
         };
         let arguments = ImmediateLayout::call_window_base(i.imm());
-        let activated = if target.forwards() {
+        let activated = if target.entry == CallEntry::Environment {
+            // SAFETY: the call's window is registers of the running function.
+            lane_activate_environment(cx, r, ip, target, unsafe { lane_call_window(r, i) }, this)
+        } else if target.forwards() {
             lane_activate_keeping::<H, true>(cx, r, ip, *target, ActivationArguments::Window(arguments), this, false, None)
         } else {
             lane_activate(cx, r, ip, target, arguments, this, false)
@@ -9489,14 +9501,24 @@ fn lane_function_call_activation<H: Host>(
     let vm = unsafe { vm(cx) };
     // A callee of another program activates as `lane_script_call_cross` activates one: a plain
     // activation its cross-program cache holds, which `lane_script_target`'s resolution fills.
-    let target = lane_script_target(cx, callee).or_else(|| {
-        if lane_constructing(vm, callee) {
-            return None;
-        }
-        let target = vm.cross_call_entry(callee)?;
-        // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
-        Some(unsafe { *target }).filter(|target| target.entry.activates_across())
-    });
+    let target = lane_script_target(cx, callee)
+        .or_else(|| {
+            if lane_constructing(vm, callee) {
+                return None;
+            }
+            let target = vm.cross_call_entry(callee)?;
+            // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
+            Some(unsafe { *target }).filter(|target| {
+                target.entry.activates_across() || target.entry == CallEntry::Environment
+            })
+        })
+        // The running program's environment target, which `lane_script_target` leaves to
+        // plain calls.
+        .or_else(|| {
+            vm.script_call_target(callee).filter(|target| {
+                target.entry == CallEntry::Environment && target.program == vm.active_program
+            })
+        });
     let Some(target) = target else {
         return Err(lane_forwarded_frame_call(cx, r, ip, i, callee, receiver, args));
     };
@@ -9504,6 +9526,18 @@ fn lane_function_call_activation<H: Host>(
     let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Err(exit(ip));
     };
+    if target.entry == CallEntry::Environment {
+        // An environment activation binds each value passed to a parameter
+        // (`lane_activate_environment`).
+        let code = vm.programs.residual(target.program).map(std::ptr::from_ref);
+        // SAFETY: the program store keeps the residual for the lane run.
+        if code.is_some_and(|code| {
+            args.len() > usize::from(target.params) && !unsafe { &*code }.function(target.function as usize).rest
+        }) {
+            return Err(lane_forwarded_frame_call(cx, r, ip, i, callee, receiver, args));
+        }
+        return lane_activate_environment(cx, r, ip, &target, args, this);
+    }
     let arguments = ActivationArguments::Kept(args.as_ptr(), args.len());
     // The target may be another program's (`cross_call_entry`), which the activation enters
     // and completes as `Completion::Cross`.
@@ -11195,21 +11229,25 @@ fn lane_activate_environment<H: Host>(
     r: Registers,
     ip: Ip,
     target: &ScriptCallTarget,
-    arguments: u16,
+    passed: &[Value],
     this: Value,
 ) -> Result<(Registers, Ip), Ip> {
     let vm = unsafe { vm(cx) };
     // SAFETY: `ip` is a record of the running view.
     let i = unsafe { &*ip };
-    // Another program's callee never activates with its environment (`resolve_script_call_target`).
-    debug_assert_eq!(target.program, unsafe { (*cx).program });
-    let argc = ImmediateLayout::argument_count(i.imm());
+    // Another program's callee enters its program and completes across (`Completion::Cross`).
+    let cross = target.program != unsafe { (*cx).program };
+    let Ok(argc) = u16::try_from(passed.len()) else {
+        return Err(exit(ip));
+    };
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
     if returns && !lane_returning_call_admitted(cx) {
         return Err(exit(ip));
     }
-    // SAFETY: the context's program outlives the lane run.
-    let rest = unsafe { &*(*cx).code }.function(target.function as usize).rest;
+    let Some(body) = vm.programs.residual(target.program).map(|code| code.function(target.function as usize)) else {
+        return Err(exit(ip));
+    };
+    let rest = body.rest;
     if argc > target.params && !rest || vm.with_scope_entered {
         return Err(exit(ip));
     }
@@ -11225,8 +11263,7 @@ fn lane_activate_environment<H: Host>(
     // which the rest parameter's local holds (`lane_activate_keeping` gathers likewise).
     let gathered = rest.then(|| {
         let fixed = usize::from(target.params) - 1;
-        let passed = (fixed..usize::from(argc)).map(|index| r.get(arguments + index as u16));
-        vm.rest_parameter_array(&passed.collect::<smallvec::SmallVec<[Value; GATHERED_INLINE_VALUES]>>())
+        vm.rest_parameter_array(&passed[fixed..])
     });
     // SAFETY: the program store keeps a derived view alive with its program, and an
     // environment target's view has a window (`ScriptCallTarget::entry`).
@@ -11257,8 +11294,7 @@ fn lane_activate_environment<H: Host>(
         // parameter's local and, after the locals, as the value a frame keeps for legacy
         // reflection, with no library copy per run.
         let bound = usize::from(argc.min(target.params));
-        for slot in 0..usize::from(argc) {
-            let value = r.get(arguments + slot as u16);
+        for (slot, &value) in passed.iter().enumerate() {
             if slot < bound {
                 local.add(slot).write(value);
             }
@@ -11287,7 +11323,7 @@ fn lane_activate_environment<H: Host>(
             caller_this: unsafe { (*cx).this },
             caller_env: unsafe { (*cx).env },
             caller_capture: unsafe { (*cx).capture },
-            completion: Completion::of(false, false),
+            completion: Completion::of(false, cross),
             forwards: false,
             environment: true,
         }),
@@ -11303,9 +11339,11 @@ fn lane_activate_environment<H: Host>(
         (*cx).env = target.env;
         (*cx).capture = target.capture;
     }
+    if cross {
+        lane_enter_program(cx, target.program);
+    }
     if vm.programs.js_jit_diagnostics_enabled() {
-        vm.programs
-            .record_js_jit_lane_entry(unsafe { (*cx).program }, target.function);
+        vm.programs.record_js_jit_lane_entry(target.program, target.function);
     }
     Ok((callee_registers, base))
 }
@@ -15571,9 +15609,13 @@ impl<H: Host> Vm<H> {
                     // the innermost activation's view.
                     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
                     if let Some(body) = code.function_get(activation.function as usize) {
+                        let instruction = body.instructions().nth(pc);
                         super::lane_exits::record_detail(format!(
-                            "exit in activation {:?} {} @{:?} pc={pc}",
-                            body.instructions().nth(pc),
+                            "exit in activation {:?} {:?} {} @{:?} pc={pc}",
+                            instruction,
+                            instruction
+                                .filter(|instruction| instruction.op() == Op::GetField)
+                                .and_then(|instruction| code.atoms.get(instruction.imm() as usize)),
                             body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
                             body.source_span.map(|span| span.start),
                         ));
