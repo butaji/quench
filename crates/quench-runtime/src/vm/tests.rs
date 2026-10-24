@@ -13662,6 +13662,7 @@ fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
 
     let mut compiled = Vm::new(TestHost::default().with_test262());
     compiled.programs.enable_js_general_dispatch();
+    compiled.programs.enable_js_jit_diagnostics();
     compiled.programs.compile_general_baseline_when_hot();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
@@ -13680,6 +13681,24 @@ fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
         assert!(native.is_general_dispatch());
         assert!(native.native_entries() > 0);
     }
+    let call_sites = compiled
+        .programs
+        .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, caller)
+        .expect("diagnostics should track call sites for the compiled caller");
+    assert!(call_sites.iter().any(|(_, opcode, attempts, outcomes)| {
+        *opcode == crate::bytecode::Op::CallArray as u16
+            && *attempts > 0
+            && outcomes[super::program_store::JsJitCallOutcome::PushFrame as usize] > 0
+    }));
+    let callee_call_sites = compiled
+        .programs
+        .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, callee)
+        .expect("diagnostics should track call sites for the compiled callee");
+    assert!(callee_call_sites.iter().any(|(_, opcode, attempts, outcomes)| {
+        *opcode == crate::bytecode::Op::Call as u16
+            && *attempts > 0
+            && outcomes[super::program_store::JsJitCallOutcome::Continue as usize] > 0
+    }));
 }
 
 #[test]
