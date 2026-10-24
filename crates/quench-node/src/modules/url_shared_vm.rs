@@ -2,7 +2,7 @@
 
 use crate::host::NodeHost;
 use crate::modules::url_legacy::{self, LegacyUrlField, LegacyUrlParseError};
-use quench_runtime::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 use std::path::{Component, Path, PathBuf};
 
 const URL_CONSTRUCTOR_SOURCE: &str = "(class Url {})";
@@ -42,7 +42,9 @@ pub(crate) fn to_path_if_file_url(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
-    if is_url_like(context, value)? {
+    let undefined = context.undefined();
+    let is_url_instance = is_url_instance(context, undefined, &[value])?;
+    if is_url_like(context, value)? || context.truthy_rooted(is_url_instance)? {
         let undefined = context.undefined();
         return file_url_to_path(context, undefined, &[value]);
     }
@@ -56,9 +58,24 @@ const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
   ];
   const data = (receiver) => {
     const value = state.get(receiver);
-    if (value === undefined) throw new TypeError("Illegal invocation");
+    if (value === undefined) {
+      const error = new TypeError('Receiver must be an instance of class URL');
+      error.code = 'ERR_INVALID_THIS';
+      throw error;
+    }
     return value;
   };
+  const setterData = (receiver) => {
+    const value = state.get(receiver);
+    if (value === undefined) throw new TypeError('Cannot read private member #context from an object whose class did not declare it');
+    return value;
+  };
+  const toUrlString = (value) => {
+    if (typeof value === 'symbol') throw new TypeError('Cannot convert a Symbol value to a string');
+    return String(value);
+  };
+  const encodeUserInfo = (value) => encodeURIComponent(String(value).toWellFormed())
+    .replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
   const serialize = (value) => {
     const auth = value.username || value.password
       ? `${value.username}${value.password ? `:${value.password}` : ""}@`
@@ -72,12 +89,44 @@ const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
   };
   class URL {
     constructor(input, base) {
-      const value = parse(String(input), base === undefined ? undefined : String(base));
+      if (arguments.length === 0) {
+        const error = new TypeError('The "url" argument must be specified');
+        error.code = 'ERR_MISSING_ARGS';
+        throw error;
+      }
+      const value = parse(toUrlString(input), base === undefined ? undefined : toUrlString(base));
       if (!value) throw new TypeError("Invalid URL");
       state.set(this, value);
     }
     toString() { return data(this).href; }
     toJSON() { return data(this).href; }
+    static createObjectURL(value) {
+      if (typeof globalThis.Blob !== "function" || !(value instanceof globalThis.Blob)) {
+        const error = new TypeError('The "obj" argument must be an instance of Blob');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (!globalThis.__nodeBlobUrls) {
+        Object.defineProperty(globalThis, "__nodeBlobUrls", {
+          value: new Map(), configurable: true,
+        });
+      }
+      const id = `blob:nodedata:${Math.random().toString(16).slice(2)}`;
+      globalThis.__nodeBlobUrls.set(id, value);
+      return id;
+    }
+    static revokeObjectURL(value) {
+      if (value === undefined) {
+        const error = new TypeError('The "url" argument must be specified');
+        error.code = "ERR_MISSING_ARGS";
+        throw error;
+      }
+      globalThis.__nodeBlobUrls?.delete(value);
+    }
+    static parse(input, base) {
+      if (arguments.length === 0) return null;
+      try { return new URL(input, base); } catch { return null; }
+    }
     static canParse(input, base) {
       if (arguments.length === 0) {
         throw Object.assign(new TypeError("The \"input\" argument must be specified"), {
@@ -85,14 +134,14 @@ const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
         });
       }
       try {
-        parse(String(input), base === undefined ? undefined : String(base));
+        parse(toUrlString(input), base === undefined ? undefined : toUrlString(base));
         return true;
       } catch (_) {
         return false;
       }
     }
     get searchParams() {
-      const value = data(this);
+      const value = setterData(this);
       if (!value._searchParams) {
         const params = new URLSearchParams(value.search,
           () => syncSearchParams(this, params.toString() ? `?${params.toString()}` : ""));
@@ -107,9 +156,9 @@ const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
       enumerable: true,
       get() { return data(this)[field]; },
       set(value) {
-        const current = data(this);
+        const current = setterData(this);
         if (field === "href") {
-          const updated = parse(String(value), undefined);
+          const updated = parse(toUrlString(value), undefined);
           if (!updated) throw new TypeError("Invalid URL");
           if (current._searchParams) {
             const params = new URLSearchParams(updated.search);
@@ -118,7 +167,28 @@ const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
           Object.assign(current, updated);
           return;
         }
-        current[field] = String(value);
+        current[field] = toUrlString(value);
+        if (field === 'protocol' && current.protocol && !current.protocol.endsWith(':')) current.protocol += ':';
+        if (field === 'search' && current.search && !current.search.startsWith('?')) current.search = `?${current.search}`;
+        if (field === 'hash' && current.hash && !current.hash.startsWith('#')) current.hash = `#${current.hash}`;
+        if (field === 'username' || field === 'password') {
+          current[field] = encodeUserInfo(value);
+        }
+        if (field === 'hostname') {
+          current.host = current.port ? `${current.hostname}:${current.port}` : current.hostname;
+        } else if (field === 'port') {
+          current.host = current.port ? `${current.hostname}:${current.port}` : current.hostname;
+        } else if (field === 'host') {
+          const portIndex = current.host.lastIndexOf(':');
+          const ipv6End = current.host.indexOf(']');
+          if (portIndex > ipv6End && portIndex >= 0) {
+            current.hostname = current.host.slice(0, portIndex);
+            current.port = current.host.slice(portIndex + 1);
+          } else {
+            current.hostname = current.host;
+            current.port = '';
+          }
+        }
         if (field === "search") {
           current.search = current.search && current.search !== "?" ? current.search : "";
           if (current._searchParams) {
@@ -127,22 +197,86 @@ const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
         }
         if (field === "pathname" && current.pathname === "") current.pathname = "/";
         current.href = serialize(current);
+        const reparsed = parse(current.href);
+        if (reparsed) Object.assign(current, reparsed);
         if (field === "searchParams") throw new TypeError("Cannot set property searchParams of [object URL] which has only a getter");
       },
     });
   }
+  // Web IDL exposes these members as enumerable prototype properties. Class
+  // syntax makes methods non-enumerable, so restore the observable ordering.
+  const ordered = ['toString', 'href', 'origin', 'protocol', 'username', 'password',
+    'host', 'hostname', 'port', 'pathname', 'search', 'searchParams', 'hash', 'toJSON'];
+  const descriptors = new Map(ordered.map((name) => [name, Object.getOwnPropertyDescriptor(URL.prototype, name)]));
+  for (const name of ordered) delete URL.prototype[name];
+  for (const name of ordered) {
+    const descriptor = descriptors.get(name);
+    descriptor.enumerable = true;
+      if (name === 'origin' || name === 'searchParams') delete descriptor.set;
+    if (!['href', 'search', 'searchParams'].includes(name) && descriptor.get) {
+      descriptor.get = ({ [`get ${name}`]() { return setterData(this)[name]; } })[`get ${name}`];
+      Object.defineProperty(descriptor.get, 'name', { value: `get ${name}` });
+    }
+    if (descriptor.get && ['href', 'search', 'searchParams'].includes(name)) {
+      Object.defineProperty(descriptor.get, 'name', { value: `get ${name}` });
+    }
+    if (descriptor.set) Object.defineProperty(descriptor.set, 'name', { value: `set ${name}` });
+    Object.defineProperty(URL.prototype, name, descriptor);
+  }
+  Object.defineProperty(URL.prototype, Symbol.for('nodejs.util.inspect.custom'), {
+    configurable: true,
+    value(depth, options) {
+      const value = data(this);
+      const constructorName = this.constructor?.name || 'URL';
+      if (depth < 0) return `${constructorName} {}`;
+      const names = ['href', 'origin', 'protocol', 'username', 'password', 'host', 'hostname', 'port', 'pathname', 'search'];
+      const lines = names.map((name) => `  ${name}: '${value[name]}'`);
+      const params = this.searchParams;
+      const entries = [...params].map(([name, item]) => `'${name}' => '${item}'`).join(', ');
+      lines.push(`  searchParams: URLSearchParams { ${entries} }`);
+      lines.push(`  hash: '${value.hash}'`);
+      if (options?.showHidden) {
+        const href = value.href;
+        const protocolEnd = href.indexOf(':');
+        const authorityStart = href.indexOf('//') + 2;
+        const at = href.indexOf('@', authorityStart);
+        const hostStart = at === -1 ? authorityStart : at + 1;
+        const slash = href.indexOf('/', hostStart);
+        const hostEnd = slash === -1 ? href.length : slash;
+        const port = value.port ? Number(value.port) : -1;
+        const actualHostEnd = hostEnd - (port === -1 ? 0 : value.port.length + 1);
+        lines.push(`  Symbol(context): URLContext {\n    href: '${href}',\n    protocol_end: ${protocolEnd + 1},\n    username_end: ${at === -1 ? -1 : authorityStart + value.username.length},\n    host_start: ${hostStart - 1},\n    host_end: ${actualHostEnd},\n    pathname_start: ${hostEnd},\n    search_start: ${href.indexOf('?')},\n    hash_start: ${href.indexOf('#')},\n    port: ${port},\n    scheme_type: ${value.protocol === 'https:' ? 2 : 0},\n    [hasPort]: [Getter],\n    [hasSearch]: [Getter],\n    [hasHash]: [Getter]\n  }`);
+      }
+      return `${constructorName} {\n${lines.join(',\n')}\n}`;
+    },
+  });
+  Object.defineProperty(URL.prototype[Symbol.for('nodejs.util.inspect.custom')], 'name', {
+    value: '[nodejs.util.inspect.custom]',
+  });
   Object.defineProperty(URL.prototype, Symbol.toStringTag, { value: "URL" });
+  for (const name of ['createObjectURL', 'revokeObjectURL']) {
+    const descriptor = Object.getOwnPropertyDescriptor(URL, name);
+    descriptor.enumerable = true;
+    Object.defineProperty(URL, name, descriptor);
+  }
   return URL;
 }"#
 );
 
 const URL_SEARCH_PARAMS_FACTORY: &str = quench_js_check::checked_js!(
     r#"() => {
+  const usv = (value) => {
+    if (typeof value === 'symbol') throw new TypeError('Cannot convert a Symbol value to a string');
+    return String(value).toWellFormed();
+  };
+  const encodeUserInfo = (value) => encodeURIComponent(usv(value))
+    .replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
   const decode = (value) => {
-    try { return decodeURIComponent(value.replace(/\+/g, " ")); }
+    const safe = value.replace(/\+/g, " ").replace(/%(?![0-9a-fA-F]{2})/g, '%25');
+    try { return decodeURIComponent(safe); }
     catch { return value.replace(/\+/g, " "); }
   };
-  const encode = (value) => encodeURIComponent(value)
+  const encode = (value) => encodeURIComponent(usv(value))
     .replace(/[!'()~]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
     .replace(/%20/g, "+");
   const entriesFrom = (init) => {
@@ -152,80 +286,194 @@ const URL_SEARCH_PARAMS_FACTORY: &str = quench_js_check::checked_js!(
       if (!query) return [];
       return query.split("&").filter(Boolean).map((part) => {
         const index = part.indexOf("=");
-        return [decode(index < 0 ? part : part.slice(0, index)),
-          decode(index < 0 ? "" : part.slice(index + 1))];
+        return [usv(decode(index < 0 ? part : part.slice(0, index))),
+          usv(decode(index < 0 ? "" : part.slice(index + 1)))];
       });
+    }
+    if (init === null || (typeof init !== 'object' && typeof init !== 'function')) {
+      return entriesFrom(usv(init));
     }
     if (init !== null && typeof init[Symbol.iterator] === "function") {
       const entries = [];
       for (const pair of init) {
         if (pair === null || typeof pair[Symbol.iterator] !== "function") {
-          throw new TypeError("Each query pair must be an iterable");
+          const error = new TypeError('Each query pair must be an iterable [name, value] tuple');
+          error.code = 'ERR_INVALID_TUPLE';
+          throw error;
         }
         const values = Array.from(pair);
-        if (values.length !== 2) throw new TypeError("Each query pair must have exactly two elements");
-        entries.push([String(values[0]), String(values[1])]);
+        if (values.length !== 2) {
+          const error = new TypeError('Each query pair must be an iterable [name, value] tuple');
+          error.code = 'ERR_INVALID_TUPLE';
+          throw error;
+        }
+        entries.push([usv(values[0]), usv(values[1])]);
       }
       return entries;
     }
     if (typeof init === "object") {
-      return Object.keys(init).map((key) => [key, String(init[key])]);
+      if (Object.hasOwn(init, Symbol.iterator)) {
+        const error = new TypeError('Query pairs must be iterable');
+        error.code = 'ERR_ARG_NOT_ITERABLE';
+        throw error;
+      }
+      if (Object.getOwnPropertySymbols(init).length !== 0) throw new TypeError('Cannot convert a Symbol value to a string');
+      const entries = [];
+      for (const key of Object.keys(init)) {
+        const name = usv(key), value = usv(init[key]);
+        const index = entries.findIndex((entry) => entry[0] === name);
+        if (index === -1) entries.push([name, value]);
+        else entries[index][1] = value;
+      }
+      return entries;
     }
     throw new TypeError("Failed to construct 'URLSearchParams': parameter 1 is not of type 'object'.");
   };
   const paramsState = new WeakMap();
   const state = (receiver) => {
     const value = paramsState.get(receiver);
-    if (value === undefined) throw new TypeError("Illegal invocation");
+    if (value === undefined) {
+      const error = new TypeError('Value of "this" must be of type URLSearchParams');
+      error.code = 'ERR_INVALID_THIS';
+      throw error;
+    }
     return value;
   };
   const pairs = (receiver) => state(receiver).pairs;
   const update = (receiver) => { const callback = state(receiver).onchange; if (callback) callback(); };
   class URLSearchParams {
     constructor(init) { paramsState.set(this, { pairs: entriesFrom(init), onchange: arguments[1] }); }
-    append(name, value) { pairs(this).push([String(name), String(value)]); update(this); }
-    delete(name, value) {
-      name = String(name);
+    append(name, value) {
       const list = pairs(this);
+      if (arguments.length < 2) {
+        const error = new TypeError('The "name" and "value" arguments must be specified');
+        error.code = 'ERR_MISSING_ARGS';
+        throw error;
+      }
+      list.push([usv(name), usv(value)]); update(this);
+    }
+    delete(name, value) {
+      const list = pairs(this);
+      if (arguments.length < 1) {
+        const error = new TypeError('The "name" argument must be specified'); error.code = 'ERR_MISSING_ARGS'; throw error;
+      }
+      name = usv(name);
       const matchValue = arguments.length > 1;
-      const expected = matchValue ? String(value) : undefined;
+      const expected = matchValue ? usv(value) : undefined;
       for (let index = list.length - 1; index >= 0; index--) {
         if (list[index][0] === name && (!matchValue || list[index][1] === expected)) list.splice(index, 1);
       }
       update(this);
     }
-    get(name) { name = String(name); const pair = pairs(this).find((entry) => entry[0] === name); return pair ? pair[1] : null; }
-    getAll(name) { name = String(name); return pairs(this).filter((entry) => entry[0] === name).map((entry) => entry[1]); }
+    get(name) {
+      const list = pairs(this);
+      if (arguments.length < 1) { const error = new TypeError('The "name" argument must be specified'); error.code = 'ERR_MISSING_ARGS'; throw error; }
+      name = usv(name); const pair = list.find((entry) => entry[0] === name); return pair ? pair[1] : null;
+    }
+    getAll(name) {
+      const list = pairs(this);
+      if (arguments.length < 1) { const error = new TypeError('The "name" argument must be specified'); error.code = 'ERR_MISSING_ARGS'; throw error; }
+      name = usv(name); return list.filter((entry) => entry[0] === name).map((entry) => entry[1]);
+    }
     has(name, value) {
-      name = String(name);
-      return pairs(this).some((entry) => entry[0] === name && (arguments.length < 2 || entry[1] === String(value)));
+      const list = pairs(this);
+      if (arguments.length < 1) { const error = new TypeError('The "name" argument must be specified'); error.code = 'ERR_MISSING_ARGS'; throw error; }
+      name = usv(name);
+      return list.some((entry) => entry[0] === name && (arguments.length < 2 || entry[1] === usv(value)));
     }
     set(name, value) {
-      name = String(name); value = String(value);
-      const list = pairs(this); const index = list.findIndex((entry) => entry[0] === name);
+      const list = pairs(this);
+      if (arguments.length < 2) { const error = new TypeError('The "name" and "value" arguments must be specified'); error.code = 'ERR_MISSING_ARGS'; throw error; }
+      name = usv(name); value = usv(value);
+      const index = list.findIndex((entry) => entry[0] === name);
       if (index < 0) list.push([name, value]);
       else { list[index][1] = value; for (let i = list.length - 1; i > index; i--) if (list[i][0] === name) list.splice(i, 1); }
       update(this);
     }
     sort() { pairs(this).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0); update(this); }
     forEach(callback, thisArg) {
-      if (typeof callback !== "function") throw new TypeError("callback must be a function");
       const list = pairs(this);
+      if (typeof callback !== "function") {
+        const error = new TypeError('The "callbackFn" argument must be of type function');
+        error.code = 'ERR_INVALID_ARG_TYPE';
+        throw error;
+      }
       for (let index = 0; index < list.length; index++) callback.call(thisArg, list[index][1], list[index][0], this);
     }
-    *entries() { for (const pair of pairs(this)) yield pair.slice(); }
-    *keys() { for (const pair of pairs(this)) yield pair[0]; }
-    *values() { for (const pair of pairs(this)) yield pair[1]; }
+    entries() { return new URLSearchParamsIterator(this, 'entry'); }
+    keys() { return new URLSearchParamsIterator(this, 'key'); }
+    values() { return new URLSearchParamsIterator(this, 'value'); }
     [Symbol.iterator]() { return this.entries(); }
     toString() { return pairs(this).map(([name, value]) => `${encode(name)}=${encode(value)}`).join("&"); }
     get size() { return pairs(this).length; }
+    [Symbol.for('nodejs.util.inspect.custom')](depth, options) {
+      const list = pairs(this);
+      if (depth < 0) return '[Object]';
+      if (list.length === 0) return 'URLSearchParams {}';
+      const entries = list.map(([name, value]) => `'${name}' => '${value}'`);
+      return options && options.breakLength <= 1
+        ? `URLSearchParams {\n  ${entries.join(',\n  ')} }`
+        : `URLSearchParams { ${entries.join(', ')} }`;
+    }
   }
+  const iteratorState = new WeakMap();
+  const invalidIterator = () => {
+    const error = new TypeError('Value of "this" must be of type URLSearchParamsIterator');
+    error.code = 'ERR_INVALID_THIS';
+    return error;
+  };
+  class URLSearchParamsIterator {
+    constructor(params, kind) { iteratorState.set(this, { list: pairs(params), kind, index: 0 }); }
+    next() {
+      const state = iteratorState.get(this);
+      if (state === undefined) throw invalidIterator();
+      if (state.index >= state.list.length) return { value: undefined, done: true };
+      const [name, value] = state.list[state.index++];
+      return { value: state.kind === 'entry' ? [name, value] : state.kind === 'key' ? name : value, done: false };
+    }
+    [Symbol.iterator]() {
+      if (!iteratorState.has(this)) throw invalidIterator();
+      return this;
+    }
+    [Symbol.for('nodejs.util.inspect.custom')](depth, options) {
+      const state = iteratorState.get(this);
+      if (state === undefined) throw invalidIterator();
+      if (depth < 0) return '[Object]';
+      const remaining = state.list.slice(state.index).map(([name, value]) =>
+        state.kind === 'entry' ? `[ '${name}', '${value}' ]` : `'${state.kind === 'key' ? name : value}'`);
+      if (remaining.length === 0) return 'URLSearchParams Iterator {  }';
+      return options && options.breakLength <= 1
+        ? `URLSearchParams Iterator {\n  ${remaining.join(',\n  ')} }`
+        : `URLSearchParams Iterator { ${remaining.join(', ')} }`;
+    }
+  }
+  Object.defineProperty(URLSearchParamsIterator.prototype, Symbol.toStringTag, { value: 'URLSearchParams Iterator' });
+  Object.defineProperty(URLSearchParamsIterator.prototype[Symbol.for('nodejs.util.inspect.custom')], 'name', {
+    value: '[nodejs.util.inspect.custom]',
+  });
+  Object.defineProperty(URLSearchParams.prototype, Symbol.iterator, {
+    configurable: true,
+    writable: true,
+    value: URLSearchParams.prototype.entries,
+  });
   Object.defineProperty(URLSearchParams.prototype, "_pairs", {
     configurable: true,
     get() { return pairs(this); },
     set(value) { state(this).pairs = value; },
   });
+  for (const name of ['append', 'delete', 'get', 'getAll', 'has', 'set', 'sort',
+    'entries', 'forEach', 'keys', 'values', 'toString']) {
+    const descriptor = Object.getOwnPropertyDescriptor(URLSearchParams.prototype, name);
+    descriptor.enumerable = true;
+    Object.defineProperty(URLSearchParams.prototype, name, descriptor);
+  }
+  const sizeDescriptor = Object.getOwnPropertyDescriptor(URLSearchParams.prototype, 'size');
+  sizeDescriptor.enumerable = true;
+  Object.defineProperty(URLSearchParams.prototype, 'size', sizeDescriptor);
   Object.defineProperty(URLSearchParams.prototype, Symbol.toStringTag, { value: "URLSearchParams", configurable: true });
+  Object.defineProperty(URLSearchParams.prototype[Symbol.for('nodejs.util.inspect.custom')], 'name', {
+    value: '[nodejs.util.inspect.custom]',
+  });
   return URLSearchParams;
 }"#
 );
@@ -235,6 +483,20 @@ const WHATWG_PARSE_MARKER: &str = "\0quench:node:url:whatwg-parse";
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let constructor = url_constructor(context)?;
     let search_params = url_search_params_constructor(context)?;
+    context.evaluate_script_rooted(
+        crate::polyfills::post_bootstrap::module_surface_06::JS,
+        "node:url/module-surface.js",
+    )?;
+    let global = context.global_root()?;
+    let pattern_factory = get(context, global, "__quenchURLPatternFactory")?;
+    let undefined = context.undefined();
+    let url_pattern = context.call_rooted(pattern_factory, undefined, &[])?;
+    let cleanup = context.evaluate_script_rooted(
+        "() => { delete globalThis.__nodeThrowReadonlyURLSetter; delete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; }",
+        "node:url/module-surface-cleanup.js",
+    )?;
+    let undefined = context.undefined();
+    context.call_rooted(cleanup, undefined, &[])?;
     let legacy_constructor =
         context.evaluate_script_rooted(URL_CONSTRUCTOR_SOURCE, "node:url/Url")?;
     let module = context.object_rooted()?;
@@ -242,6 +504,29 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         crate::host::shared_vm::operation("urlParse"),
         legacy_constructor,
     )?;
+    let warning_factory = context.evaluate_script_rooted(
+        r#"((parse) => {
+          let warned = false;
+          return function urlParse(...args) {
+            const stack = new Error().stack || '';
+            if (!warned && !stack.split('\n').some((line) =>
+              line.includes('/node_modules/') || line.includes('\\node_modules\\'))) {
+              warned = true;
+              process.emitWarning(
+                '`url.parse()` behavior is not standardized and prone to ' +
+                  'errors that have security implications. Use the WHATWG URL API ' +
+                  'instead. CVEs are not issued for `url.parse()` vulnerabilities.',
+                'DeprecationWarning',
+                'DEP0169',
+              );
+            }
+            return Reflect.apply(parse, this, args);
+          };
+        })"#,
+        "node:url/legacy-parse-warning.js",
+    )?;
+    let undefined = context.undefined();
+    let parse = context.call_rooted(warning_factory, undefined, &[parse])?;
     set(context, module, "parse", parse)?;
     let resolve = context.host_function(crate::host::shared_vm::operation("urlResolve"))?;
     set(context, module, "resolve", resolve)?;
@@ -250,8 +535,20 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         legacy_constructor,
     )?;
     set(context, module, "resolveObject", resolve_object)?;
+    let legacy_prototype = get(context, legacy_constructor, "prototype")?;
+    let resolve_object_method = context.host_function_with_data(
+        crate::host::shared_vm::operation("urlResolveObject"),
+        legacy_constructor,
+    )?;
+    set(
+        context,
+        legacy_prototype,
+        "resolveObject",
+        resolve_object_method,
+    )?;
     set(context, module, "URL", constructor)?;
     set(context, module, "URLSearchParams", search_params)?;
+    set(context, module, "URLPattern", url_pattern)?;
     set(context, module, "Url", legacy_constructor)?;
     let format = context.host_function(crate::host::shared_vm::operation("urlFormat"))?;
     set(context, module, "format", format)?;
@@ -326,16 +623,23 @@ pub(crate) fn url_to_http_options(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let Some(input) = args.first().copied() else {
-        return Err(invalid_url_to_http_options_argument(context));
+        return Err(invalid_url_to_http_options_argument(context, None));
     };
     if !context.is_object_rooted(input)? {
-        return Err(invalid_url_to_http_options_argument(context));
+        return Err(invalid_url_to_http_options_argument(context, Some(input)));
     }
     let href = url_argument_text(context, input)?;
     let is_url = href.is_some();
     let result = context.null_object_rooted()?;
     for name in ["protocol", "hostname", "hash", "search", "pathname"] {
-        let value = get(context, input, name)?;
+        let mut value = get(context, input, name)?;
+        if name == "hostname" {
+            if let Some(hostname) = context.string_text(value)? {
+                if hostname.starts_with('[') && hostname.ends_with(']') {
+                    value = context.string_rooted(&hostname[1..hostname.len() - 1]);
+                }
+            }
+        }
         set(context, result, name, value)?;
     }
     let pathname = get(context, input, "pathname")?;
@@ -388,11 +692,29 @@ fn nullish_string(
     }
 }
 
-fn invalid_url_to_http_options_argument(context: &mut NativeContext<'_, NodeHost>) -> RootedError {
+fn invalid_url_to_http_options_argument(
+    context: &mut NativeContext<'_, NodeHost>,
+    input: Option<RootId>,
+) -> RootedError {
+    let received = match input.and_then(|input| {
+        Some((input, context.value_type_rooted(input)?))
+    }) {
+        None | Some((_, ValueType::Undefined)) => "Received undefined".to_owned(),
+        Some((_, ValueType::Null)) => "Received null".to_owned(),
+        Some((input, ValueType::String)) => context
+            .to_string(input)
+            .map(|value| format!("Received type string ('{value}')"))
+            .unwrap_or_else(|_| "Received type string".to_owned()),
+        Some((input, kind @ (ValueType::Number | ValueType::Boolean))) => context
+            .to_string(input)
+            .map(|value| format!("Received type {kind:?} ({value})").to_ascii_lowercase())
+            .unwrap_or_else(|_| format!("Received type {:?}", kind).to_ascii_lowercase()),
+        Some((_, kind)) => format!("Received type {:?}", kind).to_ascii_lowercase(),
+    };
     coded_url_type_error(
         context,
         "ERR_INVALID_ARG_TYPE",
-        "The \"url\" argument must be of type object",
+        &format!("The \"url\" argument must be of type object. {received}"),
     )
 }
 
@@ -411,20 +733,118 @@ pub(crate) fn path_to_file_url(
     let original = context
         .string_text(input)?
         .ok_or_else(|| invalid_path_argument(context))?;
+    if windows && original.starts_with("\\\\") {
+        let hostname = original[2..]
+            .split(|character| character == '\\' || character == '/')
+            .next()
+            .unwrap_or_default();
+        if hostname
+            .chars()
+            .any(|character| matches!(character, ' ' | '@' | ':' | '[' | ']'))
+        {
+            return Err(coded_url_type_error(
+                context,
+                "ERR_INVALID_URL",
+                "Invalid file URL host",
+            ));
+        }
+    }
     let trailing_separator = original.ends_with('/') || (windows && original.ends_with('\\'));
+    let (windows_path, control_markers) = if windows {
+        protect_windows_path_controls(&resolved)
+    } else {
+        (resolved.clone(), Vec::new())
+    };
     let mut href = if windows {
-        windows_path_to_url(&resolved)
+        windows_unc_terminator_to_url(&original).or_else(|| windows_path_to_url(&windows_path))
     } else {
         url::Url::from_file_path(&resolved).ok()
     }
     .ok_or_else(|| invalid_path_argument(context))?
     .to_string();
+    for (marker, escaped) in control_markers {
+        href = href.replace(&marker, &escaped);
+    }
+    href = escape_file_url_path_unsafe_chars(&href);
     if trailing_separator && !href.ends_with('/') {
         href.push('/');
     }
     let href = context.string_rooted(&href);
     let constructor = url_constructor(context)?;
     context.construct_rooted(constructor, constructor, &[href])
+}
+
+fn escape_file_url_path_unsafe_chars(href: &str) -> String {
+    let path_start = href
+        .get("file://".len()..)
+        .and_then(|authority_and_path| authority_and_path.find('/'))
+        .map_or(href.len(), |offset| "file://".len() + offset);
+    let (authority, path) = href.split_at(path_start);
+    let encoded_path = path
+        .chars()
+        .map(|character| match character {
+            '"' => "%22".to_owned(),
+            '<' => "%3C".to_owned(),
+            '>' => "%3E".to_owned(),
+            '[' => "%5B".to_owned(),
+            '\\' => "%5C".to_owned(),
+            ']' => "%5D".to_owned(),
+            '^' => "%5E".to_owned(),
+            '`' => "%60".to_owned(),
+            '{' => "%7B".to_owned(),
+            '|' => "%7C".to_owned(),
+            '}' => "%7D".to_owned(),
+            '~' => "%7E".to_owned(),
+            _ => character.to_string(),
+        })
+        .collect::<String>();
+    if encoded_path != path {
+        format!("{authority}{encoded_path}")
+    } else {
+        href.to_owned()
+    }
+}
+
+fn protect_windows_path_controls(path: &str) -> (String, Vec<(String, String)>) {
+    let mut protected = String::with_capacity(path.len());
+    let mut markers = Vec::new();
+    let unc_host_end = (path.starts_with("\\\\") || path.starts_with("//"))
+        .then(|| {
+            path[2..]
+                .find(|character| matches!(character, '\\' | '/'))
+                .map(|offset| offset + 2)
+                .unwrap_or(path.len())
+        })
+        .unwrap_or(0);
+    for (offset, character) in path.char_indices() {
+        // The WHATWG host parser ignores ASCII tab, CR, and LF in a UNC
+        // hostname. Drop those here before protecting control characters in
+        // the path, otherwise they become literal marker text in the host.
+        if offset < unc_host_end && matches!(character, '\t' | '\r' | '\n') {
+            continue;
+        }
+        if !character.is_control() {
+            protected.push(character);
+            continue;
+        }
+        let mut index = markers.len();
+        let marker = loop {
+            let marker = format!("__QUENCH_CTRL_{index:X}__");
+            if !path.contains(&marker) {
+                break marker;
+            }
+            index += 1;
+        };
+        let escaped = character
+            .to_string()
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("%{byte:02X}"))
+            .collect::<String>();
+        protected.push_str(&marker);
+        markers.push((marker, escaped));
+    }
+    (protected, markers)
 }
 
 struct FileUrlPath {
@@ -753,6 +1173,10 @@ fn windows_option(
 }
 
 fn windows_path_to_url(path: &str) -> Option<url::Url> {
+    if let Some(unc) = path.strip_prefix("\\\\?\\UNC\\") {
+        let path = format!("\\\\{unc}");
+        return windows_path_to_url(&path);
+    }
     let path = path.replace('\\', "/");
     if let Some(unc) = path.strip_prefix("//") {
         let (host, path) = unc.split_once('/')?;
@@ -797,6 +1221,38 @@ fn windows_path_to_url(path: &str) -> Option<url::Url> {
         cwd.join(path)
     };
     url::Url::from_file_path(normalize_path(&path)).ok()
+}
+
+fn windows_unc_terminator_to_url(path: &str) -> Option<url::Url> {
+    if path.starts_with("\\\\?\\UNC\\") {
+        return None;
+    }
+    let input = path.strip_prefix("\\\\")?;
+    let host_end = input.find(|character| matches!(character, '\\' | '/' | '#' | '?'))?;
+    let host = &input[..host_end];
+    let marker = &input[host_end..];
+    if !marker
+        .chars()
+        .any(|character| matches!(character, '#' | '?' | '/'))
+    {
+        return None;
+    }
+    let suffix = marker
+        .split_once('\\')
+        .map(|(_, suffix)| suffix)
+        .or_else(|| marker.split_once('/').map(|(_, suffix)| suffix))
+        .unwrap_or_default();
+    let normalized = suffix.replace('\\', "/");
+    let mut url = url::Url::parse(&format!("file://{host}/")).ok()?;
+    push_url_segments(
+        &mut url,
+        &normalized,
+        suffix
+            .chars()
+            .last()
+            .is_some_and(|character| character == '\\' || character == '/'),
+    )?;
+    Some(url)
 }
 
 fn push_url_segments(url: &mut url::Url, path: &str, trailing_slash: bool) -> Option<()> {
@@ -972,7 +1428,11 @@ fn url_constructor(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, 
 }
 
 /// Share the structural URL contract with native file URL conversion.
-pub(crate) fn is_url(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn is_url(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let matches = is_url_like(context, value)?;
     Ok(context.boolean(matches))
@@ -988,17 +1448,11 @@ pub(crate) fn parse(
         return parse_whatwg(context, args);
     }
 
-    let Some(input) = args.first().copied() else {
-        return Err(type_error(
-            context,
-            "The \"url\" argument must be of type string",
-        ));
-    };
+    let input = args.first().copied().unwrap_or_else(|| context.undefined());
     let Some(input) = context.string_text(input)? else {
-        return Err(type_error(
-            context,
-            "The \"url\" argument must be of type string",
-        ));
+        return Err(super::util_shared_vm::argument_type_error(
+            context, input, "url", "string",
+        )?);
     };
     let parsed = url_legacy::parse_legacy_parts(&input).map_err(|error| match error {
         LegacyUrlParseError::Invalid { code, input } => coded_type_error(context, &code, &input),
@@ -1057,7 +1511,28 @@ pub(crate) fn resolve_object(
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let resolved = resolve(context, receiver, args)?;
+    let (base, target, module_call) = if args.len() >= 2 {
+        (
+            context.to_string(args[0])?,
+            context.to_string(args[1])?,
+            true,
+        )
+    } else {
+        let base = get(context, receiver, "href")?;
+        let base = context.string_text(base)?.unwrap_or_default();
+        let target = args
+            .first()
+            .copied()
+            .map(|root| context.to_string(root))
+            .transpose()?
+            .unwrap_or_default();
+        (base, target, false)
+    };
+    let resolved = resolve_legacy_url(&base, &target);
+    if module_call && base.is_empty() {
+        return Ok(context.string_rooted(&target));
+    }
+    let resolved = context.string_rooted(&resolved);
     parse(context, receiver, &[resolved])
 }
 
@@ -1067,6 +1542,49 @@ fn resolve_legacy_url(base: &str, target: &str) -> String {
     }
     if target.is_empty() {
         return base.to_owned();
+    }
+    if let Some((scheme, suffix)) = target.split_once(':') {
+        if !scheme.is_empty()
+            && scheme
+                .bytes()
+                .enumerate()
+                .all(|(index, byte)| {
+                    byte.is_ascii_alphabetic()
+                        || (index > 0
+                            && (byte.is_ascii_digit() || matches!(byte, b'+' | b'.' | b'-')))
+                })
+        {
+            let same_scheme = base
+                .split_once(':')
+                .is_some_and(|(base_scheme, _)| base_scheme.eq_ignore_ascii_case(scheme));
+            if ["http", "https", "ftp", "gopher", "file", "ws", "wss"]
+                .iter()
+                .any(|known| scheme.eq_ignore_ascii_case(known))
+                && suffix.starts_with('/')
+                && !suffix.starts_with("//")
+            {
+                if same_scheme {
+                    if let Ok(base_url) = url::Url::parse(base) {
+                        return base_url
+                            .join(suffix)
+                            .map(|url| url.to_string())
+                            .unwrap_or_else(|_| target.to_owned());
+                    }
+                }
+                return format!("{scheme}://{}", suffix.trim_start_matches('/'));
+            }
+            if suffix.starts_with('#') {
+                if same_scheme {
+                    if let Ok(base_url) = url::Url::parse(base) {
+                        return base_url
+                            .join(suffix)
+                            .map(|url| url.to_string())
+                            .unwrap_or_else(|_| target.to_owned());
+                    }
+                }
+                return format!("{scheme}:///{suffix}");
+            }
+        }
     }
     if url::Url::parse(target).is_ok() {
         return target.to_owned();
@@ -1086,10 +1604,12 @@ fn resolve_legacy_url(base: &str, target: &str) -> String {
                 return format!("{scheme}://{authority}{target}");
             }
         }
-        return target.to_owned();
+        return normalize_relative_url_path(target);
     }
     let prefix = base.rsplit_once('/').map_or("", |(prefix, _)| prefix);
-    let combined = if prefix.is_empty() {
+    let combined = if prefix.is_empty() && base.starts_with('/') {
+        format!("/{target}")
+    } else if prefix.is_empty() {
         target.to_owned()
     } else {
         format!("{prefix}/{target}")
@@ -1107,7 +1627,11 @@ fn normalize_relative_url_path(value: &str) -> String {
         match segment {
             "" | "." => {}
             ".." => {
-                segments.pop();
+                if segments.last().is_some_and(|segment| *segment != "..") {
+                    segments.pop();
+                } else if !rooted {
+                    segments.push("..");
+                }
             }
             segment => segments.push(segment),
         }
@@ -1116,7 +1640,9 @@ fn normalize_relative_url_path(value: &str) -> String {
     if rooted {
         normalized.insert(0, '/');
     }
-    if path.ends_with('/') && !normalized.ends_with('/') {
+    if (path.ends_with('/') || path.ends_with("/.") || path.ends_with("/.."))
+        && !normalized.ends_with('/')
+    {
         normalized.push('/');
     }
     normalized.push_str(suffix);
@@ -1147,6 +1673,26 @@ pub(crate) fn format(
                 _ => {}
             }
         }
+        // A parsed authority is not enough to infer that the input contained
+        // `//`; protocols such as CoAP also allow `scheme:user@host/path`.
+        // Preserve the delimiter that was actually present in the string.
+        fields.slashes = input.contains("://");
+        if fields
+            .hostname
+            .as_deref()
+            .is_some_and(|hostname| hostname.len() > 255)
+        {
+            fields.host = Some(String::new());
+            fields.hostname = Some(String::new());
+        }
+        // Parsing a URL string preserves escapes in `auth` that are not
+        // decoded by the legacy parser (for example `%2F`). Preserve those
+        // escapes when formatting it again instead of encoding `%` as `%25`.
+        fields.auth_encoded = fields
+            .auth
+            .as_deref()
+            .filter(|auth| !auth.is_empty())
+            .map(encode_auth_preserving_escapes);
         let formatted = format_legacy_fields(fields);
         return Ok(context.string_rooted(&formatted));
     }
@@ -1302,12 +1848,47 @@ fn encode_auth(auth: &str) -> String {
     encoded
 }
 
+fn encode_auth_preserving_escapes(auth: &str) -> String {
+    let bytes = auth.as_bytes();
+    let mut encoded = String::with_capacity(auth.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && bytes[index + 1].is_ascii_hexdigit()
+            && bytes[index + 2].is_ascii_hexdigit()
+        {
+            encoded.push('%');
+            encoded.push(char::from(bytes[index + 1]));
+            encoded.push(char::from(bytes[index + 2]));
+            index += 3;
+            continue;
+        }
+        let character = auth[index..].chars().next().expect("index is in bounds");
+        if character.is_ascii_alphanumeric() || "-_.!~*'():".contains(character) {
+            encoded.push(character);
+        } else {
+            let mut bytes = [0; 4];
+            for byte in character.encode_utf8(&mut bytes).as_bytes() {
+                encoded.push('%');
+                encoded.push(char::from(b"0123456789ABCDEF"[(byte >> 4) as usize]));
+                encoded.push(char::from(b"0123456789ABCDEF"[(byte & 0x0f) as usize]));
+            }
+        }
+        index += character.len_utf8();
+    }
+    encoded
+}
+
 fn format_whatwg_url(
     context: &mut NativeContext<'_, NodeHost>,
     href: &str,
     options: Option<RootId>,
 ) -> Result<String, RootedError> {
-    let mut formatted = href.to_owned();
+    // URL instances expose an ASCII hostname in `href`. Canonicalize here as
+    // well because a structurally compatible URL object may provide a Unicode
+    // hostname; `{ unicode: true }` converts the canonical hostname back.
+    let mut formatted = format_ascii_hostname(href);
     let Some(options) = options else {
         return Ok(formatted);
     };
@@ -1326,7 +1907,10 @@ fn format_whatwg_url(
             formatted.truncate(index);
         }
     }
-    let unicode = option_truthy(context, options, "unicode")?;
+    // Unlike `auth`, `fragment`, and `search`, Unicode formatting is opt-in.
+    // Missing or undefined `unicode` must preserve the URL's ASCII hostname.
+    let unicode_option = get(context, options, "unicode")?;
+    let unicode = context.truthy_rooted(unicode_option)?;
     if unicode {
         formatted = format_unicode_hostname(&formatted);
     }
@@ -1348,6 +1932,42 @@ fn format_whatwg_url(
         }
     }
     Ok(formatted)
+}
+
+fn format_ascii_hostname(href: &str) -> String {
+    let Some(scheme_end) = href.find("://") else {
+        return href.to_owned();
+    };
+    let authority_start = scheme_end + 3;
+    let authority_end = href[authority_start..]
+        .find(['/', '?', '#'])
+        .map(|index| authority_start + index)
+        .unwrap_or(href.len());
+    let host_start = href[authority_start..authority_end]
+        .rfind('@')
+        .map(|index| authority_start + index + 1)
+        .unwrap_or(authority_start);
+    let host_end = if href[host_start..authority_end].starts_with('[') {
+        href[host_start..authority_end]
+            .find(']')
+            .map(|index| host_start + index + 1)
+            .unwrap_or(authority_end)
+    } else {
+        href[host_start..authority_end]
+            .find(':')
+            .map(|index| host_start + index)
+            .unwrap_or(authority_end)
+    };
+    let hostname = &href[host_start..host_end];
+    let Ok(ascii) = idna::domain_to_ascii(hostname) else {
+        return href.to_owned();
+    };
+    if ascii == hostname {
+        return href.to_owned();
+    }
+    let mut formatted = href.to_owned();
+    formatted.replace_range(host_start..host_end, &ascii);
+    formatted
 }
 
 fn format_unicode_hostname(href: &str) -> String {
@@ -1492,13 +2112,6 @@ fn legacy_value(context: &mut NativeContext<'_, NodeHost>, value: LegacyUrlField
     }
 }
 
-fn type_error(context: &mut NativeContext<'_, NodeHost>, message: &str) -> RootedError {
-    match context.type_error_rooted(message) {
-        Ok(error) => context.throw(error),
-        Err(error) => error,
-    }
-}
-
 fn coded_type_error(
     context: &mut NativeContext<'_, NodeHost>,
     code: &str,
@@ -1524,18 +2137,16 @@ fn invalid_url(context: &mut NativeContext<'_, NodeHost>, input: &str) -> Rooted
 }
 
 fn uri_error(context: &mut NativeContext<'_, NodeHost>) -> RootedError {
-    let exception = match context.error_rooted("URI malformed") {
+    let exception = match (|| {
+        let global = context.global_root()?;
+        let key = context.string_rooted("URIError");
+        let constructor = context.get_property_rooted(global, key)?;
+        let message = context.string_rooted("URI malformed");
+        context.construct_rooted(constructor, constructor, &[message])
+    })() {
         Ok(exception) => exception,
         Err(error) => return error,
     };
-    let name = context.string_rooted("URIError");
-    let code = context.string_rooted("ERR_INVALID_URI");
-    if let Err(error) = set(context, exception, "name", name) {
-        return error;
-    }
-    if let Err(error) = set(context, exception, "code", code) {
-        return error;
-    }
     context.throw(exception)
 }
 
@@ -1571,15 +2182,39 @@ fn set_text(
 
 /// The actual URL constructor's private WeakMap is the URL-instance authority.
 /// Unlike isURL's structural contract, this never reads user properties.
-pub(crate) fn is_url_instance(c:&mut NativeContext<'_,NodeHost>,_:RootId,args:&[RootId])->Result<RootId,RootedError>{
-    let value=args.first().copied().unwrap_or_else(||c.undefined());
-    if !c.is_object_rooted(value)?{return Ok(c.boolean(false))}
-    let shared=c.host_mut().shared_state();let state=shared.borrow().url_state;
-    let valid=if let Some(state)=state{let data=c.weak_map_get_rooted(state,value)?;c.is_object_rooted(data)?}else{false};
+pub(crate) fn is_url_instance(
+    c: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| c.undefined());
+    if !c.is_object_rooted(value)? {
+        return Ok(c.boolean(false));
+    }
+    let shared = c.host_mut().shared_state();
+    let state = shared.borrow().url_state;
+    let valid = if let Some(state) = state {
+        let data = c.weak_map_get_rooted(state, value)?;
+        c.is_object_rooted(data)?
+    } else {
+        false
+    };
     Ok(c.boolean(valid))
 }
-pub(crate) fn get_url_href(c:&mut NativeContext<'_,NodeHost>,_:RootId,args:&[RootId])->Result<RootId,RootedError>{
-    let value=args.first().copied().unwrap_or_else(||c.undefined());let shared=c.host_mut().shared_state();let state=shared.borrow().url_state;
-    if let Some(state)=state{let data=c.weak_map_get_rooted(state,value)?;if c.is_object_rooted(data)?{return get(c,data,"href")}}
-    let error=c.type_error_rooted("Value must be an instance of URL")?;Err(c.throw(error))
+pub(crate) fn get_url_href(
+    c: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| c.undefined());
+    let shared = c.host_mut().shared_state();
+    let state = shared.borrow().url_state;
+    if let Some(state) = state {
+        let data = c.weak_map_get_rooted(state, value)?;
+        if c.is_object_rooted(data)? {
+            return get(c, data, "href");
+        }
+    }
+    let error = c.type_error_rooted("Value must be an instance of URL")?;
+    Err(c.throw(error))
 }

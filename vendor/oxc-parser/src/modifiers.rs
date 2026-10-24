@@ -405,7 +405,10 @@ mod modifier_kinds {
             // Check that `Private`, `Protected`, and `Public` have discriminants in a tightly packed range
             // i.e. they are one after another
             const MIN_DISCRIMINANT: usize = min(
-                min(ModifierKind::Private as usize, ModifierKind::Protected as usize),
+                min(
+                    ModifierKind::Private as usize,
+                    ModifierKind::Protected as usize,
+                ),
                 ModifierKind::Public as usize,
             );
             const _: () = {
@@ -518,7 +521,11 @@ impl<C: Config> ParserImpl<'_, C> {
             // Rest modifiers cannot cross line
             _ => Self::can_follow_modifier(next_kind) && !next.is_on_new_line(),
         };
-        if is_modifier { Some(modifier_kind) } else { None }
+        if is_modifier {
+            Some(modifier_kind)
+        } else {
+            None
+        }
     }
 
     fn modifier(&mut self, kind: Kind, start: u32) -> Modifier {
@@ -658,7 +665,10 @@ static ILLEGAL_PRECEDING_MODIFIERS: [ModifierKinds; ModifierKind::VARIANTS.len()
         let kind = ModifierKind::VARIANTS[i];
 
         let illegal_kinds = get_illegal_preceding_modifiers(kind);
-        assert!(illegal_kinds.contains(kind), "Same modifier twice is always illegal");
+        assert!(
+            illegal_kinds.contains(kind),
+            "Same modifier twice is always illegal"
+        );
         illegal[kind as usize] = illegal_kinds;
 
         i += 1;

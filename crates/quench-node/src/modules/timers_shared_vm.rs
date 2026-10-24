@@ -386,27 +386,58 @@ pub(crate) fn schedule_promise_timeout(
     let kind = property_text(context, operation, PROMISE_KIND)?;
     if kind == PROMISE_TIMEOUT {
         let delay = property(context, operation, PROMISE_DELAY)?;
-        if !is_undefined(context, delay) && !context.rooted_value(delay).is_some_and(|value| value.as_number().is_some()) {
-            return Err(super::util_shared_vm::argument_type_error(context, delay, "delay", "number")?);
+        if !is_undefined(context, delay)
+            && !context
+                .rooted_value(delay)
+                .is_some_and(|value| value.as_number().is_some())
+        {
+            return Err(super::util_shared_vm::argument_type_error(
+                context, delay, "delay", "number",
+            )?);
         }
     }
     if !is_undefined(context, options) {
-        if !context.is_object_rooted(options)? || context.rooted_value(options).is_some_and(|value| value.is_null()) || context.is_array_rooted(options)? {
-            return Err(super::util_shared_vm::argument_type_error(context, options, "options", "Object")?);
+        if !context.is_object_rooted(options)?
+            || context
+                .rooted_value(options)
+                .is_some_and(|value| value.is_null())
+            || context.is_array_rooted(options)?
+        {
+            return Err(super::util_shared_vm::argument_type_error(
+                context, options, "options", "Object",
+            )?);
         }
         let signal = property(context, options, "signal")?;
         if !is_undefined(context, signal) {
             let signal = property(context, options, "signal")?;
             let aborted = context.string_rooted("aborted");
-            if !context.is_object_rooted(signal)? || context.rooted_value(signal).is_some_and(|value| value.is_null()) || !context.has_property_rooted(signal, aborted)? {
-                return Err(super::util_shared_vm::argument_type_error(context, signal, "options.signal", "AbortSignal")?);
+            if !context.is_object_rooted(signal)?
+                || context
+                    .rooted_value(signal)
+                    .is_some_and(|value| value.is_null())
+                || !context.has_property_rooted(signal, aborted)?
+            {
+                return Err(super::util_shared_vm::argument_type_error(
+                    context,
+                    signal,
+                    "options.signal",
+                    "AbortSignal",
+                )?);
             }
         }
         let referenced = property(context, options, "ref")?;
         if !is_undefined(context, referenced) {
             let referenced = property(context, options, "ref")?;
-            if !context.rooted_value(referenced).is_some_and(|value| value.as_bool().is_some()) {
-                return Err(super::util_shared_vm::argument_type_error(context, referenced, "options.ref", "boolean")?);
+            if !context
+                .rooted_value(referenced)
+                .is_some_and(|value| value.as_bool().is_some())
+            {
+                return Err(super::util_shared_vm::argument_type_error(
+                    context,
+                    referenced,
+                    "options.ref",
+                    "boolean",
+                )?);
             }
         }
     }
@@ -416,8 +447,16 @@ pub(crate) fn schedule_promise_timeout(
         property(context, options, "signal")?
     };
     install(context, operation, PROMISE_SIGNAL, signal)?;
-    let referenced = if is_undefined(context, options) { context.undefined() } else { property(context, options, "ref")? };
-    let referenced = if is_undefined(context, referenced) { true } else { context.truthy_rooted(referenced)? };
+    let referenced = if is_undefined(context, options) {
+        context.undefined()
+    } else {
+        property(context, options, "ref")?
+    };
+    let referenced = if is_undefined(context, referenced) {
+        true
+    } else {
+        context.truthy_rooted(referenced)?
+    };
     let referenced = context.boolean(referenced);
     install(context, operation, PROMISE_REFED, referenced)?;
     if is_undefined(context, signal) {
@@ -474,8 +513,11 @@ fn schedule_promise_operation(
     install(context, operation, PROMISE_HANDLE, handle)?;
     let referenced = property(context, operation, PROMISE_REFED)?;
     if !context.truthy_rooted(referenced)? {
-        if kind == PROMISE_IMMEDIATE { immediate_unref(context, handle, &[])?; }
-        else { timer_unref(context, handle, &[])?; }
+        if kind == PROMISE_IMMEDIATE {
+            immediate_unref(context, handle, &[])?;
+        } else {
+            timer_unref(context, handle, &[])?;
+        }
     }
     Ok(context.undefined())
 }
@@ -654,23 +696,42 @@ fn schedule_timer(
         ));
     }
     install(context, handle, TIMER_CALLBACK, callback)?;
-    let callback_args = if args.len() > 2 { context.array_rooted(&args[2..])? } else { context.undefined() };
+    let callback_args = if args.len() > 2 {
+        context.array_rooted(&args[2..])?
+    } else {
+        context.undefined()
+    };
     install(context, handle, TIMER_ARGS, callback_args)?;
     install(context, handle, TIMER_DELAY, delay.number)?;
-    let repeat = if repeating { delay.number } else { context.null() };
+    let repeat = if repeating {
+        delay.number
+    } else {
+        context.null()
+    };
     install(context, handle, TIMER_REPEAT, repeat)?;
     let async_id =
         crate::modules::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
     let async_id_value = context.number(async_id as f64);
-    context.define_data_property_rooted(handle, api.async_id_key, async_id_value, true, true, true)?;
+    context.define_data_property_rooted(
+        handle,
+        api.async_id_key,
+        async_id_value,
+        true,
+        true,
+        true,
+    )?;
     let primitive = context.boolean(false);
     context.define_data_property_rooted(handle, api.primitive_key, primitive, true, true, true)?;
     crate::modules::async_hooks_shared_vm::emit_init(context, handle, "Timeout", async_id)?;
     // The public callback/argument slots are canonical; the scheduler retains
     // only an invocation view and the original handle.
-    let callback = SharedCallback { execution: Some(crate::modules::shared_event_loop::CallbackExecution { lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation, optional_callback: None,
-        id: async_id, resource: context.retain(handle)?,
-    }),
+    let callback = SharedCallback {
+        execution: Some(crate::modules::shared_event_loop::CallbackExecution {
+            lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation,
+            optional_callback: None,
+            id: async_id,
+            resource: context.retain(handle)?,
+        }),
         callback: context.retain(api.timer_callback)?,
         receiver: context.retain(handle)?,
         args: Vec::new(),
@@ -684,7 +745,12 @@ fn schedule_timer(
         .queue_shared_timer(id, delay.duration, interval, callback);
     let refed = context.get_property_rooted(handle, api.refed_key)?;
     let refed = context.truthy_rooted(refed)?;
-    context.host_mut().shared_state().borrow_mut().scheduler.set_shared_timer_ref(id, refed);
+    context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .scheduler
+        .set_shared_timer_ref(id, refed);
     Ok(handle)
 }
 
@@ -695,7 +761,11 @@ pub(crate) struct TimerDurationWarnings {
 }
 
 #[derive(Clone, Copy)]
-enum TimerDurationWarning { Overflow, Negative, NotNumber }
+enum TimerDurationWarning {
+    Overflow,
+    Negative,
+    NotNumber,
+}
 
 impl TimerDurationWarning {
     fn name(self) -> &'static str {
@@ -714,47 +784,73 @@ impl TimerDurationWarning {
     }
 }
 
-struct TimerDelay { duration: Duration, number: RootId }
+struct TimerDelay {
+    duration: Duration,
+    number: RootId,
+}
 
-fn timer_delay(context: &mut NativeContext<'_, NodeHost>, delay: Option<RootId>) -> Result<TimerDelay, RootedError> {
+fn timer_delay(
+    context: &mut NativeContext<'_, NodeHost>,
+    delay: Option<RootId>,
+) -> Result<TimerDelay, RootedError> {
     let one = context.number(DEFAULT_TIMER_DELAY_MS as f64);
-    let delay = delay.filter(|value| !context.rooted_value(*value).is_some_and(|value| value.is_undefined()));
+    let delay = delay.filter(|value| {
+        !context
+            .rooted_value(*value)
+            .is_some_and(|value| value.is_undefined())
+    });
     // Node's `after *= 1`: Core owns conversion hooks, Symbol/BigInt errors and NaN.
     let numeric = match delay {
         Some(delay) => context.arithmetic_rooted(NativeArithmetic::Multiply, delay, one)?,
         None => one,
     };
-    let after = context.rooted_value(numeric).and_then(|value| value.as_number())
+    let after = context
+        .rooted_value(numeric)
+        .and_then(|value| value.as_number())
         .ok_or_else(|| RootedError::host("timer multiplication did not return a Number"))?;
     if after >= DEFAULT_TIMER_DELAY_MS as f64 && after <= MAX_TIMER_DELAY_MS as f64 {
-        return Ok(TimerDelay { duration: Duration::from_millis(after.trunc() as u64), number: numeric });
+        return Ok(TimerDelay {
+            duration: Duration::from_millis(after.trunc() as u64),
+            number: numeric,
+        });
     }
     let warning = {
         let state = context.host_mut().shared_state();
         let mut state = state.borrow_mut();
         let warnings = &mut state.timer_duration_warnings;
-        if after > MAX_TIMER_DELAY_MS as f64 { Some(TimerDurationWarning::Overflow) }
-        else if after < 0.0 && !warnings.negative {
+        if after > MAX_TIMER_DELAY_MS as f64 {
+            Some(TimerDurationWarning::Overflow)
+        } else if after < 0.0 && !warnings.negative {
             warnings.negative = true;
             Some(TimerDurationWarning::Negative)
         } else if after.is_nan() && !warnings.not_number {
             warnings.not_number = true;
             Some(TimerDurationWarning::NotNumber)
-        } else { None }
+        } else {
+            None
+        }
     };
     if let Some(warning) = warning {
         let api = timer_handle_api(context)?;
         let undefined = context.undefined();
         let number = context.call_rooted(api.number_string, undefined, &[numeric])?;
-        let number = context.string_text(number)?.ok_or_else(|| RootedError::host("Number string conversion failed"))?;
-        let message = context.string_rooted(&format!("{number} {}\nTimeout duration was set to 1.", warning.detail()));
+        let number = context
+            .string_text(number)?
+            .ok_or_else(|| RootedError::host("Number string conversion failed"))?;
+        let message = context.string_rooted(&format!(
+            "{number} {}\nTimeout duration was set to 1.",
+            warning.detail()
+        ));
         let kind = context.string_rooted(warning.name());
         let global = context.global_root()?;
         let process = property(context, global, "process")?;
         let emit = property(context, process, "emitWarning")?;
         context.call_rooted(emit, process, &[message, kind])?;
     }
-    Ok(TimerDelay { duration: Duration::from_millis(DEFAULT_TIMER_DELAY_MS), number: one })
+    Ok(TimerDelay {
+        duration: Duration::from_millis(DEFAULT_TIMER_DELAY_MS),
+        number: one,
+    })
 }
 
 pub(crate) fn timer_ref(
@@ -879,14 +975,16 @@ fn build_timer_handle_api(
     let primitive_key = context.symbol_rooted(Some("kHasPrimitive"));
     // This is Node's primitive alias registry, not an activity projection.
     let primitive_registry = context.null_object_rooted()?;
-    let primitive_cleanup = context.host_function(crate::host::shared_vm::operation("timerPrimitiveCleanup"))?;
+    let primitive_cleanup =
+        context.host_function(crate::host::shared_vm::operation("timerPrimitiveCleanup"))?;
     let global = context.global_root()?;
     let reflect = property(context, global, "Reflect")?;
     let delete_property = property(context, reflect, "deleteProperty")?;
     let number_string = property(context, global, "String")?;
     let apply = property(context, reflect, "apply")?;
     let timer_callback = context.host_function(crate::host::shared_vm::operation("timerInvoke"))?;
-    let repeat_delay = context.host_function(crate::host::shared_vm::operation("timerRepeatDelay"))?;
+    let repeat_delay =
+        context.host_function(crate::host::shared_vm::operation("timerRepeatDelay"))?;
     let binding = context.object_rooted()?;
     let clock = context.host_function(crate::host::shared_vm::operation("timerLibuvNow"))?;
     let name = context.string_rooted("name");
@@ -935,8 +1033,10 @@ fn timer_handle_prototype(
         "Immediate" => ("immediateRef", "immediateUnref"),
         _ => return Err(RootedError::host("unknown timer handle kind")),
     };
-    for (name, operation) in [("ref", ref_operation), ("unref", unref_operation)].into_iter()
-        .chain((owner == "Timeout").then_some(("refresh", "timerRefresh"))) {
+    for (name, operation) in [("ref", ref_operation), ("unref", unref_operation)]
+        .into_iter()
+        .chain((owner == "Timeout").then_some(("refresh", "timerRefresh")))
+    {
         let method = context.host_function(crate::host::shared_vm::operation(operation))?;
         let key = context.string_rooted(name);
         if !context.define_data_property_rooted(prototype, key, method, true, false, true)? {
@@ -980,12 +1080,16 @@ fn timer_handle_prototype(
             "cannot name {owner}.prototype.hasRef"
         )));
     }
-    let operation = context.host_function(crate::host::shared_vm::operation(
-        if owner == "Timeout" { "timerDispose" } else { "immediateDispose" }
-    ))?;
-    let factory = context.evaluate_script_rooted(quench_js_check::checked_js!(
-        "operation=>function(){'use strict';return operation(this);}"
-    ), "node:timers/dispose-facade.js")?;
+    let operation =
+        context.host_function(crate::host::shared_vm::operation(if owner == "Timeout" {
+            "timerDispose"
+        } else {
+            "immediateDispose"
+        }))?;
+    let factory = context.evaluate_script_rooted(
+        quench_js_check::checked_js!("operation=>function(){'use strict';return operation(this);}"),
+        "node:timers/dispose-facade.js",
+    )?;
     let undefined = context.undefined();
     let method = context.call_rooted(factory, undefined, &[operation])?;
     let global = context.global_root()?;
@@ -996,7 +1100,8 @@ fn timer_handle_prototype(
         let operation = context.host_function(crate::host::shared_vm::operation("timerClose"))?;
         let method = context.call_rooted(factory, undefined, &[operation])?;
         install(context, prototype, "close", method)?;
-        let operation = context.host_function(crate::host::shared_vm::operation("timerToPrimitive"))?;
+        let operation =
+            context.host_function(crate::host::shared_vm::operation("timerToPrimitive"))?;
         let method = context.call_rooted(factory, undefined, &[operation])?;
         let key = property(context, symbol, "toPrimitive")?;
         context.define_data_property_rooted(prototype, key, method, true, true, true)?;
@@ -1097,9 +1202,13 @@ pub(crate) fn set_immediate(
         .queue_shared_immediate(
             id,
             crate::modules::shared_event_loop::SharedImmediateOwner::Guest,
-            SharedCallback { execution: Some(crate::modules::shared_event_loop::CallbackExecution { lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation, optional_callback: None,
-                id: async_id, resource: context.retain(handle)?,
-            }),
+            SharedCallback {
+                execution: Some(crate::modules::shared_event_loop::CallbackExecution {
+                    lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation,
+                    optional_callback: None,
+                    id: async_id,
+                    resource: context.retain(handle)?,
+                }),
                 callback,
                 receiver,
                 args,
@@ -1157,17 +1266,29 @@ pub(crate) fn clear_timer(
     let Some(handle) = args.first().copied() else {
         return Ok(context.undefined());
     };
-    if context.rooted_value(handle).is_some_and(|value| value.is_null() || value.is_undefined()) {
+    if context
+        .rooted_value(handle)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
         return Ok(context.undefined());
     }
-    let handle = if context.rooted_value(handle).is_some_and(|value| value.as_number().is_some()) || context.string_text(handle)?.is_some() {
+    let handle = if context
+        .rooted_value(handle)
+        .is_some_and(|value| value.as_number().is_some())
+        || context.string_text(handle)?.is_some()
+    {
         let api = timer_handle_api(context)?;
         let handle = context.get_property_rooted(api.primitive_registry, handle)?;
-        if context.rooted_value(handle).is_some_and(|value| value.is_undefined()) {
+        if context
+            .rooted_value(handle)
+            .is_some_and(|value| value.is_undefined())
+        {
             return Ok(context.undefined());
         }
         handle
-    } else { handle };
+    } else {
+        handle
+    };
     let id = timer_id(context, handle)?;
     if let Some(id) = id {
         let cancelled = context.null();
@@ -1182,7 +1303,9 @@ pub(crate) fn clear_timer(
             .borrow_mut()
             .scheduler
             .cancel_shared_timer(id);
-        if let Some(callback) = callback { release_callback(context, callback)?; }
+        if let Some(callback) = callback {
+            release_callback(context, callback)?;
+        }
         let inactive = context.number(-1.0);
         install(context, handle, TIMER_DELAY, inactive)?;
     }
@@ -1260,12 +1383,18 @@ fn operation_pending(
     Ok(property_text(context, operation, PROMISE_STATE)? == PROMISE_PENDING)
 }
 
-fn release_callback(context: &mut NativeContext<'_, NodeHost>, callback: SharedCallback) -> Result<(), RootedError> {
+fn release_callback(
+    context: &mut NativeContext<'_, NodeHost>,
+    callback: SharedCallback,
+) -> Result<(), RootedError> {
     let completed = if let Some(execution) = callback.execution {
-        let result = crate::modules::async_hooks_shared_vm::complete_callback_context(context, execution.id);
+        let result =
+            crate::modules::async_hooks_shared_vm::complete_callback_context(context, execution.id);
         context.release_root(execution.resource);
         result
-    } else { Ok(()) };
+    } else {
+        Ok(())
+    };
     context.release_root(callback.callback);
     context.release_root(callback.receiver);
     for argument in callback.args {
@@ -1274,28 +1403,53 @@ fn release_callback(context: &mut NativeContext<'_, NodeHost>, callback: SharedC
     completed
 }
 
-pub(crate) fn active_resources(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let (timers, immediates) = context.host_mut().shared_state().borrow().scheduler.shared_active_timer_counts();
+pub(crate) fn active_resources(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (timers, immediates) = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .scheduler
+        .shared_active_timer_counts();
     let mut resources = Vec::with_capacity(timers + immediates);
     for (name, count) in [("Timeout", timers), ("Immediate", immediates)] {
-        for _ in 0..count { resources.push(context.string_rooted(name)); }
+        for _ in 0..count {
+            resources.push(context.string_rooted(name));
+        }
     }
     context.array_rooted(&resources)
 }
 
-pub(crate) fn timer_dispose(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn timer_dispose(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     clear_timer(context, receiver, args)
 }
-pub(crate) fn immediate_dispose(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn immediate_dispose(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     clear_immediate(context, receiver, args)
 }
-pub(crate) fn timer_close(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn timer_close(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     clear_timer(context, receiver, args)?;
     Ok(args[0])
 }
 
 /// Public timer functions defer the promise export lookup, preserving its identity and hooks.
-pub(crate) fn install_promisify_globals(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+pub(crate) fn install_promisify_globals(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<(), RootedError> {
     let global = context.global_root()?;
     let symbol = property(context, global, "Symbol")?;
     let registry = property(context, symbol, "for")?;
@@ -1304,7 +1458,10 @@ pub(crate) fn install_promisify_globals(context: &mut NativeContext<'_, NodeHost
     for name in ["setTimeout", "setImmediate"] {
         let function = property(context, global, name)?;
         let name = context.string_rooted(name);
-        let getter = context.host_function_with_data(crate::host::shared_vm::operation("timerPromisifyGet"), name)?;
+        let getter = context.host_function_with_data(
+            crate::host::shared_vm::operation("timerPromisifyGet"),
+            name,
+        )?;
         let key = context.string_rooted("name");
         let value = context.string_rooted("get");
         context.define_data_property_rooted(getter, key, value, false, false, true)?;
@@ -1317,14 +1474,22 @@ pub(crate) fn install_promisify_globals(context: &mut NativeContext<'_, NodeHost
     Ok(())
 }
 
-pub(crate) fn promisify_get(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn promisify_get(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
     let name = context.host_function_data()?;
     let module = crate::host::shared_vm::commonjs::timers_promises_module(context)?;
     context.get_property_rooted(module, name)
 }
 
 /// Node registers the original receiver only on its first primitive conversion.
-pub(crate) fn to_primitive(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn to_primitive(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     let handle = args[0];
     let api = timer_handle_api(context)?;
     let id = context.get_property_rooted(handle, api.async_id_key)?;
@@ -1332,7 +1497,8 @@ pub(crate) fn to_primitive(context: &mut NativeContext<'_, NodeHost>, _: RootId,
     if !context.truthy_rooted(known)? {
         let yes = context.boolean(true);
         if !context.set_property_rooted(handle, api.primitive_key, yes, handle)? {
-            let error = context.type_error_rooted("Cannot assign to read only timer primitive registration")?;
+            let error = context
+                .type_error_rooted("Cannot assign to read only timer primitive registration")?;
             return Err(context.throw(error));
         }
         context.set_property_rooted(api.primitive_registry, id, handle, api.primitive_registry)?;
@@ -1342,7 +1508,11 @@ pub(crate) fn to_primitive(context: &mut NativeContext<'_, NodeHost>, _: RootId,
 
 /// Remove the primitive alias at real cancellation/completion. A firing timer
 /// supplies the identity read before its callback, matching Node's snapshot.
-pub(crate) fn primitive_cleanup(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn primitive_cleanup(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     let handle = args[0];
     let api = timer_handle_api(context)?;
     let known = context.get_property_rooted(handle, api.primitive_key)?;
@@ -1352,13 +1522,21 @@ pub(crate) fn primitive_cleanup(context: &mut NativeContext<'_, NodeHost>, _: Ro
             None => context.get_property_rooted(handle, api.async_id_key)?,
         };
         let undefined = context.undefined();
-        context.call_rooted(api.delete_property, undefined, &[api.primitive_registry, id])?;
+        context.call_rooted(
+            api.delete_property,
+            undefined,
+            &[api.primitive_registry, id],
+        )?;
     }
     Ok(context.undefined())
 }
 
 /// Invoke the canonical mutable slots through Core's ordinary call/apply paths.
-pub(crate) fn invoke_timeout(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn invoke_timeout(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
     let callback = property(context, receiver, TIMER_CALLBACK)?;
     if !context.truthy_rooted(callback)? {
         let undefined = context.undefined();
@@ -1367,12 +1545,20 @@ pub(crate) fn invoke_timeout(context: &mut NativeContext<'_, NodeHost>, receiver
     let repeat = property(context, receiver, TIMER_REPEAT)?;
     if context.truthy_rooted(repeat)? {
         if let Some(id) = timer_id(context, receiver)? {
-            context.host_mut().shared_state().borrow_mut().scheduler.begin_shared_timer_repeat(id);
+            context
+                .host_mut()
+                .shared_state()
+                .borrow_mut()
+                .scheduler
+                .begin_shared_timer_repeat(id);
         }
     }
     let args = property(context, receiver, TIMER_ARGS)?;
     let callback = property(context, receiver, TIMER_CALLBACK)?;
-    if context.rooted_value(args).is_some_and(|value| value.is_undefined()) {
+    if context
+        .rooted_value(args)
+        .is_some_and(|value| value.is_undefined())
+    {
         context.call_rooted(callback, receiver, &[])
     } else {
         let api = timer_handle_api(context)?;
@@ -1381,7 +1567,11 @@ pub(crate) fn invoke_timeout(context: &mut NativeContext<'_, NodeHost>, receiver
     }
 }
 
-pub(crate) fn repeat_delay(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn repeat_delay(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
     let repeat = property(context, receiver, TIMER_REPEAT)?;
     if context.truthy_rooted(repeat)? {
         let delay = property(context, receiver, TIMER_DELAY)?;
@@ -1403,27 +1593,45 @@ pub(crate) fn repeat_delay(context: &mut NativeContext<'_, NodeHost>, receiver: 
     Ok(context.undefined())
 }
 
-pub(crate) fn refresh(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn refresh(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
     let api = timer_handle_api(context)?;
     let refed = context.get_property_rooted(receiver, api.refed_key)?;
     let refed = context.truthy_rooted(refed)?;
     let msecs = property(context, receiver, TIMER_DELAY)?;
     let zero = context.number(0.0);
-    if context.greater_than_rooted(zero, msecs)? || context.rooted_value(msecs).is_some_and(|value| value.is_undefined()) {
+    if context.greater_than_rooted(zero, msecs)?
+        || context
+            .rooted_value(msecs)
+            .is_some_and(|value| value.is_undefined())
+    {
         return Ok(receiver);
     }
     let one = context.number(1.0);
     let numeric = context.arithmetic_rooted(NativeArithmetic::Multiply, msecs, one)?;
-    let milliseconds = context.rooted_value(numeric).and_then(|value| value.as_number()).unwrap_or(0.0);
+    let milliseconds = context
+        .rooted_value(numeric)
+        .and_then(|value| value.as_number())
+        .unwrap_or(0.0);
     let delay = Duration::from_millis(milliseconds.max(0.0).trunc() as u64);
-    let Some(id) = timer_id(context, receiver)? else { return Ok(receiver); };
+    let Some(id) = timer_id(context, receiver)? else {
+        return Ok(receiver);
+    };
     let state = context.host_mut().shared_state();
     let existing = state.borrow_mut().scheduler.refresh_shared_timer(id, delay);
     let destroyed = property(context, receiver, TIMER_DESTROYED)?;
     let mut execution_id = None;
-    let initialize = if context.truthy_rooted(destroyed)? { true } else {
+    let initialize = if context.truthy_rooted(destroyed)? {
+        true
+    } else {
         let async_id = context.get_property_rooted(receiver, api.async_id_key)?;
-        execution_id = context.rooted_value(async_id).and_then(|value| value.as_number()).map(|id| id as u64);
+        execution_id = context
+            .rooted_value(async_id)
+            .and_then(|value| value.as_number())
+            .map(|id| id as u64);
         !context.truthy_rooted(async_id)?
     };
     if initialize {
@@ -1442,26 +1650,47 @@ pub(crate) fn refresh(context: &mut NativeContext<'_, NodeHost>, receiver: RootI
         // The slot can have an observable getter/setter. Retain the identity
         // from the required read or initialization; do not read it again.
         let async_id = execution_id.ok_or_else(|| RootedError::host("timer async identity"))?;
-        let callback = SharedCallback { execution: Some(crate::modules::shared_event_loop::CallbackExecution { lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation, optional_callback: None,
-            id: async_id, resource: context.retain(receiver)?,
-        }), callback: context.retain(api.timer_callback)?, receiver: context.retain(receiver)?, args: Vec::new() };
-        state.borrow_mut().scheduler.queue_shared_timer(id, delay, None, callback);
+        let callback = SharedCallback {
+            execution: Some(crate::modules::shared_event_loop::CallbackExecution {
+                lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation,
+                optional_callback: None,
+                id: async_id,
+                resource: context.retain(receiver)?,
+            }),
+            callback: context.retain(api.timer_callback)?,
+            receiver: context.retain(receiver)?,
+            args: Vec::new(),
+        };
+        state
+            .borrow_mut()
+            .scheduler
+            .queue_shared_timer(id, delay, None, callback);
     }
     Ok(receiver)
 }
 
 /// Native internal scheduling uses the same constructor policy and starts
 /// unreferenced before init hooks. Node ignores arguments after `after` here.
-pub(crate) fn set_unref_timeout(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn set_unref_timeout(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     schedule_timer(context, &args[..args.len().min(2)], false, false)
 }
 
-pub(crate) fn internal_module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn internal_module(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
-    let factory = context.evaluate_script_rooted(quench_js_check::checked_js!(
-        "schedule=>function setUnrefTimeout(callback,after){return schedule(callback,after);}"
-    ), "node:internal/timers/set-unref-facade.js")?;
-    let operation = context.host_function(crate::host::shared_vm::operation("internalSetUnrefTimeout"))?;
+    let factory = context.evaluate_script_rooted(
+        quench_js_check::checked_js!(
+            "schedule=>function setUnrefTimeout(callback,after){return schedule(callback,after);}"
+        ),
+        "node:internal/timers/set-unref-facade.js",
+    )?;
+    let operation =
+        context.host_function(crate::host::shared_vm::operation("internalSetUnrefTimeout"))?;
     let undefined = context.undefined();
     let method = context.call_rooted(factory, undefined, &[operation])?;
     install(context, module, "setUnrefTimeout", method)?;
@@ -1472,8 +1701,18 @@ pub(crate) fn internal_module(context: &mut NativeContext<'_, NodeHost>) -> Resu
 
 /// The shared host's logical-process monotonic origin owns this clock;
 /// mutable public process.uptime and guest wall clocks do not replace it.
-pub(crate) fn libuv_now(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let milliseconds = context.host_mut().shared_state().borrow().process_control.uptime() * 1000.0;
+pub(crate) fn libuv_now(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let milliseconds = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .uptime()
+        * 1000.0;
     Ok(context.number(milliseconds.floor()))
 }
 

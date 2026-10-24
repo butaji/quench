@@ -416,9 +416,25 @@ impl<H: Host> Vm<H> {
             return Ok(TypedArrayInitialization::TypedArray(length));
         }
         if !self.is_object_like(object) {
-            return self
-                .array_buffer_to_index(p, object)
-                .map(TypedArrayInitialization::Length);
+            // TypedArray length failures have a distinct diagnostic from
+            // ArrayBuffer length failures. Keep ToIndex's conversion rules,
+            // but preserve the original number for Node's constructor error.
+            let number = self.to_number(p, object)?;
+            let integer = number.trunc();
+            if !number.is_nan()
+                && (!number.is_finite() || integer < 0.0 || integer > MAX_SAFE_INTEGER)
+            {
+                return Err(self.range_error(
+                    p,
+                    format!(
+                        "Invalid typed array length: {}",
+                        crate::number_to_string::format(number)
+                    )
+                    .into(),
+                ));
+            }
+            let length = if number.is_nan() { 0 } else { integer as usize };
+            return Ok(TypedArrayInitialization::Length(length));
         }
         if let Some(symbol) = self.well_known_symbols.get("iterator").copied() {
             let method = self.get_index(p, object, symbol)?;

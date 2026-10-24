@@ -1,6 +1,6 @@
 //! Captured SDK domain trampoline for explicit legacy AsyncWrap async_id zero.
 //! None scheduler carriers are never classified as legacy AsyncWrap callbacks.
-use crate::host::{NodeHost, shared_vm::commonjs};
+use crate::host::{shared_vm::commonjs, NodeHost};
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
 /// Node AsyncWrap legacy async_context{0,0}, not the startup resource ID.
@@ -34,6 +34,43 @@ pub(crate) fn internal_hooks(c: &mut Context<'_>) -> Result<RootId, RootedError>
             let descriptor = c.own_property_descriptor_rooted(public, key)?;
             c.define_property_descriptor_rooted(internal, key, descriptor)?;
         }
+        // Node's HTTP server connection listener uses this internal helper to
+        // mark a socket before entering its AsyncResource scope. Keep a local
+        // monotonically increasing sequence for objects that do not yet have
+        // an async id, while preserving an id already assigned by another
+        // internal subsystem.
+        let symbols_key = c.string_rooted("symbols");
+        let symbols = c.get_property_rooted(public, symbols_key)?;
+        c.release_root(symbols_key);
+        let async_id_symbol_key = c.string_rooted("async_id_symbol");
+        let async_id_symbol = c.get_property_rooted(symbols, async_id_symbol_key)?;
+        c.release_root(async_id_symbol_key);
+        c.release_root(symbols);
+        let factory = c.evaluate_script_rooted(
+            r#"(asyncIdSymbol) => {
+              let nextAsyncId = 0;
+              return function getOrSetAsyncId(object) {
+                if (Object.prototype.hasOwnProperty.call(object, asyncIdSymbol))
+                  return object[asyncIdSymbol];
+                return object[asyncIdSymbol] = ++nextAsyncId;
+              };
+            }"#,
+            "node:internal/async_hooks/get-or-set-async-id.js",
+        )?;
+        let undefined = c.undefined();
+        let get_or_set_async_id = c.call_rooted(factory, undefined, &[async_id_symbol])?;
+        c.release_root(factory);
+        c.release_root(async_id_symbol);
+        let get_or_set_async_id_key = c.string_rooted("getOrSetAsyncId");
+        c.define_data_property_rooted(
+            internal,
+            get_or_set_async_id_key,
+            get_or_set_async_id,
+            true,
+            true,
+            true,
+        )?;
+        c.release_root(get_or_set_async_id_key);
         let cell = state(c)?;
         let key = c.string_rooted("0");
         let function = c.get_property_rooted(cell, key)?;

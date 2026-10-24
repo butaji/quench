@@ -259,12 +259,14 @@ globalThis.MessageEvent ||= class MessageEvent extends Event {
 globalThis.MessagePort ||= class MessagePort extends EventTarget {
   constructor() {
     super();
-    this.onmessage = null;
-    this._peer = null;
-    this._started = false;
-    this._closed = false;
-    this._refed = false;
-    this._nodeListeners = new Map();
+    Object.defineProperties(this, {
+      onmessage: { value: null, writable: true, configurable: true },
+      _peer: { value: null, writable: true, configurable: true },
+      _started: { value: false, writable: true, configurable: true },
+      _closed: { value: false, writable: true, configurable: true },
+      _refed: { value: false, writable: true, configurable: true },
+      _nodeListeners: { value: new Map(), writable: true, configurable: true },
+    });
   }
   start() {
     this._started = true;
@@ -272,18 +274,23 @@ globalThis.MessagePort ||= class MessagePort extends EventTarget {
   close(callback) {
     this._closed = true;
     this.dispatchEvent(new Event("close"));
+    if (this._peer && !this._peer._closed) {
+      this._peer._closed = true;
+      this._peer.dispatchEvent(new Event("close"));
+    }
     if (typeof callback === "function") queueMicrotask(() => callback());
   }
   ref() {
     this._refed = true;
-    return this;
   }
   unref() {
     this._refed = false;
-    return this;
   }
   hasRef() {
     return this._refed;
+  }
+  [Symbol.for("nodejs.util.inspect.custom")]() {
+    return `MessagePort { active: ${!this._closed}, refed: ${this._refed} }`;
   }
   on(name, listener) {
     if (name === "message") this._refed = true;
@@ -307,19 +314,52 @@ globalThis.MessagePort ||= class MessagePort extends EventTarget {
     }
     if (name === "message") {
       const event = new MessageEvent("message", { data: args[0] });
-      return this.dispatchEvent(event);
+      const delivered = this.dispatchEvent(event);
+      if (typeof this.onmessage === "function") {
+        this.onmessage.call(this, event);
+        return true;
+      }
+      return delivered;
     }
     return this.dispatchEvent(new CustomEvent(name, { detail: args[0] }));
   }
   postMessage(value, transferList) {
-    if (
-      transferList !== undefined &&
-      (transferList === null ||
-        typeof transferList[Symbol.iterator] !== "function")
-    ) {
-      throw Object.assign(new TypeError("Optional transferList argument must be an iterable"), { code: "ERR_INVALID_ARG_TYPE" });
+    const hasTransferOption = transferList !== null &&
+      typeof transferList === "object" && !Array.isArray(transferList) &&
+      typeof transferList[Symbol.iterator] !== "function";
+    const transfers = hasTransferOption
+      ? transferList.transfer
+      : transferList === null ? undefined : transferList;
+    const transferArgument = hasTransferOption ? "options.transfer" : "transferList";
+    if (transfers !== undefined &&
+        (transfers === null || typeof transfers[Symbol.iterator] !== "function")) {
+      throw Object.assign(
+        new TypeError(`Optional ${transferArgument} argument must be an iterable`),
+        { code: "ERR_INVALID_ARG_TYPE" },
+      );
     }
-    if (transferList?.some((item) => __nodeUntransferableBuffers.has(item))) {
+    const transferValues = transfers === undefined ? [] : Array.from(transfers);
+    if (transferValues.includes(this)) {
+      throw new DOMException("Transfer list contains source port", "DataCloneError");
+    }
+    if (transferValues.some((item) =>
+      item instanceof MessagePort && item._closed)) {
+      throw new DOMException(
+        "MessagePort in transfer list is already detached",
+        "DataCloneError",
+      );
+    }
+    const seenTransfers = new Set();
+    for (const item of transferValues) {
+      if (seenTransfers.has(item)) {
+        const type = item instanceof ArrayBuffer
+          ? "ArrayBuffer"
+          : item instanceof MessagePort ? "MessagePort" : "object";
+        throw new DOMException(`Transfer list contains duplicate ${type}`, "DataCloneError");
+      }
+      seenTransfers.add(item);
+    }
+    if (transferValues.some((item) => __nodeUntransferableBuffers.has(item))) {
       const error = new DOMException(
         "ArrayBuffer is not transferable",
         "DataCloneError",
@@ -328,13 +368,20 @@ globalThis.MessagePort ||= class MessagePort extends EventTarget {
       throw error;
     }
     if (this._closed || !this._peer || this._peer._closed) return;
-    const event = new CustomEvent("message", { detail: value });
-    Object.defineProperty(event, "data", { value, enumerable: true });
+    // MessagePort uses the same structured clone options overload as
+    // structuredClone: the second argument may be either an iterable or an
+    // options object containing `transfer`.
+    const cloneTransfers = transferValues.filter((item) => !(item instanceof MessagePort));
+    const data = typeof structuredClone === "function"
+      ? structuredClone(value, transfers === undefined ? undefined : { transfer: cloneTransfers })
+      : value;
+    const event = new CustomEvent("message", { detail: data });
+    Object.defineProperty(event, "data", { value: data, enumerable: true });
     queueMicrotask(() => {
       if (this._peer._closed) return;
       this._peer.dispatchEvent(event);
       for (const listener of this._peer._nodeListeners.get("message") || []) {
-        listener(value);
+        listener(data);
       }
       if (typeof this._peer.onmessage === "function") {
         this._peer.onmessage.call(this._peer, event);

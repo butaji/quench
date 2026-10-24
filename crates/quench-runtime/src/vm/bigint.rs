@@ -18,7 +18,10 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.builtin_prototypes.insert((global, Native::BigInt), prototype);
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::BigInt), prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
@@ -97,12 +100,15 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn bigint_value_of(&mut self, p: &ResidualProgram, this: Value) -> Result<Value, JsError> {
+    pub(super) fn bigint_value_of(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
         if matches!(self.heap.get(this), Some(Cell::BigInt(_))) {
             return Ok(this);
         }
-        let value = self.boxed_primitive_value(this)
-            .unwrap_or(Value::UNDEFINED);
+        let value = self.boxed_primitive_value(this).unwrap_or(Value::UNDEFINED);
         if matches!(self.heap.get(value), Some(Cell::BigInt(_))) {
             Ok(value)
         } else {

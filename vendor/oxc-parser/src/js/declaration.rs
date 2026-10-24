@@ -116,7 +116,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 None
             };
             if self.at(Kind::Question) {
-                self.error(diagnostics::unexpected_optional_declaration(self.cur_token().span()));
+                self.error(diagnostics::unexpected_optional_declaration(
+                    self.cur_token().span(),
+                ));
                 self.bump_any();
             }
             let type_annotation = self.parse_ts_type_annotation();
@@ -124,7 +126,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         } else {
             (None, None)
         };
-        let init = self.eat(Kind::Eq).then(|| self.parse_assignment_expression_or_higher());
+        let init = self
+            .eat(Kind::Eq)
+            .then(|| self.parse_assignment_expression_or_higher());
         let decl = VariableDeclarator::new(
             self.end_span(start),
             id,
@@ -138,7 +142,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             && !kind.is_using()
             && !(kind.is_const() && decl.type_annotation.is_none())
         {
-            self.error(diagnostics::initializers_not_allowed_in_ambient_contexts(init.span()));
+            self.error(diagnostics::initializers_not_allowed_in_ambient_contexts(
+                init.span(),
+            ));
         }
         if decl_parent == VariableDeclarationParent::Statement {
             self.check_missing_initializer(&decl, kind);
@@ -148,9 +154,13 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             if decl.init.is_some() {
                 self.error(diagnostics::variable_declarator_definite(span));
             } else if decl.type_annotation.is_none() {
-                self.error(diagnostics::variable_declarator_definite_type_assertion(span));
+                self.error(diagnostics::variable_declarator_definite_type_assertion(
+                    span,
+                ));
             } else if self.ctx.has_ambient() {
-                self.error(diagnostics::definite_assignment_assertion_not_permitted(span));
+                self.error(diagnostics::definite_assignment_assertion_not_permitted(
+                    span,
+                ));
             }
         }
         decl
@@ -163,12 +173,16 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     ) {
         if decl.init.is_none() && !self.ctx.has_ambient() {
             if !matches!(decl.id, BindingPattern::BindingIdentifier(_)) {
-                self.error(diagnostics::invalid_destructuring_declaration(decl.id.span()));
+                self.error(diagnostics::invalid_destructuring_declaration(
+                    decl.id.span(),
+                ));
             } else if kind == VariableDeclarationKind::Const {
                 // It is a Syntax Error if Initializer is not present and IsConstantDeclaration of the LexicalDeclaration containing this LexicalBinding is true.
                 self.error(diagnostics::missing_initializer_in_const(decl.id.span()));
             } else if kind.is_using() {
-                self.error(diagnostics::using_declarations_must_be_initialized(decl.id.span()));
+                self.error(diagnostics::using_declarations_must_be_initialized(
+                    decl.id.span(),
+                ));
             }
         }
     }

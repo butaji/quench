@@ -13,6 +13,9 @@ use crate::NodeOutcome;
 pub const DEFAULT_CASE_TIMEOUT_SECS: u64 = 30;
 pub const NODE_PARALLEL_DIR: &str = "tests/node/test/parallel";
 const WORKER_OPTION: &str = "--case-worker";
+const CASE_ID_ENV: &str = "QUENCH_NODE_TEST_CASE_ID";
+const CASE_RESULT_ENV: &str = "QUENCH_NODE_TEST_CASE_RESULT";
+static NEXT_CASE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 macro_rules! case_results {
     ($($variant:ident => $label:literal),+ $(,)?) => {
@@ -32,7 +35,7 @@ case_results! {
     Timeout => "timeout", Crash => "crash", Unclassified => "unclassified",
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct CaseObservation {
     pub exit_code: Option<i32>,
     pub signal: Option<i32>,
@@ -84,7 +87,8 @@ pub fn worker_entry(arguments: &[String]) -> Option<ExitCode> {
                     use std::os::unix::process::CommandExt;
                     let current = std::env::current_exe().and_then(std::fs::canonicalize);
                     let selected = std::fs::canonicalize(&executable);
-                    if matches!((&current, &selected), (Ok(current), Ok(selected)) if current == selected) {
+                    if matches!((&current, &selected), (Ok(current), Ok(selected)) if current == selected)
+                    {
                         eprintln!("{NODE_TEST_EXECUTABLE_ENV} must select a distinct CLI");
                         return Some(ExitCode::from(2));
                     }
@@ -99,15 +103,34 @@ pub fn worker_entry(arguments: &[String]) -> Option<ExitCode> {
                     return Some(ExitCode::from(2));
                 }
             }
-            return Some(
-                match quench_node::shared_run::run_shared_cli(arguments.iter().cloned()) {
-                    Ok(code) => code,
-                    Err(error) => {
-                        eprintln!("{error}");
-                        ExitCode::from(1)
+            let code = match quench_node::shared_run::run_shared_cli(arguments.iter().cloned()) {
+                Ok(code) => code,
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::from(1)
+                }
+            };
+            if let Some(result_path) = std::env::var_os(CASE_RESULT_ENV) {
+                let outcome = if code == ExitCode::SUCCESS {
+                    NodeOutcome::Pass
+                } else {
+                    NodeOutcome::Fail {
+                        reason: format!("process replacement exited with {code:?}"),
                     }
-                },
-            );
+                };
+                match serde_json::to_vec(&outcome)
+                    .map_err(|error| error.to_string())
+                    .and_then(|bytes| {
+                        fs::write(result_path, bytes).map_err(|error| error.to_string())
+                    }) {
+                    Ok(()) => {}
+                    Err(error) => {
+                        eprintln!("write replaced Node worker result: {error}");
+                        return Some(ExitCode::from(2));
+                    }
+                }
+            }
+            return Some(code);
         }
         return None;
     }
@@ -115,7 +138,14 @@ pub fn worker_entry(arguments: &[String]) -> Option<ExitCode> {
         eprintln!("invalid Node case-worker invocation");
         return Some(ExitCode::from(2));
     };
+    #[cfg(target_os = "linux")]
+    if let Err(error) = enable_child_subreaper() {
+        eprintln!("enable fixture-worker reaping: {error}");
+        return Some(ExitCode::from(1));
+    }
     let outcome = crate::shared_runner::run_file(Path::new(fixture));
+    #[cfg(target_os = "linux")]
+    cleanup_adopted_children();
     let code = match &outcome {
         NodeOutcome::Pass | NodeOutcome::Skip { .. } | NodeOutcome::GuestExit { .. } => {
             ExitCode::SUCCESS
@@ -255,6 +285,15 @@ fn observe_process_in(
         .stderr(Stdio::from(
             fs::File::create(&stderr).map_err(|error| error.to_string())?,
         ));
+    let case_id = format!(
+        "{}-{}",
+        std::process::id(),
+        NEXT_CASE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    command.env(CASE_ID_ENV, &case_id);
+    if let Some(result_path) = result_path {
+        command.env(CASE_RESULT_ENV, result_path);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -301,6 +340,8 @@ fn observe_process_in(
     };
     #[cfg(target_os = "linux")]
     reap_process_group(child.id() as libc::pid_t)?;
+    #[cfg(target_os = "linux")]
+    terminate_case_descendants(&case_id);
     #[cfg(unix)]
     let signal = {
         use std::os::unix::process::ExitStatusExt;
@@ -357,6 +398,79 @@ fn reap_process_group(group: libc::pid_t) -> Result<(), String> {
         }
     }
 }
+
+#[cfg(target_os = "linux")]
+fn terminate_case_descendants(case_id: &str) {
+    let marker = format!("{CASE_ID_ENV}={case_id}");
+    if let Ok(entries) = fs::read_dir("/proc") {
+        for entry in entries.flatten() {
+            let Some(pid) = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.parse::<libc::pid_t>().ok())
+            else {
+                continue;
+            };
+            let matches = fs::read(entry.path().join("environ")).is_ok_and(|contents| {
+                contents
+                    .split(|byte| *byte == 0)
+                    .any(|value| value == marker.as_bytes())
+            });
+            if matches {
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn cleanup_adopted_children() {
+    use std::time::Instant;
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let task_root = format!("/proc/{}/task", std::process::id());
+        let mut children = Vec::new();
+        if let Ok(tasks) = fs::read_dir(task_root) {
+            for task in tasks.flatten() {
+                let path = task.path().join("children");
+                if let Ok(contents) = fs::read_to_string(path) {
+                    children.extend(
+                        contents
+                            .split_whitespace()
+                            .filter_map(|pid| pid.parse::<libc::pid_t>().ok()),
+                    );
+                }
+            }
+        }
+        children.sort_unstable();
+        children.dedup();
+        if children.is_empty() {
+            return;
+        }
+        for child in children {
+            unsafe {
+                libc::kill(child, libc::SIGKILL);
+            }
+        }
+        loop {
+            let waited = unsafe { libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) };
+            if waited > 0 {
+                continue;
+            }
+            break;
+        }
+        if Instant::now() >= deadline {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn cleanup_adopted_children() {}
 
 #[cfg(all(test, unix))]
 mod tests {

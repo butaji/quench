@@ -52,7 +52,9 @@ pub(crate) fn owner(
     context: &mut NativeContext<'_, NodeHost>,
     socket: RootId,
 ) -> Result<usize, RootedError> {
-    if let Some(index) = find_owner(context, socket)? { return Ok(index); }
+    if let Some(index) = find_owner(context, socket)? {
+        return Ok(index);
+    }
     let error = context.type_error_rooted("Illegal invocation")?;
     Err(context.throw(error))
 }

@@ -311,7 +311,9 @@ impl<H: Host> Vm<H> {
         }
         let extensible = self.object_data(holder).is_some_and(Object::is_extensible);
         if !extensible {
-            self.object_data_mut(holder).expect("sealed intrinsic holder").set_extensible(true);
+            self.object_data_mut(holder)
+                .expect("sealed intrinsic holder")
+                .set_extensible(true);
         }
         let key = self.property_key_value(key);
         let record = PropertyDescriptorRecord::from_attributes(property.value, property.attributes);
@@ -319,7 +321,9 @@ impl<H: Host> Vm<H> {
             vm.define_own_property_record(p, holder, key, record)
         });
         if !extensible {
-            self.object_data_mut(holder).expect("sealed intrinsic holder").set_extensible(false);
+            self.object_data_mut(holder)
+                .expect("sealed intrinsic holder")
+                .set_extensible(false);
         }
         result
     }

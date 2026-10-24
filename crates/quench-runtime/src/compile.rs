@@ -67,11 +67,14 @@ fn eval_method_body<'a, 'b>(
         _ => return None,
     };
     let body = function.body.as_deref_mut()?;
-    if !ordinary_function { return Some(body); }
+    if !ordinary_function {
+        return Some(body);
+    }
     let [Statement::ExpressionStatement(statement)] = body.statements.as_mut_slice() else {
         return None;
     };
-    let Expression::FunctionExpression(function) = statement.expression.without_parentheses_mut() else {
+    let Expression::FunctionExpression(function) = statement.expression.without_parentheses_mut()
+    else {
         return None;
     };
     function.body.as_deref_mut()
@@ -178,7 +181,10 @@ impl DynamicFunctionKind {
     }
 
     pub(crate) fn source(self, parameters: &str, body: &str) -> String {
-        format!("{} {DYNAMIC_FUNCTION_PUBLIC_NAME}({parameters}\n) {{\n{body}\n}}", self.source_prefix())
+        format!(
+            "{} {DYNAMIC_FUNCTION_PUBLIC_NAME}({parameters}\n) {{\n{body}\n}}",
+            self.source_prefix()
+        )
     }
 }
 
@@ -228,7 +234,9 @@ impl Engine {
         }
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() { return true; }
+        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
+            return true;
+        }
         let mut visitor = TaggedTemplate(false);
         visitor.visit_program(&parsed.program);
         visitor.0
@@ -343,7 +351,8 @@ impl Engine {
             if matches!(
                 import.phase,
                 ModuleRequestPhase::Source | ModuleRequestPhase::Defer
-            ) || import.module_type.is_some() {
+            ) || import.module_type.is_some()
+            {
                 locals.push((local, exported));
                 continue;
             }
@@ -563,8 +572,8 @@ impl Engine {
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let method_source;
         let raw_source_len = source.len();
-        let ordinary_private_context = context.home_atom.is_none()
-            && context.in_function && !private_names.is_empty();
+        let ordinary_private_context =
+            context.home_atom.is_none() && context.in_function && !private_names.is_empty();
         let (source, source_type) = if context.home_atom.is_some() || ordinary_private_context {
             method_source = if private_names.is_empty() && !context.super_calls {
                 let directive = if inherited_strict {
@@ -578,7 +587,9 @@ impl Engine {
                 let source = if ordinary_private_context {
                     ordinary_source = format!("(function() {{\n{source}\n}});");
                     ordinary_source.as_str()
-                } else { source };
+                } else {
+                    source
+                };
                 eval_context_source(source, private_names, context.super_calls)
             };
             (method_source.as_str(), SourceType::script())
@@ -593,12 +604,21 @@ impl Engine {
             )
         };
         let body_span = if context.home_atom.is_some() || ordinary_private_context {
-            let suffix = if ordinary_private_context { "\n});\n}\n})" }
-                else if private_names.is_empty() && !context.super_calls { "\n}})" }
-                else { "\n}\n})" };
+            let suffix = if ordinary_private_context {
+                "\n});\n}\n})"
+            } else if private_names.is_empty() && !context.super_calls {
+                "\n}})"
+            } else {
+                "\n}\n})"
+            };
             let body_start = source.len() - suffix.len() - raw_source_len - "{\n".len();
-            Some(Span::new(body_start as u32, (body_start + "{\n".len() + raw_source_len + "\n}".len()) as u32))
-        } else { None };
+            Some(Span::new(
+                body_start as u32,
+                (body_start + "{\n".len() + raw_source_len + "\n}".len()) as u32,
+            ))
+        } else {
+            None
+        };
         Self::specialize_with_mode_and_private_names(
             source,
             name,
@@ -653,8 +673,8 @@ impl Engine {
         let parameters = early::normalize_dynamic_function_parameters(parameters);
         let expression_wrapper = "(";
         let function_prefix = format!("{} {DYNAMIC_FUNCTION_PUBLIC_NAME}(", kind.source_prefix());
-        let parameter_list_end = expression_wrapper.len() + function_prefix.len()
-            + parameters.len() + "\n)".len();
+        let parameter_list_end =
+            expression_wrapper.len() + function_prefix.len() + parameters.len() + "\n)".len();
         let source = format!("{expression_wrapper}{})", kind.source(&parameters, &body));
         let expected_shape = ParsedProgramShape::DynamicFunction { parameter_list_end };
         Self::specialize_with_program_shape(
@@ -802,32 +822,41 @@ impl Engine {
         let ordinary_private_context = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
             if context.home_atom.is_none() && context.in_function && !private_name_overrides.is_empty());
         let wrapped_eval = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
-            if context.home_atom.is_some()) || ordinary_private_context;
+            if context.home_atom.is_some())
+            || ordinary_private_context;
         let dynamic_function_shape = match expected_shape {
             ParsedProgramShape::Any => true,
             ParsedProgramShape::Eval(_, expected_span) => {
-                !wrapped_eval || eval_method_body(&mut parsed.program, ordinary_private_context)
-                    .is_some_and(|body| Some(body.span) == expected_span)
+                !wrapped_eval
+                    || eval_method_body(&mut parsed.program, ordinary_private_context)
+                        .is_some_and(|body| Some(body.span) == expected_span)
             }
             ParsedProgramShape::DynamicFunction { parameter_list_end } => {
                 match parsed.program.body.as_mut_slice() {
-                    [Statement::ExpressionStatement(statement)] => match &mut statement.expression {
-                        Expression::ParenthesizedExpression(expression) => {
-                            match &mut expression.expression {
-                                Expression::FunctionExpression(function) => {
-                                    let valid = function.id.as_ref().is_some_and(|identifier| identifier.name == DYNAMIC_FUNCTION_PUBLIC_NAME)
-                                        && function.body.is_some()
-                                        && function.params.span.end as usize == parameter_list_end;
-                                    // The generated public source name is not a dynamic
-                                    // Function self binding. OXC still owns the grammar.
-                                    if valid { function.id = None; }
-                                    valid
+                    [Statement::ExpressionStatement(statement)] => {
+                        match &mut statement.expression {
+                            Expression::ParenthesizedExpression(expression) => {
+                                match &mut expression.expression {
+                                    Expression::FunctionExpression(function) => {
+                                        let valid =
+                                            function.id.as_ref().is_some_and(|identifier| {
+                                                identifier.name == DYNAMIC_FUNCTION_PUBLIC_NAME
+                                            }) && function.body.is_some()
+                                                && function.params.span.end as usize
+                                                    == parameter_list_end;
+                                        // The generated public source name is not a dynamic
+                                        // Function self binding. OXC still owns the grammar.
+                                        if valid {
+                                            function.id = None;
+                                        }
+                                        valid
+                                    }
+                                    _ => false,
                                 }
-                                _ => false,
                             }
+                            _ => false,
                         }
-                        _ => false,
-                    },
+                    }
                     _ => false,
                 }
             }
@@ -855,8 +884,7 @@ impl Engine {
         }
         let private_name_ids = private_name_ids(&semantic.semantic);
         let private_name_labels = private_name_labels(&semantic.semantic);
-        let inherited_private_ids = if wrapped_eval
-        {
+        let inherited_private_ids = if wrapped_eval {
             let mut ids = FxHashSet::default();
             if let [Statement::ExpressionStatement(statement)] = parsed.program.body.as_slice()
                 && let Expression::ClassExpression(class) =
@@ -1132,6 +1160,14 @@ fn has_top_level_await(statements: &[Statement<'_>]) -> bool {
     impl<'a> oxc_ast_visit::Visit<'a> for Finder {
         fn visit_await_expression(&mut self, _: &AwaitExpression<'a>) {
             self.0 = true;
+        }
+
+        fn visit_for_of_statement(&mut self, statement: &ForOfStatement<'a>) {
+            // `for await` suspends just like an explicit top-level await.
+            // Include it in the async-module decision so the root compiler
+            // context lowers its loop body with await support enabled.
+            self.0 |= statement.r#await;
+            oxc_ast_visit::walk::walk_for_of_statement(self, statement);
         }
 
         fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
@@ -1677,7 +1713,9 @@ impl<'a> Compiler<'a> {
     fn source_delimiter(&self, start: u32, end: u32, delimiter: char) -> u32 {
         let mut cursor = start as usize;
         let end = (end as usize).min(self.text.len());
-        let mut comment = self.source_comments.partition_point(|span| span.end <= start);
+        let mut comment = self
+            .source_comments
+            .partition_point(|span| span.end <= start);
         while cursor < end {
             if let Some(span) = self.source_comments.get(comment) {
                 if span.start as usize <= cursor && cursor < span.end as usize {
@@ -1686,8 +1724,12 @@ impl<'a> Compiler<'a> {
                     continue;
                 }
             }
-            let Some(character) = self.text[cursor..end].chars().next() else { break; };
-            if character == delimiter { return cursor as u32; }
+            let Some(character) = self.text[cursor..end].chars().next() else {
+                break;
+            };
+            if character == delimiter {
+                return cursor as u32;
+            }
             cursor += character.len_utf8();
         }
         start
@@ -1722,10 +1764,15 @@ impl<'a> Compiler<'a> {
         module_goal: bool,
         inherited_strict: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        self.source_comments = program.comments.iter().map(|comment| comment.span).collect();
+        self.source_comments = program
+            .comments
+            .iter()
+            .map(|comment| comment.span)
+            .collect();
         // One slot per source function and the root, reserved once: grown by doubling, the
         // slots of a large script stood up to twice its functions beside its tree.
-        self.functions.reserve_exact(source_function_count(program) + 1);
+        self.functions
+            .reserve_exact(source_function_count(program) + 1);
         self.module_goal = module_goal;
         let module_requests = if module_goal {
             module_requests(&program.body)
@@ -1777,7 +1824,10 @@ impl<'a> Compiler<'a> {
             None,
             FunctionOptions {
                 defaults: None,
-                directive_completion: program.directives.last().map(|directive| &directive.expression),
+                directive_completion: program
+                    .directives
+                    .last()
+                    .map(|directive| &directive.expression),
                 source_span: None,
                 name_binding: None,
                 async_function: async_module,
@@ -2485,7 +2535,9 @@ impl<'a> Compiler<'a> {
             // Directive expressions precede the body and contribute its initial completion.
             let initial = if let Some(directive) = options.directive_completion {
                 function.string_literal(directive)
-            } else { function.literal(Constant::Undefined) };
+            } else {
+                function.literal(Constant::Undefined)
+            };
             function.emit(Op::Move, completion, initial, 0, 0);
             function.statement_completion = StatementCompletion::Track(completion);
         }
@@ -2576,7 +2628,11 @@ impl<'a> Compiler<'a> {
             source_span: options.source_span,
             params: params.len() as u16,
             length: options.defaults.map_or_else(
-                || params.len().saturating_sub(usize::from(options.rest_override)),
+                || {
+                    params
+                        .len()
+                        .saturating_sub(usize::from(options.rest_override))
+                },
                 Self::formal_length,
             ) as u16,
             parameter_end_pc: if options.generator {

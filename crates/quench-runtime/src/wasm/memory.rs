@@ -408,7 +408,7 @@ impl std::ops::Deref for MemoryRead<'_> {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
         match self {
-            Self::Buffer(bytes)=>bytes,
+            Self::Buffer(bytes) => bytes,
             Self::Memory(bytes) => bytes,
         }
     }

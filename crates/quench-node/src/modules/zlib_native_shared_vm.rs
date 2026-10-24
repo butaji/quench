@@ -15,6 +15,8 @@ struct Entry {
     mode: Mode,
     phase: Phase,
     close_requested: bool,
+    frame_output_emitted: bool,
+    incomplete_after_reset: bool,
 }
 enum Phase {
     New,
@@ -25,6 +27,7 @@ struct Completed {
     engine: Engine,
     result: Result<Step, Failure>,
     output: Vec<u8>,
+    flush: i32,
 }
 fn get(c: &mut Context<'_>, o: RootId, n: &str) -> Result<RootId, RootedError> {
     let k = c.string_rooted(n);
@@ -50,7 +53,10 @@ fn number(c: &mut Context<'_>, args: &[RootId], index: usize) -> Result<usize, R
     if n.is_finite() && n >= 0.0 && n.fract() == 0.0 && n <= usize::MAX as f64 {
         Ok(n as usize)
     } else {
-        Err(fail(c, "Invalid compression buffer range"))
+        let error = c.range_error_rooted("The value is out of range")?;
+        let code = c.string_rooted("ERR_OUT_OF_RANGE");
+        put(c, error, "code", code)?;
+        Err(c.throw(error))
     }
 }
 fn find_index(c: &mut Context<'_>, handle: RootId) -> Result<Option<usize>, RootedError> {
@@ -98,6 +104,8 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let set = get(c, p, "set")?;
         put(c, api, "copy", set)?;
         let result = c.object_rooted()?;
+        let crc32 = c.host_function(crate::host::shared_vm::operation("zlibCrc32"))?;
+        put(c, result, "crc32", crc32)?;
         let constructors = [
             ("Zlib", "Zlib"),
             ("ZstdCompress", "ZstdCompress"),
@@ -114,6 +122,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             for (name, op) in [
                 ("write", "zlibNativeWrite"),
                 ("writeSync", "zlibNativeWriteSync"),
+                ("reset", "zlibNativeReset"),
                 ("close", "zlibNativeClose"),
                 ("init", "zlibNativeInit"),
             ] {
@@ -123,6 +132,13 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
                     api,
                 )?;
                 put(c, proto, name, f)?;
+            }
+            if name == "Zlib" {
+                let f = c.host_function_with_data(
+                    crate::host::shared_vm::operation("zlibNativeParams"),
+                    api,
+                )?;
+                put(c, proto, "params", f)?;
             }
             put(c, result, name, ctor)?;
         }
@@ -204,6 +220,8 @@ fn create_handle(c: &mut Context<'_>, handle: RootId, mode: Mode) -> Result<Root
             mode,
             phase: Phase::New,
             close_requested: false,
+            frame_output_emitted: false,
+            incomplete_after_reset: false,
         });
     Ok(handle)
 }
@@ -253,10 +271,12 @@ pub(crate) fn initialize(
         Ok(engine) => engine,
         Err(error) => {
             let callback = get(c, handle, "onerror")?;
-            let message = c.string_rooted(&error.message);
-            let errno = c.number(error.errno as f64);
-            let code = c.string_rooted(&error.code);
-            c.call_rooted(callback, handle, &[message, errno, code])?;
+            if c.is_callable_rooted(callback)? {
+                let message = c.string_rooted(&error.message);
+                let errno = c.number(error.errno as f64);
+                let code = c.string_rooted(&error.code);
+                c.call_rooted(callback, handle, &[message, errno, code])?;
+            }
             let init_message = if matches!(mode, Mode::ZstdCompress | Mode::ZstdDecompress) {
                 &error.message
             } else {
@@ -269,6 +289,8 @@ pub(crate) fn initialize(
         }
     };
     let data = payload(c, api, handle)?;
+    let init_args = c.array_rooted(args)?;
+    put(c, data, "initArgs", init_args)?;
     let state = *args
         .get(state_index)
         .ok_or_else(|| RootedError::host("compression write state missing"))?;
@@ -280,6 +302,118 @@ pub(crate) fn initialize(
     shared.borrow_mut().zlib_native.entries[i].phase = Phase::Ready(engine);
     Ok(c.undefined())
 }
+
+pub(crate) fn reset(
+    c: &mut Context<'_>,
+    handle: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let i = index(c, handle)?;
+    let shared = c.host_mut().shared_state();
+    let phase = std::mem::replace(
+        &mut shared.borrow_mut().zlib_native.entries[i].phase,
+        Phase::New,
+    );
+    match phase {
+        Phase::Ready(engine) => drop(engine),
+        Phase::Busy(receiver) => {
+            shared.borrow_mut().zlib_native.entries[i].phase = Phase::Busy(receiver);
+            let error = c.error_rooted("Cannot reset zlib stream while a write is in progress")?;
+            return Err(c.throw(error));
+        }
+        Phase::New => {}
+    }
+
+    {
+        let mut state = shared.borrow_mut();
+        let entry = &mut state.zlib_native.entries[i];
+        entry.incomplete_after_reset =
+            entry.frame_output_emitted && matches!(entry.mode, Mode::Gzip | Mode::ZstdCompress);
+        entry.frame_output_emitted = false;
+    }
+
+    let api = c.host_function_data()?;
+    let data = payload(c, api, handle)?;
+    let init_args = get(c, data, "initArgs")?;
+    if c.rooted_value(init_args)
+        .is_some_and(|value| value.is_undefined())
+    {
+        return Err(fail(c, "Compression handle has not been initialized"));
+    }
+    let length = get(c, init_args, "length")?;
+    let length = c.to_number(length)? as usize;
+    let mut args = Vec::with_capacity(length);
+    for index in 0..length {
+        args.push(get(c, init_args, &index.to_string())?);
+    }
+
+    // Native zlib reset clears the shared write counters before restarting
+    // with the exact initialization options, callback, and dictionary.
+    let state = get(c, data, "state")?;
+    for (index, value) in [("0", 0.0), ("1", 0.0)] {
+        let key = c.string_rooted(index);
+        let value = c.number(value);
+        c.set_property_rooted(state, key, value, state)?;
+    }
+    initialize(c, handle, &args)
+}
+
+pub(crate) fn params(
+    c: &mut Context<'_>,
+    handle: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let i = index(c, handle)?;
+    if c.host_mut().shared_state().borrow().zlib_native.entries[i]
+        .mode
+        .family()
+        != super::zlib_shared_vm::Family::Zlib
+    {
+        return Err(fail(
+            c,
+            "Compression parameters are unavailable for this mode",
+        ));
+    }
+    let level = args
+        .first()
+        .copied()
+        .ok_or_else(|| fail(c, "Compression level is missing"))?;
+    let strategy = args
+        .get(1)
+        .copied()
+        .ok_or_else(|| fail(c, "Compression strategy is missing"))?;
+    let level_number = c.to_number(level)? as i32;
+    let strategy_number = c.to_number(strategy)? as i32;
+    let api = c.host_function_data()?;
+    let data = payload(c, api, handle)?;
+    let init_args = get(c, data, "initArgs")?;
+    for (init_index, value) in [("1", level), ("3", strategy)] {
+        let key = c.string_rooted(init_index);
+        c.set_property_rooted(init_args, key, value, init_args)?;
+    }
+    let shared = c.host_mut().shared_state();
+    let phase = std::mem::replace(
+        &mut shared.borrow_mut().zlib_native.entries[i].phase,
+        Phase::New,
+    );
+    let mut engine = match phase {
+        Phase::Ready(engine) => engine,
+        other => {
+            shared.borrow_mut().zlib_native.entries[i].phase = other;
+            return Err(fail(c, "Compression handle is not ready"));
+        }
+    };
+    let result = engine.params(level_number, strategy_number);
+    shared.borrow_mut().zlib_native.entries[i].phase = Phase::Ready(engine);
+    if let Err(failure) = result {
+        let error = c.error_rooted(&failure.message)?;
+        let code = c.string_rooted(&failure.code);
+        put(c, error, "code", code)?;
+        return Err(c.throw(error));
+    }
+    Ok(c.undefined())
+}
+
 fn pledged_size(c: &mut Context<'_>, value: Option<RootId>) -> Result<Option<u64>, RootedError> {
     const MAX_SAFE_JS_INTEGER: f64 = ((1u64 << f64::MANTISSA_DIGITS) - 1) as f64;
     let Some(value) = value.filter(|v| !c.rooted_value(*v).is_some_and(|v| v.is_undefined()))
@@ -345,8 +479,22 @@ fn initialize_zlib(
         return Err(fail(c, "Invalid zlib initialization"));
     }
     let dictionary = args.get(6).copied().and_then(|v| c.view_bytes_rooted(v));
+    let reject_trailing = args
+        .get(7)
+        .copied()
+        .and_then(|value| c.rooted_value(value))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
     Ok((
-        Engine::new(mode, values[0], values[1], values[2], values[3], dictionary),
+        Engine::new(
+            mode,
+            values[0],
+            values[1],
+            values[2],
+            values[3],
+            dictionary,
+            reject_trailing,
+        ),
         4,
         5,
     ))
@@ -372,8 +520,25 @@ fn arguments(c: &mut Context<'_>, args: &[RootId]) -> Result<Write, RootedError>
     let bytes = if c.rooted_value(input).is_some_and(|v| v.is_null()) && length == 0 {
         Vec::new()
     } else {
-        c.view_bytes_rooted(input)
-            .ok_or_else(|| fail(c, "Compression input is not a buffer view"))?
+        let bytes = c
+            .view_bytes_rooted(input)
+            .ok_or_else(|| fail(c, "Compression input is not a buffer view"))?;
+        // Validate the user-visible size before slicing the host's backing view.
+        // TypedArray length properties can be shadowed in JavaScript, and Node
+        // rejects a forged size with ERR_OUT_OF_RANGE rather than letting the
+        // native binding fail with a generic range/type error.
+        let key = c.string_rooted("byteLength");
+        let byte_length = c.get_property_rooted(input, key)?;
+        let reported = c.to_number(byte_length)?;
+        if reported.is_finite() && reported != bytes.len() as f64 {
+            let error = c.range_error_rooted(&format!(
+                "The value of \"buffer.byteLength\" is out of range. Received {reported}"
+            ))?;
+            let code = c.string_rooted("ERR_OUT_OF_RANGE");
+            put(c, error, "code", code)?;
+            return Err(c.throw(error));
+        }
+        bytes
     };
     let input = bytes
         .get(
@@ -418,10 +583,23 @@ fn complete(
     result: &Result<Step, Failure>,
     output: &[u8],
     asynchronous: bool,
+    flush: i32,
 ) -> Result<(), RootedError> {
     let data = payload(c, api, handle)?;
     match result {
         Ok(step) => {
+            let i = index(c, handle)?;
+            let shared_state = c.host_mut().shared_state();
+            let mut shared = shared_state.borrow_mut();
+            let entry = &mut shared.zlib_native.entries[i];
+            if matches!(entry.mode, Mode::Gzip | Mode::ZstdCompress) {
+                if flush == super::zlib_constants::ZLIB_FINISH_FLUSH as i32 {
+                    entry.frame_output_emitted = false;
+                } else if step.produced > 0 {
+                    entry.frame_output_emitted = true;
+                }
+            }
+            drop(shared);
             let bytes = c.uint8_array_rooted(&output[..step.produced])?;
             let copy = get(c, api, "copy")?;
             let offset = c.number(delivery.offset as f64);
@@ -450,6 +628,13 @@ fn complete(
     }
     Ok(())
 }
+fn incomplete_frame_failure() -> Failure {
+    Failure {
+        errno: -1,
+        code: "ERR_ZLIB_INCOMPLETE_FRAME".into(),
+        message: "Cannot reset zlib stream after partial frame output".into(),
+    }
+}
 pub(crate) fn write_sync(
     c: &mut Context<'_>,
     handle: RootId,
@@ -459,6 +644,22 @@ pub(crate) fn write_sync(
     let write = arguments(c, args)?;
     let api = c.host_function_data()?;
     let shared = c.host_mut().shared_state();
+    if shared.borrow().zlib_native.entries[i].incomplete_after_reset {
+        shared.borrow_mut().zlib_native.entries[i].incomplete_after_reset = false;
+        let output = vec![0; write.delivery.capacity];
+        let result = Err(incomplete_frame_failure());
+        complete(
+            c,
+            api,
+            handle,
+            write.delivery,
+            &result,
+            &output,
+            false,
+            write.flush,
+        )?;
+        return Ok(c.undefined());
+    }
     let phase = std::mem::replace(
         &mut shared.borrow_mut().zlib_native.entries[i].phase,
         Phase::New,
@@ -474,7 +675,16 @@ pub(crate) fn write_sync(
     let result = engine.write(write.flush, &write.input, &mut output);
     // Restore the real engine before any guest callback can close or re-enter it.
     shared.borrow_mut().zlib_native.entries[i].phase = Phase::Ready(engine);
-    complete(c, api, handle, write.delivery, &result, &output, false)?;
+    complete(
+        c,
+        api,
+        handle,
+        write.delivery,
+        &result,
+        &output,
+        false,
+        write.flush,
+    )?;
     Ok(c.undefined())
 }
 fn queue_poll(c: &mut Context<'_>, data: RootId) -> Result<(), RootedError> {
@@ -492,7 +702,8 @@ fn queue_poll(c: &mut Context<'_>, data: RootId) -> Result<(), RootedError> {
     shared.borrow_mut().scheduler.queue_shared_immediate(
         id,
         super::shared_event_loop::SharedImmediateOwner::Host,
-        super::shared_event_loop::SharedCallback { execution: None,
+        super::shared_event_loop::SharedCallback {
+            execution: None,
             callback,
             receiver,
             args: Vec::new(),
@@ -509,6 +720,22 @@ pub(crate) fn write(
     let write = arguments(c, args)?;
     let api = c.host_function_data()?;
     let shared = c.host_mut().shared_state();
+    if shared.borrow().zlib_native.entries[i].incomplete_after_reset {
+        shared.borrow_mut().zlib_native.entries[i].incomplete_after_reset = false;
+        let output = vec![0; write.delivery.capacity];
+        let result = Err(incomplete_frame_failure());
+        complete(
+            c,
+            api,
+            handle,
+            write.delivery,
+            &result,
+            &output,
+            true,
+            write.flush,
+        )?;
+        return Ok(c.undefined());
+    }
     let phase = std::mem::replace(
         &mut shared.borrow_mut().zlib_native.entries[i].phase,
         Phase::New,
@@ -531,6 +758,7 @@ pub(crate) fn write(
             engine,
             result,
             output,
+            flush,
         });
     })
     .map_err(RootedError::host)?;
@@ -560,7 +788,7 @@ pub(crate) fn poll(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootI
             _ => {
                 return Err(RootedError::host(
                     "compression completion has no pending work",
-                ))
+                ));
             }
         }
     };
@@ -573,13 +801,14 @@ pub(crate) fn poll(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootI
         Err(TryRecvError::Disconnected) => {
             return Err(RootedError::host(
                 "compression worker terminated without a result",
-            ))
+            ));
         }
     };
     let Completed {
         engine,
         result,
         output,
+        flush,
     } = completed;
     let close_requested = {
         let mut state = shared.borrow_mut();
@@ -607,6 +836,7 @@ pub(crate) fn poll(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootI
         &result,
         &output,
         true,
+        flush,
     )?;
     if close_requested {
         close_handle(c, api, handle)?;

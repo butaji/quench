@@ -6,6 +6,15 @@ var __quenchDgramStateSymbol = __quenchDgramSharedState.stateSymbol;
 var __quenchDgramBoundPorts = __quenchDgramSharedState.boundPorts;
 var __quenchDgramClosedPorts = __quenchDgramSharedState.closedPorts;
 var __quenchDgramSockets = __quenchDgramSharedState.sockets;
+const __quenchDgramPermissionError = () => {
+  const permission = globalThis.process?.permission;
+  const audit = (globalThis.process?.execArgv || []).includes("--permission-audit");
+  if (!permission || audit || permission.has("net")) return null;
+  return Object.assign(
+    new Error("Access to this API has been restricted. Use --allow-net to manage permissions."),
+    { code: "ERR_ACCESS_DENIED", permission: "Net" },
+  );
+};
 const __quenchDgramOnce = (socket, listeners, event, callback) => {
   const wrapper = (...args) => {
     listeners[event] = (listeners[event] || []).filter(
@@ -34,6 +43,11 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         throw Object.assign(new Error("Socket is already bound"), {
           code: "ERR_SOCKET_ALREADY_BOUND",
         });
+      }
+      const permissionError = __quenchDgramPermissionError();
+      if (permissionError) {
+        setImmediate(() => socket.emit("error", permissionError));
+        return socket;
       }
       if (typeof address === "function") {
         callback = address;
@@ -109,6 +123,8 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       return socket;
     },
     bindSync: (options = {}) => {
+      const permissionError = __quenchDgramPermissionError();
+      if (permissionError) throw permissionError;
       if (socket._bound) {
         throw Object.assign(new Error("Socket is already bound"), {
           code: "ERR_SOCKET_ALREADY_BOUND",

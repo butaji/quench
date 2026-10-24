@@ -12,7 +12,10 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.builtin_prototypes.insert((global, Native::Symbol), prototype);
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::Symbol), prototype);
         self.set_named_constant(program, constructor, "prototype", prototype)?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         self.set_builtin_value_named(global, "Symbol", constructor)?;
@@ -103,7 +106,9 @@ impl<H: Host> Vm<H> {
             None | Some(Value::UNDEFINED) => None,
             Some(value) => Some(self.to_string(p, value)?),
         };
-        Ok(self.heap.alloc(Cell::Symbol(crate::heap::SymbolData::public(description))))
+        Ok(self
+            .heap
+            .alloc(Cell::Symbol(crate::heap::SymbolData::public(description))))
     }
 
     pub(super) fn call_symbol_value_native(
@@ -133,12 +138,14 @@ impl<H: Host> Vm<H> {
                 if matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
                     Ok(this)
                 } else {
-                    self.boxed_primitive_value(this).filter(|value| matches!(self.heap.get(*value), Some(Cell::Symbol(_)))).ok_or_else(|| {
-                        self.type_error(
-                            p,
-                            "Symbol.prototype.valueOf called on incompatible receiver".into(),
-                        )
-                    })
+                    self.boxed_primitive_value(this)
+                        .filter(|value| matches!(self.heap.get(*value), Some(Cell::Symbol(_))))
+                        .ok_or_else(|| {
+                            self.type_error(
+                                p,
+                                "Symbol.prototype.valueOf called on incompatible receiver".into(),
+                            )
+                        })
                 }
             }
             Native::SymbolDescriptionGetter => {
@@ -156,10 +163,15 @@ impl<H: Host> Vm<H> {
                         })?
                 };
                 match self.heap.get(symbol) {
-                    Some(Cell::Symbol(crate::heap::SymbolData { description: Some(description), .. })) => Ok(self
+                    Some(Cell::Symbol(crate::heap::SymbolData {
+                        description: Some(description),
+                        ..
+                    })) => Ok(self
                         .heap
                         .alloc(Cell::String(JsString::from_str(description)))),
-                    Some(Cell::Symbol(crate::heap::SymbolData { description: None, .. })) => Ok(Value::UNDEFINED),
+                    Some(Cell::Symbol(crate::heap::SymbolData {
+                        description: None, ..
+                    })) => Ok(Value::UNDEFINED),
                     _ => unreachable!("symbol receiver was validated"),
                 }
             }
@@ -179,7 +191,11 @@ impl<H: Host> Vm<H> {
                 if let Some(value) = self.symbol_registry.get(&key).copied() {
                     return Ok(value);
                 }
-                let value = self.heap.alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(key.clone()))));
+                let value = self
+                    .heap
+                    .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(
+                        key.clone(),
+                    ))));
                 self.symbol_registry.insert(key, value);
                 Ok(value)
             }

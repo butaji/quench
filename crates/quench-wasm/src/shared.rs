@@ -288,7 +288,10 @@ impl Module {
                 locals,
                 operators: BoundedOperators {
                     bound: body.range().len(),
-                    operators: body.get_operators_reader().map_err(parse_error)?.into_iter(),
+                    operators: body
+                        .get_operators_reader()
+                        .map_err(parse_error)?
+                        .into_iter(),
                 },
             });
         }

@@ -29,6 +29,23 @@ pub(crate) enum Codec {
     Brotli(brotli::Codec),
 }
 impl Codec {
+    pub(crate) fn params(&mut self, level: i32, strategy: i32) -> Result<(), Failure> {
+        match self {
+            Self::Zlib(codec) => codec.params(level, strategy),
+            Self::Zstd(_) => Err(Failure {
+                errno: -2,
+                code: "Z_STREAM_ERROR".into(),
+                message: "stream error".into(),
+            }),
+            #[cfg(quench_node_brotli)]
+            Self::Brotli(_) => Err(Failure {
+                errno: -2,
+                code: "Z_STREAM_ERROR".into(),
+                message: "stream error".into(),
+            }),
+        }
+    }
+
     pub(in crate::modules) fn new(
         mode: Mode,
         bits: i32,
@@ -36,8 +53,18 @@ impl Codec {
         memory: i32,
         strategy: i32,
         dictionary: Option<Vec<u8>>,
+        reject_trailing: bool,
     ) -> Result<Self, Failure> {
-        backend::Codec::new(mode, bits, level, memory, strategy, dictionary).map(Self::Zlib)
+        backend::Codec::new(
+            mode,
+            bits,
+            level,
+            memory,
+            strategy,
+            dictionary,
+            reject_trailing,
+        )
+        .map(Self::Zlib)
     }
     #[cfg(quench_node_brotli)]
     pub(in crate::modules) fn brotli(

@@ -35,7 +35,11 @@ impl<H: Host> Vm<H> {
             _ if value.as_number().is_some() => Native::Number,
             _ => return None,
         };
-        self.realm.intrinsics.builtin_prototypes.get(&(self.realm.globals, native)).copied()
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .get(&(self.realm.globals, native))
+            .copied()
     }
 
     pub(super) fn require_object_coercible(
@@ -115,9 +119,13 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if object.is_null() || object.is_undefined() {
             // A rejected base never invokes a property-key object's conversion hooks.
-            let property = if self.is_object_like(key) { None }
-                else if let Some(Cell::Symbol(description)) = self.heap.get(key) { Some(format!("Symbol({})", description.as_deref().unwrap_or(""))) }
-                else { Some(self.to_string(p, key)?) };
+            let property = if self.is_object_like(key) {
+                None
+            } else if let Some(Cell::Symbol(description)) = self.heap.get(key) {
+                Some(format!("Symbol({})", description.as_deref().unwrap_or("")))
+            } else {
+                Some(self.to_string(p, key)?)
+            };
             return Err(self.nullish_property_error(p, object, property.as_deref()));
         }
         let key = match self.heap.get(key) {
@@ -299,7 +307,12 @@ impl<H: Host> Vm<H> {
 
     /// `object[key] = value` that appends to a dense array at its length
     /// (`append_dense_element`); `false` leaves the store, unobserved, to the general path.
-    pub(super) fn try_append_dense_element(&mut self, object: Value, key: Value, value: Value) -> bool {
+    pub(super) fn try_append_dense_element(
+        &mut self,
+        object: Value,
+        key: Value,
+        value: Value,
+    ) -> bool {
         key.as_int()
             .and_then(|index| usize::try_from(index).ok())
             .is_some_and(|index| self.append_dense_element(object, index, value))
@@ -468,7 +481,12 @@ impl<H: Host> Vm<H> {
     /// Storage after either assignment checks or ValidateAndApplyPropertyDescriptor.
     /// A compatible definition can replace an accessor hole on a non-extensible
     /// array, or preserve the same value on a frozen array.
-    pub(super) fn store_validated_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {
+    pub(super) fn store_validated_array_element(
+        &mut self,
+        object: Value,
+        index: usize,
+        value: Value,
+    ) -> bool {
         let Some(array_object) = self.heap.array(object) else {
             return false;
         };

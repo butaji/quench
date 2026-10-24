@@ -153,7 +153,11 @@ impl FunctionCompiler<'_, '_> {
         for element in &class.body.body {
             if let ClassElement::AccessorProperty(accessor) = element {
                 let atom = self.owner.private_name_atom(accessor.span);
-                let home = if accessor.r#static { class_home_atom } else { constructor_home_atom };
+                let home = if accessor.r#static {
+                    class_home_atom
+                } else {
+                    constructor_home_atom
+                };
                 private_bindings.insert(atom, home);
             }
             let (key, is_static) = match element {
@@ -165,7 +169,14 @@ impl FunctionCompiler<'_, '_> {
             if let PropertyKey::PrivateIdentifier(identifier) = key {
                 let atom = self.owner.private_name_atom(identifier.span);
                 if !self.owner.private_name_is_overridden(atom) {
-                    private_bindings.insert(atom, if is_static { class_home_atom } else { constructor_home_atom });
+                    private_bindings.insert(
+                        atom,
+                        if is_static {
+                            class_home_atom
+                        } else {
+                            constructor_home_atom
+                        },
+                    );
                 }
             }
         }
@@ -328,21 +339,25 @@ impl FunctionCompiler<'_, '_> {
         let mut initialized_static_names = FxHashSet::default();
         for element in &class.body.body {
             let (name, accessor_name) = match element {
-                ClassElement::MethodDefinition(method) if method.r#static => {
-                    (matches!(&method.key, PropertyKey::PrivateIdentifier(_))
-                        .then(|| method.key.span()), None)
-                }
-                ClassElement::AccessorProperty(accessor) if accessor.r#static => {
-                    (Some(accessor.span), matches!(&accessor.key, PropertyKey::PrivateIdentifier(_))
-                        .then(|| accessor.key.span()))
-                }
+                ClassElement::MethodDefinition(method) if method.r#static => (
+                    matches!(&method.key, PropertyKey::PrivateIdentifier(_))
+                        .then(|| method.key.span()),
+                    None,
+                ),
+                ClassElement::AccessorProperty(accessor) if accessor.r#static => (
+                    Some(accessor.span),
+                    matches!(&accessor.key, PropertyKey::PrivateIdentifier(_))
+                        .then(|| accessor.key.span()),
+                ),
                 _ => continue,
             };
             for name in name.into_iter().chain(accessor_name) {
                 let atom = self.owner.private_name_atom(name);
                 if self.owner.private_name_is_overridden(atom)
                     || !initialized_static_names.insert(atom)
-                { continue; }
+                {
+                    continue;
+                }
                 self.emit(Op::MarkPrivateName, 0, class_value, class_value, atom);
             }
         }
@@ -605,8 +620,15 @@ impl FunctionCompiler<'_, '_> {
                         self.literal(Constant::Undefined)
                     };
                     self.set_class_field_function_name(field, value);
-                    if matches!(field, ClassField::Property(field) if matches!(&field.key, PropertyKey::PrivateIdentifier(_))) {
-                        self.emit(Op::DefinePrivateField, value, class_value, class_value, name.unwrap());
+                    if matches!(field, ClassField::Property(field) if matches!(&field.key, PropertyKey::PrivateIdentifier(_)))
+                    {
+                        self.emit(
+                            Op::DefinePrivateField,
+                            value,
+                            class_value,
+                            class_value,
+                            name.unwrap(),
+                        );
                     } else if let Some(key) =
                         computed_key.filter(|_| matches!(field, ClassField::Property(_)))
                     {
@@ -632,7 +654,9 @@ impl FunctionCompiler<'_, '_> {
                 _ => {}
             }
         }
-        if has_private_bindings { self.pop_lexical_scope(); }
+        if has_private_bindings {
+            self.pop_lexical_scope();
+        }
         if super_atom.is_some() {
             self.pop_lexical_scope();
         }
@@ -995,7 +1019,7 @@ impl Compiler<'_> {
             scopes,
             parent,
             FunctionOptions {
-                        directive_completion: None,
+                directive_completion: None,
                 defaults: Some(&method.value.params),
                 source_span: source_span.and_then(|span| {
                     class_method_source_span(self.text, span, method.key.span().start)
@@ -1037,7 +1061,7 @@ impl Compiler<'_> {
             scopes,
             parent,
             FunctionOptions {
-                        directive_completion: None,
+                directive_completion: None,
                 defaults: None,
                 source_span: None,
                 name_binding: None,

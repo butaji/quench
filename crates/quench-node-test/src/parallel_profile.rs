@@ -1,6 +1,8 @@
 //! The checked-in Node `test/parallel` manifest is the profile selection authority.
 
-use crate::case_process::{observe_parallel_case, RunResult, NODE_PARALLEL_DIR};
+use crate::case_process::{
+    cleanup_adopted_children, observe_parallel_case, RunResult, NODE_PARALLEL_DIR,
+};
 use std::{path::PathBuf, process::ExitCode, time::Duration};
 
 const MANIFEST: &str = "crates/quench-node-test/node-tests/parallel.txt";
@@ -57,6 +59,7 @@ pub fn run(profile: Option<&str>, filter: Option<&str>, timeout_secs: u64) -> Ex
             None => println!("{}  {}", result.label().to_uppercase(), fixture.display()),
         }
     }
+    cleanup_adopted_children();
     println!(
         "parallel: pass={} skip={} fail={} timeout={} crash={} unclassified={} total={}",
         counts[0],

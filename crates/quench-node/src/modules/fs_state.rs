@@ -3,9 +3,7 @@
 
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
-use std::io::{Read, Write};
-#[cfg(not(unix))]
-use std::io::{Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::rc::Rc;
 
 /// A handle to the one host-owned descriptor table shared by Node adapters.
@@ -246,6 +244,7 @@ impl FsState {
         &self,
         fd: i32,
         size: usize,
+        position: Option<u64>,
     ) -> std::io::Result<Option<Vec<u8>>> {
         let mut state = self.0.borrow_mut();
         let descriptor = state
@@ -253,7 +252,20 @@ impl FsState {
             .get_mut(&fd)
             .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
         let mut bytes = vec![0; size];
-        let read = descriptor.file.read(&mut bytes)?;
+        let file = &mut descriptor.file;
+        let original_position = if position.is_some() {
+            Some(file.stream_position()?)
+        } else {
+            None
+        };
+        if let Some(position) = position {
+            file.seek(SeekFrom::Start(position))?;
+        }
+        let result = file.read(&mut bytes);
+        if let Some(original_position) = original_position {
+            file.seek(SeekFrom::Start(original_position))?;
+        }
+        let read = result?;
         if read == 0 {
             return Ok(None);
         }

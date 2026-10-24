@@ -3,7 +3,10 @@ use crate::host::NodeHost;
 use crate::modules::fs_ops as ops;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) => {
+const CREATE_WRITE_STREAM: &str = r#"(Writable, fsModule) => {
+  const flushFile = (fd, fsOps) => new Promise((resolve, reject) => {
+    fsOps.fsync(fd, (error) => error ? reject(error) : resolve());
+  });
   function WriteStream(path, options) {
     if (!(this instanceof WriteStream)) return new WriteStream(path, options);
     if (options !== undefined && options !== null && typeof options !== "string" && typeof options !== "object") {
@@ -16,6 +19,74 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
     }
 
     const settings = typeof options === "string" ? { encoding: options } : (options || {});
+    const invalidArg = (message) => Object.assign(new TypeError(message), { code: "ERR_INVALID_ARG_TYPE" });
+    const received = (value) => value === null
+      ? "null"
+      : typeof value === "string"
+        ? `type string ('${value}')`
+        : typeof value === "object"
+          ? `an instance of ${Array.isArray(value) ? "Array" : "Object"}`
+          : `type ${typeof value} (${String(value)})`;
+    const rangeReceived = (value) => {
+      const text = String(value);
+      if (typeof value !== "number" || !Number.isInteger(value) || Math.abs(value) <= 0x1_0000_0000) {
+        return text;
+      }
+      const sign = text.startsWith("-") ? "-" : "";
+      const digits = sign ? text.slice(1) : text;
+      return /^\d+$/.test(digits) ? sign + digits.replace(/\B(?=(\d{3})+(?!\d))/g, "_") : text;
+    };
+    if (settings.fd !== undefined && settings.fd !== null &&
+        typeof settings.fd !== "number" &&
+        !(typeof settings.fd === "object" && typeof settings.fd.write === "function")) {
+      throw invalidArg(`The "fd" argument must be of type number or FileHandle. Received ${received(settings.fd)}`);
+    }
+    if (settings.windowsHandle !== undefined) {
+      if (settings.fd !== undefined && settings.fd !== null) {
+        const error = new Error('The "fd" and "windowsHandle" options cannot be used together.');
+        error.code = "ERR_INCOMPATIBLE_OPTION_PAIR";
+        throw error;
+      }
+      if (process.platform !== "win32") {
+        const error = new Error('The "windowsHandle" option is only supported on Windows.');
+        error.code = "ERR_FEATURE_UNAVAILABLE_ON_PLATFORM";
+        throw error;
+      }
+    }
+    if (path !== null && path !== undefined && typeof path !== "string" &&
+        !Buffer.isBuffer(path) && !(path instanceof URL)) {
+      throw invalidArg(`The "path" argument must be of type string, Buffer, or URL. Received ${received(path)}`);
+    }
+    if ((path === null || path === undefined) && (settings.fd === undefined || settings.fd === null)) {
+      throw invalidArg(`The "path" argument must be of type string, Buffer, or URL. Received ${path}`);
+    }
+    if (settings.signal !== undefined && !(settings.signal instanceof AbortSignal)) {
+      throw invalidArg('The "options.signal" property must be an instance of AbortSignal.');
+    }
+    if (settings.start !== undefined) {
+      if (typeof settings.start !== "number") {
+        throw invalidArg('The "start" option must be of type number.');
+      }
+      if (!Number.isSafeInteger(settings.start) || settings.start < 0) {
+        const requirement = Number.isInteger(settings.start)
+          ? `>= 0 && <= ${Number.MAX_SAFE_INTEGER}`
+          : 'an integer';
+        const error = new RangeError(`The value of "start" is out of range. It must be ${requirement}. Received ${rangeReceived(settings.start)}`);
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+    }
+    const fsOps = settings.fs || fsModule;
+    if (settings.fs !== undefined) {
+      for (const name of ["open", "close", "write"]) {
+        if (typeof settings.fs?.[name] !== "function") {
+          throw invalidArg(`The "options.fs.${name}" property must be of type function. Received ${received(settings.fs?.[name])}`);
+        }
+      }
+      if (settings.fs.writev !== undefined && typeof settings.fs.writev !== "function") {
+        throw invalidArg(`The "options.fs.writev" property must be of type function. Received ${received(settings.fs.writev)}`);
+      }
+    }
     if (settings.flush !== undefined && settings.flush !== null && typeof settings.flush !== "boolean") {
       const error = new TypeError('The "flush" option must be of type boolean');
       error.code = "ERR_INVALID_ARG_TYPE";
@@ -51,11 +122,78 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
           }, pending.callback);
           return;
         }
-        stream.bytesWritten += writeFile(fd, pending.chunk, position);
-        pending.callback();
+        const buffer = Buffer.isBuffer(pending.chunk)
+          ? pending.chunk
+          : Buffer.from(pending.chunk, pending.encoding || stream.writableEncoding || "utf8");
+        let offset = 0;
+        let retries = 0;
+        const writeNext = () => {
+          fsOps.write(fd, buffer, offset, buffer.byteLength - offset,
+            position === null ? null : position + offset,
+            (error, bytesWritten) => {
+              if (error && error.code === "EAGAIN") {
+                if (retries++ < 5) {
+                  setImmediate(writeNext);
+                  return;
+                }
+                pending.callback(Object.assign(new Error("write failed"), { code: "ERR_SYSTEM_ERROR" }));
+                return;
+              }
+              if (error) {
+                pending.callback(error);
+                return;
+              }
+              const written = Number(bytesWritten) || 0;
+              stream.bytesWritten += written;
+              offset += written;
+              if (offset < buffer.byteLength) {
+                if (written > 0) retries = 0;
+                else retries++;
+                if (retries <= 5) {
+                  setImmediate(writeNext);
+                  return;
+                }
+              }
+              if (offset < buffer.byteLength) {
+                pending.callback(Object.assign(new Error("write failed"), { code: "ERR_SYSTEM_ERROR" }));
+                return;
+              }
+              pending.callback();
+            });
+        };
+        writeNext();
       } catch (error) {
         pending.callback(error);
       }
+    };
+
+    const writeVector = (chunks, callback) => {
+      const buffers = chunks.map(({ chunk, encoding }) => Buffer.isBuffer(chunk)
+        ? chunk
+        : Buffer.from(chunk, encoding || stream.writableEncoding || "utf8"));
+      const position = settings.start === undefined ? null : settings.start + stream.bytesWritten;
+      if (typeof fsOps.writev !== "function") {
+        let index = 0;
+        const writeNext = (error) => {
+          if (error || index >= buffers.length) {
+            callback(error);
+            return;
+          }
+          const buffer = buffers[index++];
+          fsOps.write(fd, buffer, 0, buffer.byteLength,
+            position === null ? null : position + stream.bytesWritten,
+            (writeError, bytesWritten) => {
+              if (!writeError) stream.bytesWritten += Number(bytesWritten) || 0;
+              writeNext(writeError);
+            });
+        };
+        writeNext();
+        return;
+      }
+      fsOps.writev(fd, buffers, position, (error, bytesWritten) => {
+        if (!error) stream.bytesWritten += Number(bytesWritten) || 0;
+        callback(error);
+      });
     };
 
     const closeDescriptor = () => {
@@ -64,7 +202,35 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
       fd = null;
       stream.fd = null;
       if (fileHandle) return fileHandle.close();
-      closeFile(current);
+      return new Promise((resolve, reject) => {
+        fsOps.close(current, (error) => error ? reject(error) : resolve());
+      });
+    };
+
+    const closeWithFlush = (error, callback) => {
+      const closeAfterFlush = (flushError) => {
+        try {
+          const closing = closeDescriptor();
+          const complete = (closeError) => callback(closeError || error || flushError);
+          if (closing && typeof closing.then === "function") {
+            closing.then(() => complete(), complete);
+          } else {
+            complete();
+          }
+        } catch (closeError) {
+          callback(closeError || error || flushError);
+        }
+      };
+      if (settings.flush !== true || fd === null) {
+        closeAfterFlush();
+        return;
+      }
+      try {
+        const flushing = fileHandle ? fileHandle.sync() : flushFile(fd, fsOps);
+        Promise.resolve(flushing).then(() => closeAfterFlush(), closeAfterFlush);
+      } catch (flushError) {
+        closeAfterFlush(flushError);
+      }
     };
 
     const writableOptions = {
@@ -73,7 +239,7 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
       autoDestroy: settings.autoDestroy === false ? false : autoClose,
       write(chunk, encoding, callback) {
         if (phase === "opening") {
-          pendingWrite = { chunk, callback };
+          pendingWrite = { chunk, encoding, callback };
           return;
         }
         if (phase !== "open") {
@@ -84,7 +250,21 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
           callback(error);
           return;
         }
-        writePending({ chunk, callback });
+        writePending({ chunk, encoding, callback });
+      },
+      writev(chunks, callback) {
+        if (phase === "opening") {
+          pendingWrite = { chunks, callback, writev: true };
+          return;
+        }
+        if (phase !== "open") {
+          callback(Object.assign(
+            new Error("Cannot call write after a stream was destroyed"),
+            { code: "ERR_STREAM_DESTROYED" },
+          ));
+          return;
+        }
+        writeVector(chunks, callback);
       },
       final(callback) {
         if (phase === "opening") {
@@ -105,9 +285,8 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
           callback(closeError);
         };
         try {
-          const closing = autoClose || explicitClose ? closeDescriptor() : null;
-          if (closing && typeof closing.then === "function") {
-            closing.then(() => complete(), complete);
+          if (autoClose || explicitClose) {
+            closeWithFlush(error, complete);
             return;
           }
           complete();
@@ -126,6 +305,16 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
     stream.bytesWritten = 0;
     stream.closed = false;
     stream.pending = true;
+    stream._open = () => {
+      try {
+        fsOps.open(path, flags, settings.mode, (error, openedFd) => {
+          if (error) failOpen(error);
+          else finishOpen(openedFd);
+        });
+      } catch (error) {
+        failOpen(error);
+      }
+    };
     stream.close = function close(callback) {
       if (typeof callback === "function") {
         if (stream.closed) setImmediate(() => callback(closeError));
@@ -137,9 +326,32 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
       return stream;
     };
 
-    setImmediate(() => {
+    const failOpen = (error) => {
+      phase = "failed";
+      stream.pending = false;
+      if (pendingWrite) {
+        const pending = pendingWrite;
+        pendingWrite = null;
+        pending.callback(error);
+      }
+      if (pendingFinal) {
+        const callback = pendingFinal;
+        pendingFinal = null;
+        callback(error);
+      }
+      if (pendingDestroy) {
+        const pending = pendingDestroy;
+        pendingDestroy = null;
+        closeError = pending.error || error;
+        pending.callback(closeError);
+      } else {
+        stream.destroy(error);
+      }
+    };
+
+    const finishOpen = (openedFd) => {
       try {
-        fd = suppliedFd ? (fileHandle ? fileHandle.fd : settings.fd) : openFile(path, flags);
+        fd = openedFd;
         stream.fd = fd;
         stream.pending = false;
         phase = "open";
@@ -163,23 +375,15 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
             stream.closed = true;
             pending.callback(closeError);
           };
-          try {
-            const closing = closeDescriptor();
-            if (closing && typeof closing.then === "function") {
-              closing.then(() => complete(), complete);
-              return;
-            }
-            complete();
-          } catch (error) {
-            complete(error);
-          }
+          closeWithFlush(pending.error, complete);
           return;
         }
 
         if (pendingWrite) {
           const pending = pendingWrite;
           pendingWrite = null;
-          writePending(pending);
+          if (pending.writev) writeVector(pending.chunks, pending.callback);
+          else writePending(pending);
         }
         if (pendingFinal) {
           const callback = pendingFinal;
@@ -187,33 +391,25 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
           callback();
         }
       } catch (error) {
-        phase = "failed";
-        stream.pending = false;
-        if (pendingWrite) {
-          const pending = pendingWrite;
-          pendingWrite = null;
-          pending.callback(error);
-        }
-        if (pendingFinal) {
-          const callback = pendingFinal;
-          pendingFinal = null;
-          callback(error);
-        }
-        if (pendingDestroy) {
-          const pending = pendingDestroy;
-          pendingDestroy = null;
-          closeError = pending.error || error;
-          pending.callback(closeError);
-        } else {
-          stream.destroy(error);
-        }
+        failOpen(error);
       }
+    };
+
+    setImmediate(() => {
+      if (suppliedFd) {
+        finishOpen(fileHandle ? fileHandle.fd : settings.fd);
+        return;
+      }
+      stream.open();
     });
   }
 
   Object.setPrototypeOf(WriteStream, Writable);
   Object.setPrototypeOf(WriteStream.prototype, Writable.prototype);
   WriteStream.prototype.constructor = WriteStream;
+  WriteStream.prototype.open = function open() {
+    if (typeof this._open === "function") this._open();
+  };
   Object.defineProperty(WriteStream.prototype, "autoClose", {
     configurable: true,
     get() {
@@ -233,13 +429,10 @@ pub(crate) fn install(
     module: RootId,
     writable: RootId,
 ) -> Result<(), RootedError> {
-    let open = context.host_function(crate::host::shared_vm::operation("fsWriteStreamOpen"))?;
-    let write = context.host_function(crate::host::shared_vm::operation("fsWriteStreamWrite"))?;
-    let close = context.host_function(crate::host::shared_vm::operation("fsWriteStreamClose"))?;
     let factory = context
         .evaluate_script_rooted(CREATE_WRITE_STREAM, "node:fs/shared-create-write-stream.js")?;
     let undefined = context.undefined();
-    let constructor = context.call_rooted(factory, undefined, &[open, write, close, writable])?;
+    let constructor = context.call_rooted(factory, undefined, &[writable, module])?;
     set(context, module, "createWriteStream", constructor)?;
     set(context, module, "WriteStream", constructor)
 }

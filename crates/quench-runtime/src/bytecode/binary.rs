@@ -335,7 +335,10 @@ pub(super) fn write_program(
         out.optional_pair(site.sink);
         for source in site.sources {
             out.u8(source.is_some() as u8);
-            if let Some((line, column)) = source { out.u32(line); out.u32(column); }
+            if let Some((line, column)) = source {
+                out.u32(line);
+                out.u32(column);
+            }
         }
     }
     out.u32(program.object_sites.len() as u32);

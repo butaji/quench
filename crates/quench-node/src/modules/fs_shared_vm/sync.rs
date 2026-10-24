@@ -21,6 +21,14 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
     error.code = 'ERR_INVALID_ARG_TYPE';
     throw error;
   };
+  const validateNoNulPath = (path) => {
+    const normalized = normalizePath(path);
+    if (typeof normalized !== 'string' || !normalized.includes('\0')) return;
+    const received = normalized.replace(/\0/g, '\\x00');
+    const error = new TypeError(`The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '${received}'`);
+    error.code = 'ERR_INVALID_ARG_VALUE';
+    throw error;
+  };
   const validateSymlinkType = (type) => {
     if (type === undefined || type === 'file' || type === 'dir' || type === 'junction') return;
     const error = new TypeError('The "type" argument must be one of: "dir", "file", "junction".');
@@ -187,6 +195,10 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
       return rmSync(normalizePath(path), options);
     },
     copyFileSync(source, destination, mode) {
+      validatePath(source, 'src');
+      validatePath(destination, 'dest');
+      validateNoNulPath(source);
+      validateNoNulPath(destination);
       if (mode == null) mode = 0;
       if (typeof mode !== 'number') {
         const error = new TypeError('The "mode" argument must be of type number.');
@@ -370,9 +382,9 @@ pub(crate) fn open_sync(
     )?;
     // SDK fs.js openSync dispatches after flag/mode policy and before path
     // validation. Keep the original path and the numeric policy roots intact.
-    if let Some(result) = crate::modules::fs_policy_shared_vm::vfs_read(
-        context, "openSync", &[value, flags, mode],
-    )? {
+    if let Some(result) =
+        crate::modules::fs_policy_shared_vm::vfs_read(context, "openSync", &[value, flags, mode])?
+    {
         return Ok(result);
     }
     let flags = context.to_number(flags)? as i32;
@@ -531,7 +543,9 @@ pub(crate) fn read_sync(
         "validateOffsetLengthRead",
         &[offset, length, capacity],
     )?;
-    if let Some(result) = policy::vfs_read(context, "readSync", &[fd, buffer, offset, length, position])? {
+    if let Some(result) =
+        policy::vfs_read(context, "readSync", &[fd, buffer, offset, length, position])?
+    {
         return Ok(result);
     }
     let maximum = context.number(i32::MAX as f64);
@@ -793,21 +807,32 @@ pub(crate) fn copy_file_sync(
         .and_then(|mode| context.rooted_value(mode))
         .and_then(Value::as_number)
         .unwrap_or(0.0) as i32;
-    let result = if mode & 1 != 0 && std::path::Path::new(&destination).exists() {
-        Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
-    } else {
-        std::fs::copy(&source, &destination).map(|_| ())
-    };
+    // Validate/open the source before COPYFILE_EXCL checks the destination.
+    // libuv reports ENOENT for a missing source even when the destination
+    // already exists; checking the destination first incorrectly masks it as
+    // EEXIST.
+    let result = std::fs::metadata(&source).and_then(|_| {
+        if mode & 1 != 0 && std::path::Path::new(&destination).exists() {
+            Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
+        } else {
+            std::fs::copy(&source, &destination).map(|_| ())
+        }
+    });
     match result {
         Ok(()) => Ok(context.undefined()),
-        Err(error) => throw_operation_error(
-            context,
-            &ops::OperationError::Io {
-                syscall: "copyfile",
-                path: destination,
-                error,
-            },
-        ),
+        Err(error) => {
+            let mut details = fs_error_details::error_details("copyfile", Some(&source), &error);
+            details.message = format!("{} -> '{destination}'", details.message);
+            let exception = context.error_rooted(&details.message)?;
+            let errno = context.number(details.errno as f64);
+            set(context, exception, "errno", errno)?;
+            set_string(context, exception, "code", details.code)?;
+            let syscall = context.string_rooted(&details.syscall);
+            set(context, exception, "syscall", syscall)?;
+            set_string(context, exception, "path", &source)?;
+            set_string(context, exception, "dest", &destination)?;
+            Err(context.throw(exception))
+        }
     }
 }
 
@@ -842,14 +867,7 @@ pub(crate) fn symlink_sync(
     let result: std::io::Result<()> = Err(std::io::Error::from(std::io::ErrorKind::Unsupported));
     match result {
         Ok(()) => Ok(context.undefined()),
-        Err(error) => throw_operation_error(
-            context,
-            &ops::OperationError::Io {
-                syscall: "symlink",
-                path: link_path,
-                error,
-            },
-        ),
+        Err(error) => throw_io_error_with_dest(context, "symlink", &target, &link_path, &error),
     }
 }
 
@@ -862,14 +880,7 @@ pub(crate) fn link_sync(
     let new_path = path_argument(context, args.get(1).copied())?;
     match std::fs::hard_link(&existing_path, &new_path) {
         Ok(()) => Ok(context.undefined()),
-        Err(error) => throw_operation_error(
-            context,
-            &ops::OperationError::Io {
-                syscall: "link",
-                path: new_path,
-                error,
-            },
-        ),
+        Err(error) => throw_io_error_with_dest(context, "link", &existing_path, &new_path, &error),
     }
 }
 
@@ -882,14 +893,7 @@ pub(crate) fn rename_sync(
     let new_path = path_argument(context, args.get(1).copied())?;
     match std::fs::rename(&old_path, &new_path) {
         Ok(()) => Ok(context.undefined()),
-        Err(error) => throw_operation_error(
-            context,
-            &ops::OperationError::Io {
-                syscall: "rename",
-                path: old_path,
-                error,
-            },
-        ),
+        Err(error) => throw_io_error_with_dest(context, "rename", &old_path, &new_path, &error),
     }
 }
 
@@ -937,6 +941,8 @@ pub(crate) fn rm_async(
         callback = options;
         options = context.undefined();
     }
+    let undefined = context.undefined();
+    let path = crate::modules::url_shared_vm::to_path_if_file_url(context, undefined, &[path])?;
     let path = path_argument(context, Some(path))?;
     if !context.is_callable_rooted(callback)? {
         return Err(crate::modules::util_shared_vm::argument_type_error(
@@ -1249,6 +1255,19 @@ pub(crate) fn throw_io_error(
     )
 }
 
+pub(crate) fn throw_io_error_with_dest(
+    context: &mut NativeContext<'_, NodeHost>,
+    syscall: &str,
+    path: &str,
+    dest: &str,
+    error: &std::io::Error,
+) -> Result<RootId, RootedError> {
+    let mut details = fs_error_details::error_details(syscall, Some(path), error);
+    details.message = format!("{} -> '{dest}'", details.message);
+    details.dest = Some(dest.to_owned());
+    throw_error_details(context, details)
+}
+
 fn throw_error_details(
     context: &mut NativeContext<'_, NodeHost>,
     details: fs_error_details::FsErrorDetails,
@@ -1265,6 +1284,10 @@ fn throw_error_details(
     if let Some(path) = details.path {
         let path = context.string_rooted(&path);
         set(context, exception, "path", path)?;
+    }
+    if let Some(dest) = details.dest {
+        let dest = context.string_rooted(&dest);
+        set(context, exception, "dest", dest)?;
     }
     Err(context.throw(exception))
 }

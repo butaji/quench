@@ -13,6 +13,7 @@ pub(crate) fn module(
 }
 
 const SCALAR_GUARDS: &str = "\0builtin:assert/scalar-guards";
+const ASYNC_REJECTS_STACK: &str = "\0builtin:assert/async-rejects-stack";
 
 fn get(
     context: &mut NativeContext<'_, NodeHost>,
@@ -77,6 +78,7 @@ fn install_scalar_guards(
             }
         }
     }
+    install_async_rejects_stack(context, module)?;
     let retained = context.retain(module)?;
     context
         .host_mut()
@@ -84,6 +86,59 @@ fn install_scalar_guards(
         .borrow_mut()
         .builtin_cache
         .insert(SCALAR_GUARDS.to_owned(), retained);
+    Ok(())
+}
+
+fn install_async_rejects_stack(
+    context: &mut NativeContext<'_, NodeHost>,
+    module: RootId,
+) -> Result<(), RootedError> {
+    if context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .builtin_cache
+        .contains_key(ASYNC_REJECTS_STACK)
+    {
+        return Ok(());
+    }
+    let source = r#"((assertModule) => {
+      function patchRejects(target) {
+        if (!target) return;
+        const descriptor = Object.getOwnPropertyDescriptor(target, 'rejects');
+        if (!descriptor || typeof descriptor.value !== 'function') return;
+        const original = descriptor.value;
+        function rejects(...args) {
+          return Reflect.apply(original, this, args).catch((error) => {
+            // The engine cannot reconstruct V8's async parent frames after an
+            // await. Keep Node's visible async `rejects` frame when the
+            // assertion stack was otherwise trimmed to only its message.
+            if (error?.code === 'ERR_ASSERTION' &&
+                error.operator === 'rejects' &&
+                typeof error.stack === 'string' &&
+                !error.stack.includes('rejects')) {
+              error.stack += '\n    at async rejects';
+            }
+            throw error;
+          });
+        }
+        Object.defineProperty(rejects, 'name', { value: original.name, configurable: true });
+        Object.defineProperty(rejects, 'length', { value: original.length });
+        Object.defineProperty(target, 'rejects', { ...descriptor, value: rejects });
+      }
+      patchRejects(assertModule);
+      patchRejects(assertModule.strict);
+    })"#;
+    let installer = context.evaluate_script_rooted(source, "assert/async-rejects-stack.js")?;
+    let undefined = context.undefined();
+    context.call_rooted(installer, undefined, &[module])?;
+    let retained = context.retain(module)?;
+    context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .builtin_cache
+        .insert(ASYNC_REJECTS_STACK.to_owned(), retained);
     Ok(())
 }
 

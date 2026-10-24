@@ -76,7 +76,10 @@ impl<H: Host> Vm<H> {
         let number = self.native_value(Native::Number);
         self.set_builtin_function_name(number, "Number")?;
         let prototype = self.object();
-        self.realm.intrinsics.builtin_prototypes.insert((self.realm.globals, Native::Number), prototype);
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((self.realm.globals, Native::Number), prototype);
         self.set_builtin_value_named(number, "prototype", prototype)?;
         let prototype_key = self.prototype_atom();
         self.set_property_attributes(
@@ -91,7 +94,9 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.object_data_mut(prototype).expect("primitive prototype").set_boxed_primitive(Value::number(0.0));
+        self.object_data_mut(prototype)
+            .expect("primitive prototype")
+            .set_boxed_primitive(Value::number(0.0));
         self.set_builtin_value_named(prototype, "constructor", number)?;
         self.set_builtin_named(program, prototype, "toString", Native::NumberString)?;
         self.set_builtin_named(program, prototype, "valueOf", Native::NumberValueOf)?;
@@ -146,7 +151,10 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.builtin_prototypes.insert((global, Native::Number), prototype);
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::Number), prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_key = self.prototype_atom();
         self.set_property_attributes(
@@ -162,7 +170,9 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
-        self.object_data_mut(prototype).expect("primitive prototype").set_boxed_primitive(Value::number(0.0));
+        self.object_data_mut(prototype)
+            .expect("primitive prototype")
+            .set_boxed_primitive(Value::number(0.0));
         let methods = [
             ("toString", Native::NumberString),
             ("valueOf", Native::NumberValueOf),

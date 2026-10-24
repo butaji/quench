@@ -2,9 +2,15 @@ use super::array_literal::AccumulatedElement;
 use super::*;
 
 impl FunctionCompiler<'_, '_> {
-    pub(super) fn with_source_offset<T>(&mut self, offset: u32, emit: impl FnOnce(&mut Self) -> T) -> T {
+    pub(super) fn with_source_offset<T>(
+        &mut self,
+        offset: u32,
+        emit: impl FnOnce(&mut Self) -> T,
+    ) -> T {
         let position = self.owner.source_position(offset);
-        let previous = self.current_source_position.replace((position.line, position.column));
+        let previous = self
+            .current_source_position
+            .replace((position.line, position.column));
         let result = emit(self);
         self.current_source_position = previous;
         result
@@ -12,23 +18,35 @@ impl FunctionCompiler<'_, '_> {
 
     pub(super) fn static_access_source_offset(&self, member: &StaticMemberExpression<'_>) -> u32 {
         if member.optional {
-            self.owner.source_delimiter(member.object.span().end, member.span.end, '?')
-        } else { member.property.span.start }
+            self.owner
+                .source_delimiter(member.object.span().end, member.span.end, '?')
+        } else {
+            member.property.span.start
+        }
     }
 
-    pub(super) fn computed_access_source_offset(&self, member: &ComputedMemberExpression<'_>) -> u32 {
-        self.owner.source_delimiter(member.object.span().end, member.span.end, '[')
+    pub(super) fn computed_access_source_offset(
+        &self,
+        member: &ComputedMemberExpression<'_>,
+    ) -> u32 {
+        self.owner
+            .source_delimiter(member.object.span().end, member.span.end, '[')
     }
 
     pub(super) fn call_source_offset(&self, call: &CallExpression<'_>) -> u32 {
         if !call.optional {
             match &call.callee {
-                Expression::Identifier(_) | Expression::Super(_) => return call.callee.span().start,
+                Expression::Identifier(_) | Expression::Super(_) => {
+                    return call.callee.span().start;
+                }
                 Expression::StaticMemberExpression(member) => return member.property.span.start,
                 _ => {}
             }
         }
-        let start = call.type_arguments.as_ref().map_or(call.callee.span().end, |arguments| arguments.span.end);
+        let start = call
+            .type_arguments
+            .as_ref()
+            .map_or(call.callee.span().end, |arguments| arguments.span.end);
         self.owner.source_delimiter(start, call.span.end, '(')
     }
 
@@ -139,7 +157,11 @@ impl FunctionCompiler<'_, '_> {
         self.literal(Constant::Undefined)
     }
 
-    pub(super) fn logical(&mut self, value: &LogicalExpression<'_>, debug_name: Option<Atom>) -> Register {
+    pub(super) fn logical(
+        &mut self,
+        value: &LogicalExpression<'_>,
+        debug_name: Option<Atom>,
+    ) -> Register {
         if value.operator.is_coalesce() {
             return self.coalesce(value, debug_name);
         }
@@ -161,7 +183,11 @@ impl FunctionCompiler<'_, '_> {
         dst
     }
 
-    pub(super) fn conditional(&mut self, value: &ConditionalExpression<'_>, debug_name: Option<Atom>) -> Register {
+    pub(super) fn conditional(
+        &mut self,
+        value: &ConditionalExpression<'_>,
+        debug_name: Option<Atom>,
+    ) -> Register {
         let dst = self.reg();
         let test = self.expression(&value.test);
         let other = self.emit(Op::JumpFalse, test, 0, 0, 0);
@@ -324,9 +350,12 @@ impl FunctionCompiler<'_, '_> {
         for scope in self.lexical_scopes.iter().rev() {
             for atom in scope.bindings.keys() {
                 if scope.kinds.get(atom) == Some(&LexicalBindingKind::PrivateName)
-                    && let Some(label) = crate::bytecode::private_identity_label(&self.owner.atoms[*atom as usize])
+                    && let Some(label) =
+                        crate::bytecode::private_identity_label(&self.owner.atoms[*atom as usize])
                     && !private_labels.insert(label)
-                { continue; }
+                {
+                    continue;
+                }
                 if scope.kinds.get(atom) != Some(&LexicalBindingKind::FunctionName)
                     && visible.insert(*atom)
                     && let Some(binding) = self.lexical_binding_projection(scope, *atom)
@@ -366,19 +395,28 @@ impl FunctionCompiler<'_, '_> {
         }
         // Eval may mention private names only in its string. Its class home
         // still needs the same lexical capture that compiled super access uses.
-        if self.dynamic_eval && let Some(atom) = self.super_home_atom {
-            let location = self.local_slots.get(&atom).copied()
+        if self.dynamic_eval
+            && let Some(atom) = self.super_home_atom
+        {
+            let location = self
+                .local_slots
+                .get(&atom)
+                .copied()
                 .map(crate::bytecode::EvalBindingLocation::Local)
-                .or_else(|| self.scopes.iter().enumerate().find_map(|(depth, scope)| {
-                    let slot = *scope.get(&atom)?;
-                    let depth = u16::try_from(depth).ok()?;
-                    Some(crate::bytecode::EvalBindingLocation::Capture { depth, slot })
-                }));
+                .or_else(|| {
+                    self.scopes.iter().enumerate().find_map(|(depth, scope)| {
+                        let slot = *scope.get(&atom)?;
+                        let depth = u16::try_from(depth).ok()?;
+                        Some(crate::bytecode::EvalBindingLocation::Capture { depth, slot })
+                    })
+                });
             if let Some(location) = location
                 && !direct.iter().any(|binding| binding.atom == atom)
             {
                 direct.push(crate::bytecode::EvalBinding {
-                    atom, location, with_depth: 0,
+                    atom,
+                    location,
+                    with_depth: 0,
                     kind: LexicalBindingKind::Mutable,
                     declaration: crate::bytecode::EvalBindingDeclaration::Variable,
                 });
@@ -459,9 +497,15 @@ impl FunctionCompiler<'_, '_> {
         let atom = self.owner.atom(member.property.name.as_str());
         let cache = self.owner.cache_site();
         let source = self.static_access_source_offset(member);
-        self.with_source_offset(source, |compiler| compiler.emit(
-            Op::GetField, callee, FieldBase::register(receiver).0, cache, atom,
-        ));
+        self.with_source_offset(source, |compiler| {
+            compiler.emit(
+                Op::GetField,
+                callee,
+                FieldBase::register(receiver).0,
+                cache,
+                atom,
+            )
+        });
         if let Some(end) = end {
             self.patch(end);
         }
@@ -486,7 +530,9 @@ impl FunctionCompiler<'_, '_> {
         };
         let key = self.expression_outside_optional_chain(&member.expression);
         let source = self.computed_access_source_offset(member);
-        self.with_source_offset(source, |compiler| compiler.emit(Op::GetIndex, callee, receiver, key, 0));
+        self.with_source_offset(source, |compiler| {
+            compiler.emit(Op::GetIndex, callee, receiver, key, 0)
+        });
         if let Some(end) = end {
             self.patch(end);
         }
@@ -507,9 +553,15 @@ impl FunctionCompiler<'_, '_> {
         };
         let atom = self.owner.private_name_atom(member.field.span);
         let cache = self.owner.cache_site();
-        self.with_source_offset(member.field.span.start, |compiler| compiler.emit(
-            Op::GetField, callee, FieldBase::register(receiver).0, cache, atom,
-        ));
+        self.with_source_offset(member.field.span.start, |compiler| {
+            compiler.emit(
+                Op::GetField,
+                callee,
+                FieldBase::register(receiver).0,
+                cache,
+                atom,
+            )
+        });
         if let Some(end) = end {
             self.patch(end);
         }
@@ -623,9 +675,9 @@ impl FunctionCompiler<'_, '_> {
             .iter()
             .map(|argument| match argument {
                 Argument::SpreadElement(spread) => AccumulatedElement::Spread(&spread.argument),
-                argument => {
-                    AccumulatedElement::Value(argument.as_expression().expect("expression argument"))
-                }
+                argument => AccumulatedElement::Value(
+                    argument.as_expression().expect("expression argument"),
+                ),
             })
             .collect::<Vec<_>>();
         self.accumulated_array(&elements)

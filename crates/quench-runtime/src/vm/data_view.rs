@@ -334,7 +334,8 @@ impl<H: Host> Vm<H> {
             Native::DataViewByteLengthGetter | Native::DataViewByteOffsetGetter => unreachable!(),
             Native::DataViewGetUint8 => {
                 let value = match self.heap.get(buffer) {
-                    Some(Cell::ArrayBuffer { bytes, .. }) => bytes.read()
+                    Some(Cell::ArrayBuffer { bytes, .. }) => bytes
+                        .read()
                         .get(offset + index)
                         .copied()
                         .ok_or_else(|| JsError("DataView byte offset is out of range".into()))?,
@@ -472,7 +473,8 @@ impl<H: Host> Vm<H> {
 
     fn data_view_byte(&self, buffer: Value, index: usize) -> Result<u8, JsError> {
         match self.heap.get(buffer) {
-            Some(Cell::ArrayBuffer { bytes, .. }) => bytes.read()
+            Some(Cell::ArrayBuffer { bytes, .. }) => bytes
+                .read()
                 .get(index)
                 .copied()
                 .ok_or_else(|| JsError("DataView byte offset is out of range".into())),
@@ -527,7 +529,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) else {
             return Err(JsError("DataView buffer is invalid".into()));
         };
-        let mut guard=bytes.make_mut();
+        let mut guard = bytes.make_mut();
         let Some(slot) = guard.get_mut(index) else {
             return Err(JsError("DataView byte offset is out of range".into()));
         };

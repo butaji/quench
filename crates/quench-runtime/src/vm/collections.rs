@@ -205,36 +205,43 @@ impl<H: Host> Vm<H> {
             }
             vm.with_call_roots([adder], |vm| {
                 let iterator = vm.get_iterator(p, iterable)?;
-                vm.with_call_roots([iterator], |vm| loop {
-                    let Some(entry) = vm.iterator_step_value(p, iterator)? else {
-                        return Ok(collection);
-                    };
-                    let result = vm.with_call_roots([entry], |vm| match entries {
-                        CollectionEntries::Pairs => {
-                            if !vm.is_object_like(entry) {
-                                return Err(vm.type_error(
-                                    p,
-                                    "Iterator value is not an entry object".into(),
-                                ));
-                            }
-                            let key =
-                                vm.get_index(p, entry, Value::number(MAP_ENTRY_KEY_INDEX as f64))?;
-                            vm.with_call_roots([key], |vm| {
-                                let value = vm.get_index(
+                vm.with_call_roots([iterator], |vm| {
+                    loop {
+                        let Some(entry) = vm.iterator_step_value(p, iterator)? else {
+                            return Ok(collection);
+                        };
+                        let result = vm.with_call_roots([entry], |vm| match entries {
+                            CollectionEntries::Pairs => {
+                                if !vm.is_object_like(entry) {
+                                    return Err(vm.type_error(
+                                        p,
+                                        "Iterator value is not an entry object".into(),
+                                    ));
+                                }
+                                let key = vm.get_index(
                                     p,
                                     entry,
-                                    Value::number(MAP_ENTRY_VALUE_INDEX as f64),
+                                    Value::number(MAP_ENTRY_KEY_INDEX as f64),
                                 )?;
-                                vm.call_value(p, adder, collection, &[key, value])
-                            })
-                        }
-                        CollectionEntries::Values => vm.call_value(p, adder, collection, &[entry]),
-                    });
-                    if let Err(error) = result {
-                        vm.with_call_roots(error.thrown_value(), |vm| {
-                            let _ = vm.iterator_close(p, iterator);
+                                vm.with_call_roots([key], |vm| {
+                                    let value = vm.get_index(
+                                        p,
+                                        entry,
+                                        Value::number(MAP_ENTRY_VALUE_INDEX as f64),
+                                    )?;
+                                    vm.call_value(p, adder, collection, &[key, value])
+                                })
+                            }
+                            CollectionEntries::Values => {
+                                vm.call_value(p, adder, collection, &[entry])
+                            }
                         });
-                        return Err(error);
+                        if let Err(error) = result {
+                            vm.with_call_roots(error.thrown_value(), |vm| {
+                                let _ = vm.iterator_close(p, iterator);
+                            });
+                            return Err(error);
+                        }
                     }
                 })
             })

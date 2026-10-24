@@ -69,9 +69,10 @@ impl CallContext {
 
     pub(super) fn callee(self) -> Option<Value> {
         match self {
-            Self::Function(value) | Self::Constructor(value) | Self::DirectEval(value) | Self::IndirectEval(value) => {
-                Some(value)
-            }
+            Self::Function(value)
+            | Self::Constructor(value)
+            | Self::DirectEval(value)
+            | Self::IndirectEval(value) => Some(value),
             Self::Internal => None,
         }
     }

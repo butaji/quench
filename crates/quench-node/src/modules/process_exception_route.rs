@@ -98,7 +98,11 @@ fn property(c: &mut impl Context, object: RootId, name: &str) -> Result<RootId, 
     c.release_owned(key);
     value
 }
-pub(crate) fn event(c: &mut impl Context, name: &str, args: &[RootId]) -> Result<Option<RootId>, RootedError> {
+pub(crate) fn event(
+    c: &mut impl Context,
+    name: &str,
+    args: &[RootId],
+) -> Result<Option<RootId>, RootedError> {
     let process = c.shared().borrow().process_module;
     let Some(process) = process else {
         return Ok(None);

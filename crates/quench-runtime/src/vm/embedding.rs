@@ -33,11 +33,18 @@ impl<H: Host> Vm<H> {
         self.heap.memory_composition()
     }
 
+    pub(crate) fn embedding_objects_with_prototype(&self, prototype: Value) -> Vec<Value> {
+        self.heap.objects_with_prototype(prototype)
+    }
+
     pub(super) fn boxed_primitive_value(&self, value: Value) -> Option<Value> {
         self.object_data(value)?.boxed_primitive()
     }
 
-    pub(super) fn boxed_primitive_data(&self, value: Value) -> Option<(crate::BuiltinBrand, Value)> {
+    pub(super) fn boxed_primitive_data(
+        &self,
+        value: Value,
+    ) -> Option<(crate::BuiltinBrand, Value)> {
         let payload = self.boxed_primitive_value(value)?;
         use crate::BuiltinBrand as B;
         let brand = match self.heap.get(payload) {
@@ -155,11 +162,21 @@ impl<H: Host> Vm<H> {
         self.embedding_filtered_own_keys(root, include_symbols, include_indices, true)
     }
 
-    pub(crate) fn embedding_non_index_own_keys(&mut self, root: RootId, enumerable_only: bool) -> Result<Vec<RootId>, JsError> {
+    pub(crate) fn embedding_non_index_own_keys(
+        &mut self,
+        root: RootId,
+        enumerable_only: bool,
+    ) -> Result<Vec<RootId>, JsError> {
         self.embedding_filtered_own_keys(root, true, false, enumerable_only)
     }
 
-    fn embedding_filtered_own_keys(&mut self, root: RootId, include_symbols: bool, include_indices: bool, enumerable_only: bool) -> Result<Vec<RootId>, JsError> {
+    fn embedding_filtered_own_keys(
+        &mut self,
+        root: RootId,
+        include_symbols: bool,
+        include_indices: bool,
+        enumerable_only: bool,
+    ) -> Result<Vec<RootId>, JsError> {
         let value = self.embedding_value(root)?;
         let program = self.embedding_program()?;
         let keys = if !include_indices && !matches!(self.heap.get(value), Some(Cell::Proxy { .. }))
@@ -188,7 +205,9 @@ impl<H: Host> Vm<H> {
                 }
                 let descriptor =
                     self.object_get_own_property_descriptor(&program, &[value, property])?;
-                if !descriptor.is_undefined() && (!enumerable_only || self.descriptor_flag(descriptor, "enumerable")) {
+                if !descriptor.is_undefined()
+                    && (!enumerable_only || self.descriptor_flag(descriptor, "enumerable"))
+                {
                     enumerable.push(*key);
                     retained[index] = true;
                 }
@@ -212,7 +231,11 @@ impl<H: Host> Vm<H> {
         let value = self.embedding_value(root)?;
         let cell = self.heap.get(value);
         Ok(match brand {
-            B::External => self.heap.object(value).and_then(Object::external_address).is_some(),
+            B::External => self
+                .heap
+                .object(value)
+                .and_then(Object::external_address)
+                .is_some(),
             B::Date => matches!(cell, Some(Cell::Date { .. })),
             B::RegExp => matches!(cell, Some(Cell::RegExp { .. })),
             B::NativeError => self.error_is_error(value) || matches!(cell, Some(Cell::Error(_))),
@@ -290,10 +313,9 @@ impl<H: Host> Vm<H> {
             | B::StringObject
             | B::SymbolObject
             | B::BigIntObject
-            | B::BoxedPrimitive => {
-                self.boxed_primitive_data(value)
-                    .is_some_and(|(actual, _)| brand == B::BoxedPrimitive || brand == actual)
-            }
+            | B::BoxedPrimitive => self
+                .boxed_primitive_data(value)
+                .is_some_and(|(actual, _)| brand == B::BoxedPrimitive || brand == actual),
             typed => {
                 let kind = TYPED_BRANDS
                     .iter()
@@ -313,24 +335,50 @@ impl<H: Host> Vm<H> {
         Ok(self.strict_equal(self.embedding_value(left)?, self.embedding_value(right)?))
     }
 
-    pub(crate) fn embedding_source_stack_frames(&mut self, limit: usize) -> Vec<crate::SourceStackFrame> {
-        let records: Vec<_> = self.frames.iter().rev().filter_map(|frame| {
-            self.source_call_site_record(frame, false).map(|(record, module)| (frame.program, record, module))
-        }).take(limit).collect();
-        records.into_iter().map(|(program, mut record, module)| {
-            Self::map_call_site_source(&mut self.host, &mut record, module);
-            let name = self.call_site_name(&record).map_or_else(Vec::new, |name| name.units().to_vec());
-            let unnamed_script = record.eval_origin.is_some();
-            let CallSiteLocation::Source { file_name, line, column } = record.location else { unreachable!("source projection"); };
-            crate::SourceStackFrame {
-                function_name: name,
-                script_id: u64::from(self.programs.source_identity(program).raw()) + 1,
-                script_name: if unnamed_script { String::new() } else { file_name },
-                is_eval: unnamed_script,
-                line_number: line,
-                column_number: column,
-            }
-        }).collect()
+    pub(crate) fn embedding_source_stack_frames(
+        &mut self,
+        limit: usize,
+    ) -> Vec<crate::SourceStackFrame> {
+        let records: Vec<_> = self
+            .frames
+            .iter()
+            .rev()
+            .filter_map(|frame| {
+                self.source_call_site_record(frame, false)
+                    .map(|(record, module)| (frame.program, record, module))
+            })
+            .take(limit)
+            .collect();
+        records
+            .into_iter()
+            .map(|(program, mut record, module)| {
+                Self::map_call_site_source(&mut self.host, &mut record, module);
+                let name = self
+                    .call_site_name(&record)
+                    .map_or_else(Vec::new, |name| name.units().to_vec());
+                let unnamed_script = record.eval_origin.is_some();
+                let CallSiteLocation::Source {
+                    file_name,
+                    line,
+                    column,
+                } = record.location
+                else {
+                    unreachable!("source projection");
+                };
+                crate::SourceStackFrame {
+                    function_name: name,
+                    script_id: u64::from(self.programs.source_identity(program).raw()) + 1,
+                    script_name: if unnamed_script {
+                        String::new()
+                    } else {
+                        file_name
+                    },
+                    is_eval: unnamed_script,
+                    line_number: line,
+                    column_number: column,
+                }
+            })
+            .collect()
     }
 
     pub(crate) fn embedding_error_source_position(
@@ -339,13 +387,27 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<crate::ErrorSourcePosition>, JsError> {
         let value = self.embedding_value(error)?;
         // Proxy objects deliberately do not expose their target's captured metadata.
-        if let Some(crate::heap::StackData::Captured { records, source }) =
-            self.object_data(value).and_then(crate::heap::Object::stack_data)
+        if let Some(crate::heap::StackData::Captured { records, source }) = self
+            .object_data(value)
+            .and_then(crate::heap::Object::stack_data)
         {
-            if let Some(record) = records.iter().find(|record| matches!(record.location, CallSiteLocation::Source { .. })) {
-                let CallSiteLocation::Source { file_name, line, column } = &record.location else { unreachable!() };
+            if let Some(record) = records
+                .iter()
+                .find(|record| matches!(record.location, CallSiteLocation::Source { .. }))
+            {
+                let CallSiteLocation::Source {
+                    file_name,
+                    line,
+                    column,
+                } = &record.location
+                else {
+                    unreachable!()
+                };
                 return Ok(Some(crate::ErrorSourcePosition {
-                    source_line: source.as_ref().and_then(|source| source.source_line(*line)).map(str::to_owned),
+                    source_line: source
+                        .as_ref()
+                        .and_then(|source| source.source_line(*line))
+                        .map(str::to_owned),
                     script_name: record.eval_origin.is_none().then(|| file_name.clone()),
                     line_number: *line,
                     column_number: *column,
@@ -354,13 +416,29 @@ impl<H: Host> Vm<H> {
         }
         let Some((mut record, module, source_line)) = self.frames.iter().rev().find_map(|frame| {
             let (record, module) = self.source_call_site_record(frame, false)?;
-            let CallSiteLocation::Source { line, .. } = &record.location else { return None };
-            let source_line = self.programs.get(frame.program)?.source.as_ref()
-                .and_then(|source| source.source_line(*line)).map(str::to_owned);
+            let CallSiteLocation::Source { line, .. } = &record.location else {
+                return None;
+            };
+            let source_line = self
+                .programs
+                .get(frame.program)?
+                .source
+                .as_ref()
+                .and_then(|source| source.source_line(*line))
+                .map(str::to_owned);
             Some((record, module, source_line))
-        }) else { return Ok(None) };
+        }) else {
+            return Ok(None);
+        };
         Self::map_call_site_source(&mut self.host, &mut record, module);
-        let CallSiteLocation::Source { file_name, line, column } = record.location else { unreachable!() };
+        let CallSiteLocation::Source {
+            file_name,
+            line,
+            column,
+        } = record.location
+        else {
+            unreachable!()
+        };
         Ok(Some(crate::ErrorSourcePosition {
             source_line,
             script_name: record.eval_origin.is_none().then_some(file_name),
@@ -370,12 +448,18 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_call_stack_source_names(&self) -> Vec<String> {
-        self.frames.iter().rev().filter_map(|frame| {
-            self.programs.source_name(frame.program).map(str::to_owned)
-        }).collect()
+        self.frames
+            .iter()
+            .rev()
+            .filter_map(|frame| self.programs.source_name(frame.program).map(str::to_owned))
+            .collect()
     }
 
-    pub(crate) fn embedding_instanceof(&mut self, value: RootId, constructor: RootId) -> Result<bool, JsError> {
+    pub(crate) fn embedding_instanceof(
+        &mut self,
+        value: RootId,
+        constructor: RootId,
+    ) -> Result<bool, JsError> {
         let value = self.embedding_value(value)?;
         let constructor = self.embedding_value(constructor)?;
         let program = self.embedding_program()?;
@@ -383,33 +467,66 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_proxy_target(&self, root: RootId) -> Result<Option<Value>, JsError> {
-        Ok(self.embedding_proxy_details(root)?.map(|(target, _)| target))
+        Ok(self
+            .embedding_proxy_details(root)?
+            .map(|(target, _)| target))
     }
 
-    pub(crate) fn embedding_proxy_details(&self, root: RootId) -> Result<Option<(Value, Value)>, JsError> {
+    pub(crate) fn embedding_proxy_details(
+        &self,
+        root: RootId,
+    ) -> Result<Option<(Value, Value)>, JsError> {
         let value = self.embedding_value(root)?;
         Ok(match self.heap.get(value) {
-            Some(Cell::Proxy { target, handler, .. }) => Some((*target, *handler)),
+            Some(Cell::Proxy {
+                target, handler, ..
+            }) => Some((*target, *handler)),
             _ => None,
         })
     }
 
     /// Read the same live slots and cursor used by normal collection iteration.
-    pub(crate) fn embedding_collection_preview(&self, root: RootId) -> Result<Option<crate::CollectionPreview<Value>>, JsError> {
+    pub(crate) fn embedding_collection_preview(
+        &self,
+        root: RootId,
+    ) -> Result<Option<crate::CollectionPreview<Value>>, JsError> {
         use crate::CollectionPreview;
         let value = self.embedding_value(root)?;
         let preview = match self.heap.get(value) {
             Some(Cell::Map { entries, .. }) => CollectionPreview {
-                entries: entries.iter().flat_map(|(key, value)| [key, value]).collect(), is_key_value: true,
+                entries: entries
+                    .iter()
+                    .flat_map(|(key, value)| [key, value])
+                    .collect(),
+                is_key_value: true,
             },
-            Some(Cell::Set { entries, .. }) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
+            Some(Cell::Set { entries, .. }) => CollectionPreview {
+                entries: entries.to_vec(),
+                is_key_value: false,
+            },
             Some(Cell::WeakMap { entries, .. }) => CollectionPreview {
-                entries: entries.iter().flat_map(|&(key, value)| [key, value]).collect(), is_key_value: true,
+                entries: entries
+                    .iter()
+                    .flat_map(|&(key, value)| [key, value])
+                    .collect(),
+                is_key_value: true,
             },
-            Some(Cell::WeakSet { entries, .. }) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
-            Some(Cell::Iterator { source, kind, index, done, ext, .. }) => {
+            Some(Cell::WeakSet { entries, .. }) => CollectionPreview {
+                entries: entries.to_vec(),
+                is_key_value: false,
+            },
+            Some(Cell::Iterator {
+                source,
+                kind,
+                index,
+                done,
+                ext,
+                ..
+            }) => {
                 let is_key_value = match kind {
-                    IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::SetValues => false,
+                    IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::SetValues => {
+                        false
+                    }
                     IteratorKind::MapEntries | IteratorKind::SetEntries => true,
                     _ => return Ok(None),
                 };
@@ -431,14 +548,19 @@ impl<H: Host> Vm<H> {
                         Some(Cell::Set { entries, .. }) => {
                             while let Some((slot, value)) = entries.next_live(position) {
                                 output.push(value);
-                                if is_key_value { output.push(value); }
+                                if is_key_value {
+                                    output.push(value);
+                                }
                                 position = slot + 1;
                             }
                         }
-                        _ => {},
+                        _ => {}
                     }
                 }
-                CollectionPreview { entries: output, is_key_value }
+                CollectionPreview {
+                    entries: output,
+                    is_key_value,
+                }
             }
             _ => return Ok(None),
         };
@@ -773,34 +895,62 @@ impl<H: Host> Vm<H> {
         self.promise_object()
     }
 
-    pub(crate) fn embedding_resolve_promise(&mut self, promise: RootId, value: RootId) -> Result<(), JsError> {
+    pub(crate) fn embedding_resolve_promise(
+        &mut self,
+        promise: RootId,
+        value: RootId,
+    ) -> Result<(), JsError> {
         let promise = self.embedding_value(promise)?;
         let value = self.embedding_value(value)?;
-        let state = self.realm.promise.records.get(&promise)
-            .ok_or_else(|| JsError("value does not have Promise internal slots".into()))?.state;
-        if state != super::promise::PromiseState::Pending { return Ok(()); }
+        let state = self
+            .realm
+            .promise
+            .records
+            .get(&promise)
+            .ok_or_else(|| JsError("value does not have Promise internal slots".into()))?
+            .state;
+        if state != super::promise::PromiseState::Pending {
+            return Ok(());
+        }
         let program = self.embedding_program()?;
         self.promise_resolve_value(&program, promise, value)
     }
 
-    pub(crate) fn embedding_reject_promise(&mut self, promise: RootId, reason: RootId) -> Result<(), JsError> {
+    pub(crate) fn embedding_reject_promise(
+        &mut self,
+        promise: RootId,
+        reason: RootId,
+    ) -> Result<(), JsError> {
         let promise = self.embedding_value(promise)?;
         let reason = self.embedding_value(reason)?;
         if !self.realm.promise.records.contains_key(&promise) {
             return Err(JsError("value does not have Promise internal slots".into()));
         }
         let program = self.embedding_program()?;
-        self.promise_settle(&program, promise, super::promise::PromiseState::Rejected, reason)
+        self.promise_settle(
+            &program,
+            promise,
+            super::promise::PromiseState::Rejected,
+            reason,
+        )
     }
 
-    pub(crate) fn embedding_promise_snapshot(&self, root: RootId) -> Result<Option<crate::PromiseSnapshot<Value>>, JsError> {
+    pub(crate) fn embedding_promise_snapshot(
+        &self,
+        root: RootId,
+    ) -> Result<Option<crate::PromiseSnapshot<Value>>, JsError> {
         use crate::PromiseSnapshot as Snapshot;
         let value = self.embedding_value(root)?;
-        Ok(self.realm.promise.records.get(&value).map(|record| match record.state {
-            super::promise::PromiseState::Pending => Snapshot::Pending,
-            super::promise::PromiseState::Fulfilled => Snapshot::Fulfilled(record.result),
-            super::promise::PromiseState::Rejected => Snapshot::Rejected(record.result),
-        }))
+        Ok(self
+            .realm
+            .promise
+            .records
+            .get(&value)
+            .map(|record| match record.state {
+                super::promise::PromiseState::Pending => Snapshot::Pending,
+                super::promise::PromiseState::Fulfilled => Snapshot::Fulfilled(record.result),
+                super::promise::PromiseState::Rejected => Snapshot::Rejected(record.result),
+            }))
     }
 
     pub(crate) fn embedding_mark_promise_handled(&mut self, root: RootId) -> Result<(), JsError> {
@@ -818,10 +968,17 @@ impl<H: Host> Vm<H> {
         self.to_string(&program, value)
     }
 
-    pub(crate) fn embedding_to_string_code_units(&mut self, root: RootId) -> Result<Vec<u16>, JsError> {
+    pub(crate) fn embedding_to_string_code_units(
+        &mut self,
+        root: RootId,
+    ) -> Result<Vec<u16>, JsError> {
         let value = self.embedding_value(root)?;
         let program = self.embedding_program()?;
-        Ok(self.coerce_js_string(&program, value)?.units().wide().into_owned())
+        Ok(self
+            .coerce_js_string(&program, value)?
+            .units()
+            .wide()
+            .into_owned())
     }
 
     pub(crate) fn embedding_to_number(&mut self, root: RootId) -> Result<f64, JsError> {
@@ -1061,7 +1218,10 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn create_embedding_external(&mut self, address: usize) -> Result<Value, JsError> {
         let value = self.create_embedding_null_object()?;
-        self.heap.object_mut(value).expect("new native object").set_external_address(address);
+        self.heap
+            .object_mut(value)
+            .expect("new native object")
+            .set_external_address(address);
         Ok(value)
     }
 
@@ -1079,11 +1239,15 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_symbol(&mut self, description: Option<String>) -> Value {
-        self.heap.alloc(Cell::Symbol(crate::heap::SymbolData::public(description)))
+        self.heap
+            .alloc(Cell::Symbol(crate::heap::SymbolData::public(description)))
     }
 
     pub(crate) fn embedding_private_symbol(&mut self, description: Option<String>) -> Value {
-        self.heap.alloc(Cell::Symbol(crate::heap::SymbolData::host_private(description)))
+        self.heap
+            .alloc(Cell::Symbol(crate::heap::SymbolData::host_private(
+                description,
+            )))
     }
 
     fn create_embedding_object_with_prototype(
@@ -1142,43 +1306,72 @@ impl<H: Host> Vm<H> {
 
     /// Evaluates host Script source as a global Script of the realm owning `global`.
     pub(crate) fn evaluate_embedding_script_in_realm(
-        &mut self, global: RootId, source: &str, name: &str,
+        &mut self,
+        global: RootId,
+        source: &str,
+        name: &str,
     ) -> Result<Value, JsError> {
-        self.with_embedding_realm(global, |vm| vm.evaluate_embedding_global_script(source, name))
+        self.with_embedding_realm(global, |vm| {
+            vm.evaluate_embedding_global_script(source, name)
+        })
     }
 
     pub(crate) fn evaluate_embedding_specialized_script_in_realm_with_origin(
-        &mut self, global: RootId, source: &str, name: &str, origin: (u32, u32),
+        &mut self,
+        global: RootId,
+        source: &str,
+        name: &str,
+        origin: (u32, u32),
     ) -> Result<Value, JsError> {
-        self.with_embedding_realm(global, |vm| vm.evaluate_embedding_specialized_script_with_origin(source, name, Some(origin)))
+        self.with_embedding_realm(global, |vm| {
+            vm.evaluate_embedding_specialized_script_with_origin(source, name, Some(origin))
+        })
     }
 
     pub(crate) fn prepare_embedding_specialized_script_in_realm_with_origin(
-        &mut self, global: RootId, source: &str, name: &str, origin: (u32, u32),
+        &mut self,
+        global: RootId,
+        source: &str,
+        name: &str,
+        origin: (u32, u32),
     ) -> Result<crate::PreparedScript, JsError> {
-        self.with_embedding_realm(global, |vm| vm.prepare_embedding_specialized_script(source, name, Some(origin)))
+        self.with_embedding_realm(global, |vm| {
+            vm.prepare_embedding_specialized_script(source, name, Some(origin))
+        })
     }
 
     pub(crate) fn evaluate_embedding_prepared_script_in_realm(
-        &mut self, global: RootId, prepared: &crate::PreparedScript,
+        &mut self,
+        global: RootId,
+        prepared: &crate::PreparedScript,
     ) -> Result<Value, JsError> {
         self.with_embedding_realm(global, |vm| vm.evaluate_embedding_prepared_script(prepared))
     }
 
     pub(crate) fn compile_embedding_script_in_realm(
-        &mut self, global: RootId, source: &str, name: &str, origin: (u32, u32),
+        &mut self,
+        global: RootId,
+        source: &str,
+        name: &str,
+        origin: (u32, u32),
     ) -> Result<crate::CompiledScript, JsError> {
-        self.with_embedding_realm(global, |vm| vm.compile_embedding_host_script(source, name, origin))
+        self.with_embedding_realm(global, |vm| {
+            vm.compile_embedding_host_script(source, name, origin)
+        })
     }
 
     pub(crate) fn evaluate_embedding_compiled_script_in_realm(
-        &mut self, global: RootId, script: &crate::CompiledScript,
+        &mut self,
+        global: RootId,
+        script: &crate::CompiledScript,
     ) -> Result<Value, JsError> {
         self.with_embedding_realm(global, |vm| vm.evaluate_embedding_compiled_script(script))
     }
 
     fn with_embedding_realm<T>(
-        &mut self, global: RootId, run: impl FnOnce(&mut Self) -> Result<T, JsError>,
+        &mut self,
+        global: RootId,
+        run: impl FnOnce(&mut Self) -> Result<T, JsError>,
     ) -> Result<T, JsError> {
         let global = self.embedding_value(global)?;
         if !self.is_realm_global(global) {

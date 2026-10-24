@@ -144,9 +144,12 @@ impl<H: Host> Vm<H> {
         if let Some(resource) = self.realm.promise.records[&promise].host_context {
             // The reactions have left the authoritative record but are not
             // queued yet. Hooks may collect, so keep their entire payload live.
-            let roots = std::iter::once(promise).chain(std::iter::once(result)).chain(
-                reactions.iter().flat_map(|reaction| [reaction.on_fulfilled, reaction.on_rejected, reaction.next]),
-            ).collect::<Vec<_>>();
+            let roots = std::iter::once(promise)
+                .chain(std::iter::once(result))
+                .chain(reactions.iter().flat_map(|reaction| {
+                    [reaction.on_fulfilled, reaction.on_rejected, reaction.next]
+                }))
+                .collect::<Vec<_>>();
             self.with_call_roots(roots, |vm| {
                 let mut context = crate::NativeContext::new(vm);
                 H::promise_settled(&mut context, resource)

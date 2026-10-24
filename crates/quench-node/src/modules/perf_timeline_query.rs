@@ -62,12 +62,12 @@ pub(crate) fn entries(
         );
     }
     let mode = context
-        .rooted_value(args[3])
+        .rooted_value(args[5])
         .and_then(|v| v.as_number())
         .ok_or_else(|| RootedError::host("private performance query kind missing"))?;
     let mode = QueryKind::from_number(mode)?;
     let provided = context
-        .rooted_value(args[6])
+        .rooted_value(args[8])
         .and_then(|v| v.as_number())
         .unwrap_or(0.0);
     if mode != QueryKind::All && provided == 0.0 {
@@ -84,14 +84,14 @@ pub(crate) fn entries(
     let coerce = get(context, data, "coerce")?;
     let undefined = context.undefined();
     let name = if mode == QueryKind::Name {
-        Some(context.call_rooted(coerce, undefined, &[args[4]])?)
+        Some(context.call_rooted(coerce, undefined, &[args[6]])?)
     } else {
         None
     };
     let type_input = if mode == QueryKind::Type {
-        args[4]
+        args[6]
     } else {
-        args[5]
+        args[7]
     };
     let kind = if mode == QueryKind::Type
         || !context
@@ -105,7 +105,12 @@ pub(crate) fn entries(
     let name_key = context.string_rooted("name");
     let length_key = context.string_rooted("length");
     let mut selected = Vec::new();
-    for (array, entry_type) in [(args[1], "mark"), (args[2], "measure")] {
+    for (array, entry_type) in [
+        (args[1], "mark"),
+        (args[2], "measure"),
+        (args[3], "resource"),
+        (args[4], "function"),
+    ] {
         if let Some(kind) = kind {
             let label = context.string_rooted(entry_type);
             let include = context.strict_equal_rooted(kind, label)?;

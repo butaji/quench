@@ -5,7 +5,7 @@ use foreign_types::{ForeignType, ForeignTypeRef};
 use openssl::{error::ErrorStack, hash::MessageDigest, md::Md, md_ctx::MdCtx, pkey::PKey};
 use openssl_sys::EVP_MD;
 use std::{
-    ffi::{CStr, c_char, c_int, c_ulong, c_void},
+    ffi::{c_char, c_int, c_ulong, c_void, CStr},
     ptr,
 };
 const EVP_MD_FLAG_XOF: c_ulong = 0x0002; // openssl/evp.h authoritative flag.
@@ -61,17 +61,24 @@ pub struct Digest {
 }
 // A fetched digest owns its provider reference. OpenSSL's legacy descriptors are
 // genuinely process-static objects; never cast a fetched pointer to that lifetime.
-enum NativeDigest { Fetched(Md), Legacy(MessageDigest) }
+enum NativeDigest {
+    Fetched(Md),
+    Legacy(MessageDigest),
+}
 impl Digest {
     /// ncrypto::Digest::FromName accepts known legacy descriptors even when
     /// their provider is unavailable; the actual operation then owns failure.
     pub(crate) fn from_sdk_name(name: &str) -> Result<Self, DigestError> {
         let name = name.split('\0').next().unwrap_or("");
-        let legacy = if matches!(name, "dss1" | "DSS1") { Some(MessageDigest::sha1()) }
-                     else { MessageDigest::from_name(name) };
+        let legacy = if matches!(name, "dss1" | "DSS1") {
+            Some(MessageDigest::sha1())
+        } else {
+            MessageDigest::from_name(name)
+        };
         match legacy {
-            Some(md) if md.as_ptr() != unsafe { openssl_sys::EVP_md_null() } =>
-                Ok(Self { md: NativeDigest::Legacy(md) }),
+            Some(md) if md.as_ptr() != unsafe { openssl_sys::EVP_md_null() } => Ok(Self {
+                md: NativeDigest::Legacy(md),
+            }),
             _ => Self::fetch(name),
         }
     }
@@ -128,7 +135,9 @@ impl Digest {
         if unsafe { EVP_MD_is_a(md.as_ptr(), c"NULL".as_ptr()) } == 1 {
             return None;
         }
-        Some(Self { md: NativeDigest::Fetched(md) })
+        Some(Self {
+            md: NativeDigest::Fetched(md),
+        })
     }
     pub(crate) fn aliases(&self) -> Vec<String> {
         unsafe extern "C" fn collect(name: *const c_char, data: *mut c_void) {
@@ -152,7 +161,9 @@ impl Digest {
     pub(crate) fn native_md(&self) -> &openssl::md::MdRef {
         match &self.md {
             NativeDigest::Fetched(md) => md,
-            NativeDigest::Legacy(md) => unsafe { openssl::md::MdRef::from_ptr(md.as_ptr() as *mut EVP_MD) },
+            NativeDigest::Legacy(md) => unsafe {
+                openssl::md::MdRef::from_ptr(md.as_ptr() as *mut EVP_MD)
+            },
         }
     }
     pub(crate) fn identity(&self) -> usize {

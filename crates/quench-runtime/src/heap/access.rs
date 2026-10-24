@@ -4,8 +4,52 @@ use super::{
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
+use std::collections::HashSet;
 
 impl Heap {
+    /// Return live JavaScript objects whose internal prototype chain contains `prototype`.
+    /// The caller is responsible for collecting first when it needs only currently reachable
+    /// objects. Prototypes are read from heap object records directly, so Proxy traps are not
+    /// invoked during this heap query.
+    pub(crate) fn objects_with_prototype(&self, prototype: Value) -> Vec<Value> {
+        let mut candidates = Vec::with_capacity(self.live_slots());
+        for (index, slot) in self.slots.iter().enumerate() {
+            if slot
+                .cell
+                .as_ref()
+                .is_some_and(|cell| cell.object().is_some())
+            {
+                candidates.push(Value::heap(index as u32));
+            }
+        }
+        self.object_records
+            .for_each_live(|id, _| candidates.push(Value::direct_object(id)));
+        self.array_records
+            .for_each_live(|id, _| candidates.push(Value::direct_array(id)));
+
+        candidates
+            .into_iter()
+            .filter(|candidate| {
+                let Some(mut current) = self.object(*candidate).map(Object::proto) else {
+                    return false;
+                };
+                let mut seen = HashSet::new();
+                loop {
+                    if current == prototype {
+                        return true;
+                    }
+                    if current.is_null() || current.is_undefined() || !seen.insert(current) {
+                        return false;
+                    }
+                    let Some(object) = self.object(current) else {
+                        return false;
+                    };
+                    current = object.proto();
+                }
+            })
+            .collect()
+    }
+
     /// Moves the positions of `collection`'s running iterators by `move_slot`, keeping only
     /// the registrations that still name one.
     pub(crate) fn move_collection_iterators(
@@ -38,12 +82,12 @@ impl Heap {
             }
         }
         match self.get_mut(collection) {
-            Some(Cell::Map { entries, .. }) => {
-                running.into_iter().for_each(|it| entries.register_iterator(it))
-            }
-            Some(Cell::Set { entries, .. }) => {
-                running.into_iter().for_each(|it| entries.register_iterator(it))
-            }
+            Some(Cell::Map { entries, .. }) => running
+                .into_iter()
+                .for_each(|it| entries.register_iterator(it)),
+            Some(Cell::Set { entries, .. }) => running
+                .into_iter()
+                .for_each(|it| entries.register_iterator(it)),
             _ => {}
         }
     }

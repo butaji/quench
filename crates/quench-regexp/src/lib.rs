@@ -339,18 +339,24 @@ impl Regex {
         let backend_enabled = !flags.unicode_sets
             && !flags.unicode
             && std::env::var_os("QUENCH_DISABLE_COMPILED_REGEXP").is_none();
+        // The byte backend recognizes only LF as a multiline anchor boundary;
+        // ECMAScript also recognizes CR, LS, and PS. Keep multiline patterns
+        // on the semantic matcher so anchors behave correctly for every line
+        // terminator (including the CRLF pair).
         let compiled = (backend_enabled
+            && !flags.multiline
             && compiled_source_syntax_is_safe(source, NonCapturingGroups::Allowed)
             && compiled_structure_is_safe(&parsed.body))
         .then(|| compile_byte_regex(source, flags))
         .flatten();
-        let range_backend = if !(backend_enabled && compiled_test_source_is_safe(source)) {
-            RangeBackend::None
-        } else if compiled.is_some() {
-            RangeBackend::Compiled
-        } else {
-            compile_byte_regex(source, flags).map_or(RangeBackend::None, RangeBackend::Own)
-        };
+        let range_backend =
+            if !(backend_enabled && !flags.multiline && compiled_test_source_is_safe(source)) {
+                RangeBackend::None
+            } else if compiled.is_some() {
+                RangeBackend::Compiled
+            } else {
+                compile_byte_regex(source, flags).map_or(RangeBackend::None, RangeBackend::Own)
+            };
         let compiled_locations = compiled
             .as_ref()
             .map(regex::bytes::Regex::capture_locations);
@@ -2516,7 +2522,12 @@ fn escape_matches(
 }
 
 pub fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
-    resolved_property_matches(compile_property_matcher(name, value), name, value, character)
+    resolved_property_matches(
+        compile_property_matcher(name, value),
+        name,
+        value,
+        character,
+    )
 }
 
 /// `property_matches` with the ICU matcher for `name`/`value` already resolved.
@@ -2751,7 +2762,11 @@ fn canonical_preimages(unicode: bool) -> &'static std::collections::HashMap<u32,
     static TABLES: [std::sync::OnceLock<std::collections::HashMap<u32, Vec<u32>>>; 2] =
         [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
     TABLES[usize::from(unicode)].get_or_init(|| {
-        let last = if unicode { u32::from(char::MAX) } else { BMP_MAX };
+        let last = if unicode {
+            u32::from(char::MAX)
+        } else {
+            BMP_MAX
+        };
         let mut preimages = std::collections::HashMap::<u32, Vec<u32>>::new();
         for member in 0..=last {
             let key = canonical(member, unicode);
@@ -2799,6 +2814,19 @@ mod tests {
     use super::{normalize_new_unicode_scripts, Flags, Regex, NEW_UNICODE_SCRIPTS};
 
     #[test]
+    fn multiline_end_anchor_accepts_crlf_and_other_ecmascript_terminators() {
+        let regex = Regex::with_flags(r"^Connection: close\r\n$", Flags::from("m")).unwrap();
+        for subject in [
+            "A\r\nConnection: close\r\n\r\n",
+            "A\nConnection: close\r\n\n",
+            "A\u{2028}Connection: close\r\n\u{2028}",
+            "A\u{2029}Connection: close\r\n\u{2029}",
+        ] {
+            assert!(regex.find_from(subject, 0).next().is_some(), "{subject:?}");
+        }
+    }
+
+    #[test]
     fn new_unicode_script_normalization_borrows_unrelated_patterns() {
         for pattern in [r"\s+", r"\p{Letter}", r"\p{Script=Latin}"] {
             assert!(matches!(
@@ -2836,7 +2864,13 @@ mod tests {
         // the range, while its members (all Greek lowercase letters here) still match.
         for flags in ["i", "iu"] {
             let regex = Regex::with_flags(r"^[\u0391-\u03ce]+$", Flags::from(flags)).unwrap();
-            assert!(regex.find_from("αβγδεζηθικλμνξοπρςστυφχψω", 0).next().is_some(), "{flags}");
+            assert!(
+                regex
+                    .find_from("αβγδεζηθικλμνξοπρςστυφχψω", 0)
+                    .next()
+                    .is_some(),
+                "{flags}"
+            );
             let ascii = Regex::with_flags(r"^[a-z]+$", Flags::from(flags)).unwrap();
             assert!(ascii.find_from("QUENCH", 0).next().is_some(), "{flags}");
         }
@@ -2849,7 +2883,14 @@ mod tests {
         assert!(regex.find_sticky_in_subject(&subject, 0).next().is_none());
         let digits = regex.find_sticky_in_subject(&subject, 2).next().unwrap();
         assert_eq!(digits.range, 2..4);
-        assert_eq!(regex.find_sticky_in_subject(&subject, 4).next().unwrap().range, 4..5);
+        assert_eq!(
+            regex
+                .find_sticky_in_subject(&subject, 4)
+                .next()
+                .unwrap()
+                .range,
+            4..5
+        );
         assert!(regex.find_sticky_in_subject(&subject, 6).next().is_none());
     }
 

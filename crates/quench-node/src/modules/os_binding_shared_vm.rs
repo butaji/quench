@@ -32,10 +32,18 @@ pub(crate) fn os_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:os", build_os_binding)
 }
 pub(crate) fn credentials_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:credentials", build_credentials_binding)
+    crate::host::shared_vm::commonjs::cached_native_binding(
+        c,
+        "\0binding:credentials",
+        build_credentials_binding,
+    )
 }
 pub(crate) fn constants(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:os.constants", build_constants)
+    crate::host::shared_vm::commonjs::cached_native_binding(
+        c,
+        "\0binding:os.constants",
+        build_constants,
+    )
 }
 fn build_os_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let result = binding(
@@ -61,9 +69,9 @@ fn build_os_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     Ok(result)
 }
 fn build_credentials_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let binding=binding(c, &[("getTempDir", "osBindingTempdir")])?;
-    let supported=c.boolean(cfg!(unix));
-    put(c,binding,"implementsPosixCredentials",supported)?;
+    let binding = binding(c, &[("getTempDir", "osBindingTempdir")])?;
+    let supported = c.boolean(cfg!(unix));
+    put(c, binding, "implementsPosixCredentials", supported)?;
     Ok(binding)
 }
 fn system_error(

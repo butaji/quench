@@ -1,10 +1,26 @@
 //! Runtime-neutral process inputs and scalar state shared by Node adapters.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::rc::Rc;
 
 /// Compatibility target of the actual bundled Node standard library.
 pub(crate) const NODE_VERSION: &str = env!("QUENCH_NODE_COMPAT_VERSION");
+
+pub(crate) fn openssl_version() -> String {
+    #[cfg(quench_openssl_provider)]
+    {
+        let version = openssl::version::version();
+        version
+            .strip_prefix("OpenSSL ")
+            .and_then(|version| version.split_whitespace().next())
+            .unwrap_or("3.0.0")
+            .to_owned()
+    }
+    #[cfg(not(quench_openssl_provider))]
+    {
+        "3.0.0".to_owned()
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(crate) enum ProcessFact {
@@ -19,7 +35,10 @@ pub(crate) fn config_variable_facts() -> &'static [(&'static str, ProcessFact)] 
     &[
         ("v8_enable_i18n_support", ProcessFact::Number(1.0)),
         ("node_module_version", ProcessFact::Number(127.0)),
-        ("napi_build_version", ProcessFact::String(env!("QUENCH_NODE_API_SUPPORTED_VERSION_MAX"))),
+        (
+            "napi_build_version",
+            ProcessFact::String(env!("QUENCH_NODE_API_SUPPORTED_VERSION_MAX")),
+        ),
         (
             "node_builtin_shareable_builtins",
             ProcessFact::StringArray(&["deps/undici/undici.js"]),
@@ -54,7 +73,7 @@ pub(crate) fn feature_facts() -> &'static [(&'static str, ProcessFact)] {
 pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
     &[
         ("node", NODE_VERSION),
-        ("acorn", "8.18.0"),
+        ("acorn", "8.19.0"),
         ("ada", "2.7.8"),
         #[cfg(quench_node_cares)]
         ("ares", super::cares_channel_shared_vm::VERSION),
@@ -77,7 +96,7 @@ pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
         ("simdjson", "1.0.0"),
         ("simdutf", "5.2.4"),
         ("tz", "2024a"),
-        ("undici", "8.10.0"),
+        ("undici", "8.12.2"),
         ("unicode", "15.1"),
         ("uv", "1.48.0"),
         ("uvwasi", "1.0.0"),
@@ -214,7 +233,7 @@ impl UnhandledRejectionMode {
 /// Process and path consumers observe the same owner, so cwd changes remain
 /// visible without passing runtime values across the host boundary.
 #[derive(Clone)]
-pub struct ProcessCwd(Rc<RefCell<WorkingDirectory>>);
+pub struct ProcessCwd(std::sync::Arc<std::sync::Mutex<WorkingDirectory>>);
 
 struct WorkingDirectory {
     path: std::path::PathBuf,
@@ -237,7 +256,7 @@ fn open_directory(path: &std::path::Path) -> std::io::Result<std::sync::Arc<std:
 impl ProcessCwd {
     pub fn from_current_directory() -> Self {
         let path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
-        Self(Rc::new(RefCell::new(WorkingDirectory {
+        Self(std::sync::Arc::new(std::sync::Mutex::new(WorkingDirectory {
             path,
             observed_path: None,
             // The inherited directory can remain valid after its pathname is removed.
@@ -248,22 +267,22 @@ impl ProcessCwd {
 
     pub fn path(&self) -> std::path::PathBuf {
         self.current_path()
-            .unwrap_or_else(|_| self.0.borrow().path.clone())
+            .unwrap_or_else(|_| self.0.lock().expect("cwd lock poisoned").path.clone())
     }
 
     /// Node caches successful process.cwd observations until process.chdir.
     /// Relative filesystem and child operations continue to use directory identity.
     pub(crate) fn query_path(&self) -> std::io::Result<std::path::PathBuf> {
-        if let Some(path) = self.0.borrow().observed_path.clone() {
+        if let Some(path) = self.0.lock().expect("cwd lock poisoned").observed_path.clone() {
             return Ok(path);
         }
         let path = self.current_path()?;
-        self.0.borrow_mut().observed_path = Some(path.clone());
+        self.0.lock().expect("cwd lock poisoned").observed_path = Some(path.clone());
         Ok(path)
     }
 
     pub(crate) fn current_path(&self) -> std::io::Result<std::path::PathBuf> {
-        let state = self.0.borrow();
+        let state = self.0.lock().expect("cwd lock poisoned");
         #[cfg(target_os = "linux")]
         if let Some(directory) = &state.directory {
             use std::os::fd::AsRawFd;
@@ -284,7 +303,7 @@ impl ProcessCwd {
     pub fn set_path(&self, path: std::path::PathBuf) -> std::io::Result<()> {
         #[cfg(target_os = "linux")]
         let directory = Some(open_directory(&path)?);
-        *self.0.borrow_mut() = WorkingDirectory {
+        *self.0.lock().expect("cwd lock poisoned") = WorkingDirectory {
             path,
             observed_path: None,
             #[cfg(target_os = "linux")]
@@ -294,7 +313,7 @@ impl ProcessCwd {
     }
 
     pub fn join(&self, path: impl AsRef<std::path::Path>) -> std::path::PathBuf {
-        self.0.borrow().path.join(path)
+        self.0.lock().expect("cwd lock poisoned").path.join(path)
     }
 
     /// Resolve an I/O path against the retained directory inode, including after rename.
@@ -303,7 +322,7 @@ impl ProcessCwd {
             return path.to_owned();
         }
         #[cfg(target_os = "linux")]
-        if let Some(directory) = &self.0.borrow().directory {
+        if let Some(directory) = &self.0.lock().expect("cwd lock poisoned").directory {
             use std::os::fd::AsRawFd;
             let directory =
                 std::path::PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()));
@@ -326,7 +345,7 @@ impl ProcessCwd {
             return Ok(());
         }
         #[cfg(target_os = "linux")]
-        if let Some(directory) = self.0.borrow().directory.clone() {
+        if let Some(directory) = self.0.lock().expect("cwd lock poisoned").directory.clone() {
             use std::os::fd::AsRawFd;
             use std::os::unix::process::CommandExt;
             let relative = requested
@@ -388,6 +407,9 @@ pub(crate) struct ProcessControl(Rc<ProcessControlCells>);
 struct ProcessControlCells {
     started: std::time::Instant,
     performance_origins: Option<(f64, f64)>,
+    loop_start_ns: Cell<Option<f64>>,
+    loop_idle_ns: Cell<f64>,
+    loop_count: Cell<u64>,
     exit_code: Cell<Option<i32>>,
     requested_exit: Cell<Option<RequestedExit>>,
     umask: Cell<u32>,
@@ -402,6 +424,13 @@ enum RequestedExit {
 
 impl ProcessControl {
     pub(crate) fn new() -> Self {
+        Self::with_performance_origins(sample_performance_origins())
+    }
+
+    /// Create a worker's process control using the owning process's performance
+    /// origin. Node workers share one process time origin even though each
+    /// worker owns its own runtime and uptime counter.
+    pub(crate) fn with_performance_origins(performance_origins: Option<(f64, f64)>) -> Self {
         #[cfg(unix)]
         let umask = unsafe {
             let current = libc::umask(0);
@@ -412,14 +441,69 @@ impl ProcessControl {
         let umask = INITIAL_UMASK;
         Self(Rc::new(ProcessControlCells {
             started: std::time::Instant::now(),
-            performance_origins: sample_performance_origins(),
+            performance_origins,
+            loop_start_ns: Cell::new(None),
+            loop_idle_ns: Cell::new(0.0),
+            loop_count: Cell::new(0),
             exit_code: Cell::new(None),
             requested_exit: Cell::new(None),
             umask: Cell::new(umask),
         }))
     }
 
-    pub(crate) fn performance_origins(&self) -> Option<(f64, f64)> { self.0.performance_origins }
+    pub(crate) fn performance_origins(&self) -> Option<(f64, f64)> {
+        self.0.performance_origins
+    }
+
+    /// Return the process-wide monotonic clock coordinate used by Node's
+    /// `process.hrtime()` and performance milestones. Unlike `uptime()`, this
+    /// remains aligned for workers that inherit the parent process origin.
+    pub(crate) fn monotonic_now_ns(&self) -> Option<f64> {
+        monotonic_time_ns()
+    }
+
+    pub(crate) fn performance_elapsed_ms(&self) -> f64 {
+        self.0
+            .performance_origins
+            .and_then(|(origin_ns, _)| {
+                monotonic_time_ns().map(|now_ns| (now_ns - origin_ns) / 1_000_000.0)
+            })
+            .unwrap_or_else(|| self.uptime() * 1_000.0)
+    }
+
+    pub(crate) fn start_event_loop(&self) {
+        if self.0.loop_start_ns.get().is_none() {
+            // Workers inherit the process time origin, but their uptime starts
+            // when the worker host is created. Combining those values shifts
+            // a worker's loop start back to before that worker existed.
+            let start = self.0.performance_origins.and_then(|_| monotonic_time_ns());
+            self.0.loop_start_ns.set(start);
+        }
+    }
+
+    pub(crate) fn loop_start_ns(&self) -> Option<f64> {
+        self.0.loop_start_ns.get()
+    }
+
+    pub(crate) fn record_event_loop_iteration(&self) {
+        self.0
+            .loop_count
+            .set(self.0.loop_count.get().saturating_add(1));
+    }
+
+    pub(crate) fn event_loop_iterations(&self) -> u64 {
+        self.0.loop_count.get()
+    }
+
+    pub(crate) fn record_event_loop_idle(&self, duration: std::time::Duration) {
+        self.0
+            .loop_idle_ns
+            .set(self.0.loop_idle_ns.get() + duration.as_secs_f64() * 1_000_000_000.0);
+    }
+
+    pub(crate) fn event_loop_idle_ms(&self) -> f64 {
+        self.0.loop_idle_ns.get() / 1_000_000.0
+    }
 
     pub(crate) fn uptime(&self) -> f64 {
         self.0.started.elapsed().as_secs_f64()
@@ -435,35 +519,57 @@ impl ProcessControl {
 
     pub(crate) fn request_really_exit(&self, code: i32) {
         self.0.exit_code.set(Some(code));
-        self.0.requested_exit.set(Some(RequestedExit::Immediate(code)));
+        self.0
+            .requested_exit
+            .set(Some(RequestedExit::Immediate(code)));
     }
 
     pub(crate) fn request_fatal_uncaught(&self, code: i32) {
         self.0.exit_code.set(Some(code));
-        self.0.requested_exit.set(Some(RequestedExit::FatalUncaught(code)));
+        self.0
+            .requested_exit
+            .set(Some(RequestedExit::FatalUncaught(code)));
     }
     pub(crate) fn fatal_uncaught_requested(&self) -> bool {
-        matches!(self.0.requested_exit.get(), Some(RequestedExit::FatalUncaught(_)))
+        matches!(
+            self.0.requested_exit.get(),
+            Some(RequestedExit::FatalUncaught(_))
+        )
     }
 
     pub(crate) fn fail_fatal_exception_handler(&self) {
-        let code = super::node_protocol_constants::ExitCode::ExceptionInFatalExceptionHandler as i32;
+        let code =
+            super::node_protocol_constants::ExitCode::ExceptionInFatalExceptionHandler as i32;
         self.0.exit_code.set(Some(code));
-        self.0.requested_exit.set(Some(RequestedExit::FatalExceptionHandler(code)));
+        self.0
+            .requested_exit
+            .set(Some(RequestedExit::FatalExceptionHandler(code)));
     }
 
     pub(crate) fn fatal_exception_handler_failed(&self) -> bool {
-        matches!(self.0.requested_exit.get(), Some(RequestedExit::FatalExceptionHandler(_)))
+        matches!(
+            self.0.requested_exit.get(),
+            Some(RequestedExit::FatalExceptionHandler(_))
+        )
     }
 
     pub(crate) fn requested_exit_code(&self) -> Option<i32> {
         self.0.requested_exit.get().map(|request| match request {
-            RequestedExit::Immediate(code) | RequestedExit::FatalExceptionHandler(code) | RequestedExit::FatalUncaught(code) => code,
+            RequestedExit::Immediate(code)
+            | RequestedExit::FatalExceptionHandler(code)
+            | RequestedExit::FatalUncaught(code) => code,
         })
     }
 
     pub(crate) fn exit_without_event(&self) -> bool {
-        matches!(self.0.requested_exit.get(), Some(RequestedExit::Immediate(_) | RequestedExit::FatalExceptionHandler(_) | RequestedExit::FatalUncaught(_)))
+        matches!(
+            self.0.requested_exit.get(),
+            Some(
+                RequestedExit::Immediate(_)
+                    | RequestedExit::FatalExceptionHandler(_)
+                    | RequestedExit::FatalUncaught(_)
+            )
+        )
     }
 
     pub(crate) fn umask(&self) -> u32 {
@@ -508,13 +614,39 @@ pub(crate) fn shared_openssl() -> bool {
 // Capture actual clock coordinates at environment creation, rather than synthesizing
 // a zero origin when a performance module happens to be imported later.
 fn sample_performance_origins() -> Option<(f64, f64)> {
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
         const MICROS_PER_SECOND: f64 = 1_000_000.0;
         let mut time: libc::timespec = unsafe { std::mem::zeroed() };
-        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) } != 0 { return None; }
-        let wall = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?;
-        Some((time.tv_sec as f64 * NANOS_PER_SECOND + time.tv_nsec as f64, wall.as_secs_f64() * MICROS_PER_SECOND))
+        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) } != 0 {
+            return None;
+        }
+        let wall = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?;
+        Some((
+            time.tv_sec as f64 * NANOS_PER_SECOND + time.tv_nsec as f64,
+            wall.as_secs_f64() * MICROS_PER_SECOND,
+        ))
     }
-    #[cfg(not(unix))] { None }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+fn monotonic_time_ns() -> Option<f64> {
+    #[cfg(unix)]
+    {
+        let mut time: libc::timespec = unsafe { std::mem::zeroed() };
+        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) } != 0 {
+            return None;
+        }
+        Some(time.tv_sec as f64 * 1_000_000_000.0 + time.tv_nsec as f64)
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
 }

@@ -5,6 +5,10 @@ const FACTORY: &str = quench_js_check::checked_js!(
     r#"(register, initialize, create) => {
  'use strict';
  class NativeSecureContext { constructor() { register(this); } }
+ Object.defineProperty(NativeSecureContext.prototype, '_external', {
+   configurable: true,
+   get() { throw new TypeError('Illegal invocation'); }
+ });
  function SecureContext(secureProtocol, secureOptions, minVersion, maxVersion) {
    return initialize(this, this instanceof SecureContext, secureProtocol, secureOptions, minVersion, maxVersion);
  }
@@ -53,7 +57,8 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
     let key = context.string_rooted("SecureContext");
     context.define_data_property_rooted(binding, key, native, true, true, true)?;
     if super::super::crypto_engine_shared_vm::SUPPORTED {
-        let function = context.host_function(crate::host::shared_vm::operation("cryptoSetEngineBinding"))?;
+        let function =
+            context.host_function(crate::host::shared_vm::operation("cryptoSetEngineBinding"))?;
         let key = context.string_rooted("name");
         let name = context.string_rooted("setEngine");
         context.define_data_property_rooted(function, key, name, false, false, true)?;
@@ -63,9 +68,9 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
     #[cfg(quench_openssl_provider)]
     super::super::crypto_hash_shared_vm::install(context, binding)?;
     #[cfg(quench_openssl_provider)]
-    super::super::crypto_signature_shared_vm::install(context,binding)?;
+    super::super::crypto_signature_shared_vm::install(context, binding)?;
     #[cfg(quench_openssl_provider)]
-    super::super::crypto_rsa_shared_vm::install(context,binding)?;
+    super::super::crypto_rsa_shared_vm::install(context, binding)?;
     set(context, api, "binding", binding)?;
     let prototype = get(context, native, "prototype")?;
     for (name, operation) in [

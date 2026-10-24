@@ -37,17 +37,21 @@ fn on_path(program: &str) -> bool {
 }
 
 fn main() {
-
     println!("cargo:rustc-check-cfg=cfg(quench_openssl_provider)");
     println!("cargo:rerun-if-env-changed=DEP_OPENSSL_VERSION_NUMBER");
-    let provider = std::env::var("DEP_OPENSSL_VERSION_NUMBER").ok()
-        .and_then(|v| u64::from_str_radix(&v,16).ok()).is_some_and(|v|v>=0x3000_0000);
-    if provider { println!("cargo:rustc-cfg=quench_openssl_provider"); }
+    let provider = std::env::var("DEP_OPENSSL_VERSION_NUMBER")
+        .ok()
+        .and_then(|v| u64::from_str_radix(&v, 16).ok())
+        .is_some_and(|v| v >= 0x3000_0000);
+    if provider {
+        println!("cargo:rustc-cfg=quench_openssl_provider");
+    }
     embed_node_sources();
     configure_icu();
     configure_native_zlib();
     configure_native_brotli();
     configure_native_cares();
+    configure_native_nghttp2();
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={X86_64_LINUX_ORDER}");
     println!("cargo:rerun-if-changed={X86_64_LINUX_STATIC_ORDER}");
@@ -68,8 +72,12 @@ fn main() {
     let static_runtime = env::var("CARGO_CFG_TARGET_FEATURE")
         .is_ok_and(|features| features.split(',').any(|feature| feature == "crt-static"));
     if os == "linux" && !static_runtime {
-        let list = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap_or_default()).join(NODE_API_DYNAMIC_LIST);
-        println!("cargo:rustc-link-arg-bins=-Wl,--dynamic-list={}", list.display());
+        let list = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap_or_default())
+            .join(NODE_API_DYNAMIC_LIST);
+        println!(
+            "cargo:rustc-link-arg-bins=-Wl,--dynamic-list={}",
+            list.display()
+        );
     }
     // A static C runtime chooses its own executable kind.
     if os == "linux" && static_runtime {
@@ -100,6 +108,65 @@ fn main() {
         );
         println!("cargo:rustc-link-arg-bins=-Wl,--no-warn-symbol-ordering");
     }
+}
+
+/// Build the pinned Node nghttp2 implementation into Quench. Keeping this
+/// static and vendored makes HTTP/2 available on hosts without a system lib.
+fn configure_native_nghttp2() {
+    let root = Path::new(&env::var("CARGO_MANIFEST_DIR").expect("manifest directory"))
+        .join("../../tests/node/deps/nghttp2")
+        .canonicalize()
+        .expect("initialize pinned nghttp2 sources");
+    let lib = root.join("lib");
+    let includes = lib.join("includes");
+    let sources = [
+        "nghttp2_buf.c",
+        "nghttp2_callbacks.c",
+        "nghttp2_debug.c",
+        "nghttp2_extpri.c",
+        "nghttp2_frame.c",
+        "nghttp2_hd.c",
+        "nghttp2_hd_huffman.c",
+        "nghttp2_hd_huffman_data.c",
+        "nghttp2_helper.c",
+        "nghttp2_http.c",
+        "nghttp2_map.c",
+        "nghttp2_mem.c",
+        "nghttp2_alpn.c",
+        "nghttp2_option.c",
+        "nghttp2_outbound_item.c",
+        "nghttp2_pq.c",
+        "nghttp2_priority_spec.c",
+        "nghttp2_queue.c",
+        "nghttp2_ratelim.c",
+        "nghttp2_rcbuf.c",
+        "nghttp2_session.c",
+        "nghttp2_stream.c",
+        "nghttp2_submit.c",
+        "nghttp2_time.c",
+        "nghttp2_version.c",
+        "sfparse.c",
+    ];
+    let mut build = cc::Build::new();
+    build
+        .include(&includes)
+        .include(&lib)
+        .define("BUILDING_NGHTTP2", None)
+        .define("NGHTTP2_STATICLIB", None)
+        .define("HAVE_CONFIG_H", None)
+        .define("_U_", Some(""));
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        build.define("WIN32", None).define("_WINDOWS", None);
+    }
+    for source in sources {
+        let path = lib.join(source);
+        println!("cargo:rerun-if-changed={}", path.display());
+        build.file(path);
+    }
+    let shim = Path::new(&env::var("CARGO_MANIFEST_DIR").expect("manifest directory"))
+        .join("src/modules/http2_native.c");
+    println!("cargo:rerun-if-changed={}", shim.display());
+    build.file(shim).compile("quench_nghttp2");
 }
 
 /// The Node version denotes the compatibility target of the bundled library,
@@ -135,7 +202,10 @@ fn configure_node_compat_version(root: &std::path::Path) {
         definition("NODE_PATCH_VERSION")
     );
     // Node-API versions the runtime supports and assumes for modules that declare none.
-    for name in ["NODE_API_SUPPORTED_VERSION_MAX", "NODE_API_DEFAULT_MODULE_API_VERSION"] {
+    for name in [
+        "NODE_API_SUPPORTED_VERSION_MAX",
+        "NODE_API_DEFAULT_MODULE_API_VERSION",
+    ] {
         println!("cargo:rustc-env=QUENCH_{name}={}", definition(name));
     }
 }
@@ -155,7 +225,10 @@ fn embed_node_sources() {
     embed_empty_string_list_options(&root);
     embed_legacy_binding_metadata(&root);
     let mut pending = vec![root.join("lib")];
-    let mut files = BUNDLED_DEPENDENCIES.iter().map(|(_, path)| root.join(path)).collect::<Vec<_>>();
+    let mut files = BUNDLED_DEPENDENCIES
+        .iter()
+        .map(|(_, path)| root.join(path))
+        .collect::<Vec<_>>();
     while let Some(directory) = pending.pop() {
         println!("cargo:rerun-if-changed={}", directory.display());
         for entry in std::fs::read_dir(directory).expect("read pinned Node library") {
@@ -262,15 +335,25 @@ fn embed_node_protocol_constants(root: &Path) {
         println!("cargo:rerun-if-changed={}", path.display());
         let source = std::fs::read_to_string(path).expect("read Node protocol constants");
         let definition = format!("#define {name}(V)");
-        let mut lines = source.lines().skip_while(|line| !line.starts_with(&definition));
+        let mut lines = source
+            .lines()
+            .skip_while(|line| !line.starts_with(&definition));
         assert!(lines.next().is_some(), "Node protocol macro {name}");
         let mut entries = Vec::new();
         for line in lines {
             let line = line.trim();
             if let Some(entry) = line.strip_prefix("V(") {
-                entries.push(entry.split_once(')').expect("Node constant entry").0.to_owned());
+                entries.push(
+                    entry
+                        .split_once(')')
+                        .expect("Node constant entry")
+                        .0
+                        .to_owned(),
+                );
             }
-            if !line.ends_with('\\') { break; }
+            if !line.ends_with('\\') {
+                break;
+            }
         }
         assert!(!entries.is_empty(), "Node protocol constants {name}");
         entries
@@ -278,19 +361,29 @@ fn embed_node_protocol_constants(root: &Path) {
     let codes = entries(root, "node_exit_code.h", "EXIT_CODE_LIST");
     let statuses = entries(root, "compile_cache.h", "COMPILE_CACHE_STATUS");
     let cached_types = entries(root, "compile_cache.h", "CACHED_CODE_TYPES");
-    let codes = codes.iter().map(|code| {
-        let (name, value) = code.split_once(',').expect("Node exit code pair");
-        let value: i32 = value.trim().parse().expect("numeric Node exit code");
-        (name.trim(), value)
-    }).collect::<Vec<_>>();
+    let codes = codes
+        .iter()
+        .map(|code| {
+            let (name, value) = code.split_once(',').expect("Node exit code pair");
+            let value: i32 = value.trim().parse().expect("numeric Node exit code");
+            (name.trim(), value)
+        })
+        .collect::<Vec<_>>();
     let mut output = String::from("#[repr(i32)]\npub(crate) enum ExitCode {\n");
-    for (name, value) in &codes { output.push_str(&format!("    {name} = {value},\n")); }
+    for (name, value) in &codes {
+        output.push_str(&format!("    {name} = {value},\n"));
+    }
     output.push_str("}\npub(crate) const EXIT_CODES: &[(&str, i32)] = &[\n");
     for (name, _) in &codes {
-        output.push_str(&format!("    ({:?}, ExitCode::{name} as i32),\n", format!("k{name}")));
+        output.push_str(&format!(
+            "    ({:?}, ExitCode::{name} as i32),\n",
+            format!("k{name}")
+        ));
     }
     output.push_str("];\npub(crate) const COMPILE_CACHE_STATUS: &[&str] = &[\n");
-    for status in statuses { output.push_str(&format!("    {status:?},\n")); }
+    for status in statuses {
+        output.push_str(&format!("    {status:?},\n"));
+    }
     output.push_str("];\npub(crate) const CACHED_CODE_TYPES: &[(&str, u32)] = &[\n");
     for entry in cached_types {
         let (name, value) = entry.split_once(',').expect("Node cached code type pair");
@@ -298,7 +391,8 @@ fn embed_node_protocol_constants(root: &Path) {
         output.push_str(&format!("    ({:?}, {value}),\n", name.trim()));
     }
     output.push_str("];\n");
-    let path = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("node_protocol_constants.rs");
+    let path = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap())
+        .join("node_protocol_constants.rs");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(&output) {
         std::fs::write(path, output).expect("write Node protocol constants");
     }
@@ -314,13 +408,17 @@ fn embed_uv_error_constants(root: &Path) {
     let out = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let input = out.join("node_uv_error_constants.c");
     let header = std::fs::read_to_string(include.join("uv.h")).expect("read libuv error macro");
-    let mut lines = header.lines().skip_while(|line| !line.starts_with("#define UV_ERRNO_MAP(XX)"));
+    let mut lines = header
+        .lines()
+        .skip_while(|line| !line.starts_with("#define UV_ERRNO_MAP(XX)"));
     let mut definition = String::new();
     loop {
         let line = lines.next().expect("complete libuv error macro");
         definition.push_str(line);
         definition.push('\n');
-        if !line.ends_with('\\') { break; }
+        if !line.ends_with('\\') {
+            break;
+        }
     }
     // uv.h undefines UV__ERR after its enum; errno.h deliberately owns that
     // target-specific sign operation, so preprocess its macros directly.
@@ -338,19 +436,38 @@ QUENCH_UV_ERRORS_END
     } else {
         command.args(["-E", "-P", "-I"]).arg(&include);
     }
-    let result = command.arg(&input).output().expect("preprocess libuv protocol facts");
-    assert!(result.status.success(), "libuv protocol preprocessor: {}", String::from_utf8_lossy(&result.stderr));
+    let result = command
+        .arg(&input)
+        .output()
+        .expect("preprocess libuv protocol facts");
+    assert!(
+        result.status.success(),
+        "libuv protocol preprocessor: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
     let source = String::from_utf8(result.stdout).expect("UTF-8 libuv protocol output");
-    let rows = source.split_once("QUENCH_UV_ERRORS_BEGIN").expect("libuv protocol start").1
-        .split_once("QUENCH_UV_ERRORS_END").expect("libuv protocol end").0;
+    let rows = source
+        .split_once("QUENCH_UV_ERRORS_BEGIN")
+        .expect("libuv protocol start")
+        .1
+        .split_once("QUENCH_UV_ERRORS_END")
+        .expect("libuv protocol end")
+        .0;
     let mut output = String::from("pub(crate) const UV_ERRORS: &[(i32, &str, &str)] = &[\n");
     for row in rows.split("QUENCH_UV_ROW_END") {
         let row = row.trim();
-        if row.is_empty() { continue; }
-        let row = row.strip_prefix("QUENCH_UV_ROW_BEGIN").expect("libuv error row");
+        if row.is_empty() {
+            continue;
+        }
+        let row = row
+            .strip_prefix("QUENCH_UV_ROW_BEGIN")
+            .expect("libuv error row");
         let mut fields = row.splitn(3, ',');
         let number = fields.next().expect("libuv numeric code");
-        let digits = number.chars().filter(|c| !c.is_whitespace() && *c != '(' && *c != ')').collect::<String>();
+        let digits = number
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '(' && *c != ')')
+            .collect::<String>();
         let number: i32 = digits.parse().expect("literal target libuv code");
         let name = fields.next().expect("libuv error name").trim();
         let message = fields.next().expect("libuv error message").trim();
@@ -372,24 +489,48 @@ fn embed_empty_string_list_options(root: &Path) {
     println!("cargo:rerun-if-changed={}", source_path.display());
     let header = std::fs::read_to_string(header_path).expect("read Node option declarations");
     let source = std::fs::read_to_string(source_path).expect("read Node option registrations");
-    let fields = header.lines().filter_map(|line| {
-        let field = line.trim().strip_prefix("std::vector<std::string> ")?.strip_suffix(';')?.trim();
-        (!field.is_empty() && field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')).then_some(field)
-    }).collect::<BTreeSet<_>>();
+    let fields = header
+        .lines()
+        .filter_map(|line| {
+            let field = line
+                .trim()
+                .strip_prefix("std::vector<std::string> ")?
+                .strip_suffix(';')?
+                .trim();
+            (!field.is_empty() && field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+                .then_some(field)
+        })
+        .collect::<BTreeSet<_>>();
     let mut names = BTreeSet::new();
     for registration in source.split("AddOption(").skip(1) {
-        let Some((registration, _)) = registration.split_once(");") else { continue; };
-        let Some(rest) = registration.trim_start().strip_prefix('"') else { continue; };
-        let Some((name, _)) = rest.split_once('"') else { continue; };
-        let Some((_, member)) = registration.split_once("&EnvironmentOptions::") else { continue; };
-        let field = member.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect::<String>();
-        if fields.contains(field.as_str()) { names.insert(name); }
+        let Some((registration, _)) = registration.split_once(");") else {
+            continue;
+        };
+        let Some(rest) = registration.trim_start().strip_prefix('"') else {
+            continue;
+        };
+        let Some((name, _)) = rest.split_once('"') else {
+            continue;
+        };
+        let Some((_, member)) = registration.split_once("&EnvironmentOptions::") else {
+            continue;
+        };
+        let field = member
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect::<String>();
+        if fields.contains(field.as_str()) {
+            names.insert(name);
+        }
     }
     assert!(!names.is_empty(), "SDK empty string-list option inventory");
     let mut generated = String::from("const EMPTY_STRING_LIST_OPTIONS: &[&str] = &[\n");
-    for name in names { generated.push_str(&format!("    {name:?},\n")); }
+    for name in names {
+        generated.push_str(&format!("    {name:?},\n"));
+    }
     generated.push_str("];\n");
-    let path = Path::new(&env::var("OUT_DIR").expect("build output")).join("node_option_defaults.rs");
+    let path =
+        Path::new(&env::var("OUT_DIR").expect("build output")).join("node_option_defaults.rs");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(&generated) {
         std::fs::write(path, generated).expect("write SDK option inventory");
     }
@@ -406,29 +547,64 @@ fn embed_legacy_binding_metadata(root: &Path) {
         ("legacyWrapperList", "LEGACY_WRAPPER_BINDINGS"),
     ] {
         let start = format!("const {name} = new SafeSet([");
-        let body = source.split_once(&start).expect("SDK binding metadata set").1
-            .split_once("]);").expect("SDK binding metadata end").0;
+        let body = source
+            .split_once(&start)
+            .expect("SDK binding metadata set")
+            .1
+            .split_once("]);")
+            .expect("SDK binding metadata end")
+            .0;
         output.push_str(&format!("const {constant}: &[&str] = &[\n"));
-        for line in body.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with("//")) {
-            let value = line.strip_prefix('\'').and_then(|line| line.split_once('\'')).expect("SDK binding name literal").0;
-            assert!(!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'));
+        for line in body
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with("//"))
+        {
+            let value = line
+                .strip_prefix('\'')
+                .and_then(|line| line.split_once('\''))
+                .expect("SDK binding name literal")
+                .0;
+            assert!(
+                !value.is_empty()
+                    && value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            );
             output.push_str(&format!("    {value:?},\n"));
         }
         output.push_str("];\n");
     }
-    let path = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("node_legacy_bindings.rs");
+    let path =
+        std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("node_legacy_bindings.rs");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(&output) {
         std::fs::write(path, output).expect("write SDK legacy binding metadata");
     }
 }
 
 #[allow(dead_code)]
-mod c_ares_abi { include!("src/modules/cares_constants.rs"); }
+mod c_ares_abi {
+    include!("src/modules/cares_constants.rs");
+}
 fn configure_native_cares() {
     println!("cargo:rustc-check-cfg=cfg(quench_node_cares)");
-    if std::env::var("CARGO_CFG_TARGET_FAMILY").as_deref() != Ok("unix") { return; }
-    let Ok(library) = pkg_config::Config::new().cargo_metadata(false).statik(true).probe("quench-node-cares") else { return; };
-    assert_eq!(library.version, c_ares_abi::CARES_VERSION, "c-ares ABI must match configured original SDK");
+    if std::env::var("CARGO_CFG_TARGET_FAMILY").as_deref() != Ok("unix") {
+        return;
+    }
+    let Ok(library) = pkg_config::Config::new()
+        .cargo_metadata(false)
+        .statik(true)
+        .probe("quench-node-cares")
+    else {
+        return;
+    };
+    assert_eq!(
+        library.version,
+        c_ares_abi::CARES_VERSION,
+        "c-ares ABI must match configured original SDK"
+    );
     println!("cargo:rustc-cfg=quench_node_cares");
-    for directory in library.link_paths { println!("cargo:rustc-link-search=native={}", directory.display()); }
+    for directory in library.link_paths {
+        println!("cargo:rustc-link-search=native={}", directory.display());
+    }
 }

@@ -161,7 +161,10 @@ impl Token {
     #[inline]
     pub(super) fn set_end(&mut self, end: u32) {
         let start = self.start();
-        debug_assert!(end >= start, "Token end ({end}) cannot be less than start ({start})");
+        debug_assert!(
+            end >= start,
+            "Token end ({end}) cannot be less than start ({start})"
+        );
 
         /*
         // Original version. Perf regressed in Rust 1.95.0.
@@ -203,8 +206,11 @@ impl Token {
         self.0 |= u128::from(kind as u8) << KIND_SHIFT;
         */
 
-        const OFFSET: usize =
-            if cfg!(target_endian = "little") { KIND_SHIFT / 8 } else { 15 - (KIND_SHIFT / 8) };
+        const OFFSET: usize = if cfg!(target_endian = "little") {
+            KIND_SHIFT / 8
+        } else {
+            15 - (KIND_SHIFT / 8)
+        };
         // SAFETY: `Kind` is `#[repr(u8)]`, so writing one byte at `OFFSET` overwrites only the `kind` byte
         // without touching adjacent fields. These bits always represent a valid `Kind`.
         // `Token` is borrowed mutably, so the write is unaliased.
@@ -334,7 +340,11 @@ impl Token {
     #[inline(always)] // So `shift` is statically known
     unsafe fn read_bool(&self, shift: usize) -> bool {
         // Byte offset depends on endianness of the system
-        let offset = if cfg!(target_endian = "little") { shift / 8 } else { 15 - (shift / 8) };
+        let offset = if cfg!(target_endian = "little") {
+            shift / 8
+        } else {
+            15 - (shift / 8)
+        };
         // SAFETY: Caller guarantees `shift` points to valid `bool`.
         // This method borrows `Token`, so valid to read field via a reference - can't be aliased.
         unsafe {
@@ -360,7 +370,11 @@ impl Token {
     #[inline(always)] // So `shift` is statically known
     unsafe fn write_bool(&mut self, shift: usize, value: bool) {
         // Byte offset depends on endianness of the system
-        let offset = if cfg!(target_endian = "little") { shift / 8 } else { 15 - (shift / 8) };
+        let offset = if cfg!(target_endian = "little") {
+            shift / 8
+        } else {
+            15 - (shift / 8)
+        };
         // SAFETY: Caller guarantees `shift` points to a valid `bool` field.
         // `Token` is borrowed mutably, so the write is unaliased.
         // `as_mut` produces a `&mut bool` with `noalias` metadata for LLVM.
@@ -380,7 +394,11 @@ impl Token {
     #[inline(always)] // So `shift` is statically known
     unsafe fn write_u32(&mut self, shift: usize, value: u32) {
         // `Token` is 16 bytes = 4 `u32`s wide. Offset in `u32` units depends on endianness.
-        let offset = if cfg!(target_endian = "little") { shift / 32 } else { 3 - (shift / 32) };
+        let offset = if cfg!(target_endian = "little") {
+            shift / 32
+        } else {
+            3 - (shift / 32)
+        };
         // SAFETY: Caller guarantees `shift` points to a valid `u32` field (`start` or `end`).
         // `Token` is `#[repr(transparent)]` over `u128`, so casting `NonNull<Token>` to `NonNull<u32>`
         // is going from stricter to looser alignment. `Token` is borrowed mutably, so the

@@ -4,7 +4,6 @@
 //! data and host state that those adapters consume.
 
 pub(crate) mod assert_shared_vm;
-pub(crate) mod napi;
 pub(crate) mod async_hook_registry_shared_vm;
 pub(crate) mod async_hooks_shared_vm;
 pub(crate) mod async_hooks_state;
@@ -23,7 +22,8 @@ pub(crate) mod buffer_shared_vm;
 pub(crate) mod buffer_string_shared_vm;
 pub(crate) mod buffer_swap_shared_vm;
 pub(crate) mod cares_binding;
-#[cfg(quench_node_cares)] pub(crate) mod cares_channel_shared_vm;
+#[cfg(quench_node_cares)]
+pub(crate) mod cares_channel_shared_vm;
 pub(crate) mod child_process_env_shared_vm;
 pub(crate) mod child_process_exec_shared_vm;
 pub(crate) mod child_process_fork_shared_vm;
@@ -74,13 +74,19 @@ pub(crate) mod fs_stat_watch_shared_vm;
 pub(crate) mod fs_state;
 pub(crate) mod fs_watch_shared_vm;
 pub(crate) mod fs_write_shared_vm;
+pub(crate) mod http2_native;
+pub(crate) mod http2_shared_vm;
+pub(crate) mod http_common_shared_vm;
 pub(crate) mod http_protocol;
 pub(crate) mod http_shared_vm;
 pub(crate) mod http_status_shared_vm;
+pub(crate) mod https_shared_vm;
 #[cfg(quench_icu)]
 pub(crate) mod icu_binding_shared_vm;
 pub(crate) mod memory_facts;
+pub(crate) mod messaging_binding_shared_vm;
 pub(crate) mod module_shared_vm;
+pub(crate) mod napi;
 pub(crate) mod native_task_pool;
 pub(crate) mod net_config;
 pub(crate) mod net_connect_error;
@@ -101,21 +107,21 @@ pub(crate) mod os_shared_vm;
 pub(crate) mod path_algorithms;
 pub(crate) mod path_shared_vm;
 pub(crate) mod perf_hooks;
-pub(crate) mod performance_binding_shared_vm;
 pub(crate) mod perf_timeline_query;
+pub(crate) mod performance_binding_shared_vm;
 pub(crate) mod process_binding_shared_vm;
+mod process_exception_route;
+pub(crate) mod process_fatal_exception_route;
 pub(crate) mod process_memory_shared_vm;
 #[cfg(target_os = "linux")]
 pub(crate) mod process_metrics_shared_vm;
 pub(crate) mod process_shared_vm;
-mod process_exception_route;
-pub(crate) mod process_fatal_exception_route;
 pub(crate) mod process_signals_state;
 pub(crate) mod process_state;
 pub(crate) mod process_stdin_shared_vm;
+pub(crate) mod promise_hooks_shared_vm;
 pub(crate) mod querystring_data;
 pub(crate) mod querystring_shared_vm;
-pub(crate) mod readline_shared_vm;
 pub(crate) mod shared_event_loop;
 pub(crate) mod string_decoder_codec;
 pub(crate) mod string_decoder_shared_vm;
@@ -192,24 +198,26 @@ pub(crate) mod util_aborted_source_shared_vm;
 pub(crate) mod crypto_digest_cache;
 
 #[cfg(quench_openssl_provider)]
-pub(crate) mod crypto_hash_shared_vm;
+pub(crate) mod crypto_digest_state;
 #[cfg(quench_openssl_provider)]
-pub(crate) mod crypto_hash_source_shared_vm;
+pub(crate) mod crypto_hash_shared_vm;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_hash_source;
 #[cfg(quench_openssl_provider)]
-pub(crate) mod crypto_digest_state;
+pub(crate) mod crypto_hash_source_shared_vm;
 
 pub(crate) mod abort_dependencies_shared_vm;
 
 pub(crate) mod abort_timeout_shared_vm;
 
-pub(crate) mod crypto_secret_material;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_argon2;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_hkdf;
+pub(crate) mod crypto_secret_material;
 
-pub(crate) mod udp_transport;
 pub(crate) mod udp_binding;
+pub(crate) mod udp_transport;
 
 pub(crate) mod fd_handle_type;
 pub(crate) mod native_number;
@@ -221,14 +229,13 @@ mod crypto_kdf;
 #[cfg(quench_openssl_provider)]
 mod crypto_pbkdf2;
 
-pub(crate) mod worker_threads_shared_vm;
-pub(crate) mod worker_owned_clone;
 pub(crate) mod worker_error_packet;
+pub(crate) mod worker_owned_clone;
+pub(crate) mod worker_threads_shared_vm;
 
-pub(crate) mod unix_rights;
 pub(crate) mod ipc_pipe;
 pub(crate) mod pipe_binding;
-
+pub(crate) mod unix_rights;
 
 pub(crate) mod crypto_constants;
 pub(crate) mod crypto_key_layout;
@@ -244,14 +251,14 @@ pub(crate) mod crypto_asymmetric_operations;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_asymmetric_shared_vm;
 #[cfg(quench_openssl_provider)]
-pub(crate) mod crypto_keypair_request;
-#[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_keypair_config;
 #[cfg(quench_openssl_provider)]
-pub(crate) mod crypto_signature_state;
+pub(crate) mod crypto_keypair_request;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_rsa_shared_vm;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_signature_request;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_signature_shared_vm;
 #[cfg(quench_openssl_provider)]
-pub(crate) mod crypto_rsa_shared_vm;
+pub(crate) mod crypto_signature_state;

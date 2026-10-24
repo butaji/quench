@@ -56,6 +56,9 @@ impl Output {
     pub(crate) fn inherited(&self) -> bool {
         matches!(self.usage, Usage::Inherited)
     }
+    pub(crate) fn is_closed(&self) -> bool {
+        matches!(self.phase, Phase::Closed)
+    }
     pub(crate) fn is_referenced(&self) -> bool {
         match &self.phase {
             Phase::Closed => false,
@@ -105,7 +108,7 @@ impl Output {
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    return Progress::Idle
+                    return Progress::Idle;
                 }
                 Err(_) => {
                     self.close();

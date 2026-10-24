@@ -130,21 +130,28 @@ impl<H: Host> Vm<H> {
                 if matches!(self.heap.get(this), Some(Cell::String(_))) {
                     Ok(this)
                 } else {
-                    self.boxed_primitive_value(this).filter(|value| matches!(self.heap.get(*value), Some(Cell::String(_)))).ok_or_else(|| {
-                        self.type_error(p, "String method called on incompatible receiver".into())
-                    })
+                    self.boxed_primitive_value(this)
+                        .filter(|value| matches!(self.heap.get(*value), Some(Cell::String(_))))
+                        .ok_or_else(|| {
+                            self.type_error(
+                                p,
+                                "String method called on incompatible receiver".into(),
+                            )
+                        })
                 }
             }
             Native::NumberValueOf => {
                 if this.as_number().is_some() {
                     Ok(this)
                 } else {
-                    self.boxed_primitive_value(this).filter(|value| value.as_number().is_some()).ok_or_else(|| {
-                        self.type_error(
-                            p,
-                            "Number.prototype.valueOf called on incompatible receiver".into(),
-                        )
-                    })
+                    self.boxed_primitive_value(this)
+                        .filter(|value| value.as_number().is_some())
+                        .ok_or_else(|| {
+                            self.type_error(
+                                p,
+                                "Number.prototype.valueOf called on incompatible receiver".into(),
+                            )
+                        })
                 }
             }
             Native::BooleanValueOf => self.boolean_prototype_value(this).ok_or_else(|| {

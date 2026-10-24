@@ -17,6 +17,7 @@ pub(crate) const METHODS: &[&str] = &[
     "setSessionIdContext",
     "setSessionTimeout",
     "setTicketKeys",
+    "getTicketKeys",
     "setClientCertEngine",
     "setEngineKey",
     "setCertificateCompression",
@@ -52,7 +53,9 @@ fn absent(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
         .is_some_and(|value| value.is_null() || value.is_undefined())
 }
 pub(crate) fn configure(
-    context: &mut NativeContext<'_, NodeHost>, outer: RootId, options: RootId,
+    context: &mut NativeContext<'_, NodeHost>,
+    outer: RootId,
+    options: RootId,
 ) -> Result<(), RootedError> {
     let api = super::facade::install(context)?;
     let policy = get(context, api, "standardConfigure")?;
@@ -204,6 +207,129 @@ pub(crate) fn method(
                 SSL_CTX_set_timeout(configuration.as_ptr(), timeout);
             }
         }
+        "setTicketKeys" => {
+            let Some(bytes) = context.view_bytes_rooted(value).map(|bytes| bytes.to_vec()) else {
+                return Err(super::super::util_shared_vm::argument_type_error(
+                    context, value, "keys", "Buffer",
+                )?);
+            };
+            if bytes.len() != 48 {
+                // Node validates this with an assertion after accepting any
+                // ArrayBuffer view (Buffer, TypedArray, or DataView).
+                let error = context.error_rooted("Session ticket keys must be a 48-byte buffer")?;
+                return Err(context.throw(error));
+            }
+            // Node exposes ticket keys as 16-byte name + 16-byte HMAC key +
+            // 16-byte AES key. OpenSSL 3.5 expanded both internal keys to 32
+            // bytes, so its SSL_CTX control expects 80 bytes. Zero-extend the
+            // Node key material while preserving Node's 48-byte public value.
+            const SSL_CTRL_SET_TLSEXT_TICKET_KEYS: i32 = 59;
+            const SSL_CTRL_GET_TLSEXT_TICKET_KEYS: i32 = 58;
+            let key_len = {
+                let mut state = shared.borrow_mut();
+                let configuration = state.tls_contexts.configuration(index)?;
+                unsafe {
+                    openssl_sys::SSL_CTX_ctrl(
+                        configuration.as_ptr(),
+                        SSL_CTRL_GET_TLSEXT_TICKET_KEYS,
+                        0,
+                        std::ptr::null_mut(),
+                    ) as usize
+                }
+            };
+            if !matches!(key_len, 48 | 80) {
+                return Err(RootedError::host(
+                    "unsupported OpenSSL ticket key layout",
+                ));
+            }
+            let mut openssl_keys = vec![0u8; key_len];
+            if key_len == 48 {
+                openssl_keys.copy_from_slice(&bytes);
+            } else {
+                openssl_keys[..16].copy_from_slice(&bytes[..16]);
+                openssl_keys[16..32].copy_from_slice(&bytes[16..32]);
+                openssl_keys[48..64].copy_from_slice(&bytes[32..48]);
+            }
+            let result = {
+                let mut state = shared.borrow_mut();
+                let configuration = state.tls_contexts.configuration(index)?;
+                unsafe {
+                    openssl_sys::SSL_CTX_ctrl(
+                        configuration.as_ptr(),
+                        SSL_CTRL_SET_TLSEXT_TICKET_KEYS,
+                        openssl_keys.len() as _,
+                        openssl_keys.as_mut_ptr().cast(),
+                    )
+                }
+            };
+            if result != 1 {
+                return Err(super::parser_error(
+                    context,
+                    openssl::error::ErrorStack::get(),
+                ));
+            }
+        }
+        "getTicketKeys" => {
+            // OpenSSL 3.5 returns an 80-byte layout (16-byte name, 32-byte
+            // HMAC key, 32-byte AES key), while Node's API is 48 bytes. Drop
+            // the zero-extended tails when projecting its public key format.
+            const SSL_CTRL_GET_TLSEXT_TICKET_KEYS: i32 = 58;
+            let key_len = {
+                let mut state = shared.borrow_mut();
+                let configuration = state.tls_contexts.configuration(index)?;
+                unsafe {
+                    openssl_sys::SSL_CTX_ctrl(
+                        configuration.as_ptr(),
+                        SSL_CTRL_GET_TLSEXT_TICKET_KEYS,
+                        0,
+                        std::ptr::null_mut(),
+                    ) as usize
+                }
+            };
+            if !matches!(key_len, 48 | 80) {
+                return Err(RootedError::host(
+                    "unsupported OpenSSL ticket key layout",
+                ));
+            }
+            let mut openssl_keys = vec![0u8; key_len];
+            let result = {
+                let mut state = shared.borrow_mut();
+                let configuration = state.tls_contexts.configuration(index)?;
+                unsafe {
+                    openssl_sys::SSL_CTX_ctrl(
+                        configuration.as_ptr(),
+                        SSL_CTRL_GET_TLSEXT_TICKET_KEYS,
+                        openssl_keys.len() as _,
+                        openssl_keys.as_mut_ptr().cast(),
+                    )
+                }
+            };
+            if result != 1 {
+                return Err(super::parser_error(
+                    context,
+                    openssl::error::ErrorStack::get(),
+                ));
+            }
+            let public_keys: Vec<u8> = if key_len == 48 {
+                openssl_keys
+            } else {
+                openssl_keys[..16]
+                    .iter()
+                    .chain(&openssl_keys[16..32])
+                    .chain(&openssl_keys[48..64])
+                    .copied()
+                    .collect()
+            };
+            let values: Vec<_> = public_keys
+                .iter()
+                .map(|byte| context.number(*byte as f64))
+                .collect();
+            let array = context.array_rooted(&values)?;
+            let global = context.global_root()?;
+            let buffer = get(context, global, "Buffer")?;
+            let from = get(context, buffer, "from")?;
+            return context.call_rooted(from, buffer, &[array]);
+        }
         "setDHParam" => {
             if context
                 .rooted_value(value)
@@ -307,15 +433,32 @@ pub(crate) fn method(
             }
         }
         "addRootCerts" => {
-            let roots = bundled_roots()
-                .map_err(|error| super::super::crypto_error_shared_vm::decorated(context, error))?;
+            let defaults = shared.borrow().tls_contexts.default_ca_certificates.clone();
+            let roots: Vec<openssl::x509::X509> = if let Some(defaults) = defaults {
+                if defaults.is_empty() {
+                    Vec::new()
+                } else {
+                    let pem = defaults.concat();
+                    openssl::x509::X509::stack_from_pem(pem.as_bytes()).map_err(|error| {
+                        super::super::crypto_error_shared_vm::decorated(context, error)
+                    })?
+                }
+            } else {
+                bundled_roots()
+                    .map_err(|error| {
+                        super::super::crypto_error_shared_vm::decorated(context, error)
+                    })?
+                    .iter()
+                    .map(|root| root.to_owned())
+                    .collect()
+            };
             for root in roots {
                 let result = shared
                     .borrow_mut()
                     .tls_contexts
                     .configuration(index)?
                     .cert_store_mut()
-                    .add_cert(root.to_owned());
+                    .add_cert(root);
                 result.map_err(|error| {
                     super::super::crypto_error_shared_vm::decorated(context, error)
                 })?;

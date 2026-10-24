@@ -477,8 +477,12 @@ pub(crate) fn source_positions(
     };
     let line = context.number(f64::from(position.line_number));
     let column = context.number(f64::from(position.column_number.saturating_sub(1)));
-    for (name, value) in [("sourceLine", source_line), ("scriptResourceName", resource),
-        ("lineNumber", line), ("startColumn", column)] {
+    for (name, value) in [
+        ("sourceLine", source_line),
+        ("scriptResourceName", resource),
+        ("lineNumber", line),
+        ("startColumn", column),
+    ] {
         let key = context.string_rooted(name);
         context.define_data_property_rooted(result, key, value, true, true, true)?;
     }
@@ -486,15 +490,32 @@ pub(crate) fn source_positions(
 }
 
 pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:errors", build_binding)
+    crate::host::shared_vm::commonjs::cached_native_binding(
+        context,
+        "\0binding:errors",
+        build_binding,
+    )
 }
 
 fn build_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     let function = context.host_function_named(
-        crate::host::shared_vm::operation("errorSourcePositions"), "getErrorSourcePositions",
+        crate::host::shared_vm::operation("errorSourcePositions"),
+        "getErrorSourcePositions",
     )?;
     let key = context.string_rooted("getErrorSourcePositions");
+    context.define_data_property_rooted(binding, key, function, true, true, true)?;
+    let function = context.host_function_named(
+        crate::host::shared_vm::operation("errorSetSourceMapsEnabled"),
+        "setSourceMapsEnabled",
+    )?;
+    let key = context.string_rooted("setSourceMapsEnabled");
+    context.define_data_property_rooted(binding, key, function, true, true, true)?;
+    let function = context.host_function_named(
+        crate::host::shared_vm::operation("errorTriggerUncaughtException"),
+        "triggerUncaughtException",
+    )?;
+    let key = context.string_rooted("triggerUncaughtException");
     context.define_data_property_rooted(binding, key, function, true, true, true)?;
     let codes = context.object_rooted()?;
     for &(name, code) in super::node_protocol_constants::EXIT_CODES {
@@ -505,4 +526,27 @@ fn build_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, Ro
     let key = context.string_rooted("exitCodes");
     context.define_data_property_rooted(binding, key, codes, false, true, true)?;
     Ok(binding)
+}
+
+/// Node's source-map cache calls this internal engine hook after validating
+/// the boolean option. Quench has no V8 source-map toggle, so the native hook
+/// is intentionally inert while the JavaScript stack formatter remains in
+/// control of stack presentation.
+pub(crate) fn set_source_maps_enabled(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    Ok(context.undefined())
+}
+
+/// Node's internal errors binding routes Promise callback failures through the
+/// same fatal-exception policy used by top-level unhandled Promise rejections.
+pub(crate) fn trigger_uncaught_exception(
+    context: &mut NativeContext<'_, NodeHost>,
+    this: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    super::process_fatal_exception_route::dispatch(context, this, args)?;
+    Ok(context.undefined())
 }

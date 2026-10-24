@@ -26,14 +26,21 @@ pub(crate) fn project(source: &str, exports: &[&str]) -> Result<String, String> 
 
 /// Supplied names are real native capabilities or the original SDK captures.
 /// Fail closed if a required declaration would redeclare a supplied binding.
-pub(crate) fn project_with_bindings(source: &str, exports: &[&str], supplied: &[&str]) -> Result<String, String> {
+pub(crate) fn project_with_bindings(
+    source: &str,
+    exports: &[&str],
+    supplied: &[&str],
+) -> Result<String, String> {
     if exports.iter().any(|name| supplied.contains(name)) {
         return Err("SDK policy export cannot be replaced by a supplied binding".to_owned());
     }
     let allocator = oxc_allocator::Allocator::default();
     let parsed = oxc_parser::Parser::new(&allocator, source, oxc_span::SourceType::cjs()).parse();
     if !parsed.diagnostics.is_empty() {
-        return Err(format!("SDK policy syntax errors: {:?}", parsed.diagnostics));
+        return Err(format!(
+            "SDK policy syntax errors: {:?}",
+            parsed.diagnostics
+        ));
     }
     let mut owners = BTreeMap::<String, usize>::new();
     let mut references = Vec::new();
@@ -81,11 +88,16 @@ pub(crate) fn project_with_bindings(source: &str, exports: &[&str], supplied: &[
         if !selected.insert(index) {
             continue;
         }
-        if bindings[index].iter().any(|name| supplied.contains(&name.as_str())) {
+        if bindings[index]
+            .iter()
+            .any(|name| supplied.contains(&name.as_str()))
+        {
             return Err("SDK policy declaration mixes supplied and required bindings".to_owned());
         }
         for name in &references[index] {
-            if supplied.contains(&name.as_str()) { continue; }
+            if supplied.contains(&name.as_str()) {
+                continue;
+            }
             if let Some(owner) = owners.get(name) {
                 pending.push(*owner);
             }

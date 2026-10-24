@@ -8,7 +8,7 @@ use openssl::{
     error::ErrorStack,
     pkey::{PKey, Private},
 };
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::ffi::{c_char, c_int, c_void, CString};
 pub struct Pss<'a> {
     pub digest: Option<&'a Digest>,
     pub mgf1_digest: Option<&'a Digest>,

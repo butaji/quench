@@ -565,9 +565,9 @@ impl<H: Host> Vm<H> {
 
     /// `promise.then(resolve, reject)` for `target`'s fresh resolving functions, as a
     /// thenable job performs it with the intrinsic `then`. The species lookup runs exactly
-    /// as `then` would; when it yields %Promise%, the derived promise and both resolving
-    /// functions are unobservable, so `promise`'s settlement resolves `target` directly
-    /// through a pass-through reaction (one job later, as the resolving function would).
+    /// as `then` would. Without lifecycle observers the derived promise and both resolving
+    /// functions are unobservable, so `promise`'s settlement can resolve `target` directly
+    /// through a pass-through reaction.
     fn promise_then_resolving(
         &mut self,
         p: &ResidualProgram,
@@ -589,7 +589,32 @@ impl<H: Host> Vm<H> {
             });
         match next {
             Ok(None) => {
-                self.perform_promise_then(p, promise, Value::UNDEFINED, Value::UNDEFINED, target);
+                if H::OBSERVE_PROMISE_LIFECYCLE {
+                    // Keep the otherwise-unobservable Promise returned by
+                    // `then` when the host observes Promise resources. Node's
+                    // async_hooks exposes its init, job boundaries, and
+                    // settlement even though the resolving callbacks return
+                    // no value to JavaScript.
+                    let parent = self
+                        .realm
+                        .promise
+                        .records
+                        .get(&promise)
+                        .and_then(|record| record.host_context);
+                    let next = self.with_call_roots([promise, target], |vm| {
+                        vm.promise_object_with_parent(parent)
+                    })?;
+                    let (resolve, reject) = self.promise_resolving_functions(target);
+                    self.perform_promise_then(p, promise, resolve, reject, next);
+                } else {
+                    self.perform_promise_then(
+                        p,
+                        promise,
+                        Value::UNDEFINED,
+                        Value::UNDEFINED,
+                        target,
+                    );
+                }
             }
             Ok(Some(next)) => {
                 let (resolve, reject) = self.promise_resolving_functions(target);
@@ -618,9 +643,8 @@ impl<H: Host> Vm<H> {
         let previous_context = thenable
             .execution_context
             .and_then(|context| self.host.enter_job_context(context));
-        let outcome = self.with_call_roots(
-            [thenable.promise, thenable.thenable, thenable.then],
-            |vm| {
+        let outcome =
+            self.with_call_roots([thenable.promise, thenable.thenable, thenable.then], |vm| {
                 vm.promise_job_boundary(thenable.execution_context, true)?;
                 if vm.is_intrinsic_promise_then(thenable.then)
                     && vm.realm.promise.records.contains_key(&thenable.thenable)
@@ -640,11 +664,11 @@ impl<H: Host> Vm<H> {
                     vm.call_value(p, reject, Value::UNDEFINED, &[reason])?;
                 }
                 Ok(Value::UNDEFINED)
-            },
-        );
-        let after = self.with_call_roots([thenable.promise, thenable.thenable, thenable.then], |vm| {
-            vm.promise_job_boundary(thenable.execution_context, false)
-        });
+            });
+        let after = self
+            .with_call_roots([thenable.promise, thenable.thenable, thenable.then], |vm| {
+                vm.promise_job_boundary(thenable.execution_context, false)
+            });
         if thenable.execution_context.is_some() {
             self.host.restore_job_context(previous_context);
         }

@@ -239,7 +239,11 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
         throw codedTypeError('The "this" argument must be an instance of Buffer or Uint8Array', "ERR_INVALID_ARG_TYPE");
       }
       if (!ArrayBuffer.isView(target) || target instanceof DataView) {
-        throw codedTypeError('The "target" argument must be an instance of Buffer or Uint8Array', "ERR_INVALID_ARG_TYPE");
+        throw codedTypeError(
+          'The "target" argument must be an instance of Buffer or Uint8Array.' +
+            invalidArgumentDescription(target),
+          "ERR_INVALID_ARG_TYPE",
+        );
       }
       targetStart = Math.floor(Number(targetStart));
       sourceStart = Math.floor(Number(sourceStart));
@@ -472,8 +476,12 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
   }
   const legacyWrite = (encoding) => function(value, offset, length) {
     offset = offset === undefined ? 0 : offset;
+    // Legacy write aliases perform the same numeric coercion as Buffer.write.
+    // Coerce explicitly so objects with valueOf are observed exactly once.
+    offset = Number(offset);
     length = length === undefined ? this.length - offset : length;
-    if (typeof offset !== "number" || typeof length !== "number" ||
+    length = Number(length);
+    if (!Number.isInteger(offset) || !Number.isInteger(length) ||
         offset < 0 || length < 0 || offset + length > this.length) {
       const error = new RangeError("Attempt to access memory outside buffer bounds");
       error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
@@ -482,22 +490,51 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     return this.write(value, offset, length, encoding);
   };
   Buffer.prototype.asciiWrite = legacyWrite("ascii");
+  Buffer.prototype.base64Write = legacyWrite("base64");
+  Buffer.prototype.base64urlWrite = legacyWrite("base64url");
+  Buffer.prototype.hexWrite = legacyWrite("hex");
   Buffer.prototype.latin1Write = legacyWrite("latin1");
+  Buffer.prototype.ucs2Write = legacyWrite("ucs2");
   Buffer.prototype.utf8Write = legacyWrite("utf8");
+  Buffer.prototype.subarray = function subarray(start, end) {
+    const result = Uint8Array.prototype.subarray.call(this, start, end);
+    Object.setPrototypeOf(result, Buffer.prototype);
+    return result;
+  };
 
   // Node's alloc is an ordinary constructible function, including its arity.
   Buffer.alloc = function alloc(size, fill, encoding) {
     if (typeof size !== "number") {
       throw codedTypeError('The "size" argument must be of type number', "ERR_INVALID_ARG_TYPE");
     }
-    if (!Number.isFinite(size) || size < 0 || size > 0x7fffffff) {
+    if (!Number.isFinite(size) || size < 0 || size > maxBufferLength) {
       const error = new RangeError("The value of \"size\" is out of range");
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
-    const result = new Buffer(Math.trunc(size));
+    let result;
+    try {
+      result = new Buffer(Math.trunc(size));
+    } catch {
+      const error = new RangeError("Array buffer allocation failed");
+      error.code = "ERR_MEMORY_ALLOCATION_FAILED";
+      throw error;
+    }
     if (typeof fill === "string") {
+      if (encoding !== undefined && typeof encoding !== "string") {
+        throw codedTypeError(
+          'The "encoding" argument must be of type string.' +
+            invalidArgumentDescription(encoding),
+          "ERR_INVALID_ARG_TYPE",
+        );
+      }
       const pattern = Buffer.from(fill, encoding);
+      if (pattern.length === 0 && fill.length > 0 &&
+          canonicalEncoding(String(encoding || "utf8")) === "hex") {
+        const error = new TypeError(`The argument 'value' is invalid. Received '${fill}'`);
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
       if (pattern.length === 1) {
         Uint8Array.prototype.fill.call(result, pattern[0]);
       } else if (pattern.length > 1) {
@@ -557,6 +594,22 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let buffer = get(context, constructor, "Buffer")?;
     let buffer = super::buffer_constructor_shared_vm::install(context, buffer)?;
     super::buffer_compare_shared_vm::install(context, buffer)?;
+    let string_length = context.evaluate_script_rooted(
+        "(Buffer) => { Object.defineProperty(Buffer, 'stringLength', { configurable: true, writable: true, value: function stringLength(input, encoding = 'utf8') {\n\
+          const invalid = (name, message) => { const error = new TypeError(message); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; };\n\
+          if (encoding !== undefined && typeof encoding !== 'string') invalid('encoding', 'The \\\"encoding\\\" argument must be of type string.');\n\
+          const isArrayBuffer = input instanceof ArrayBuffer || (typeof SharedArrayBuffer === 'function' && input instanceof SharedArrayBuffer);\n\
+          const isTypedArray = ArrayBuffer.isView(input) && !(input instanceof DataView);\n\
+          if (!(Buffer.isBuffer(input) || isArrayBuffer || isTypedArray)) invalid('input', 'The \\\"input\\\" argument must be an instance of Buffer, TypedArray, ArrayBuffer, or SharedArrayBuffer.');\n\
+          if (encoding !== undefined && !Buffer.isEncoding(encoding)) { const error = new TypeError(`Unknown encoding: ${encoding}`); error.code = 'ERR_UNKNOWN_ENCODING'; throw error; }\n\
+          if (input.byteLength === 0) return 0;\n\
+          const bytes = Buffer.isBuffer(input) ? input : isArrayBuffer ? Buffer.from(input) : Buffer.from(input.buffer, input.byteOffset, input.byteLength);\n\
+          return bytes.toString(encoding).length;\n\
+        } }); }",
+        "node:buffer/string-length.js",
+    )?;
+    let undefined = context.undefined();
+    context.call_rooted(string_length, undefined, &[buffer])?;
     let prototype = get(context, buffer, "prototype")?;
     super::buffer_search_shared_vm::install(context, prototype)?;
     super::buffer_bigint_shared_vm::install(context, prototype)?;
@@ -592,6 +645,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         let value = get(context, constructor, name)?;
         set(context, module, name, value)?;
     }
+    let transcode = context.host_function(crate::host::shared_vm::operation("bufferTranscode"))?;
+    set(context, module, "transcode", transcode)?;
     let global = context.global_root()?;
     for name in ["atob", "btoa"] {
         if let Some(value) = optional_get(context, global, name)? {
@@ -648,7 +703,12 @@ pub(crate) fn install_blob_export(
     let blob = get(context, global, "Blob")?;
     set(context, module, "Blob", blob)?;
     let file = get(context, global, "File")?;
-    set(context, module, "File", file)
+    set(context, module, "File", file)?;
+    let resolve = context.evaluate_script_rooted(
+        "(url) => globalThis.__nodeBlobUrls?.get(url)",
+        "node:buffer/resolve-object-url.js",
+    )?;
+    set(context, module, "resolveObjectURL", resolve)
 }
 
 pub(crate) fn encode(
@@ -749,6 +809,49 @@ pub(crate) fn decode(
     }
     let units = crate::modules::buffer_codec::decode_units(&bytes, canonical);
     Ok(context.string_units_rooted(&units))
+}
+
+pub(crate) fn transcode(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let source = args.first().copied().unwrap_or(undefined);
+    let Some(quench_runtime::BuiltinData::Bytes { bytes, .. }) =
+        context.builtin_data_rooted(source)?
+    else {
+        let error = super::util_shared_vm::argument_type_error_with_expected(
+            context,
+            source,
+            "source",
+            "an instance of Buffer or Uint8Array",
+        )?;
+        return Err(error);
+    };
+    if bytes.is_empty() {
+        return from_bytes(context, &[]);
+    }
+    let from = context.to_string(args.get(1).copied().unwrap_or(undefined))?;
+    let to = context.to_string(args.get(2).copied().unwrap_or(undefined))?;
+    let from = crate::modules::buffer_codec::canonical_encoding(&from)
+        .unwrap_or(&from)
+        .to_owned();
+    let to = crate::modules::buffer_codec::canonical_encoding(&to)
+        .unwrap_or(&to)
+        .to_owned();
+    match super::text_decoder_icu::transcode(&bytes, &from, &to) {
+        Ok(bytes) => from_bytes(context, &bytes),
+        Err(status) => {
+            let code = super::text_decoder_icu::status_name(status);
+            let error = context.error_rooted(&format!("Unable to transcode Buffer [{code}]"))?;
+            let code = context.string_rooted(&code);
+            set(context, error, "code", code)?;
+            let errno = context.number(f64::from(status));
+            set(context, error, "errno", errno)?;
+            Err(context.throw(error))
+        }
+    }
 }
 
 pub(crate) fn canonical_encoding(

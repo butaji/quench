@@ -384,9 +384,11 @@ impl<H: Host> Vm<H> {
         &mut self,
         ty: wasmparser::MemoryType,
     ) -> Result<Value, JsError> {
-        let length = crate::WasmMemory { ty, import: None }.byte_length().ok_or_else(|| {
-            JsError::validation("Wasm memory allocation exceeds host address space".into())
-        })?;
+        let length = crate::WasmMemory { ty, import: None }
+            .byte_length()
+            .ok_or_else(|| {
+                JsError::validation("Wasm memory allocation exceeds host address space".into())
+            })?;
         // An unshared memory32 lives in a guarded reservation in both
         // modes: its pages commit as they are first touched, and growth
         // never copies. Compiled code also relies on the guard in place
@@ -430,8 +432,9 @@ impl<H: Host> Vm<H> {
         declarations: crate::WasmTypes,
         initial: Value,
     ) -> Result<Value, JsError> {
-        let length = usize::try_from(ty.initial)
-            .map_err(|_| JsError::validation("Wasm table size exceeds host address space".into()))?;
+        let length = usize::try_from(ty.initial).map_err(|_| {
+            JsError::validation("Wasm table size exceeds host address space".into())
+        })?;
         let mut elements = Vec::new();
         elements
             .try_reserve_exact(length)
@@ -742,10 +745,7 @@ impl<H: Host> Vm<H> {
                                 )
                             })?;
                         let Some(Cell::WasmGlobal {
-                            value,
-                            ty,
-                            header,
-                            ..
+                            value, ty, header, ..
                         }) = self.heap.get(binding)
                         else {
                             return Err(crate::Diagnostic::unsupported(
@@ -1337,7 +1337,10 @@ impl<H: Host> Vm<H> {
             resizable: false,
             immutable: false,
         });
-        if let Some(Cell::WasmMemory { buffer: current, .. }) = self.heap.get_mut(memory) {
+        if let Some(Cell::WasmMemory {
+            buffer: current, ..
+        }) = self.heap.get_mut(memory)
+        {
             *current = buffer;
         }
         Some(buffer)

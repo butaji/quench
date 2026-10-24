@@ -179,10 +179,25 @@ pub(crate) fn check_server_identity(
     }
     let api = super::facade::install(context)?;
     let net = get(context, api, "identityNet")?;
-    let is_ip = get(context, net, "isIP")?;
+    let is_ip_fn = get(context, net, "isIP")?;
     let hostname_value = context.string_rooted(hostname);
-    let is_ip = context.call_rooted(is_ip, net, &[hostname_value])?;
-    let reason = if context.truthy_rooted(is_ip)? {
+    let hostname_is_ip = context.call_rooted(is_ip_fn, net, &[hostname_value])?;
+    let ascii_is_ip = context.call_rooted(is_ip_fn, net, &[ascii_root])?;
+    if !context.truthy_rooted(hostname_is_ip)? && context.truthy_rooted(ascii_is_ip)? {
+        let reason = "Host is a non-canonical IP address";
+        let error = context.error_rooted(&format!(
+            "Hostname/IP does not match certificate's altnames: {reason}"
+        ))?;
+        let code = context.string_rooted("ERR_TLS_CERT_ALTNAME_INVALID");
+        put(context, error, "code", code)?;
+        let reason = context.string_rooted(reason);
+        put(context, error, "reason", reason)?;
+        let hostname = context.string_rooted(hostname);
+        put(context, error, "host", hostname)?;
+        put(context, error, "cert", cert)?;
+        return Ok(error);
+    }
+    let reason = if context.truthy_rooted(hostname_is_ip)? {
         let canonical = hostname
             .parse::<IpAddr>()
             .map(|ip| ip.to_string())

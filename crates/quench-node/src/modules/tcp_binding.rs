@@ -35,7 +35,11 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             crate::host::shared_vm::operation("nativeTcpConstruct"),
             "TCP",
         )?;
-        crate::host::shared_vm::commonjs::cached_native_binding(c,"\0native:TCPConstructor", |_|Ok(tcp))?;
+        crate::host::shared_vm::commonjs::cached_native_binding(
+            c,
+            "\0native:TCPConstructor",
+            |_| Ok(tcp),
+        )?;
         let tp = get(c, tcp, "prototype")?;
         let libuv = c.host_constructor_named(
             crate::host::shared_vm::operation("nativeAsyncWrapConstruct"),
@@ -92,9 +96,9 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             crate::host::shared_vm::operation("nativeStreamConnectWrap"),
             "TCPConnectWrap",
         )?;
-        let connect_prototype=get(c,connect,"prototype")?;
-        let async_prototype=super::native_async_wrap::prototype(c)?;
-        c.set_prototype_rooted(connect_prototype,async_prototype)?;
+        let connect_prototype = get(c, connect, "prototype")?;
+        let async_prototype = super::native_async_wrap::prototype(c)?;
+        c.set_prototype_rooted(connect_prototype, async_prototype)?;
         put(c, b, "TCPConnectWrap", connect)?;
         let constants = c.object_rooted()?;
         for (n, v) in [
@@ -254,6 +258,24 @@ pub(crate) fn close(
         return super::udp_binding::close(c, receiver, args);
     }
     let endpoint = id(c, receiver)?;
+    #[cfg(unix)]
+    {
+        // ChildProcess.send() closes a transferred accepted TCP handle after
+        // its IPC acknowledgement. The handle's owner is the source public
+        // Socket; close that Socket through net's destroy lifecycle so its
+        // server's connection set drains with the transport descriptor.
+        let owner_key = super::net_reference_shared_vm::owner_symbol(c)?;
+        let owner = c.get_property_rooted(receiver, owner_key)?;
+        if c.truthy_rooted(owner)?
+            && c.is_object_rooted(owner)?
+            && super::net_shared_vm::socket_id(c, owner).ok() == Some(endpoint)
+        {
+            super::child_process_ipc_shared_vm::destroy_transferred_public_socket(
+                c, owner, endpoint,
+            )?;
+            return Ok(c.undefined());
+        }
+    }
     let shared = c.host_mut().shared_state();
     if !net::native_tcp_is_open(&shared.borrow().tcp, endpoint) {
         return Ok(c.undefined());
@@ -326,33 +348,65 @@ pub(crate) fn fd(
 }
 
 #[cfg(unix)]
-pub(crate) fn duplicate_descriptor(c:&mut Context<'_>,handle:RootId)->Result<std::os::fd::OwnedFd,RootedError> {
-    use std::os::fd::{AsRawFd,FromRawFd};
-    let endpoint=id(c,handle)?;
-    let shared=c.host_mut().shared_state();
-    let fd=net::native_tcp_fd(&shared.borrow().tcp,endpoint);
-    if fd<0 {return Err(RootedError::host("TCP descriptor owner is closed"));}
-    let mut address:libc::sockaddr_storage=unsafe {std::mem::zeroed()};let mut length=std::mem::size_of_val(&address) as libc::socklen_t;
-    if unsafe {libc::getsockname(fd,(&mut address as *mut libc::sockaddr_storage).cast(),&mut length)}<0 {return Err(RootedError::host(std::io::Error::last_os_error().to_string()));}
-    if address.ss_family as i32!=libc::AF_INET && address.ss_family as i32!=libc::AF_INET6 {return Err(RootedError::host("Native handle is not TCP"));}
-    let duplicated=unsafe {libc::fcntl(fd,libc::F_DUPFD_CLOEXEC,0)};
-    if duplicated<0 {return Err(RootedError::host(std::io::Error::last_os_error().to_string()));}
-    let owned=unsafe {std::os::fd::OwnedFd::from_raw_fd(duplicated)};
-    debug_assert!(owned.as_raw_fd()>=0);Ok(owned)
+pub(crate) fn duplicate_descriptor(
+    c: &mut Context<'_>,
+    handle: RootId,
+) -> Result<std::os::fd::OwnedFd, RootedError> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let endpoint = id(c, handle)?;
+    let shared = c.host_mut().shared_state();
+    let fd = net::native_tcp_fd(&shared.borrow().tcp, endpoint);
+    if fd < 0 {
+        return Err(RootedError::host("TCP descriptor owner is closed"));
+    }
+    let mut address: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of_val(&address) as libc::socklen_t;
+    if unsafe {
+        libc::getsockname(
+            fd,
+            (&mut address as *mut libc::sockaddr_storage).cast(),
+            &mut length,
+        )
+    } < 0
+    {
+        return Err(RootedError::host(
+            std::io::Error::last_os_error().to_string(),
+        ));
+    }
+    if address.ss_family as i32 != libc::AF_INET && address.ss_family as i32 != libc::AF_INET6 {
+        return Err(RootedError::host("Native handle is not TCP"));
+    }
+    let duplicated = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
+    if duplicated < 0 {
+        return Err(RootedError::host(
+            std::io::Error::last_os_error().to_string(),
+        ));
+    }
+    let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(duplicated) };
+    debug_assert!(owned.as_raw_fd() >= 0);
+    Ok(owned)
 }
 #[cfg(unix)]
-pub(crate) fn from_owned_descriptor(c:&mut Context<'_>,fd:std::os::fd::OwnedFd)->Result<RootId,RootedError> {
+pub(crate) fn from_owned_descriptor(
+    c: &mut Context<'_>,
+    fd: std::os::fd::OwnedFd,
+) -> Result<RootId, RootedError> {
     binding(c)?;
-    let ctor=crate::host::shared_vm::commonjs::cached_native_binding(c,"\0native:TCPConstructor", |_|Err(RootedError::host("TCP constructor authority missing")))?;
+    let ctor = crate::host::shared_vm::commonjs::cached_native_binding(
+        c,
+        "\0native:TCPConstructor",
+        |_| Err(RootedError::host("TCP constructor authority missing")),
+    )?;
     // Node StreamWrap::AcceptHandle instantiates TCPWRAP even for a listening
     // descriptor. Kernel SO_ACCEPTCONN controls physical ownership, not provider.
-    let kind=c.number(SOCKET as f64);
-    let handle=c.construct_rooted(ctor,ctor,&[kind])?;
-    let endpoint=id(c,handle)?;
-    let shared=c.host_mut().shared_state();
-    let result=net::native_tcp_receive(&mut shared.borrow_mut().tcp,endpoint,fd);
-    if let Err(error)=result {
-        let _=close(c,handle,&[]);return Err(RootedError::host(error.to_string()));
+    let kind = c.number(SOCKET as f64);
+    let handle = c.construct_rooted(ctor, ctor, &[kind])?;
+    let endpoint = id(c, handle)?;
+    let shared = c.host_mut().shared_state();
+    let result = net::native_tcp_receive(&mut shared.borrow_mut().tcp, endpoint, fd);
+    if let Err(error) = result {
+        let _ = close(c, handle, &[]);
+        return Err(RootedError::host(error.to_string()));
     }
     Ok(handle)
 }

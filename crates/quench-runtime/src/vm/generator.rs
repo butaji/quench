@@ -499,7 +499,13 @@ impl<H: Host> Vm<H> {
             on_fulfilled: Value::UNDEFINED,
             on_rejected: Value::UNDEFINED,
             next: target,
-            execution_context: self.host.capture_job_context(self.realm.promise.records.get(&target).and_then(|record| record.host_context)),
+            execution_context: self.host.capture_job_context(
+                self.realm
+                    .promise
+                    .records
+                    .get(&target)
+                    .and_then(|record| record.host_context),
+            ),
         };
         if record.state == PromiseState::Pending {
             self.realm
@@ -1104,7 +1110,10 @@ impl<H: Host> Vm<H> {
         };
         continuation.pc += 1;
         continuation.resume_register = None;
-        let roots = continuation.roots().chain([generator, reason]).collect::<Vec<_>>();
+        let roots = continuation
+            .roots()
+            .chain([generator, reason])
+            .collect::<Vec<_>>();
         let (rejected, promise) = self.with_call_roots(roots, |vm| {
             let rejected = vm.promise_object()?;
             vm.with_call_roots([rejected], |vm| {

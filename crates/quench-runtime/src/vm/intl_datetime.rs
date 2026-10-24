@@ -131,7 +131,9 @@ impl<H: Host> Vm<H> {
             .insert(global, prototype);
         let fallback_symbol = self
             .heap
-            .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(INTL_LEGACY_CONSTRUCTED_SYMBOL.into()))));
+            .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(
+                INTL_LEGACY_CONSTRUCTED_SYMBOL.into(),
+            ))));
         self.realm
             .intrinsics
             .intl_datetime_format_fallback_symbols

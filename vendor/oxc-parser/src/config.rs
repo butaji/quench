@@ -88,7 +88,9 @@ pub struct RuntimeParserConfig {
 impl RuntimeParserConfig {
     #[inline(always)]
     pub fn new(tokens: bool) -> Self {
-        Self { lexer_config: RuntimeLexerConfig::new(tokens) }
+        Self {
+            lexer_config: RuntimeLexerConfig::new(tokens),
+        }
     }
 }
 

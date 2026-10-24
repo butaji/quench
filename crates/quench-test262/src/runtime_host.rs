@@ -138,9 +138,11 @@ impl Test262RuntimeHost {
                 .iter()
                 .map(|script| (*script, HARNESS_SCRIPT_NAME))
                 .collect::<Vec<_>>();
-            runtime.execute_after_scripts(&harness, &program).map_err(|error| {
-                format!("quench runtime: {}", runtime.format_error(&program, &error))
-            })?;
+            runtime
+                .execute_after_scripts(&harness, &program)
+                .map_err(|error| {
+                    format!("quench runtime: {}", runtime.format_error(&program, &error))
+                })?;
             if async_test {
                 runtime.run_jobs(&program).map_err(|error| {
                     format!(

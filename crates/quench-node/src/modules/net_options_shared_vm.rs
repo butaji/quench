@@ -2,6 +2,7 @@
 use super::event_constructor_shared_vm::get;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
+use std::net::IpAddr;
 
 /// The Server constructor accepts nullish defaults, objects, and a listener function.
 pub(crate) fn server_options(
@@ -36,17 +37,101 @@ pub(crate) fn socket_options(
         .transpose()?
         .unwrap_or(false);
     if for_connect {
-        return if context.is_object_rooted(options)? && !context.is_callable_rooted(options)? {
-            Ok(options)
-        } else {
-            context.object_rooted()
-        };
+        if !context.is_object_rooted(options)? || context.is_callable_rooted(options)? {
+            return context.object_rooted();
+        }
+        let local_address = get(context, options, "localAddress")?;
+        if context.truthy_rooted(local_address)? {
+            let valid = context
+                .string_text(local_address)?
+                .as_deref()
+                .and_then(super::net_shared_vm::parse_ip)
+                .is_some();
+            if !valid {
+                let received = context.to_string(local_address)?;
+                let error =
+                    context.type_error_rooted(&format!("Invalid IP address: {received}"))?;
+                super::node_errors_shared_vm::decorate_type_error(
+                    context,
+                    error,
+                    "ERR_INVALID_IP_ADDRESS",
+                )?;
+                return Err(context.throw(error));
+            }
+        }
+        let local_port = get(context, options, "localPort")?;
+        if !context
+            .rooted_value(local_port)
+            .is_some_and(|value| value.is_undefined() || value.is_null())
+        {
+            let Some(number) = context
+                .rooted_value(local_port)
+                .and_then(|value| value.as_number())
+            else {
+                let error = super::util_shared_vm::argument_type_error(
+                    context,
+                    local_port,
+                    "options.localPort",
+                    "number",
+                )?;
+                return Err(validator_error(context, error, "ERR_INVALID_ARG_TYPE")?);
+            };
+            if !number.is_finite() || number.fract() != 0.0 || !(0.0..=65535.0).contains(&number)
+            {
+                let received = super::util_shared_vm::range_error_received(context, local_port)?;
+                let error = context.range_error_rooted(&format!(
+                    "The value of \"options.localPort\" is out of range. It must be >= 0 && <= 65535. Received {received}"
+                ))?;
+                super::node_errors_shared_vm::decorate_range_error(
+                    context,
+                    error,
+                    "ERR_OUT_OF_RANGE",
+                )?;
+                return Err(context.throw(error));
+            }
+        }
+        return Ok(options);
     }
     if context
         .rooted_value(options)
         .is_some_and(|value| value.is_undefined() || value.is_null())
     {
         return context.object_rooted();
+    }
+    if context.is_object_rooted(options)? {
+        let fd = get(context, options, "fd")?;
+        if !context
+            .rooted_value(fd)
+            .is_some_and(|value| value.is_undefined())
+        {
+            let Some(number) = context.rooted_value(fd).and_then(|value| value.as_number()) else {
+                let error = super::util_shared_vm::argument_type_error(
+                    context,
+                    fd,
+                    "options.fd",
+                    "number",
+                )?;
+                return Err(validator_error(context, error, "ERR_INVALID_ARG_TYPE")?);
+            };
+            if !number.is_finite()
+                || number.fract() != 0.0
+                || number < 0.0
+                || number > i32::MAX as f64
+            {
+                let received = super::util_shared_vm::range_error_received(context, fd)?;
+                let error = context.range_error_rooted(&format!(
+                    "The value of \"options.fd\" is out of range. It must be >= 0 && <= {}. Received {received}",
+                    i32::MAX,
+                ))?;
+                super::node_errors_shared_vm::decorate_range_error(
+                    context,
+                    error,
+                    "ERR_OUT_OF_RANGE",
+                )?;
+                super::node_errors_shared_vm::hide_range_error(context, error, "ERR_OUT_OF_RANGE")?;
+                return Err(context.throw(error));
+            }
+        }
     }
     let object_mode = get(context, options, "objectMode")?;
     if context.truthy_rooted(object_mode)? {
@@ -86,6 +171,33 @@ pub(crate) fn socket_options(
         )?);
     }
     Ok(options)
+}
+
+/// Return the optional source endpoint requested by `net.connect(options)`.
+/// Passing it through the shared transport path keeps the same binding
+/// behavior for net, tls, and https clients.
+pub(super) fn connect_source(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: RootId,
+) -> Result<(Option<IpAddr>, u16), RootedError> {
+    if !context.is_object_rooted(options)? {
+        return Ok((None, 0));
+    }
+    let address = get(context, options, "localAddress")?;
+    let address = if context.truthy_rooted(address)? {
+        context
+            .string_text(address)?
+            .as_deref()
+            .and_then(super::net_shared_vm::parse_ip)
+    } else {
+        None
+    };
+    let port = get(context, options, "localPort")?;
+    let port = context
+        .rooted_value(port)
+        .and_then(|value| value.as_number())
+        .unwrap_or(0.0) as u16;
+    Ok((address, port))
 }
 
 pub(crate) fn missing_endpoint(

@@ -16,9 +16,9 @@ use crate::bytecode::{
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
-    CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, GcTraceKind, Heap, IteratorConsumer,
-    IteratorHelper, IteratorKind, Native, Object, ProxyKind, RootId, StackData, TypedArrayKind,
-    WeakHandle,
+    CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, GcTraceKind, Heap,
+    IteratorConsumer, IteratorHelper, IteratorKind, Native, Object, ProxyKind, RootId, StackData,
+    TypedArrayKind, WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
@@ -80,8 +80,6 @@ mod dispatch_frame;
 mod dispatch_wasm;
 mod dynamic_strings;
 mod embedding;
-mod provenance;
-mod inspection;
 mod environment;
 mod equality;
 mod error;
@@ -96,6 +94,7 @@ mod generator;
 mod group_by;
 mod host_function;
 mod index;
+mod inspection;
 mod intl_collator;
 mod intl_datetime;
 mod intl_datetime_parts;
@@ -111,6 +110,7 @@ mod iterator_list;
 mod lazy_data_property;
 mod local_time;
 mod property_definition;
+mod provenance;
 use group_by::GroupByKind;
 use property_definition::PropertyDefinitionKind;
 mod iterators;
@@ -119,8 +119,8 @@ mod method_cache;
 mod module;
 mod number;
 mod object;
-mod object_assignment;
 mod object_array;
+mod object_assignment;
 mod object_builtins;
 mod object_descriptors;
 mod object_get;
@@ -139,6 +139,7 @@ use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
 mod operations;
+mod owned_clone_native;
 mod primitives;
 pub(crate) mod program_store;
 mod promise;
@@ -155,7 +156,6 @@ mod string;
 mod string_cache;
 mod string_extra;
 mod structured_clone;
-mod owned_clone_native;
 mod superinstruction;
 mod symbol;
 mod temporal;
@@ -249,7 +249,11 @@ impl Default for CaptureCache {
 
 impl Frame {
     fn source_instruction_pc(&self) -> usize {
-        if self.pc_is_resume { self.pc.saturating_sub(1) } else { self.pc }
+        if self.pc_is_resume {
+            self.pc.saturating_sub(1)
+        } else {
+            self.pc
+        }
     }
 
     fn empty(program: ProgramId, with_base: usize) -> Self {
@@ -454,7 +458,10 @@ impl PendingJob {
                 callback,
                 this,
                 args,
-            } => [*callback, *this].into_iter().chain(args.iter().copied()).collect(),
+            } => [*callback, *this]
+                .into_iter()
+                .chain(args.iter().copied())
+                .collect(),
             Self::Reaction(job) => vec![job.realm, job.handler, job.next, job.value],
         }
     }
@@ -711,10 +718,15 @@ struct StringConcatCache {
 #[derive(Clone, Copy)]
 enum ShapeTransition {
     Root,
-    FunctionName { name: Atom },
+    FunctionName {
+        name: Atom,
+    },
     FunctionNameReconfigured,
     FunctionLengthReconfigured,
-    Constructed { constructor: Value, new_target_is_base: bool },
+    Constructed {
+        constructor: Value,
+        new_target_is_base: bool,
+    },
     Add {
         key: property_key::PropertyKey,
         slot: u32,
@@ -847,7 +859,14 @@ impl ShapeTransition {
         match self {
             Self::Add { key, .. } => key.symbol_value().is_some(),
             Self::Descriptor { attributes, .. } => attributes.accessors != NO_SHAPE_ACCESSORS,
-            Self::Root | Self::FunctionName { .. } | Self::FunctionNameReconfigured | Self::FunctionLengthReconfigured | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
+            Self::Root
+            | Self::FunctionName { .. }
+            | Self::FunctionNameReconfigured
+            | Self::FunctionLengthReconfigured
+            | Self::Constructed { .. }
+            | Self::Delete { .. }
+            | Self::Vacant
+            | Self::Dictionary { .. } => false,
         }
     }
 
@@ -855,8 +874,16 @@ impl ShapeTransition {
         match self {
             Self::FunctionName { name } => Some(ShapeTransitionKey::FunctionName(name)),
             Self::FunctionNameReconfigured => Some(ShapeTransitionKey::FunctionNameReconfigured),
-            Self::FunctionLengthReconfigured => Some(ShapeTransitionKey::FunctionLengthReconfigured),
-            Self::Constructed { constructor, new_target_is_base } => Some(ShapeTransitionKey::Constructed(constructor, new_target_is_base)),
+            Self::FunctionLengthReconfigured => {
+                Some(ShapeTransitionKey::FunctionLengthReconfigured)
+            }
+            Self::Constructed {
+                constructor,
+                new_target_is_base,
+            } => Some(ShapeTransitionKey::Constructed(
+                constructor,
+                new_target_is_base,
+            )),
             Self::Add {
                 key: PropertyKey::String(atom),
                 attributes,
@@ -1204,7 +1231,7 @@ pub(crate) struct Vm<H> {
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
     test262_agent: Test262AgentState,
-    shared_async_waiters:Vec<atomics::SharedAsyncWaiter>,
+    shared_async_waiters: Vec<atomics::SharedAsyncWaiter>,
     programs: ProgramStore,
     program_cache_layouts: Vec<ProgramCacheLayout>,
     /// The register file of the frame the general loop dispatches; see `run_general_loop`.
@@ -1310,9 +1337,15 @@ struct IteratorRealmPrototypes {
     async_generator: Value,
 }
 impl<H: Host> Vm<H> {
-    pub(crate) fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.execution_interrupt.clone() }
-    pub(super) fn check_execution_interrupt(&self)->Result<(),JsError> {
-        if self.execution_interrupt.is_termination_requested() { Err(JsError::execution_terminated()) } else { Ok(()) }
+    pub(crate) fn execution_interrupt_handle(&self) -> crate::ExecutionInterrupt {
+        self.execution_interrupt.clone()
+    }
+    pub(super) fn check_execution_interrupt(&self) -> Result<(), JsError> {
+        if self.execution_interrupt.is_termination_requested() {
+            Err(JsError::execution_terminated())
+        } else {
+            Ok(())
+        }
     }
 
     /// Makes `global`'s realm current, carrying each realm's global lexical
@@ -2284,7 +2317,9 @@ impl<H: Host> Vm<H> {
                     .functions
                     .get(id as usize)
                     .is_some_and(|function| function.is_class_constructor)
-                    && !self.construct_target.is_some_and(|target| target.callee == callee)
+                    && !self
+                        .construct_target
+                        .is_some_and(|target| target.callee == callee)
                 {
                     Err(self.type_error(p, "class constructor cannot be called without new".into()))
                 } else {

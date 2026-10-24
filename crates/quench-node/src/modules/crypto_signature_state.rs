@@ -2,7 +2,7 @@
 //! consume it at finalization, and sign/verify the resulting native digest.
 use super::{
     crypto_asymmetric::{KeyError, OwnedKey},
-    crypto_asymmetric_operations::{SignatureOptions, sign_prehashed, verify_prehashed},
+    crypto_asymmetric_operations::{sign_prehashed, verify_prehashed, SignatureOptions},
     crypto_digest::{Digest, DigestError},
     crypto_digest_state::HashState,
 };

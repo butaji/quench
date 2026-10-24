@@ -678,7 +678,14 @@ fn rewrite_once(
                     .iter()
                     .filter(|rule| rule.pattern == [first.op(), second.op()])
                     .find_map(|rule| {
-                        let replacement = apply_rule(*rule, first, *second, field_sites, &function.source_positions, index)?;
+                        let replacement = apply_rule(
+                            *rule,
+                            first,
+                            *second,
+                            field_sites,
+                            &function.source_positions,
+                            index,
+                        )?;
                         let removed_definitions = original_definitions
                             & !liveness::definitions(replacement.as_wide(), superinstructions);
                         (live_out & removed_definitions == 0).then_some(replacement)
@@ -721,10 +728,16 @@ fn apply_rule(
     let replacement = sound_replacement(first, second, replacement)?;
     if matches!(rule.recipe, Recipe::GetSetThis) {
         if let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
-            let at = |pc: usize| positions.partition_point(|p| p.pc as usize <= pc)
-                .checked_sub(1).map(|index| (positions[index].line, positions[index].column));
+            let at = |pc: usize| {
+                positions
+                    .partition_point(|p| p.pc as usize <= pc)
+                    .checked_sub(1)
+                    .map(|index| (positions[index].line, positions[index].column))
+            };
             let site = &mut field_sites[index];
-            if site.sources[0].is_none() { site.sources[0] = at(pc); }
+            if site.sources[0].is_none() {
+                site.sources[0] = at(pc);
+            }
             site.sources[2] = at(pc + 1);
         }
     }
@@ -825,7 +838,9 @@ fn relocate_source_positions(
         // Call anchors are observable even when their location matches a
         // preceding Move that a later pass may remove.
         if previous_location == Some(location)
-            && fixed_width(old_code[anchor], wide).op().control_flow_layout()
+            && fixed_width(old_code[anchor], wide)
+                .op()
+                .control_flow_layout()
                 != crate::bytecode::ControlFlowLayout::Call
         {
             continue;
@@ -1293,19 +1308,41 @@ mod tests {
         let load = Instr::new(Op::LoadConst, 0, 0, 0, 0);
         let call = Instr::wide(0).unwrap();
         let mut positions = vec![
-            SourcePosition { pc: 0, line: 1, column: 74 },
-            SourcePosition { pc: 1, line: 1, column: 69 },
-            SourcePosition { pc: 2, line: 1, column: 69 },
+            SourcePosition {
+                pc: 0,
+                line: 1,
+                column: 74,
+            },
+            SourcePosition {
+                pc: 1,
+                line: 1,
+                column: 69,
+            },
+            SourcePosition {
+                pc: 2,
+                line: 1,
+                column: 69,
+            },
         ];
         let first = [load, Instr::new(Op::Move, 0, 0, 0, 0), call];
         relocate_source_positions(3, &mut positions, &first, &wide, &[0, 1, 2, 3]);
         assert_eq!(positions.last().unwrap().pc, 2);
         let second = [load, Instr::new(Op::Nop, 0, 0, 0, 0), call];
         relocate_source_positions(2, &mut positions, &second, &wide, &[0, 1, 1, 2]);
-        assert_eq!(positions, vec![
-            SourcePosition { pc: 0, line: 1, column: 74 },
-            SourcePosition { pc: 1, line: 1, column: 69 },
-        ]);
+        assert_eq!(
+            positions,
+            vec![
+                SourcePosition {
+                    pc: 0,
+                    line: 1,
+                    column: 74
+                },
+                SourcePosition {
+                    pc: 1,
+                    line: 1,
+                    column: 69
+                },
+            ]
+        );
     }
-
 }

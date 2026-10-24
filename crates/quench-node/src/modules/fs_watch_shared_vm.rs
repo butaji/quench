@@ -524,9 +524,13 @@ pub(crate) fn watch(
 ) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
     let mut forwarded = [undefined; 3];
-    for (slot, value) in forwarded.iter_mut().zip(args) { *slot = *value; }
+    for (slot, value) in forwarded.iter_mut().zip(args) {
+        *slot = *value;
+    }
     // SDK watch dispatch precedes overload, option and path validation.
-    if let Some(watcher) = crate::modules::fs_policy_shared_vm::vfs_read(context, "watch", &forwarded)? {
+    if let Some(watcher) =
+        crate::modules::fs_policy_shared_vm::vfs_read(context, "watch", &forwarded)?
+    {
         return Ok(watcher);
     }
     let filename = args.first().copied().unwrap_or_else(|| context.undefined());

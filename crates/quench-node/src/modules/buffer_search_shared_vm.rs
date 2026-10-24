@@ -147,12 +147,10 @@ pub(crate) fn search(
     let needle_bytes = if numeric_needle {
         let mask = context.number(u8::MAX as f64);
         let byte = context.arithmetic_rooted(NativeArithmetic::BitwiseAnd, needle, mask)?;
-        vec![
-            context
-                .rooted_value(byte)
-                .and_then(|value| value.as_number())
-                .unwrap_or(0.0) as u8,
-        ]
+        vec![context
+            .rooted_value(byte)
+            .and_then(|value| value.as_number())
+            .unwrap_or(0.0) as u8]
     } else {
         let canonical = if undefined(context, encoding) {
             Some("utf8")

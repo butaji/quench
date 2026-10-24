@@ -2,7 +2,7 @@
 //! No guest roots or runtime callbacks may cross this boundary.
 use std::{
     collections::VecDeque,
-    ffi::{CString, c_char, c_int},
+    ffi::{c_char, c_int, CString},
     io,
     sync::{Arc, Condvar, Mutex},
     thread,
@@ -42,21 +42,28 @@ fn worker_count(value: Option<&[u8]>) -> usize {
     count.clamp(1, LIBUV_MAX_WORKERS)
 }
 fn configured_workers() -> usize {
-        // libuv reads process environment at the first work submission.
-        let value = std::env::var_os("UV_THREADPOOL_SIZE");
-        #[cfg(unix)]
-        let count = {
-            use std::os::unix::ffi::OsStrExt;
-            worker_count(value.as_deref().map(|v| v.as_bytes()))
-        };
-        #[cfg(not(unix))]
-        let count = worker_count(value.as_ref().and_then(|v| v.to_str()).map(str::as_bytes));
-        count
+    // libuv reads process environment at the first work submission.
+    let value = std::env::var_os("UV_THREADPOOL_SIZE");
+    #[cfg(unix)]
+    let count = {
+        use std::os::unix::ffi::OsStrExt;
+        worker_count(value.as_deref().map(|v| v.as_bytes()))
+    };
+    #[cfg(not(unix))]
+    let count = worker_count(value.as_ref().and_then(|v| v.to_str()).map(str::as_bytes));
+    count
 }
 impl Default for Pool {
     fn default() -> Self {
-        Self { shared: Arc::new(Shared { queue: Mutex::new(Queue::default()), ready: Condvar::new() }),
-            workers: Vec::new(), configured: None, started: false }
+        Self {
+            shared: Arc::new(Shared {
+                queue: Mutex::new(Queue::default()),
+                ready: Condvar::new(),
+            }),
+            workers: Vec::new(),
+            configured: None,
+            started: false,
+        }
     }
 }
 impl Pool {

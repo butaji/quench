@@ -5,11 +5,16 @@ use std::io::{self, Read, Write};
 struct BufferedRaw {
     raw: RawStream,
     received: std::collections::VecDeque<u8>,
+    saw_eof: bool,
 }
 impl Read for BufferedRaw {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         if self.received.is_empty() {
-            return self.raw.read(bytes);
+            let count = self.raw.read(bytes)?;
+            if count == 0 && !bytes.is_empty() {
+                self.saw_eof = true;
+            }
+            return Ok(count);
         }
         let count = bytes.len().min(self.received.len());
         for byte in &mut bytes[..count] {
@@ -69,6 +74,7 @@ impl EncryptedStream {
                 BufferedRaw {
                     raw: stream,
                     received: Default::default(),
+                    saw_eof: false,
                 },
             )?,
             phase: if started {
@@ -104,7 +110,7 @@ impl EncryptedStream {
             self.phase = Phase::Ready;
         }
     }
-    pub(crate) fn handshake(&mut self) -> Result<bool, Error> {
+    pub(crate) fn handshake(&mut self) -> Result<bool, io::Error> {
         let Phase::Handshaking(role) = self.phase else {
             return Ok(false);
         };
@@ -118,7 +124,14 @@ impl EncryptedStream {
                 Ok(true)
             }
             Err(error) if readiness(&error) => Ok(false),
-            Err(error) => Err(error),
+            Err(_error) if self.stream.get_ref().saw_eof => {
+                // OpenSSL may classify an incomplete handshake EOF as either
+                // SSL_ERROR_SYSCALL (sometimes with EIO) or SSL_ERROR_SSL.
+                // Translate only when the underlying stream actually returned
+                // EOF; a genuine read EIO never sets saw_eof and stays EIO.
+                Err(io::Error::from_raw_os_error(libc::ECONNRESET))
+            }
+            Err(error) => Err(io_error(error)),
         }
     }
     pub(crate) fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
@@ -151,6 +164,9 @@ impl EncryptedStream {
                 Err(io_error(error))
             }
         }
+    }
+    pub(crate) fn write_raw(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.stream.get_mut().raw.write(bytes)
     }
     pub(crate) fn shutdown_write(&mut self) -> io::Result<bool> {
         match self.stream.shutdown() {

@@ -43,7 +43,12 @@ pub(super) fn active_shape_attributes(
                 }
             }
             ShapeTransition::Vacant => entries.push(None),
-            ShapeTransition::Root | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured | ShapeTransition::Constructed { .. } | ShapeTransition::Dictionary { .. } => {}
+            ShapeTransition::Root
+            | ShapeTransition::FunctionName { .. }
+            | ShapeTransition::FunctionNameReconfigured
+            | ShapeTransition::FunctionLengthReconfigured
+            | ShapeTransition::Constructed { .. }
+            | ShapeTransition::Dictionary { .. } => {}
         }
     }
     entries
@@ -109,7 +114,14 @@ impl ParallelShapeTrace<'_> {
 
     // Called once per marked object, so its frame setup would rival its body.
     #[inline(always)]
-    fn append(&self, trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>) {
+    fn append(
+        &self,
+        trace_kind: GcTraceKind,
+        owner: Value,
+        shape: u32,
+        prototype: bool,
+        roots: &mut Vec<Value>,
+    ) {
         let shape_index = shape as usize;
         debug_assert!(shape_index < self.shape_count);
         // SAFETY: construction holds an immutable borrow of the shape table;
@@ -130,8 +142,12 @@ impl ParallelShapeTrace<'_> {
         // A prototype no longer owns its original base constructor. Keep this
         // trace bit separate: a prototype may be the first holder of a shape.
         let constructor = self.constructors[shape_index];
-        if !prototype && !constructor.is_undefined() &&
-            (trace_kind == GcTraceKind::VerifyFull || self.marked_constructor_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0) {
+        if !prototype
+            && !constructor.is_undefined()
+            && (trace_kind == GcTraceKind::VerifyFull
+                || self.marked_constructor_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask
+                    == 0)
+        {
             roots.push(constructor);
         }
         if let Some(edges) = self.owned_roots.get(&owner) {
@@ -183,13 +199,23 @@ fn rebuild_shape(
     transitions: &mut super::shape_transitions::ShapeTransitionIndex,
 ) -> u32 {
     let mut parent = 0;
-    let (function_name, constructed_name, name_reconfigured) = provenance::shape_names(old_shapes, old_shape);
+    let (function_name, constructed_name, name_reconfigured) =
+        provenance::shape_names(old_shapes, old_shape);
     for transition in [
         function_name.map(|name| ShapeTransition::FunctionName { name }),
         name_reconfigured.then_some(ShapeTransition::FunctionNameReconfigured),
-        provenance::shape_function_length_reconfigured(old_shapes, old_shape).then_some(ShapeTransition::FunctionLengthReconfigured),
-        constructed_name.map(|(constructor, new_target_is_base)| ShapeTransition::Constructed { constructor, new_target_is_base }),
-    ].into_iter().flatten() {
+        provenance::shape_function_length_reconfigured(old_shapes, old_shape)
+            .then_some(ShapeTransition::FunctionLengthReconfigured),
+        constructed_name.map(
+            |(constructor, new_target_is_base)| ShapeTransition::Constructed {
+                constructor,
+                new_target_is_base,
+            },
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    {
         parent = append_compacted_shape(shapes, transitions, parent, transition, 0);
     }
     for (slot, entry) in active_shape_attributes(old_shapes, old_shape)
@@ -212,7 +238,8 @@ fn rebuild_shape(
         if let Some((_, attributes)) = entry
             && data.is_none()
         {
-            let attributes = ShapeAttributes::record(attributes.attributes(old_accessors), accessors);
+            let attributes =
+                ShapeAttributes::record(attributes.attributes(old_accessors), accessors);
             parent = append_compacted_shape(
                 shapes,
                 transitions,
@@ -292,7 +319,8 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         let full = self.heap.collection_is_full(full);
-        self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
+        self.constructed_shapes
+            .fill(super::provenance::ConstructedShape::EMPTY);
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(
@@ -435,7 +463,9 @@ impl<H: Host> Vm<H> {
                     intrinsics.stack_setter,
                     intrinsics.call_site_constructor,
                     intrinsics.call_site_prototype,
-                ].into_iter().chain(intrinsics.host_formatter)
+                ]
+                .into_iter()
+                .chain(intrinsics.host_formatter)
             },
         ));
         roots.extend(self.realm.intrinsics.regexp_intrinsics.iter().flat_map(
@@ -598,7 +628,7 @@ impl<H: Host> Vm<H> {
             },
         ));
         roots.extend(self.test262_agent.roots());
-        roots.extend(self.shared_async_waiters.iter().map(|w|w.promise));
+        roots.extend(self.shared_async_waiters.iter().map(|w| w.promise));
         roots.extend(
             self.realm
                 .promise
@@ -704,12 +734,17 @@ impl<H: Host> Vm<H> {
         let marked_shape_bits = (0..shape_word_count)
             .map(|_| AtomicU64::new(0))
             .collect::<Vec<_>>();
-        let marked_constructor_shape_bits = (0..shape_word_count).map(|_| AtomicU64::new(0)).collect::<Vec<_>>();
+        let marked_constructor_shape_bits = (0..shape_word_count)
+            .map(|_| AtomicU64::new(0))
+            .collect::<Vec<_>>();
         let mut constructors = Vec::with_capacity(shape_count);
         for shape in &self.shapes {
             let constructor = match shape.transition {
                 ShapeTransition::Constructed { constructor, .. } => constructor,
-                _ => shape.parent().map(|parent| constructors[parent as usize]).unwrap_or(Value::UNDEFINED),
+                _ => shape
+                    .parent()
+                    .map(|parent| constructors[parent as usize])
+                    .unwrap_or(Value::UNDEFINED),
             };
             constructors.push(constructor);
         }
@@ -723,10 +758,13 @@ impl<H: Host> Vm<H> {
             owned_roots: &owned_roots,
             _shape_borrow: std::marker::PhantomData,
         };
-        let parallel_object_roots =
-            |trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
-                shape_trace.append(trace_kind, owner, shape, prototype, roots);
-            };
+        let parallel_object_roots = |trace_kind: GcTraceKind,
+                                     owner: Value,
+                                     shape: u32,
+                                     prototype: bool,
+                                     roots: &mut Vec<Value>| {
+            shape_trace.append(trace_kind, owner, shape, prototype, roots);
+        };
         let finalization_jobs = self.heap.collect_with_object_roots(
             roots,
             |trace_kind, owner, shape, prototype, roots| {
@@ -742,7 +780,8 @@ impl<H: Host> Vm<H> {
         // weak function cache before any post-collection cleanup can allocate
         // into newly freed slots.
         let heap = &self.heap;
-        self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
+        self.programs
+            .prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
         self.prune_function_values();
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go
@@ -774,15 +813,17 @@ impl<H: Host> Vm<H> {
         for id in attached_continuations.difference(&live_continuations) {
             self.resume_continuation(*id);
         }
-        self.realm.jobs.extend(
-            finalization_jobs
-                .into_iter()
-                .map(|(callback, held)| PendingJob::Call {
-                    callback,
-                    this: Value::UNDEFINED,
-                    args: vec![held],
-                }),
-        );
+        self.realm
+            .jobs
+            .extend(
+                finalization_jobs
+                    .into_iter()
+                    .map(|(callback, held)| PendingJob::Call {
+                        callback,
+                        this: Value::UNDEFINED,
+                        args: vec![held],
+                    }),
+            );
         self.descriptors
             .retain(|(object, _), _| self.heap.is_live(*object));
         let mut abandoned_job_contexts = Vec::new();
@@ -939,12 +980,14 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn drain_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
-        loop{
+        loop {
             self.drain_pending_microtasks(program)?;
             // Async futex completion is an agent task: settle only after the
             // existing microtask queue drains, then run its Promise reactions.
             self.poll_shared_async_waiters(program)?;
-            if self.realm.jobs.is_empty(){break}
+            if self.realm.jobs.is_empty() {
+                break;
+            }
         }
         Ok(Value::UNDEFINED)
     }
@@ -973,8 +1016,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// A native microtask-only checkpoint, with no native agent-task polling.
-    pub(crate) fn native_microtask_checkpoint(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        if self.native_microtask_running { return Ok(Value::UNDEFINED); }
+    pub(crate) fn native_microtask_checkpoint(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<Value, JsError> {
+        if self.native_microtask_running {
+            return Ok(Value::UNDEFINED);
+        }
         self.drain_pending_microtasks(program)
     }
 
@@ -998,7 +1046,6 @@ impl<H: Host> Vm<H> {
         self.native_microtask_running = previous;
         result
     }
-
 
     pub(crate) fn drain_host_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.advance_static_module_jobs(program)?;
@@ -1038,24 +1085,67 @@ mod tests {
 
     #[test]
     fn shape_compaction_preserves_creation_metadata_without_property_slots() {
-        use super::{append_compacted_shape, rebuild_shape, provenance};
+        use super::{append_compacted_shape, provenance, rebuild_shape};
         let mut shapes = vec![Shape::root()];
         let mut transitions = crate::vm::shape_transitions::ShapeTransitionIndex::default();
-        let named = append_compacted_shape(&mut shapes, &mut transitions, 0,
-            ShapeTransition::FunctionName { name: 7 }, 0);
-        let reconfigured = append_compacted_shape(&mut shapes, &mut transitions, named,
-            ShapeTransition::FunctionNameReconfigured, 0);
-        let length_reconfigured = append_compacted_shape(&mut shapes, &mut transitions, reconfigured,
-            ShapeTransition::FunctionLengthReconfigured, 0);
-        let created = append_compacted_shape(&mut shapes, &mut transitions, length_reconfigured,
-            ShapeTransition::Constructed { constructor: Value::heap(17), new_target_is_base: false }, 0);
-        let with_field = append_compacted_shape(&mut shapes, &mut transitions, created,
-            ShapeTransition::Add { key: PropertyKey::string(9), slot: 0, attributes: DEFAULT_DATA_ATTRIBUTES }, 1);
+        let named = append_compacted_shape(
+            &mut shapes,
+            &mut transitions,
+            0,
+            ShapeTransition::FunctionName { name: 7 },
+            0,
+        );
+        let reconfigured = append_compacted_shape(
+            &mut shapes,
+            &mut transitions,
+            named,
+            ShapeTransition::FunctionNameReconfigured,
+            0,
+        );
+        let length_reconfigured = append_compacted_shape(
+            &mut shapes,
+            &mut transitions,
+            reconfigured,
+            ShapeTransition::FunctionLengthReconfigured,
+            0,
+        );
+        let created = append_compacted_shape(
+            &mut shapes,
+            &mut transitions,
+            length_reconfigured,
+            ShapeTransition::Constructed {
+                constructor: Value::heap(17),
+                new_target_is_base: false,
+            },
+            0,
+        );
+        let with_field = append_compacted_shape(
+            &mut shapes,
+            &mut transitions,
+            created,
+            ShapeTransition::Add {
+                key: PropertyKey::string(9),
+                slot: 0,
+                attributes: DEFAULT_DATA_ATTRIBUTES,
+            },
+            1,
+        );
         let mut rebuilt = vec![Shape::root()];
-        let shape = rebuild_shape(&shapes, &[], with_field, &mut rebuilt,
-            &mut Vec::new(), &mut crate::vm::shape_transitions::ShapeTransitionIndex::default());
-        assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), false)), true));
-        assert!(provenance::shape_function_length_reconfigured(&rebuilt, shape));
+        let shape = rebuild_shape(
+            &shapes,
+            &[],
+            with_field,
+            &mut rebuilt,
+            &mut Vec::new(),
+            &mut crate::vm::shape_transitions::ShapeTransitionIndex::default(),
+        );
+        assert_eq!(
+            provenance::shape_names(&rebuilt, shape),
+            (Some(7), Some((Value::heap(17), false)), true)
+        );
+        assert!(provenance::shape_function_length_reconfigured(
+            &rebuilt, shape
+        ));
         assert_eq!(rebuilt[shape as usize].storage_len(), 1);
         assert_eq!(super::active_shape_attributes(&rebuilt, shape).len(), 1);
     }

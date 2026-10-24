@@ -8,7 +8,7 @@ use oxc_span::GetSpan;
 use std::{collections::BTreeSet, path::Path};
 
 pub(super) fn names(path: &Path, source: &str) -> Vec<String> {
-    let resolver = super::commonjs::commonjs_resolver();
+    let resolver = super::commonjs::commonjs_resolver(true);
     let mut names = BTreeSet::new();
     collect(path, source, &resolver, &mut BTreeSet::new(), &mut names);
     names.remove("default");
