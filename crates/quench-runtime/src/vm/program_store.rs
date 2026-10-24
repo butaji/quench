@@ -57,7 +57,11 @@ pub(super) const JS_JIT_PROMOTION_LOOKS: [(u8, u8); 4] =
 /// arguments or a bytecode-shape candidate.
 const JS_JIT_GENERAL_PROMOTION_ENTRIES: u8 = 32;
 const JS_JIT_MAX_FUNCTIONS: usize = 64;
-const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 256;
+// Tier observations include dynamically generated functions across all retained
+// programs. Web-SSR exposes more than 1,300 functions in one VM; keep a fixed
+// metadata bound large enough to observe that workload without changing the
+// independent compiled-artifact or executable-memory budgets.
+const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 2048;
 const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
 const JS_JIT_MAX_REJECTED_FUNCTIONS: usize = 4096;
 const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
@@ -559,6 +563,7 @@ pub(crate) struct ProgramStore {
     unchecked_reclaimable: usize,
     /// VM-local bounds for the optional JavaScript tier cache.
     js_jit_tracked_functions: usize,
+    js_jit_tracking_exhaustions: u64,
     js_jit_rejected_functions: usize,
     /// Shared JS/Wasm executable-code cache admission and accounting.
     jit_code_cache: JitCodeCacheBudget,
@@ -578,6 +583,7 @@ impl Default for ProgramStore {
             reclaim_passes: 0,
             unchecked_reclaimable: 0,
             js_jit_tracked_functions: 0,
+            js_jit_tracking_exhaustions: 0,
             js_jit_rejected_functions: 0,
             jit_code_cache: JitCodeCacheBudget::default(),
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
@@ -1487,6 +1493,7 @@ impl ProgramStore {
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
+        let already_tracked = entry.jit_tiers.js(function).is_some();
         let decision = entry.jit_tiers.note_js_entry(
             function,
             numeric,
@@ -1497,6 +1504,9 @@ impl ProgramStore {
         );
         if decision.tracked {
             self.js_jit_tracked_functions += 1;
+        } else if !can_track && !already_tracked {
+            self.js_jit_tracking_exhaustions =
+                self.js_jit_tracking_exhaustions.saturating_add(1);
         }
         if decision.promoted {
             self.record_js_jit_promotion(id, function);
@@ -1523,6 +1533,8 @@ impl ProgramStore {
         let mut promoted = false;
         let Some(state) = entry.jit_tiers.js_mut(function) else {
             if !can_track {
+                self.js_jit_tracking_exhaustions =
+                    self.js_jit_tracking_exhaustions.saturating_add(1);
                 return false;
             }
             let tracked = entry.jit_tiers.js_insert(
@@ -2045,6 +2057,11 @@ impl ProgramStore {
         self.js_jit_tracked_functions
     }
 
+    #[cfg(test)]
+    pub(super) fn js_jit_tracking_exhaustion_count(&self) -> u64 {
+        self.js_jit_tracking_exhaustions
+    }
+
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn jit_mapped_bytes(&self) -> usize {
         self.jit_code_cache.mapped_bytes
@@ -2431,6 +2448,13 @@ impl Drop for ProgramStore {
             self.js_jit_dataview_float64_enabled,
             self.js_jit_dataview_float64_get_entries,
             self.js_jit_dataview_float64_set_entries
+        );
+        let _ = writeln!(
+            stderr,
+            "QUENCH_JS_JIT_TIER_TRACKING {{\"tracked_functions\":{},\"tracking_limit\":{},\"exhaustion_events\":{}}}",
+            self.js_jit_tracked_functions,
+            JS_JIT_MAX_TRACKED_FUNCTIONS,
+            self.js_jit_tracking_exhaustions
         );
     }
 }
