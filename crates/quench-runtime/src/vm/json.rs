@@ -630,8 +630,6 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
     }
 
     fn value<B: JsonBuilder>(&mut self, builder: &mut B) -> Result<B::Value, JsonParseError> {
-        let _stack =
-            crate::stack::StackGuard::enter().map_err(|()| JsonParseError::StackExhausted)?;
         self.whitespace();
         let start = self.index;
         let primitive = match self.peek() {
@@ -724,7 +722,14 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
         Ok(value)
     }
 
+    /// A nested value's parse recurses only through `array` and `object`, which therefore
+    /// hold the stack guard.
+    fn nesting_guard() -> Result<crate::stack::StackGuard, JsonParseError> {
+        crate::stack::StackGuard::enter().map_err(|()| JsonParseError::StackExhausted)
+    }
+
     fn array<B: JsonBuilder>(&mut self, builder: &mut B) -> Result<B::Value, JsonParseError> {
+        let _stack = Self::nesting_guard()?;
         self.expect(b'[')?;
         let mut values = Vec::new();
         self.whitespace();
@@ -742,6 +747,7 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
     }
 
     fn object<B: JsonBuilder>(&mut self, builder: &mut B) -> Result<B::Value, JsonParseError> {
+        let _stack = Self::nesting_guard()?;
         self.expect(b'{')?;
         let mut entries = Vec::new();
         self.whitespace();

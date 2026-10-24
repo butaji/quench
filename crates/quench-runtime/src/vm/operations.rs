@@ -715,12 +715,26 @@ pub(super) const BITWISE_AND: u32 = BinaryOperator::BitwiseAnd as u32;
 /// `None` for any other operand.
 #[inline(always)]
 pub(super) fn number_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+    if let Some(value) = bitwise_value_operator::<OP>(left, right) {
+        return Some(value);
+    }
     let (left, right) = Value::number_pair(left, right)?;
     Some(Value::number(numeric_number_result(
         numeric_binary_operator(OP)?,
         left,
         right,
     )))
+}
+
+/// A bitwise operator `OP` of two Numbers, each taken to int32 from its own representation
+/// (an integer as it is, a double by ToInt32), its result made as `number_bitwise_result`
+/// makes it, without the round trip through doubles `numeric_number_result` takes. `None`
+/// for any other operator, which folds away for a constant `OP`, and for other operands.
+#[inline(always)]
+fn bitwise_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+    let operation = NumberBitwise::from_binary_operator(numeric_binary_operator(OP)?)?;
+    let int32 = |value: Value| value.as_int().or_else(|| value.as_number().map(|number| number_to_u32(number) as i32));
+    Some(number_bitwise_result(operation, int32(left)?, int32(right)?))
 }
 
 /// Integer operator `OP` (`numeric_integer_result`) when both operands are integers;
