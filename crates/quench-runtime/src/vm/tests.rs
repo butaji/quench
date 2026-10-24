@@ -11007,6 +11007,138 @@ fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_general_dispatch_compiles_tagged_int32_bitwise_ops_and_falls_back_exactly() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function bitAnd(left, right) {
+            let result = 0;
+            for (let pass = 0; pass < 2; pass++) result = left & right;
+            return result;
+          }
+          function bitOr(left, right) {
+            let result = 0;
+            for (let pass = 0; pass < 2; pass++) result = left | right;
+            return result;
+          }
+          function bitXor(left, right) {
+            let result = 0;
+            for (let pass = 0; pass < 2; pass++) result = left ^ right;
+            return result;
+          }
+          function shiftLeft(left, right) {
+            let result = 0;
+            for (let pass = 0; pass < 2; pass++) result = left << right;
+            return result;
+          }
+          function shiftRight(left, right) {
+            let result = 0;
+            for (let pass = 0; pass < 2; pass++) result = left >> right;
+            return result;
+          }
+          function shiftRightUnsigned(left, right) {
+            let result = 0;
+            for (let pass = 0; pass < 2; pass++) result = left >>> right;
+            return result;
+          }
+          var result = 0;
+          for (let index = 0; index < 20000; index++) {
+            result += bitAnd(index, 127) + bitOr(index, 32) + bitXor(index, 7);
+            result += shiftLeft(index, 2) + shiftRight(-index, 1);
+            result += shiftRightUnsigned(-1, index & 31);
+          }
+          if (bitAnd(6, 3) !== 2 || bitOr(6, 3) !== 7 || bitXor(6, 3) !== 5) {
+            throw Error('tagged bitwise operation');
+          }
+          if (shiftLeft(-2, 2) !== -8 || shiftRight(-8, 2) !== -2) {
+            throw Error('signed shift operation');
+          }
+          if (shiftRightUnsigned(-1, 0) !== 4294967295) {
+            throw Error('unsigned shift must box outside int32');
+          }
+          let conversions = 0;
+          const coercible = { valueOf() { conversions++; return 13; } };
+          if (bitXor(coercible, 10) !== 7 || conversions !== 2) {
+            throw Error('object coercion fallback');
+          }
+          if (bitXor(2.5, 7) !== 5 || bitXor(4294967296, 7) !== 7) {
+            throw Error('numeric conversion fallback');
+          }
+          if (bitXor('13', 10) !== 7 || bitXor(NaN, 7) !== 7) {
+            throw Error('primitive conversion fallback');
+          }
+          let bigintThrew = false;
+          try { bitXor(13n, 1); } catch (error) { bigintThrew = error instanceof TypeError; }
+          if (!bigintThrew) throw Error('mixed bigint fallback');
+        "#,
+        "js-general-int32-bitwise.js",
+    ))
+    .unwrap();
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    let result_atom = interpreter.intern_atom("result");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, result_atom)
+        .unwrap();
+    let result = compiled
+        .own_property(compiled.realm.globals, result_atom)
+        .unwrap();
+    assert_eq!(result, expected);
+
+    for name in [
+        "bitAnd",
+        "bitOr",
+        "bitXor",
+        "shiftLeft",
+        "shiftRight",
+        "shiftRightUnsigned",
+    ] {
+        let function = program
+            .functions
+            .iter()
+            .position(|body| {
+                body.header()
+                    .name
+                    .or(body.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} did not compile through GeneralDispatch");
+        };
+        assert!(native.is_general_dispatch(), "{name} used a specialized compiler");
+        assert!(native.native_entries() > 0, "{name} has no native entries");
+        let body = program.function_get(function as usize).unwrap();
+        let binary_pcs: Vec<_> = body
+            .code
+            .iter()
+            .enumerate()
+            .filter_map(|(pc, instruction)| {
+                (instruction.as_wide().op() == crate::bytecode::Op::Binary).then_some(pc as u32)
+            })
+            .collect();
+        assert!(!binary_pcs.is_empty());
+        for pc in binary_pcs {
+            assert!(
+                native.general_dispatch_pc_is_native(pc as usize),
+                "{name} pc {pc} is a callout"
+            );
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_guarded_int32_identity_arm_and_falls_back_for_other_types() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
