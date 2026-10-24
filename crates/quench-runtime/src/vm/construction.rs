@@ -962,18 +962,15 @@ impl<H: Host> Vm<H> {
         let object = &self.heap.function(constructor)?.object;
         let shape = object.shape();
         let key = PropertyKey::string(prototype_atom);
-        let data_slot = || {
-            self.property_attributes(constructor, key)
-                .filter(|attributes| !attributes.accessor)
-                .and_then(|_| self.property_shape_slot(shape, key))
-        };
         if self.shape_is_dictionary(shape) {
-            return self.heap.property_get(object, data_slot()?);
+            return self.heap.property_get(object, self.prototype_data_slot(constructor, shape, key)?);
         }
         let memo = &self.shapes[shape as usize].prototype_slot;
         let slot = match memo.get() {
             PROTOTYPE_SLOT_UNKNOWN => {
-                let slot = data_slot().map_or(PROTOTYPE_SLOT_NONE, |slot| slot as u32);
+                let slot = self
+                    .prototype_data_slot(constructor, shape, key)
+                    .map_or(PROTOTYPE_SLOT_NONE, |slot| slot as u32);
                 memo.set(slot);
                 slot
             }
@@ -983,6 +980,17 @@ impl<H: Host> Vm<H> {
             return None;
         }
         self.heap.property_get(object, slot as usize)
+    }
+
+    /// The slot of `constructor`'s own `prototype` data property `key` in its `shape`; `None`
+    /// for an accessor or no such property. Out of line and of plain values: a construct the
+    /// lane inlines this lookup into passes it no address of its stack, which would keep its
+    /// dispatch from being a sibling call (`tools/check-lane-tail-calls.sh`).
+    #[inline(never)]
+    fn prototype_data_slot(&self, constructor: Value, shape: u32, key: PropertyKey) -> Option<usize> {
+        self.property_attributes(constructor, key)
+            .filter(|attributes| !attributes.accessor)
+            .and_then(|_| self.property_shape_slot(shape, key))
     }
 
     /// `constructor`'s own shape and the slot of its own data `prototype` there, for a shape

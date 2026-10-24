@@ -207,11 +207,17 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     pub(super) fn try_insert(&mut self, value: T) -> Result<RecordId, T> {
         // The common allocation, inline: an id from the loaded free word, else the next fresh
         // id in a block that exists. Reservation, new blocks and loading the next free word
-        // take `try_insert_slow`.
+        // take `claim_slow`, which names no value: an allocation inlined into a lane handler
+        // then passes it no address of the handler's stack, which would keep the handler's
+        // dispatch from being a sibling call (`tools/check-lane-tail-calls.sh`).
         let id = if self.free_word != 0 {
             let bit = OCCUPANCY_WORD_BITS - 1 - self.free_word.leading_zeros() as usize;
             self.free_word &= !(1_u64 << bit);
-            self.free_word_base + bit as RecordId
+            let id = self.free_word_base + bit as RecordId;
+            let (block_index, record_index) = Self::split_id(id);
+            let claimed = self.blocks[block_index].claim(record_index);
+            debug_assert!(claimed, "a free-word bit names an unoccupied id");
+            id
         } else if self.free_cursor == 0
             && self.reserved
             && (self.next_id as usize) < CAPACITY
@@ -219,17 +225,17 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         {
             let id = self.next_id;
             let (block_index, record_index) = Self::split_id(id);
-            if self.blocks[block_index].is_occupied(record_index) {
+            if !self.blocks[block_index].claim(record_index) {
                 return Err(value);
             }
             self.next_id += 1;
             id
         } else {
-            return self.try_insert_slow(value);
+            let Some(id) = self.claim_slow() else {
+                return Err(value);
+            };
+            id
         };
-        let (block_index, record_index) = Self::split_id(id);
-        let claimed = self.blocks[block_index].claim(record_index);
-        debug_assert!(claimed, "a free or fresh id is unoccupied");
         // SAFETY: the occupancy bit claims this previously uninitialized id, in the reserved
         // range (a free word and a block exist only after reservation).
         unsafe {
@@ -242,11 +248,12 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         Ok(id)
     }
 
-    /// `try_insert` when it reserves the range, adds a block or loads a free word.
+    /// `try_insert`'s claim of an unoccupied id when it reserves the range, adds a block or
+    /// loads a free word; `None` when no id is free.
     #[inline(never)]
-    fn try_insert_slow(&mut self, value: T) -> Result<RecordId, T> {
+    fn claim_slow(&mut self) -> Option<RecordId> {
         if !self.ensure_reserved() {
-            return Err(value);
+            return None;
         }
         if self.free_word == 0 && self.free_cursor != 0 {
             self.load_free_word();
@@ -258,37 +265,21 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
             let (block_index, record_index) = Self::split_id(id);
             let claimed = self.blocks[block_index].claim(record_index);
             debug_assert!(claimed, "a free-word bit names an unoccupied id");
-            // SAFETY: the occupancy bit claims this previously uninitialized id.
-            unsafe {
-                self.base
-                    .as_ptr()
-                    .add(id as usize)
-                    .write(MaybeUninit::new(value));
-            };
-            self.live += 1;
-            return Ok(id);
+            return Some(id);
         }
         let id = self.next_id;
         if id as usize >= CAPACITY {
-            return Err(value);
+            return None;
         }
         let (block_index, record_index) = Self::split_id(id);
         while self.blocks.len() <= block_index {
             self.blocks.push(RecordBlock::new());
         }
         if !self.blocks[block_index].claim(record_index) {
-            return Err(value);
+            return None;
         }
-        // SAFETY: the occupancy bit claims this previously uninitialized id.
-        unsafe {
-            self.base
-                .as_ptr()
-                .add(id as usize)
-                .write(MaybeUninit::new(value));
-        };
         self.next_id += 1;
-        self.live += 1;
-        Ok(id)
+        Some(id)
     }
 
     /// Places `value` at `id`, as a snapshot restores it (`crate::snapshot`): ids arrive in
