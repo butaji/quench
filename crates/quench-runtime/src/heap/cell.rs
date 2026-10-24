@@ -896,7 +896,7 @@ impl Native {
     /// error's stack or making a collection due (`Host::host_function_runs_beside_activations`
     /// for a host's), so a lane calls it with its activations frameless. Each of these reads
     /// its arguments and the heap, and reaches guest code only through getters, coercions,
-    /// proxy traps or species constructors, whose calls make the activations frames first
+    /// proxy traps, species constructors or a `JSON.parse` reviver, whose calls make the activations frames first
     /// (`Vm::materialize_deferred_lane`): `assert.deepEqual` calls `Object.prototype.toString`
     /// on every value it compares (10,210 materializations in the color-convert npm scenario).
     pub(crate) fn runs_beside_activations(self) -> bool {
@@ -918,6 +918,7 @@ impl Native {
                 | Self::StringSplit
                 | Self::StringMatch
                 | Self::RegExpTest
+                | Self::JsonParse
                 | Self::JsonStringify
                 | Self::ParseInt
                 | Self::ArrayShift
