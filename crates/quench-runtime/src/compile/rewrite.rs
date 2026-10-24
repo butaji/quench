@@ -2,6 +2,7 @@ use super::*;
 use crate::bytecode::{
     FieldLayout, ImmediateRole, InstructionField, Superinstruction, WideInstruction,
 };
+use super::liveness::{RegisterSet, register_bit};
 
 #[derive(Clone, Copy)]
 struct Rule {
@@ -216,7 +217,7 @@ fn remove_dead_moves(
         .local_registers
         .iter()
         .filter(|entry| entry.local < function.params)
-        .fold(0_u64, |mask, entry| mask | register_bit(entry.register));
+        .fold(0, |mask, entry| mask | register_bit(entry.register));
     let mut changed = Vec::new();
     for pc in 0..function.code.len() {
         let mov = function.code[pc];
@@ -295,8 +296,8 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
 /// The liveness of a function's code as it stands: each instruction's transfer masks and the
 /// registers live before it.
 struct CodeLiveness {
-    transfers: Vec<(u64, u64)>,
-    live: Vec<u64>,
+    transfers: Vec<(RegisterSet, RegisterSet)>,
+    live: Vec<RegisterSet>,
 }
 
 /// What a pass hands the next about the code as it stands. A pass that leaves the code
@@ -305,7 +306,7 @@ struct CodeLiveness {
 /// updated for the instructions it changed, so the next pass derives only the live sets.
 enum CodeFacts {
     Live(CodeLiveness),
-    Transfers(Vec<(u64, u64)>),
+    Transfers(Vec<(RegisterSet, RegisterSet)>),
 }
 
 impl CodeLiveness {
@@ -453,7 +454,7 @@ fn coalesce_distant_producer_moves(
     let storage = function
         .local_registers
         .iter()
-        .fold(0_u64, |mask, entry| mask | register_bit(entry.register));
+        .fold(0, |mask, entry| mask | register_bit(entry.register));
     let mut claimed_until = 0;
     let mut changed = Vec::new();
     for target in 0..function.code.len() {
@@ -558,7 +559,7 @@ fn forward_move_sources(
     let storage = function
         .local_registers
         .iter()
-        .fold(0_u64, |mask, entry| mask | register_bit(entry.register));
+        .fold(0, |mask, entry| mask | register_bit(entry.register));
     let in_handler = |pc: usize| {
         function
             .handlers
@@ -691,9 +692,6 @@ fn fuses(first: Op, second: Op, recipe: impl Fn(Recipe) -> bool) -> bool {
         .any(|rule| rule.pattern == [first, second] && recipe(rule.recipe))
 }
 
-fn register_bit(register: Register) -> u64 {
-    1_u64.checked_shl(u32::from(register)).unwrap_or(0)
-}
 
 struct SuperRule {
     pattern: &'static [Op],
@@ -1406,7 +1404,7 @@ mod tests {
         assert_eq!(fused[0].op(), Op::JumpBinaryFalse);
         assert_eq!(fused[0].jump_target(), 2);
         assert_eq!(fused.len(), dead_branch.len() - 1);
-        assert_rewrite_preserves_code(dead_branch, u64::BITS as u16 + 1);
+        assert_rewrite_preserves_code(dead_branch, super::super::liveness::ROOT_MAP_REGISTERS + 1);
     }
 
     #[test]
