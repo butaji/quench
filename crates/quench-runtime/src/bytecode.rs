@@ -792,6 +792,7 @@ opcodes!(
     Move => Effect::PURE; layout Scalar; meaning Unused; js Move, @ Register, @ fields(ResultRegister, Register, Unused),
     Call => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
     CallArray => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
+    CallSpread => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
     CallKnown => CALL_EFFECT; layout CallWindow; flow Call, @ Returnable, @ fields(ResultRegister, FunctionIndex, Unused),
     CallMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call, @ Returnable, @ fields(ResultRegister, Register, Unused),
     CallThisMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call, @ Returnable, @ fields(ResultRegister, Unused, Unused),
@@ -3095,6 +3096,15 @@ impl ProgramSource {
     }
 }
 
+/// The sizes of a program's inline-cache site tables (`ResidualProgram::cache_site_counts`):
+/// its field, method and object literal sites.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CacheSiteCounts {
+    pub(crate) fields: u16,
+    pub(crate) methods: usize,
+    pub(crate) objects: usize,
+}
+
 #[derive(Clone, Debug)]
 pub struct ResidualProgram {
     pub(crate) specialized: bool,
@@ -3234,7 +3244,7 @@ impl ResidualProgram {
                     })
                     .function,
             };
-            // As `prime_loop_decoding` primes the functions of an installed program.
+            // As `ResidualProgram::prime_loop_decoding` primes an installed program's records.
             function.decoded.prime_loop(&function.code, &function.wide);
             std::rc::Rc::new(function)
         })
@@ -3393,6 +3403,28 @@ impl ResidualProgram {
 
     /// `encode_snapshot`'s bytes, sharing `atoms` (the restored VM's) and with `text` as the
     /// source; valid as the compiler output it was when written.
+    /// The sizes of the program's inline-cache site tables, which a VM lays out per program.
+    pub(crate) fn cache_site_counts(&self) -> CacheSiteCounts {
+        CacheSiteCounts {
+            fields: self.cache_sites,
+            methods: self.method_sites.len(),
+            objects: self.object_sites.len(),
+        }
+    }
+
+    /// Primes the loop decoding of every function record the program holds; a released
+    /// record primes as it compiles again (`ResidualProgram::function`).
+    pub(crate) fn prime_loop_decoding(&self) {
+        for function in self.functions.iter().filter_map(FunctionSlot::record) {
+            function.decoded.prime_loop(&function.code, &function.wide);
+        }
+    }
+
+    /// Checks `encode_snapshot`'s bytes as `decode_snapshot` would before decoding them.
+    pub(crate) fn verify_snapshot(bytes: &[u8]) -> Result<(), String> {
+        binary::verify_snapshot_program(bytes)
+    }
+
     pub(crate) fn decode_snapshot(
         bytes: KeptBytes,
         text: Option<SourceText>,
