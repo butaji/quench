@@ -11,13 +11,13 @@ impl<H: Host> Vm<H> {
         self.snapshot_method_caches(_reason);
         self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);
         self.megamorphic_methods.clear();
-        self.method_cache_atoms = 0;
+        self.method_cache_atoms.clear();
     }
 
     /// Whether any method cache may name `atom`; `false` proves that none does.
     #[inline(always)]
     pub(super) fn method_caches_may_name(&self, atom: Atom) -> bool {
-        self.method_cache_atoms & method_cache_atom_bit(atom) != 0
+        self.method_cache_atoms.contains(atom)
     }
 
     pub(super) fn invalidate_method_caches_for_atom(&mut self, atom: Atom) {
@@ -186,7 +186,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn record_method_cache(&mut self, site: usize, cache: MethodCache) {
-        self.method_cache_atoms |= method_cache_atom_bit(cache.atom);
+        self.method_cache_atoms.insert(cache.atom);
         if let Some(set) = self
             .megamorphic_methods
             .iter_mut()
@@ -485,8 +485,36 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// The `method_cache_atoms` filter bit for `atom`.
-#[inline(always)]
-fn method_cache_atom_bit(atom: Atom) -> u64 {
-    1 << (atom % u64::BITS)
+/// The atoms method caches may name: a bit per atom, set when an entry for the atom is
+/// recorded and cleared only when every method cache is, so a clear bit proves that no method
+/// cache names the atom. Exact per atom, so a program with many cached method names does not
+/// make every property add on every object scan the caches.
+#[derive(Clone, Debug, Default)]
+pub(super) struct MethodCacheAtoms {
+    words: Vec<u64>,
+}
+
+impl MethodCacheAtoms {
+    #[inline(always)]
+    fn position(atom: Atom) -> (usize, u64) {
+        ((atom / u64::BITS) as usize, 1 << (atom % u64::BITS))
+    }
+
+    #[inline(always)]
+    pub(super) fn contains(&self, atom: Atom) -> bool {
+        let (word, bit) = Self::position(atom);
+        self.words.get(word).is_some_and(|bits| bits & bit != 0)
+    }
+
+    pub(super) fn insert(&mut self, atom: Atom) {
+        let (word, bit) = Self::position(atom);
+        if word >= self.words.len() {
+            self.words.resize(word + 1, 0);
+        }
+        self.words[word] |= bit;
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.words.fill(0);
+    }
 }
