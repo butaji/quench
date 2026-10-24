@@ -5244,22 +5244,22 @@ impl CompiledJsFunction {
         misses
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn specialized_guard_misses(&self) -> u8 {
         self.specialized_guard_misses.get()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn general_dispatch_island_steps(&self) -> u64 {
         self.general_dispatch_island_steps.get()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn general_dispatch_global_name_cache_hits(&self) -> u64 {
         self.general_dispatch_global_name_cache_hits.get()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn general_dispatch_pc_is_native(&self, pc: usize) -> bool {
         self.general_dispatch_native_pcs.get(pc) == Some(&1)
     }
