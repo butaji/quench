@@ -94,6 +94,7 @@ impl<H: Host> Vm<H> {
             lane_returned: None,
             active_layout: Default::default(),
             active_constants: &[],
+            active_field_entries: std::ptr::null(),
             active_program: ProgramId::MAIN,
             #[cfg(feature = "profile-aggregate")]
             profile: Profile::default(),
