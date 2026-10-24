@@ -194,7 +194,7 @@ pub(super) struct LaneView {
     osr_rejections: Option<Box<[(super::compiled::RegionRejection, usize)]>>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(super) struct OsrDiagnostics {
     pub(super) plain_backward_jump_sites: usize,
     pub(super) admitted_sites: usize,
@@ -5692,26 +5692,29 @@ fn lane_loop_entry<H: Host>(
             Some(index) => lane_region_field(cx, r, &region.fields[index])?,
         };
         if array.written {
-            // A Number store logs nothing.
-            let object = vm.heap.record_array_store_mut_unlogged(value, Value::integer(0))?;
-            if object.has_indexed_descriptors() || object.is_frozen() || object.arguments_map().is_some() {
+            // A store below the length or an append at it, into a dense array no prototype
+            // claims an index of, defines or replaces an own data element and nothing else
+            // (`append_dense_element`, `fill_dense_hole`).
+            if vm.dense_array_length(value).is_none() || !vm.prototypes_hold_no_index(value) {
                 return None;
             }
+            // A Number store logs nothing.
+            let object = vm.heap.record_array_store_mut_unlogged(value, Value::integer(0))?;
             let elements = object.elements_mut();
             if elements.owner_count() != 1 {
                 return None;
             }
             let elements = super::index::mutable_array_elements(elements);
-            entry.push_array(elements.as_mut_ptr(), elements.len())?;
+            entry.push_array(elements.as_mut_ptr(), elements.len(), elements.capacity())?;
         } else {
             let elements = vm.heap.record_array(value)?.elements().as_slice();
-            entry.push_array(elements.as_ptr().cast_mut(), elements.len())?;
+            entry.push_array(elements.as_ptr().cast_mut(), elements.len(), elements.len())?;
         }
     }
-    // These regions cannot run calls or field writes, and their element stores replace
-    // existing elements in bounds, which changes no named property. Thus a hit on an
-    // ordinary data field stays valid for the whole native run. Any miss, accessor, private name, or non-Number exits before native
-    // code can alter a register.
+    // These regions cannot run calls or field writes, and their element stores define or
+    // replace own data elements, which changes no shape slot. Thus a hit on an ordinary
+    // data field stays valid for the whole native run. Any miss, accessor, private name, or
+    // non-Number exits before native code can alter a register.
     for field in &region.fields {
         let value = lane_region_field(cx, r, field)?;
         entry.push_field(value, field.tagged)?;
