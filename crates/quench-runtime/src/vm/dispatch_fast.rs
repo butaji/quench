@@ -11558,27 +11558,51 @@ fn lane_frame_return<H: Host>(vm: &mut Vm<H>, call: Ip, value: Value) -> Ip {
     exit(call)
 }
 
-/// Complete the innermost lane activation with `value` when it is the common return: a
-/// JavaScript activation of the running program's caller yielding `value` to its call's result
-/// register. Each step loads or stores, so a handler returning through it saves no
-/// registers. `None`, which changes nothing, leaves every other completion to
-/// `lane_complete_activation`.
+/// Complete the innermost lane activation with `value` when it is the common return
+/// (`lane_return_plain`): a JavaScript activation of the running program's caller yielding
+/// `value` to its call's result register. Each step loads or stores, so a handler returning
+/// through it saves no registers. `None`, which changes nothing, leaves every other completion
+/// to `lane_complete_activation`.
 #[inline(always)]
 fn lane_complete_plain_activation<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
-    let vm = unsafe { vm(cx) };
-    let last = vm.lane_stack.activations.last()?;
-    let ActivationKind::Script(script) = &last.kind else {
-        return None;
+    let (registers, next) = lane_return_plain(cx, value)?;
+    let view = Carried {
+        memory: MemoryView::script(cx),
+        integers: crate::value::IntegerEncoding::TAG,
+        acc: Slot::of(Value::UNDEFINED),
     };
-    // SAFETY: the call record belongs to the caller's live view.
-    if script.completion != Completion::Plain
-        || unsafe { (*last.call).a } & crate::bytecode::RETURN_REGISTER != 0
-    {
-        return None;
-    }
-    let activation = vm.lane_stack.pop_activation()?;
-    let (memory, _) = lane_restore_caller(cx, &activation);
-    Some(lane_resume_after_call(&activation, memory, value))
+    Some(Resumed::At(registers, next, view))
+}
+
+/// `lane_complete_activation` of a run of JavaScript activations of one program each
+/// returning the completion of the call above it (`return f(...)`), down to one whose call
+/// takes `value` in its result register. Only that outermost activation's caller state is
+/// restored: an inner one's would be overwritten by it. `None`, which changes nothing, leaves
+/// any other completion to the activation-by-activation loop.
+#[inline(always)]
+fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let activations = &vm.lane_stack.activations;
+    let mut index = activations.len();
+    let outermost = loop {
+        index = index.checked_sub(1)?;
+        let activation = &activations[index];
+        let ActivationKind::Script(script) = &activation.kind else {
+            return None;
+        };
+        if script.completion != Completion::Plain {
+            return None;
+        }
+        // SAFETY: the call record belongs to the caller's live view.
+        if unsafe { (*activation.call).a } & crate::bytecode::RETURN_REGISTER == 0 {
+            break index;
+        }
+    };
+    // Script activations hold no Wasm storage (`LaneStack::pop_activation`), so the inner
+    // ones go without its accounting.
+    debug_assert!(activations[outermost..].iter().all(|activation| activation.frame_storage_bytes == 0));
+    vm.lane_stack.activations.truncate(outermost + 1);
+    lane_complete_plain_activation(cx, value)
 }
 
 /// Restore the lane state `activation`'s caller runs with, as its return does: the lane
@@ -11627,13 +11651,8 @@ fn lane_resume_after_call(activation: &Activation, memory: MemoryView, value: Va
 /// runs: the running function is a VM frame.
 #[inline(always)]
 fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Value) -> Option<Resumed> {
-    if let Some((registers, next)) = lane_return_plain(cx, value) {
-        let view = Carried {
-            memory: MemoryView::script(cx),
-            integers: crate::value::IntegerEncoding::TAG,
-            acc: Slot::of(Value::UNDEFINED),
-        };
-        return Some(Resumed::At(registers, next, view));
+    if let Some(resumed) = lane_complete_plain_chain(cx, value) {
+        return Some(resumed);
     }
     let vm = unsafe { vm(cx) };
     let mut activation = vm.lane_stack.pop_activation()?;
