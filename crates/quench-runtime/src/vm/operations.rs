@@ -170,6 +170,15 @@ macro_rules! number_bitwise {
         pub(super) enum NumberBitwise { $($operation),+ }
 
         impl NumberBitwise {
+            /// `from_operator` of a decoded operator, as one match.
+            #[inline(always)]
+            pub(super) fn from_binary_operator(operator: BinaryOperator) -> Option<Self> {
+                match operator {
+                    $(BinaryOperator::$operator => Some(Self::$operation),)+
+                    _ => None,
+                }
+            }
+
             pub(super) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == BinaryOperator::$operator as u32 {
@@ -250,9 +259,16 @@ fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) ->
     }
 }
 
+/// `operation` of int32 operands as a value: the int32 result as it is, but for a zero-fill
+/// shift above `i32::MAX`, which is the Number of its unsigned bits.
 #[inline(always)]
 fn number_bitwise_result(operation: NumberBitwise, left: i32, right: i32) -> Value {
-    Value::number(number_bitwise_f64_result(operation, left, right))
+    let bits = operation.apply(&mut I32BitwiseStage, left, right);
+    if operation == NumberBitwise::ShiftRightUnsigned && bits < 0 {
+        Value::number(f64::from(bits as u32))
+    } else {
+        Value::integer(bits)
+    }
 }
 
 struct NumberF64Stage;
@@ -566,9 +582,9 @@ fn numeric_integer_result(operator: BinaryOperator, left: i32, right: i32) -> Op
             }
         }
         BinaryOperator::Exponential => return None,
-        _ => number_bitwise_result(
-            NumberBitwise::from_operator(operator as u32)
-                .expect("numeric operator table contains supported bitwise operations"),
+        operator => number_bitwise_result(
+            NumberBitwise::from_binary_operator(operator)
+                .expect("numeric operator table only contains numeric operators"),
             left,
             right,
         ),
