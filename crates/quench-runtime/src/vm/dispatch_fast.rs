@@ -9787,6 +9787,9 @@ script_handler! {
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
         match vm.heap.function(callee) {
             Some(FunctionRecord { kind: FunctionKind::User(..), .. }) => {
+                if let Some(parent) = lane_super_forwarded_parent(vm, callee) {
+                    return lane_construct_forwarded_parent(cx, r, ip, i, callee, parent);
+                }
                 return lane_frame_construct(cx, r, ip, i);
             }
             Some(FunctionRecord { kind: FunctionKind::Native(native), .. })
@@ -9795,7 +9798,7 @@ script_handler! {
                 let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
                 // SAFETY: the construction's window is registers of the running function.
                 let args = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.c)), argc) };
-                let Some(value) = lane_construct_native(cx, ip, callee, args) else {
+                let Some(value) = lane_construct_native(cx, ip, callee, callee, args) else {
                     return exit(ip);
                 };
                 // The construction ran from the innermost frame, whose registers are the lane's.
@@ -10673,7 +10676,13 @@ fn lane_call_native<H: Host>(
 /// path, which raises the error the construction stashed in `Vm::lane_raised` or makes one
 /// this does not admit.
 #[inline(never)]
-fn lane_construct_native<H: Host>(cx: *mut LaneContext<H>, ip: Ip, callee: Value, args: &[Value]) -> Option<Value> {
+fn lane_construct_native<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    callee: Value,
+    new_target: Value,
+    args: &[Value],
+) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     if !unsafe { (*cx).script_calls } || vm.construct_target.is_some() {
         return None;
@@ -10681,23 +10690,89 @@ fn lane_construct_native<H: Host>(cx: *mut LaneContext<H>, ip: Ip, callee: Value
     // The values are copied before activations become frames, which moves the registers
     // they may lie in; the frames then root what the construction passes.
     let arguments = super::call_arguments::CallArguments::from_slice(args);
-    vm.materialize_lane_activations(cx);
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
-    // active view, which is the running frame's.
-    let (code, frame, call_pc) = unsafe { (&*(*cx).code, (*cx).frame, ip.offset_from((*cx).base) as usize) };
-    vm.frames[frame].pc = call_pc + 1;
-    vm.frames[frame].pc_is_resume = true;
-    let result = vm.construct_value_with_new_target(code, callee, callee, arguments.as_slice());
+    // running function's view.
+    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    // A native's construction runs beside the activations, as a native call beside them
+    // runs (`lane_call_native`): the first point that observes frames makes them frames.
+    let beside = !vm.lane_stack.activations.is_empty() && vm.constructs_beside_activations(callee);
+    if beside {
+        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc });
+    } else {
+        vm.materialize_lane_activations(cx);
+        let frame = unsafe { (*cx).frame };
+        vm.frames[frame].pc = call_pc + 1;
+        vm.frames[frame].pc_is_resume = true;
+    }
+    // SAFETY: as above; the construction runs from the running function's program.
+    let code = unsafe { &*(*cx).code };
+    let result = vm.construct_value_with_new_target(code, callee, new_target, arguments.as_slice());
     // The construction's allocations may make a collection due, which the lane's safepoints
     // take.
     note_allocation(vm);
+    let unobserved = beside && vm.lane_deferred.take().is_some();
     match result {
         Ok(value) => Some(value),
         Err(error) => {
+            // The general path raises it from the frames the activations become.
+            if unobserved {
+                vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc });
+                vm.materialize_deferred_lane();
+            }
             vm.lane_raised = Some(error);
             None
         }
     }
+}
+
+/// The native parent a `new` of `callee` constructs in its place: `callee`'s own parent
+/// (`[[GetPrototypeOf]]`) when its constructor only constructs it
+/// (`Function::super_forwarding`) and that parent is a native the lane constructs other
+/// than an error constructor, with what the constructor passes on.
+#[inline(never)]
+fn lane_super_forwarded_parent<H: Host>(vm: &Vm<H>, callee: Value) -> Option<(Value, crate::bytecode::SuperForwarded)> {
+    let Some(FunctionRecord { kind: FunctionKind::User(program, function), .. }) = vm.heap.function(callee) else {
+        return None;
+    };
+    let code = vm.programs.residual(*program)?;
+    let forwarded = code.function_get(*function as usize)?.super_forwarding(&code.atoms, &code.constants)?;
+    let parent = vm.object_data(callee)?.proto();
+    match vm.heap.function(parent) {
+        // An error's stack starts past its constructors' frames, which this construction
+        // would not make.
+        Some(FunctionRecord { kind: FunctionKind::Native(native), .. })
+            if native.constructs_from_lane() && !native.is_error_constructor() =>
+        {
+            Some((parent, forwarded))
+        }
+        _ => None,
+    }
+}
+
+/// `new callee(...)` of a class whose constructor only constructs its native `parent`
+/// (`lane_super_forwarded_parent`): the parent's construction with what the constructor
+/// passes on (every value, or its parameters with missing ones `undefined`) and `callee`
+/// as `new.target`, as the body's `super(...)` makes it; its receiver is the construction's
+/// value.
+#[inline(never)]
+fn lane_construct_forwarded_parent<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    callee: Value,
+    (parent, forwarded): (Value, crate::bytecode::SuperForwarded),
+) -> Ip {
+    let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
+    let count = match forwarded {
+        crate::bytecode::SuperForwarded::Passed => argc,
+        crate::bytecode::SuperForwarded::Parameters(count) => usize::from(count),
+    };
+    let passed = (0..count)
+        .map(|index| if index < argc { r.get(i.c + index as u16) } else { Value::UNDEFINED })
+        .collect::<smallvec::SmallVec<[Value; GATHERED_INLINE_VALUES]>>();
+    let value = lane_construct_native(cx, ip, parent, callee, &passed);
+    lane_native_complete(cx, ip, i, value)
 }
 
 script_handler! {
@@ -16028,8 +16103,9 @@ impl<H: Host> Vm<H> {
                     if let Some(body) = code.function_get(activation.function as usize) {
                         let instruction = body.instructions().nth(pc);
                         super::lane_exits::record_detail(format!(
-                            "exit in activation {:?} {:?} {} @{:?} pc={pc}",
+                            "exit in activation {:?} {} {:?} {} @{:?} pc={pc}",
                             instruction,
+                            self.programs.source_name(unsafe { (*cx).program }).unwrap_or_default(),
                             instruction
                                 .filter(|instruction| instruction.op() == Op::GetField)
                                 .and_then(|instruction| code.atoms.get(instruction.imm() as usize)),
