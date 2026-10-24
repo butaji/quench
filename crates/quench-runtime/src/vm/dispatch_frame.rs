@@ -1405,9 +1405,6 @@ impl<H: Host> Vm<H> {
         // every PC, so they run the general path only.
         let fast_lane = !STOPS
             && stop_pc.is_none()
-            && !(self.js_tier_runs()
-                && self.programs.js_jit_general_dispatch_enabled()
-                && p.kind != crate::bytecode::ProgramKind::Wasm)
             && !cfg!(any(
                 feature = "profile-aggregate",
                 feature = "profile-memory"
@@ -1537,6 +1534,18 @@ impl<H: Host> Vm<H> {
                     &mut executing,
                     allow_inline_calls,
                 );
+                if self.js_tier_runs()
+                    && self.js_tier_needs_general_entry(
+                        self.frames[frame].program,
+                        self.frames[frame].function,
+                    )
+                {
+                    // A lane loop reported enough backward-edge work for the
+                    // shared baseline. Re-enter at that loop header without
+                    // restarting the same lane before compilation.
+                    cursor.lane = std::ptr::null();
+                    cursor.back_edges = None;
+                }
                 // The lane may leave in a frame of another program, its activations' calls
                 // having set the loop's executing program aside as the loop's pushes do.
                 executing_program = executing.id;
