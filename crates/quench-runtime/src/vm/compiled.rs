@@ -2277,23 +2277,54 @@ const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
 
+/// An opt-in JIT switch the environment sets ("1" or "true"), read once per process: a
+/// compiled call consults several, and reading the environment on each call cost more than
+/// the calls (HashSet-wasm `--jit`: `getenv` was 68% of the run's instructions).
+struct EnvSwitch {
+    name: &'static str,
+    enabled: std::sync::OnceLock<bool>,
+}
+
+impl EnvSwitch {
+    const fn new(name: &'static str) -> Self {
+        Self { name, enabled: std::sync::OnceLock::new() }
+    }
+
+    fn enabled(&self) -> bool {
+        *self.enabled.get_or_init(|| {
+            std::env::var(self.name).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+        })
+    }
+}
+
+static JIT_WASM_SELECTIVE: EnvSwitch = EnvSwitch::new(JIT_WASM_SELECTIVE_ENV);
+static JIT_DIRECT_COMPARE_BRANCHES: EnvSwitch = EnvSwitch::new(JIT_DIRECT_COMPARE_BRANCHES_ENV);
+static JIT_AFFINE_PAIR: EnvSwitch = EnvSwitch::new(JIT_AFFINE_PAIR_ENV);
+static JIT_REFERENCE_BODY_CACHE: EnvSwitch = EnvSwitch::new(JIT_REFERENCE_BODY_CACHE_ENV);
+static JIT_EMSCRIPTEN_MEMCPY_LEAF: EnvSwitch = EnvSwitch::new(JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV);
+static JIT_ROOT_ONLY: EnvSwitch = EnvSwitch::new(JIT_ROOT_ONLY_ENV);
+static JIT_ROOT_FIRST: EnvSwitch = EnvSwitch::new(JIT_ROOT_FIRST_ENV);
+
 fn jit_root_override() -> Result<Option<usize>, ()> {
     #[cfg(test)]
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return Ok(mode.root);
     }
-    let Some(root) = std::env::var_os(JIT_ROOT_ENV) else {
-        return Ok(None);
-    };
-    root.to_str()
-        .ok_or(())?
-        .parse::<usize>()
-        .map(Some)
-        .map_err(|_| ())
+    static ROOT: std::sync::OnceLock<Result<Option<usize>, ()>> = std::sync::OnceLock::new();
+    *ROOT.get_or_init(|| {
+        let Some(root) = std::env::var_os(JIT_ROOT_ENV) else {
+            return Ok(None);
+        };
+        root.to_str()
+            .ok_or(())?
+            .parse::<usize>()
+            .map(Some)
+            .map_err(|_| ())
+    })
 }
 
 fn jit_wasm_selective_enabled() -> bool {
-    std::env::var(JIT_WASM_SELECTIVE_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_WASM_SELECTIVE.enabled()
 }
 
 fn jit_direct_compare_branches_enabled() -> bool {
@@ -2302,24 +2333,21 @@ fn jit_direct_compare_branches_enabled() -> bool {
     {
         return enabled;
     }
-    std::env::var(JIT_DIRECT_COMPARE_BRANCHES_ENV)
-        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_DIRECT_COMPARE_BRANCHES.enabled()
 }
 
 /// Keep the screened affine pair loop opt-in; the benchmark harness can still
 /// run a same-binary, same-host comparison arm with it enabled.
 fn jit_affine_pair_enabled() -> bool {
-    std::env::var(JIT_AFFINE_PAIR_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_AFFINE_PAIR.enabled()
 }
 
 fn jit_reference_body_cache_enabled() -> bool {
-    std::env::var(JIT_REFERENCE_BODY_CACHE_ENV)
-        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_REFERENCE_BODY_CACHE.enabled()
 }
 
 fn jit_emscripten_memcpy_leaf_enabled() -> bool {
-    std::env::var(JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV)
-        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_EMSCRIPTEN_MEMCPY_LEAF.enabled()
 }
 
 /// Run the guarded numeric hash-map loop by default. Set the environment
@@ -2337,7 +2365,7 @@ fn jit_wasm_root_only_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_only;
     }
-    std::env::var(JIT_ROOT_ONLY_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_ROOT_ONLY.enabled()
 }
 
 fn jit_wasm_root_first_enabled() -> bool {
@@ -2345,7 +2373,7 @@ fn jit_wasm_root_first_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_first;
     }
-    std::env::var(JIT_ROOT_FIRST_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_ROOT_FIRST.enabled()
 }
 
 #[cfg(test)]
@@ -3984,7 +4012,8 @@ impl Drop for CompiledProgram {
 }
 
 fn jit_diagnostics_enabled() -> bool {
-    std::env::var_os("QUENCH_WASM_JIT_STATS").is_some_and(|value| value == "1")
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("QUENCH_WASM_JIT_STATS").is_some_and(|value| value == "1"))
 }
 
 impl CompiledProgram {
@@ -11725,6 +11754,7 @@ impl<H: Host> Vm<H> {
                         function.code.len() <= MAX_JIT_TIER_BYTECODES_PER_FUNCTION
                     })
             })
+            && self.programs.wasm_tier_has_room()
             && self.programs.note_wasm_tier_entry(program, id)
         {
             let tier = self
