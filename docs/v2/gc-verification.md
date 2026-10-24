@@ -54,21 +54,15 @@ runtime trades memory for speed. A runtime chooses it once, at startup
 | Young minimum / maximum | 2^16 / 2^17 | 2^13 / 2^17 |
 | Full-collection minimum | 2^18 | 384 |
 | Allocation-cap back-off after unproductive fulls | up to 2 doublings | none |
-| Pages returned at release points | read-only and free heap pages, at most once per 100 ms | read-only and free heap pages, at each point |
+| Pages returned at collection boundaries | no | read-only and free heap pages |
 
 The throughput table is the JetStream lane's. The other lanes' measurements
 (npm, Score, web) bound each of its values; the doc comments on the constants
 cite them. The runtime passes the policy to `Host::at_collection_boundary`, and
-the Node host returns pages at most once per
-`MemoryPolicy::resident_release_interval`. The same interval paces its other
-read-only releases (after library loads, at compile phases, before output and
-at teardown), which also follow their own intervals. Under `Throughput` a
-return at every point only refaulted the run's code (path-parse npm scenario:
-33.3 -> 26.7 ms, peak RSS 12.7 -> 18.5 MB without them), and none at all left a
-long run's bootstrap pages resident (V8-v7 max RSS +3-4 MB per fixture), so it
-returns them every 100 ms: a short package's run ends before its first return.
-Every policy counts the
-collection for the release before output.
+the Node host returns pages only when
+`MemoryPolicy::returns_pages_at_collections` says so. Every policy counts the
+collection for the release before output. Releases after library loads, at
+compile phases and at teardown follow their own intervals under both policies.
 A restored snapshot paces under the restoring runtime's policy.
 
 `quench-node` selects one policy per process, because the pages a policy
@@ -86,7 +80,7 @@ table.
 Follow-ups, each compile-time and in need of its own matched measurement under
 both policies:
 
-- the allocator, the `quench-node` `quench-alloc` Cargo feature (off by default);
+- the allocator: Quench's size-classed allocator under Throughput, the system allocator under MemoryFirst (`shared_run::apply_allocator_policy`);
 - the object layout: `INLINE_PROPERTY_COUNT` (2 inline slots) and the 16-byte
   narrow records (TOD-166).
 
