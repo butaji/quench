@@ -5218,6 +5218,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                 vm.programs.record_js_jit_field_cache_probe(
                     dispatch.program_id,
                     vm.frames[dispatch.frame].function,
+                    cache_site,
                     matches!(&probe, super::object::FieldCacheProbe::Hit(_)),
                 );
             }
@@ -5282,6 +5283,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                 vm.programs.record_js_jit_field_cache_probe(
                     dispatch.program_id,
                     vm.frames[dispatch.frame].function,
+                    cache_site,
                     matches!(&probe, super::object::FieldCacheProbe::Hit(_)),
                 );
             }

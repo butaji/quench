@@ -18,6 +18,9 @@ struct Header {
 const VALUES_OFFSET: usize = size_of::<Header>();
 const _: () = assert!(VALUES_OFFSET % align_of::<Value>() == 0);
 const _: () = assert!(align_of::<Header>() >= align_of::<Value>());
+/// The byte offset from a backing's first value to its `u32` length: native code that
+/// appends within capacity advances the length there.
+pub(crate) const LENGTH_FROM_VALUES: i32 = std::mem::offset_of!(Header, len) as i32 - VALUES_OFFSET as i32;
 
 /// The header every empty backing shares: never written, never freed.
 static EMPTY: Header = Header {
