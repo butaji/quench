@@ -157,7 +157,7 @@ pub(crate) struct LoopRegion {
     tagged_constants: std::collections::BTreeMap<u16, Value>,
     /// The function's live registers before each instruction (`compile::liveness`), when
     /// liveness covers it.
-    live: Option<Box<[crate::compile::liveness::RegisterSet]>>,
+    live: Option<crate::compile::liveness::RegisterMasks>,
 }
 
 /// Why a backward jump was excluded from OSR before native code generation.
@@ -281,7 +281,7 @@ impl LoopRegion {
             return true;
         };
         live.get(pc as usize)
-            .is_none_or(|mask| !crate::compile::liveness::register_dead(*mask, usize::from(register)))
+            .is_none_or(|mask| !crate::compile::liveness::register_dead(mask, usize::from(register)))
     }
 }
 
@@ -463,7 +463,7 @@ pub(super) fn region(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[Value],
-    live: Option<&[crate::compile::liveness::RegisterSet]>,
+    live: Option<&crate::compile::liveness::RegisterMasks>,
     header: u32,
     backedge: u32,
 ) -> Result<LoopRegion, RegionRejection> {
@@ -551,7 +551,7 @@ pub(super) fn region(
         instructions: decoded[start..=end].to_vec(),
         constants: admission.numbers,
         tagged_constants: admission.values,
-        live: live.map(Box::from),
+        live: live.cloned(),
     })
 }
 
