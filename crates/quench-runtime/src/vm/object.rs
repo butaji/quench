@@ -832,6 +832,7 @@ impl<H: Host> Vm<H> {
         self.species_slot_proof.set(None);
         self.enumerable_keys.clear();
         self.field_add_sets.clear();
+        self.keyed_adds.fill(FieldAddCache::EMPTY);
         self.megamorphic_fields.clear();
         self.inherited_field_caches.clear();
         self.accessor_field_caches.clear();
@@ -3530,27 +3531,101 @@ impl<H: Host> Vm<H> {
     #[cold]
     #[inline(never)]
     fn prove_field_add_chain(&mut self, set: usize, shape: u32, atom: Atom, link: ProtoLink) -> bool {
-        let Some(cache) = self.field_add_sets[set].find(shape, atom) else {
+        let Some(cache) = self.field_add_sets[set].find(shape, atom).copied() else {
             return false;
         };
-        let (proto, depth) = (link.prototype(), cache.prototype_depth);
-        let epoch = crate::heap::prototype_layout_epoch();
-        // Entries record only non-dictionary source and prototype shapes, a shape's
-        // dictionary state is fixed when it is created, and shape compaction clears these
-        // caches, so a matching shape needs no dictionary probe here or along the chain.
-        if !self.field_add_prototype_chain_matches(proto, cache.prototype_shapes()) {
+        let Some(proved) = self.prove_add_chain(&cache, link) else {
             return false;
-        }
-        self.mark_prototype_links(proto, depth);
-        // Marking a link that was no prototype yet leaves the epoch where it was, so the
-        // proof made before it holds.
-        if crate::heap::prototype_layout_epoch() == epoch
+        };
+        if let Some(epoch) = proved
             && let Some(cache) = self.field_add_sets[set].find_mut(shape, atom)
         {
             cache.proved_epoch = epoch;
             cache.proved_prototype = link;
         }
         true
+    }
+
+    /// Whether the chain from the prototype `link` names still has the shapes `cache`
+    /// recorded, with the epoch that proof then holds under; `Some(None)` when marking its
+    /// links advanced the epoch past the walk, which then proves only this add.
+    fn prove_add_chain(&mut self, cache: &FieldAddCache, link: ProtoLink) -> Option<Option<u64>> {
+        let (proto, depth) = (link.prototype(), cache.prototype_depth);
+        let epoch = crate::heap::prototype_layout_epoch();
+        // Entries record only non-dictionary source and prototype shapes, a shape's
+        // dictionary state is fixed when it is created, and shape compaction clears these
+        // caches, so a matching shape needs no dictionary probe here or along the chain.
+        if !self.field_add_prototype_chain_matches(proto, cache.prototype_shapes()) {
+            return None;
+        }
+        self.mark_prototype_links(proto, depth);
+        // Marking a link that was no prototype yet leaves the epoch where it was, so the
+        // proof made before it holds.
+        Some((crate::heap::prototype_layout_epoch() == epoch).then_some(epoch))
+    }
+
+    /// A keyed `[[Set]]` adding the plain name `atom` (`plain_named_key`) to `object` by the
+    /// keyed add entry of its shape (`keyed_adds`), as a named site's cached add makes it
+    /// (`try_cached_field_add`). `false` changes nothing.
+    pub(super) fn keyed_add_hit(&mut self, object: Value, atom: Atom, value: Value) -> bool {
+        let Some(data) = self.heap.object_record(object) else {
+            return false;
+        };
+        // Entries record no dictionary source, which `exact_shape` never names.
+        let (shape, link) = (data.exact_shape(), data.proto_link());
+        if !data.admits_cached_add() || data.has_side_descriptors() || !self.field_add_atom_eligible(atom) {
+            return false;
+        }
+        let index = keyed_add_index(shape, atom);
+        let cache = self.keyed_adds[index];
+        if cache.source_shape != shape || cache.atom != atom || self.is_global_object(object) {
+            return false;
+        }
+        if !cache.proof_holds(link) {
+            let Some(proved) = self.prove_add_chain(&cache, link) else {
+                return false;
+            };
+            if let Some(epoch) = proved {
+                self.keyed_adds[index].proved_epoch = epoch;
+                self.keyed_adds[index].proved_prototype = link;
+            }
+        }
+        self.apply_cached_field_add(object, atom, shape, cache.target_shape, cache.slot, value);
+        true
+    }
+
+    /// The source shape and prototype proof a keyed add of `atom` to `object` would record
+    /// (`record_keyed_add`), taken before the add.
+    pub(super) fn keyed_add_guard(&self, object: Value, atom: Atom) -> Option<(u32, FieldAddCache)> {
+        let data = self.heap.object_record(object)?;
+        let shape = data.shape();
+        if self.shape_is_dictionary(shape) || self.shape_slot(shape, atom).is_some() || !self.field_add_atom_eligible(atom) {
+            return None;
+        }
+        Some((shape, self.add_prototype_guard(object, PropertyKey::string(atom))?))
+    }
+
+    /// Remembers the add of `atom` that moved `object` from `shape`, proved by `guard`
+    /// (`keyed_add_guard`), as `keyed_add_hit` replays it: an append at the source shape's
+    /// end to a non-dictionary shape.
+    pub(super) fn record_keyed_add(&mut self, object: Value, atom: Atom, shape: u32, guard: FieldAddCache) {
+        let Some(target_shape) = self.heap.object_record(object).map(Object::shape) else {
+            return;
+        };
+        let Some(slot) = self.shape_slot(target_shape, atom) else {
+            return;
+        };
+        if target_shape == shape
+            || self.shape_is_dictionary(target_shape)
+            || slot != self.shapes[shape as usize].storage_len()
+        {
+            return;
+        }
+        let Ok(slot) = u16::try_from(slot) else {
+            return;
+        };
+        self.keyed_adds[keyed_add_index(shape, atom)] =
+            FieldAddCache { atom, source_shape: shape, target_shape, slot, ..guard };
     }
 
     /// Marks the `depth` links of the chain from `proto` as prototypes, so a later change to
@@ -3955,4 +4030,13 @@ impl<H: Host> Vm<H> {
         self.reconfigure_function_name(object, key);
         self.invalidate_method_caches_for_key(key);
     }
+}
+
+/// The `Vm::keyed_adds` entry of an add of `atom` to a receiver of `shape`: the high bits of
+/// their Fx hash.
+fn keyed_add_index(shape: u32, atom: Atom) -> usize {
+    use std::hash::Hasher;
+    let mut hasher = rustc_hash::FxHasher::default();
+    hasher.write_u64(u64::from(shape) << u32::BITS | u64::from(atom));
+    (hasher.finish() >> (u64::BITS - super::KEYED_ADD_INDEX_BITS)) as usize
 }
