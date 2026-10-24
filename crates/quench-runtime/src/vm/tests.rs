@@ -11969,6 +11969,44 @@ fn shared_osr_widens_an_int32_field_that_holds_a_double() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_drops_only_the_int32_guards_ranges_and_reads_cover() {
+    // `m`'s products and sums stay in range and are read only by sums and bitwise
+    // operators; `p` is read by a division, which tells -0 from +0, and `big` overflows.
+    let source = r#"
+function mix(a, k, n) {
+  var s = 0, inf = 0, big = 0;
+  for (var i = 0; i < n; i++) {
+    var l = a[i] & 0x3fff, h = a[i] >> 14;
+    var m = k * l + h * (k & 0x3fff);
+    s = (s + ((m & 0x3fff) << 14) + (m >> 14)) | 0;
+    var p = k * l;
+    if (1 / p < 0 && p == 0) inf++;
+    big = big + a[i] * 65536;
+  }
+  return s + " " + inf + " " + big;
+}
+var a = [];
+for (var i = 0; i < 300; i++) a.push(i % 7 == 0 ? 0 : (i * 2654435761) & 0x7fffffff);
+var out = "";
+for (var c = 0; c < 300; c++) out = mix(a, c % 2 ? -5 : 3, 300);
+print(out);
+"#;
+    let program = Engine::specialize(source, "osr-int32-facts.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["-15100555 43 18079553300791296"]);
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"

@@ -2014,6 +2014,213 @@ impl CountedLoop {
 
 /// The counted loops of `region`, each with the facts its proof can establish under the
 /// compilation's representations: a fact needs every value it names held as an `i32`.
+/// The values an `i32` may take, both bounds included.
+type Range = (i64, i64);
+/// Every `i32`.
+const INT32_RANGE: Range = (i32::MIN as i64, i32::MAX as i64);
+/// How often a web's range may grow before it is taken to be every `i32`: a loop-carried
+/// value that keeps growing (a sum of itself) would otherwise grow by one step per pass.
+const MAX_RANGE_GROWTH: u8 = 4;
+
+/// What the region knows of its `i32` arithmetic before lowering it (`int32_facts`).
+#[derive(Default)]
+struct Int32Facts {
+    /// The PCs whose sum, difference or product of `i32`s is an `i32` for every value its
+    /// operands can hold, so it needs no overflow guard.
+    exact: std::collections::BTreeSet<u32>,
+    /// The PCs of products whose zero needs no sign: no factor is ever negative, or every
+    /// read of the product treats -0 as +0 and no leave writes it back.
+    signless_zero: std::collections::BTreeSet<u32>,
+}
+
+/// The range of an operation's exact result from its operands' ranges; `None` while an
+/// operand's range is not known yet. An operation it does not bound may give any `i32`.
+fn exact_range(instruction: WideInstruction, operand: &dyn Fn(Operand) -> Option<Range>, register: &dyn Fn(Register) -> Option<Range>, constants: &std::collections::BTreeMap<u16, f64>) -> Option<Range> {
+    use super::super::operations::NumberBitwise as Bitwise;
+    let constant = |operand: Operand| match operand.kind() {
+        Some(OperandKind::Constant) => constants.get(&operand.payload()).copied().filter(|number| int32_number(*number)).map(|number| number as i64),
+        _ => None,
+    };
+    let corners = |(a, b): Range, (c, d): Range, f: fn(i64, i64) -> i64| {
+        let values = [f(a, c), f(a, d), f(b, c), f(b, d)];
+        (*values.iter().min().expect("four corners"), *values.iter().max().expect("four corners"))
+    };
+    Some(match instruction.op() {
+        Op::LoadConst => {
+            let index = u16::try_from(instruction.constant_index()).ok();
+            match index.and_then(|index| constants.get(&index)) {
+                Some(number) if int32_number(*number) => (*number as i64, *number as i64),
+                _ => INT32_RANGE,
+            }
+        }
+        Op::Move | Op::ToNumeric => register(instruction.register_b())?,
+        Op::IncDec => {
+            let (low, high) = register(instruction.register_b())?;
+            let step = if instruction.boolean_flag() == Some(true) { -1 } else { 1 };
+            (low + step, high + step)
+        }
+        Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+            let (left, right) = (operand(instruction.operand_b())?, operand(instruction.operand_c())?);
+            match arithmetic(instruction.op(), instruction.binary_operator()) {
+                Some(Arithmetic::Float(NumberArithmetic::Add)) => (left.0 + right.0, left.1 + right.1),
+                Some(Arithmetic::Float(NumberArithmetic::Subtract)) => (left.0 - right.1, left.1 - right.0),
+                Some(Arithmetic::Float(NumberArithmetic::Multiply)) => corners(left, right, |a, b| a * b),
+                Some(Arithmetic::Int32(Bitwise::And)) if left.0 >= 0 || right.0 >= 0 => {
+                    let high = [left, right].iter().filter(|range| range.0 >= 0).map(|range| range.1).min().expect("a nonnegative side");
+                    (0, high)
+                }
+                Some(Arithmetic::Int32(Bitwise::Or | Bitwise::Xor)) if left.0 >= 0 && right.0 >= 0 => {
+                    let high = left.1.max(right.1);
+                    (0, ((high + 1) as u64).next_power_of_two() as i64 - 1)
+                }
+                Some(Arithmetic::Int32(shift @ (Bitwise::ShiftLeft | Bitwise::ShiftRight))) => match constant(instruction.operand_c()) {
+                    // ToInt32 of a value in `left`, an `i32` range, is itself.
+                    Some(count) if left.0 >= INT32_RANGE.0 && left.1 <= INT32_RANGE.1 => {
+                        let count = (count & 31) as u32;
+                        match shift {
+                            Bitwise::ShiftRight => (left.0 >> count, left.1 >> count),
+                            _ => (left.0 << count, left.1 << count),
+                        }
+                    }
+                    _ => INT32_RANGE,
+                },
+                _ => INT32_RANGE,
+            }
+        }
+        _ => INT32_RANGE,
+    })
+}
+
+/// Each `i32` web's range and the arithmetic that needs no guard (`Int32Facts`): the least
+/// fixpoint of each definition's `exact_range`, clamped to the `i32`s its web holds, from the
+/// entry values, which may be any. A web whose range keeps growing takes every `i32`.
+fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representation]) -> Int32Facts {
+    let int32 = |web: Definition| representations[web] == Representation::Int32;
+    let mut ranges: Vec<Option<Range>> = vec![None; webs.parent.len()];
+    let mut growth = vec![0u8; webs.parent.len()];
+    for entry in 0..region.entry_count() {
+        if webs.entry_read[entry] {
+            ranges[webs.find(entry)] = Some(INT32_RANGE);
+        }
+    }
+    // The range a read at `pc` sees: a non-`i32` web's ToInt32 may be any `i32`.
+    let register_range = |ranges: &[Option<Range>], pc: u32, register: Register| {
+        let web = webs.read(region, pc, register);
+        if int32(web) { ranges[web] } else { Some(INT32_RANGE) }
+    };
+    let operand_range = |ranges: &[Option<Range>], pc: u32, operand: Operand| match operand.kind()? {
+        OperandKind::Register => register_range(ranges, pc, operand.payload()),
+        OperandKind::Constant => match region.constants.get(&operand.payload()) {
+            Some(number) if int32_number(*number) => Some((*number as i64, *number as i64)),
+            _ => Some(INT32_RANGE),
+        },
+        OperandKind::Field | OperandKind::Local => Some(INT32_RANGE),
+    };
+    loop {
+        let mut changed = false;
+        for (offset, instruction) in region.instructions.iter().copied().enumerate() {
+            let pc = region.header + offset as u32;
+            if number_definition(instruction).is_none() || !int32(webs.defined(region, pc)) {
+                continue;
+            }
+            let Some((low, high)) = exact_range(
+                instruction,
+                &|operand| operand_range(&ranges, pc, operand),
+                &|register| register_range(&ranges, pc, register),
+                &region.constants,
+            ) else {
+                continue;
+            };
+            // The web holds the result only where it is an `i32`; any other leaves.
+            let held = (low.max(INT32_RANGE.0), high.min(INT32_RANGE.1));
+            let held = if held.0 <= held.1 { held } else { INT32_RANGE };
+            let web = webs.defined(region, pc);
+            let joined = match ranges[web] {
+                Some((low, high)) => (low.min(held.0), high.max(held.1)),
+                None => held,
+            };
+            if ranges[web] != Some(joined) {
+                growth[web] += 1;
+                ranges[web] = Some(if growth[web] > MAX_RANGE_GROWTH { INT32_RANGE } else { joined });
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    // A web no definition reached holds nothing; it is taken to hold any `i32`.
+    let ranges: Vec<Option<Range>> = ranges.into_iter().map(|range| Some(range.unwrap_or(INT32_RANGE))).collect();
+    let inside = |pc: u32| (region.header..=region.backedge).contains(&pc);
+    let written_back: std::collections::BTreeSet<Definition> = webs
+        .leaves
+        .iter()
+        .filter(|((pc, _), _)| !inside(*pc))
+        .map(|(_, definition)| webs.find(*definition))
+        .collect();
+    // Whether every read of `web` treats its -0 as +0: a bitwise operand (ToInt32), a
+    // comparison, or a sum with an `i32`, which is never -0 itself.
+    let signless_reads = |web: Definition| {
+        region.instructions.iter().copied().enumerate().all(|(offset, instruction)| {
+            let pc = region.header + offset as u32;
+            let reads = |register: Register| webs.read(region, pc, register) == web;
+            if !number_reads(instruction).into_iter().any(reads) {
+                return true;
+            }
+            match instruction.op() {
+                Op::JumpBinaryFalse => true,
+                Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+                    let reads_operand = |operand: Operand| operand.register_index().is_some_and(reads);
+                    match arithmetic(instruction.op(), instruction.binary_operator()) {
+                        Some(Arithmetic::Int32(_)) => true,
+                        Some(Arithmetic::Float(NumberArithmetic::Add)) => {
+                            !(reads_operand(instruction.operand_b()) && reads_operand(instruction.operand_c()))
+                                && int32(webs.defined(region, pc))
+                        }
+                        Some(Arithmetic::Float(NumberArithmetic::Subtract)) => {
+                            !reads_operand(instruction.operand_b()) && int32(webs.defined(region, pc))
+                        }
+                        _ => false,
+                    }
+                }
+                _ => false,
+            }
+        })
+    };
+    let mut facts = Int32Facts::default();
+    for (offset, instruction) in region.instructions.iter().copied().enumerate() {
+        let pc = region.header + offset as u32;
+        let Some(Arithmetic::Float(operator @ (NumberArithmetic::Add | NumberArithmetic::Subtract | NumberArithmetic::Multiply))) =
+            matches!(instruction.op(), Op::Binary | Op::NumericAdd | Op::NumericMultiply)
+                .then(|| arithmetic(instruction.op(), instruction.binary_operator()))
+                .flatten()
+        else {
+            continue;
+        };
+        let web = webs.defined(region, pc);
+        if !int32(web) {
+            continue;
+        }
+        let operand = |operand: Operand| operand_range(&ranges, pc, operand);
+        if let Some((low, high)) =
+            exact_range(instruction, &operand, &|register| register_range(&ranges, pc, register), &region.constants)
+            && low >= INT32_RANGE.0
+            && high <= INT32_RANGE.1
+        {
+            facts.exact.insert(pc);
+        }
+        if operator == NumberArithmetic::Multiply {
+            let nonnegative = [instruction.operand_b(), instruction.operand_c()]
+                .into_iter()
+                .all(|side| operand(side).is_some_and(|range| range.0 >= 0));
+            if nonnegative || (signless_reads(web) && !written_back.contains(&web)) {
+                facts.signless_zero.insert(pc);
+            }
+        }
+    }
+    facts
+}
+
 fn counted_loops(
     region: &LoopRegion,
     webs: &Webs,
@@ -2287,6 +2494,7 @@ pub(super) fn lower(
     let webs = webs(region);
     let (representations, entry) = representations(region, &webs, observation);
     let counted = counted_loops(region, &webs, &representations, &entry.captures);
+    let facts = int32_facts(region, &webs, &representations);
     let mut context = FunctionBuilderContext::new();
     let builder = FunctionBuilder::new(&mut native, &mut context);
     let widenings = Lowering::new(
@@ -2298,6 +2506,7 @@ pub(super) fn lower(
         representations,
         entry,
         counted,
+        facts,
         poll,
         track_backedges,
     )
@@ -2337,6 +2546,8 @@ struct Lowering<'a, 'b> {
     /// Numeric cached field values, loaded from the guarded entry record.
     fields: Vec<Typed>,
     entry_representations: EntryRepresentations,
+    /// The `i32` arithmetic that needs no guard (`int32_facts`).
+    facts: Int32Facts,
     blocks: Vec<ir::Block>,
     /// The region's counted loops; each has a preheader block, which every arrival at its
     /// header from outside it takes, and a proved copy of its body's blocks.
@@ -2423,6 +2634,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         representations: Vec<Representation>,
         entry_representations: EntryRepresentations,
         counted: Vec<CountedLoop>,
+        facts: Int32Facts,
         poll: Option<i64>,
         track_backedges: bool,
     ) -> Self {
@@ -2463,6 +2675,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             captures: Vec::new(),
             fields: Vec::new(),
             entry_representations,
+            facts,
             blocks,
             counted,
             preheaders,
@@ -3401,12 +3614,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
         if let Some(result) = self.int32_offset(pc, operator, register, left, right) {
             return result;
         }
-        // A proof covers a sum's exactness, so it needs no overflow flag.
+        // A proof or the operands' ranges cover a result's exactness, so it needs no
+        // overflow flag.
+        let exact = self.proved(pc) || self.facts.exact.contains(&pc);
         match operator {
-            NumberArithmetic::Add if self.proved(pc) => {
+            NumberArithmetic::Add if exact => {
                 return self.body.builder.ins().iadd(left, right);
             }
-            NumberArithmetic::Subtract if self.proved(pc) => {
+            NumberArithmetic::Subtract if exact => {
                 return self.body.builder.ins().isub(left, right);
             }
             _ => {}
@@ -3417,9 +3632,20 @@ impl<'a, 'b> Lowering<'a, 'b> {
             NumberArithmetic::Multiply if self.proved(pc) => {
                 return self.body.builder.ins().imul(left, right);
             }
+            NumberArithmetic::Multiply if exact && self.facts.signless_zero.contains(&pc) => {
+                return self.body.builder.ins().imul(left, right);
+            }
             NumberArithmetic::Multiply => {
-                let (product, overflow) = self.body.builder.ins().smul_overflow(left, right);
-                self.guard_int32(pc, overflow, Widening::Register(register));
+                let product = if exact {
+                    self.body.builder.ins().imul(left, right)
+                } else {
+                    let (product, overflow) = self.body.builder.ins().smul_overflow(left, right);
+                    self.guard_int32(pc, overflow, Widening::Register(register));
+                    product
+                };
+                if self.facts.signless_zero.contains(&pc) {
+                    return product;
+                }
                 // A zero product is -0 when a factor is negative; the signs are tested only
                 // for a zero product, off the common path.
                 let zero = self.body.builder.ins().icmp_imm_u(IntCC::Equal, product, 0);
