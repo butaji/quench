@@ -330,7 +330,10 @@ impl<'a> Units<'a> {
         }
         let last = self.len() - search.len();
         if let (Self::Ascii(haystack), Units::Ascii(needle)) = (self, search) {
-            return (start..=last).find(|index| haystack[*index..*index + needle.len()] == *needle);
+            if start > last {
+                return None;
+            }
+            return memchr::memmem::find(&haystack[start..], needle).map(|offset| start + offset);
         }
         let first = search.at(0);
         (start..=last).find(|index| {
@@ -1030,6 +1033,21 @@ impl JsString {
             return;
         }
         if text.len() == 0 {
+            return;
+        }
+        // Two flat ASCII pieces the policy below joins are joined by one copy of each, straight
+        // into the joined storage (a template literal's pieces, a key built from parts).
+        if let (Some(Units::Ascii(left)), Some(Units::Ascii(right))) =
+            (self.existing_flat().map(FlatUnits::view), text.existing_flat().map(FlatUnits::view))
+            && right.len() <= ROPE_LEAF_MAX_UNITS
+            && left.len() <= FLAT_PREFIX_MAX_UNITS
+        {
+            let units = FlatUnits::ascii_with(left.len() + right.len(), |bytes| {
+                let (head, tail) = bytes.split_at_mut(left.len());
+                head.write_copy_of_slice(left);
+                tail.write_copy_of_slice(right);
+            });
+            *self = Self { repr: Repr::Flat(units) };
             return;
         }
         let short = |piece: &Self| piece.len() <= ROPE_LEAF_MAX_UNITS;
