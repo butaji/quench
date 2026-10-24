@@ -4238,6 +4238,62 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                 result: Err(error),
             }));
         }
+
+        if instruction.op() == Op::GetField
+            && (instruction.result_flags() == 0
+                || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
+            && !instruction.writes_current_this()
+            && (instruction.returns_from_frame() || next_pc < body.code.len())
+            && let Some(FieldLookup::Atom {
+                base,
+                cache_site,
+                ..
+            }) = instruction.field_lookup()
+            && let Some(receiver_register) = base.register_index()
+            && let Some(receiver) = vm.frames[dispatch.frame]
+                .registers
+                .get(usize::from(receiver_register))
+                .copied()
+        {
+            let probe = vm.cached_field_hit(&program, receiver, cache_site);
+            if vm.programs.js_jit_diagnostics_enabled() {
+                vm.programs.record_js_jit_field_cache_probe(
+                    dispatch.program_id,
+                    vm.frames[dispatch.frame].function,
+                    matches!(&probe, super::object::FieldCacheProbe::Hit(_)),
+                );
+            }
+            if let super::object::FieldCacheProbe::Hit(value) = probe {
+                let frame = &mut vm.frames[dispatch.frame];
+                if instruction.returns_from_frame() {
+                    frame.pc = pc;
+                    frame.pc_is_resume = false;
+                    return Ok(JsCalloutStep::Stop(JsNativeStep {
+                        instruction_pc: pc,
+                        next_pc,
+                        result: Ok(super::StepResult::Return(value)),
+                    }));
+                }
+                let destination = frame
+                    .registers
+                    .get_mut(usize::from(instruction.result_register()))
+                    .ok_or_else(|| {
+                        JsError::validation("native JS field result register is invalid".into())
+                    })?;
+                *destination = value;
+                let native_registers = unsafe {
+                    std::slice::from_raw_parts_mut(
+                        dispatch.native_registers,
+                        dispatch.register_count,
+                    )
+                };
+                native_registers.copy_from_slice(&frame.registers);
+                frame.pc = next_pc;
+                frame.pc_is_resume = true;
+                return Ok(JsCalloutStep::Continue(next_pc));
+            }
+        }
+
         let mut next = next_pc;
         let step = vm.step(
             &program,
