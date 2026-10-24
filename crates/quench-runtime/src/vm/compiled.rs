@@ -1290,11 +1290,14 @@ enum JsGeneralBranch {
 pub(super) fn compile_js_general_dispatch(
     program: &ResidualProgram,
     function_id: u32,
+    unresolved_names_are_global: bool,
 ) -> Option<super::js_compiled::JsJitArtifact> {
     if program.kind == crate::bytecode::ProgramKind::Wasm || function_id == 0 {
         return None;
     }
     let function = program.function_get(function_id as usize)?;
+    let static_global_names = unresolved_names_are_global
+        && function.names_resolve_statically(program);
     let instruction_count = function.code.len();
     if !js_general_dispatch_candidate(program, function) {
         return None;
@@ -1364,6 +1367,35 @@ pub(super) fn compile_js_general_dispatch(
         let packed = function.code[pc];
         let instruction = super::dispatch_fast::decoded_instruction(function, packed);
         let next = blocks.get(pc + 1).copied();
+        if static_global_names
+            && matches!(instruction.op(), Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof)
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && program
+                .atoms
+                .get(instruction.atom_index() as usize)
+                .is_some_and(|name| {
+                    !name.starts_with('\0') && !crate::bytecode::is_intrinsic_name(name)
+                })
+            && next.is_some()
+        {
+            // The shared callout takes a cached data-property hit where the
+            // global environment proves it side-effect-free; every lexical,
+            // accessor, and miss case resumes Vm::step at this exact PC.
+            emit_js_step_fallback(
+                &mut builder,
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            );
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
         let direct = if let Some(next) = next {
             match instruction.op().js_denotation() {
                 JsDenotation::Noop
@@ -4423,6 +4455,8 @@ pub(super) struct CompiledJsFunction {
     native_entries: std::cell::Cell<u64>,
     #[cfg(test)]
     general_dispatch_island_steps: std::cell::Cell<u64>,
+    #[cfg(test)]
+    general_dispatch_global_name_cache_hits: std::cell::Cell<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -4524,6 +4558,8 @@ struct JsStepDispatch {
     native_pc_count: usize,
     #[cfg(test)]
     island_steps: u64,
+    #[cfg(test)]
+    global_name_cache_hits: u64,
     outcome: Option<JsNativeStep>,
 }
 
@@ -4584,6 +4620,48 @@ unsafe extern "C" fn js_step_callout<H: Host>(
         let next_pc = pc
             .checked_add(1)
             .ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
+
+        let native_pc = !dispatch.native_pcs.is_null()
+            && pc < dispatch.native_pc_count
+            // SAFETY: the compiled artifact owns this byte map for the entire
+            // native callout and the PC is bounded by its recorded length.
+            && unsafe { *dispatch.native_pcs.add(pc) != 0 };
+        if native_pc
+            && matches!(instruction.op(), Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof)
+            && !vm.realm.global_lexical_declarations.contains(&instruction.atom_index())
+            && program
+                .atoms
+                .get(instruction.atom_index() as usize)
+                .is_some_and(|name| {
+                    !name.starts_with('\0') && !crate::bytecode::is_intrinsic_name(name)
+                })
+        {
+            let globals = vm.realm.globals;
+            let cache_site = instruction.cache_site_index();
+            let probe = vm.cached_field_hit(&program, globals, cache_site);
+            if vm.programs.js_jit_diagnostics_enabled() {
+                vm.programs.record_js_jit_field_cache_probe(
+                    dispatch.program_id,
+                    vm.frames[dispatch.frame].function,
+                    matches!(&probe, super::object::FieldCacheProbe::Hit(_)),
+                );
+            }
+            if let super::object::FieldCacheProbe::Hit(value) = probe {
+                #[cfg(test)]
+                {
+                    dispatch.global_name_cache_hits =
+                        dispatch.global_name_cache_hits.saturating_add(1);
+                }
+                let frame = &mut vm.frames[dispatch.frame];
+                frame.registers[usize::from(instruction.result_register())] = value;
+                if instruction.op() == Op::LoadNameCall {
+                    frame.registers[usize::from(instruction.register_b())] = Value::UNDEFINED;
+                }
+                frame.pc = next_pc;
+                frame.pc_is_resume = true;
+                return Ok(JsCalloutStep::Continue(next_pc));
+            }
+        }
 
         let frame = &mut vm.frames[dispatch.frame];
         if !js_native_frame_storage_unchanged(frame, dispatch) {
@@ -5031,6 +5109,8 @@ impl CompiledJsFunction {
             native_entries: std::cell::Cell::new(0),
             #[cfg(test)]
             general_dispatch_island_steps: std::cell::Cell::new(0),
+            #[cfg(test)]
+            general_dispatch_global_name_cache_hits: std::cell::Cell::new(0),
         })
     }
 
@@ -5062,6 +5142,11 @@ impl CompiledJsFunction {
     #[cfg(test)]
     pub(super) fn general_dispatch_island_steps(&self) -> u64 {
         self.general_dispatch_island_steps.get()
+    }
+
+    #[cfg(test)]
+    pub(super) fn general_dispatch_global_name_cache_hits(&self) -> u64 {
+        self.general_dispatch_global_name_cache_hits.get()
     }
 
     #[cfg(test)]
@@ -5184,6 +5269,14 @@ impl CompiledJsFunction {
             self.general_dispatch_island_steps
                 .get()
                 .saturating_add(unsafe { (*payload.cast::<JsStepDispatch>()).island_steps }),
+        );
+        #[cfg(test)]
+        self.general_dispatch_global_name_cache_hits.set(
+            self.general_dispatch_global_name_cache_hits
+                .get()
+                .saturating_add(unsafe {
+                    (*payload.cast::<JsStepDispatch>()).global_name_cache_hits
+                }),
         );
         if let Some(Raised::Panic(panic)) = context.raised.take() {
             std::panic::resume_unwind(panic);
@@ -9825,7 +9918,14 @@ impl<H: Host> Vm<H> {
                     .js_jit_diagnostics_enabled()
                     .then(std::time::Instant::now);
                 self.host.before_native_compilation();
-                let artifact = compile_js_general_dispatch(program, function_id);
+                let unresolved_names_are_global = self
+                    .programs
+                    .unresolved_names_are_global(program_id, function_id);
+                let artifact = compile_js_general_dispatch(
+                    program,
+                    function_id,
+                    unresolved_names_are_global,
+                );
                 self.host.after_native_compilation();
                 let code_bytes = artifact.as_ref().map_or(0, |artifact| artifact.code.len());
                 let rejection = artifact.is_none().then_some("general-dispatch-codegen-rejected");
@@ -9864,6 +9964,8 @@ impl<H: Host> Vm<H> {
             native_pc_count: 0,
             #[cfg(test)]
             island_steps: 0,
+            #[cfg(test)]
+            global_name_cache_hits: 0,
             outcome: None,
         };
         let interrupt = self.execution_interrupt.atomic_flag();
