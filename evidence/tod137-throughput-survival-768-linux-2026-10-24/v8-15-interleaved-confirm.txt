@@ -1,0 +1,6 @@
+regexp             qv2 med 11788 max 11884 min 10816 s 3197 | qsv med 11788 max 11952 min 10816 s 3257
+regexp        jit  qv2 med 11336 max 11336 min 10816 s 3117 | qsv med 11336 max 11336 min 10712 s 3204
+crypto             qv2 med 8256 max 9024 min 8128 s 2508 | qsv med 8188 max 8896 min 8068 s 2421
+crypto        jit  qv2 med 9012 max 10020 min 8680 s 5331 | qsv med 9304 max 9852 min 8332 s 5259
+splay              qv2 med 32776 max 32864 min 32776 s 4291 | qsv med 32756 max 32892 min 32756 s 4406
+splay         jit  qv2 med 32640 max 32756 min 32512 s 4454 | qsv med 32628 max 32788 min 32624 s 4602
