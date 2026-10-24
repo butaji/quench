@@ -653,7 +653,7 @@ pub(crate) struct ProgramStore {
     /// a fixed entry count promoted short runs into compile cost (npm p51, TOD-138) until
     /// promotion weighs size and compile cost.
     js_jit_general_dispatch_enabled: bool,
-    /// Per-program, per-function estimated work from opt-in JS backedges.
+    /// Per-program, per-function sampled interpreter work and native loop work.
     /// Both map levels are allocated only after the first eligible observation.
     js_general_dispatch_work: Option<FxHashMap<u32, FxHashMap<u32, u64>>>,
     js_jit_dataview_float64_enabled: bool,
@@ -1709,10 +1709,10 @@ impl ProgramStore {
         false
     }
 
-    /// Accumulate estimated bytecode work from a hot backward edge. The
-    /// function must already have an eligible JS tier record, and this path is
-    /// available only to the opt-in complete-semantics dispatcher.
-    pub(super) fn note_js_general_dispatch_backedge(
+    /// Accumulate sampled interpreter or native loop work. The function must
+    /// already have an eligible JS tier record, and this path is available
+    /// only to the opt-in complete-semantics dispatcher.
+    pub(super) fn note_js_general_dispatch_work(
         &mut self,
         id: ProgramId,
         function: u32,
@@ -1722,13 +1722,8 @@ impl ProgramStore {
         if !self.js_jit_general_dispatch_enabled || work == 0 {
             return false;
         }
-        // A zero-byte admission probe checks count and aggregate artifact
-        // ceilings before this accounting path can request compilation.
-        if self.jit_code_cache.js_functions >= JS_JIT_MAX_FUNCTIONS
-            || !self.jit_code_cache.can_retain(JitArtifactKind::JsFunction, 0)
-        {
-            return false;
-        }
+        // Record work even when the artifact budget is full. If a retained
+        // artifact later frees capacity, the next sample can request compile.
         let priced = self.general_baseline_priced;
         if !self.entry(id).is_some_and(|entry| {
             !entry.jit_tiers.is_wasm()
@@ -1752,6 +1747,11 @@ impl ProgramStore {
             .or_default();
         accumulate_general_dispatch_work(accumulated_work, work);
         let accumulated_work = *accumulated_work;
+        if self.jit_code_cache.js_functions >= JS_JIT_MAX_FUNCTIONS
+            || !self.jit_code_cache.can_retain(JitArtifactKind::JsFunction, 0)
+        {
+            return false;
+        }
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
@@ -2578,6 +2578,29 @@ impl Drop for ProgramStore {
                 .and_then(|entry| entry.lane_views.derived(*function))
                 .map(super::dispatch_fast::LaneView::osr_diagnostics)
                 .unwrap_or_default();
+            let general_dispatch_observed_work = self
+                .js_general_dispatch_work
+                .as_ref()
+                .and_then(|work| work.get(program))
+                .and_then(|work| work.get(function))
+                .copied()
+                .unwrap_or(0);
+            let general_entry_work = u64::try_from(counters.entries)
+                .unwrap_or(u64::MAX)
+                .saturating_mul(u64::try_from(counters.instruction_count.max(1)).unwrap_or(u64::MAX));
+            let general_compile_work_required = if self.general_baseline_priced {
+                JS_JIT_GENERAL_COMPILE_FIXED_COST
+                    .saturating_add(
+                        JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION
+                            .saturating_mul(u64::try_from(counters.instruction_count.max(1)).unwrap_or(u64::MAX)),
+                    )
+                    .saturating_mul(JS_JIT_GENERAL_SAVED_SHARE.1)
+                    / JS_JIT_GENERAL_SAVED_SHARE.0
+            } else {
+                u64::try_from(counters.instruction_count.max(1))
+                    .unwrap_or(u64::MAX)
+                    .saturating_mul(u64::from(JS_JIT_GENERAL_PROMOTION_ENTRIES))
+            };
             let _ = write!(
                 stderr,
                 "QUENCH_JS_JIT_STATS {{\"program\":{program},\"function\":{function},\"function_name\":"
@@ -2706,7 +2729,10 @@ impl Drop for ProgramStore {
             }
             let _ = writeln!(
                 stderr,
-                "],\"code_bytes\":{},\"guard_census_kind\":\"bytecode-sites-not-proven-redundancies\",\"dynamic_opcode_count_scope\":\"general-dispatch-only; fast-lane-and-native-instructions-excluded\"}}",
+                "],\"general_entry_work\":{},\"general_dispatch_observed_work\":{},\"general_compile_work_required\":{},\"code_bytes\":{},\"guard_census_kind\":\"bytecode-sites-not-proven-redundancies\",\"dynamic_opcode_count_scope\":\"general-dispatch-only; fast-lane-and-native-instructions-excluded\"}}",
+                general_entry_work,
+                general_dispatch_observed_work,
+                general_compile_work_required,
                 counters.code_bytes
             );
         }
@@ -2854,7 +2880,7 @@ mod jit_code_cache_tests {
         let mut store = super::ProgramStore::default();
         store.js_jit_general_dispatch_enabled = false;
         assert!(!store.js_jit_general_dispatch_enabled());
-        assert!(!store.note_js_general_dispatch_backedge(
+        assert!(!store.note_js_general_dispatch_work(
             super::ProgramId::MAIN,
             1,
             usize::MAX,

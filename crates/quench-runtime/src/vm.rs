@@ -271,6 +271,12 @@ pub(super) struct Frame {
     /// Opt-in interpreter time for a synchronous JIT-diagnostic activation.
     /// Excludes compile work, native execution, suspended and exceptional exits.
     js_jit_interpreter_started: Option<std::time::Instant>,
+    /// Sampled interpreted bytecode work for the opt-in general JS baseline.
+    /// Flushes every 64 VM steps so ordinary instructions only update a frame-local byte.
+    js_general_dispatch_work_sample: u8,
+    /// Whether this frame belongs to an admitted general-JS tier candidate. Sampling is
+    /// disabled for functions that the tier will never compile.
+    js_general_dispatch_work_tracking: bool,
     /// The frame pushed its own `this` binding with a live value. Only `super()` rebinds
     /// `this`, and only in derived constructors, whose binding starts deleted; so for these
     /// frames `this` is authoritative and the binding lookup can be skipped.
@@ -351,6 +357,8 @@ impl Frame {
             with_objects: Vec::new(),
             with_base,
             js_jit_interpreter_started: None,
+            js_general_dispatch_work_sample: 0,
+            js_general_dispatch_work_tracking: false,
             fixed_this: false,
         }
     }
@@ -377,6 +385,8 @@ impl Frame {
         arguments: &[Value],
     ) {
         self.js_jit_skip_entry_once = false;
+        self.js_general_dispatch_work_sample = 0;
+        self.js_general_dispatch_work_tracking = false;
         let initial = function.initial_register.value();
         let count = usize::from(function.registers);
         let (base, parameters) = match function.parameter_registers {
@@ -425,6 +435,8 @@ impl Frame {
     #[inline(always)]
     fn prepare_registers_for(&mut self, function: &crate::bytecode::Function) {
         self.js_jit_skip_entry_once = false;
+        self.js_general_dispatch_work_sample = 0;
+        self.js_general_dispatch_work_tracking = false;
         let register_count = usize::from(function.registers);
         if !function.register_roots.covered()
             || function.is_generator
