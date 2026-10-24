@@ -161,11 +161,11 @@ fn regexp_literals_lower_to_validated_site_metadata() {
     let site = &program.regexp_literal_sites[0];
     assert!(matches!(
         program.constants.get(site.pattern_constant as usize),
-        Some(Constant::String(pattern)) if pattern == "a"
+        Some(Constant::String(pattern)) if &**pattern == "a"
     ));
     assert!(matches!(
         program.constants.get(site.flags_constant as usize),
-        Some(Constant::String(flags)) if flags == "g"
+        Some(Constant::String(flags)) if &**flags == "g"
     ));
     assert!(program.functions.iter().any(|function| {
         function
