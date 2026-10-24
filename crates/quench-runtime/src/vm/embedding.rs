@@ -1120,7 +1120,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn decoded_string_rooted(&mut self, text: &str) -> RootId {
-        let value = self.heap.alloc_string(JsString::from_str(text));
+        let value = self.heap.alloc_string(JsString::decoded(text));
         self.root(value)
     }
 
