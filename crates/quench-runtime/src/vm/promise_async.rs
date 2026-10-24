@@ -24,10 +24,14 @@ impl<H: Host> Vm<H> {
         else {
             return;
         };
-        for (register, value) in frame.registers.iter_mut().enumerate() {
-            if register >= u64::BITS as usize || mask & (1 << register) == 0 {
-                *value = Value::UNDEFINED;
-            }
+        // The mask covers the first `u64::BITS` registers; every later one is dead.
+        let covered = frame.registers.len().min(u64::BITS as usize);
+        let (low, high) = frame.registers.split_at_mut(covered);
+        high.fill(Value::UNDEFINED);
+        let mut dead = !mask & u64::MAX.checked_shr(u64::BITS - covered as u32).unwrap_or(0);
+        while dead != 0 {
+            low[dead.trailing_zeros() as usize] = Value::UNDEFINED;
+            dead &= dead - 1;
         }
     }
 
