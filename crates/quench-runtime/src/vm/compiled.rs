@@ -49,7 +49,8 @@ use std::rc::{Rc, Weak};
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 pub(super) use osr_loop::{
-    ArrayUse, FieldReceiver, FieldUse, LoopEntry, LoopOutcome, LoopRegion, Observation, RegionRejection, Widening,
+    ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, LoopEntry, LoopOutcome, LoopRegion, Observation,
+    RegionRejection, Widening,
 };
 
 #[derive(Clone, Copy)]
@@ -117,12 +118,19 @@ impl RegionExitBlocks {
 
     /// Sends control to the shared per-PC leave block, carrying the handoff word as an
     /// argument. The tier fills that block with its exact-PC live-state writeback.
-    pub(super) fn leave(&mut self, builder: &mut FunctionBuilder<'_>, outcome: RegionExit) {
+    /// A tier whose region PCs are not its function's hands off `reported`, its own PC of
+    /// the outcome (an inlining loop region); any other reports `outcome` itself.
+    pub(super) fn leave(
+        &mut self,
+        builder: &mut FunctionBuilder<'_>,
+        outcome: RegionExit,
+        reported: RegionExit,
+    ) {
         let pc = match outcome {
             RegionExit::Resume(pc) | RegionExit::Fallback(pc) | RegionExit::Recompile(pc) => pc,
             RegionExit::EntryMiss(_) => unreachable!("entry miss does not write back"),
         };
-        let word = builder.ins().iconst(types::I64, outcome.encode() as i64);
+        let word = builder.ins().iconst(types::I64, reported.encode() as i64);
         let block = match self.leave_blocks.get(&pc) {
             Some(block) => *block,
             None => {
@@ -4388,6 +4396,20 @@ impl CompiledOsrRegion {
     pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
         self.widenings.get(&pc).copied()
     }
+}
+
+/// Analyze a loop candidate whose calls run inlined (`osr_loop::inline_region`), each
+/// callee from `resolve` of the cached field its function is read from.
+pub(super) fn analyze_inlining_osr_region<'a>(
+    function: &Function,
+    decoded: &[WideInstruction],
+    constants: &[crate::value::Value],
+    live: &[crate::compile::liveness::RegisterSet],
+    header: u32,
+    backedge: u32,
+    resolve: &mut dyn FnMut(FieldUse) -> Option<InlineCallee<'a>>,
+) -> Option<LoopRegion> {
+    osr_loop::inline_region(function, decoded, constants, live, header, backedge, resolve)
 }
 
 /// Analyze a loop candidate through the shared region compiler's OSR mode.
