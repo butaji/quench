@@ -51,6 +51,25 @@ const LOAD_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_mil
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const MEMORY_FIRST_FIRST_CALL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
 
+
+/// Measurement probe (`profile-memory`, `QUENCH_RELEASE_TRACE`): one line per release,
+/// collection and compile-phase boundary with the process's resident and file-backed bytes,
+/// read before the event acts, so each line is the level the run reached since the last one.
+#[cfg(all(feature = "profile-memory", target_os = "linux", target_arch = "x86_64"))]
+pub(crate) fn trace_event(event: &str) {
+    static START: std::sync::OnceLock<Option<std::time::Instant>> = std::sync::OnceLock::new();
+    let Some(start) = START.get_or_init(|| std::env::var_os("QUENCH_RELEASE_TRACE").map(|_| std::time::Instant::now())) else {
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(STATM_PATH) else { return };
+    let fields: Vec<usize> = text.split_ascii_whitespace().filter_map(|f| f.parse().ok()).collect();
+    let page = page_size() / 1024;
+    eprintln!("RT {} {event} rss {} file {}", start.elapsed().as_micros(), fields[1] * page, fields[2] * page);
+}
+#[cfg(not(all(feature = "profile-memory", target_os = "linux", target_arch = "x86_64")))]
+#[inline(always)]
+pub(crate) fn trace_event(_: &str) {}
+
 /// When the read-only pages were last released.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 static LAST_RELEASE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
@@ -73,6 +92,7 @@ pub fn release_read_only_pages_after_load() {
 /// from its file.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages() {
+    trace_event("release");
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
@@ -332,6 +352,10 @@ pub fn release_read_only_code_and_data() {}
 /// then, at its heap's peak, with the code it ran since the last collection resident (V8-v7
 /// RegExp).
 pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
+    trace_event(match phase {
+        quench_runtime::CompilePhase::CodeGeneration => "codegen",
+        quench_runtime::CompilePhase::FirstCall => "first-call",
+    });
     match phase {
         quench_runtime::CompilePhase::CodeGeneration => {
             release_once_per_interval(CompileRelease::CodeGeneration, release_read_only_code_and_data)

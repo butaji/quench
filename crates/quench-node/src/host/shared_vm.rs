@@ -1084,6 +1084,7 @@ impl quench_runtime::Host for NodeHost {
     /// returns pages at collections (memory-first); every policy counts the collection for
     /// the release before output (`resident_pages::note_collection`).
     fn at_collection_boundary(&mut self, policy: quench_runtime::MemoryPolicy) {
+        crate::host::resident_pages::trace_event("collection");
         if policy.returns_pages_at_collections() {
             crate::host::resident_pages::release_read_only_pages();
             crate::host::resident_pages::release_free_heap_pages();
