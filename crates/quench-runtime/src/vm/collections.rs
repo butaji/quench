@@ -240,6 +240,9 @@ impl<H: Host> Vm<H> {
             if !vm.is_function(adder) {
                 return Err(vm.type_error(p, error.into()));
             }
+            if vm.add_intact_entries(native, collection, adder, iterable) {
+                return Ok(collection);
+            }
             vm.with_call_roots([adder], |vm| {
                 let iterator = vm.get_iterator(p, iterable)?;
                 let iterator_root = vm.heap.root(iterator);
@@ -903,23 +906,11 @@ impl<H: Host> Vm<H> {
             }
             Native::MapGroupBy => self.group_by(p, args, GroupByKind::Map),
             Native::SetAdd => {
-                if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
+                if !self.set_add(this, args.first().copied().unwrap_or(Value::UNDEFINED)) {
                     return Err(self.type_error(
                         p,
                         "Set.prototype.add called on incompatible receiver".into(),
                     ));
-                }
-                let value = canonical_collection_key(args.first().copied().unwrap_or(Value::UNDEFINED));
-                let exists = self.set_entry_index(this, value).is_some();
-                let value_hash = self.same_value_zero_hash(value);
-                let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
-                    return Err(self.type_error(
-                        p,
-                        "Set.prototype.add called on incompatible receiver".into(),
-                    ));
-                };
-                if !exists {
-                    entries.push(value, value_hash);
                 }
                 Ok(this)
             }
@@ -1325,6 +1316,70 @@ impl<H: Host> Vm<H> {
     /// `Map.prototype.set` of `map` with its `args`, which runs no guest code: the key's
     /// entry takes the value, or a new entry is appended. `false`, with nothing written,
     /// when `map` is no Map.
+    /// Set.prototype.add's effect on a Set; `false` for any other receiver.
+    pub(super) fn set_add(&mut self, set: Value, value: Value) -> bool {
+        if !matches!(self.heap.get(set), Some(Cell::Set { .. })) {
+            return false;
+        }
+        let value = canonical_collection_key(value);
+        let value_hash = self.same_value_zero_hash(value);
+        let exists = self.set_entry_index_hashed(set, value, value_hash).is_some();
+        let Some(Cell::Set { entries, .. }) = self.heap.get_mut(set) else {
+            unreachable!("a Set was checked above")
+        };
+        if !exists {
+            entries.push(value, value_hash);
+        }
+        true
+    }
+
+    /// AddEntriesFromIterable when no step can run guest code: the adder is the intrinsic
+    /// `Set.prototype.add` or `Map.prototype.set`, the iterable iterates intact
+    /// (`intact_iteration_values`), and for a Map every entry is an array whose indices 0 and
+    /// 1 are present own data elements, so each Get reads an element. `false` (nothing added)
+    /// leaves every other case to the protocol.
+    fn add_intact_entries(&mut self, native: Native, collection: Value, adder: Value, iterable: Value) -> bool {
+        let adds = match native {
+            Native::Set => self.is_current_realm_native(adder, Native::SetAdd),
+            Native::Map => self.is_current_realm_native(adder, Native::MapSet),
+            _ => false,
+        };
+        let Some(values) = adds.then(|| self.intact_iteration_values(iterable)).flatten() else {
+            return false;
+        };
+        if native == Native::Set {
+            // A Set's values are already distinct under SameValueZero, so filling an empty Set
+            // from one appends without looking any up.
+            let distinct = matches!(self.heap.get(iterable), Some(Cell::Set { .. }))
+                && matches!(self.heap.get(collection), Some(Cell::Set { entries, .. }) if entries.len() == 0);
+            for value in values {
+                if distinct {
+                    let hash = self.same_value_zero_hash(value);
+                    if let Some(Cell::Set { entries, .. }) = self.heap.get_mut(collection) {
+                        entries.push(value, hash);
+                    }
+                } else {
+                    self.set_add(collection, value);
+                }
+            }
+            return true;
+        }
+        let Some(pairs) = values
+            .iter()
+            .map(|&entry| {
+                let pair = self.present_dense_elements(entry, MAP_ENTRY_KEY_INDEX..MAP_ENTRY_VALUE_INDEX + 1)?;
+                Some([pair[MAP_ENTRY_KEY_INDEX], pair[MAP_ENTRY_VALUE_INDEX]])
+            })
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
+        for pair in pairs {
+            self.map_set(collection, &pair);
+        }
+        true
+    }
+
     pub(super) fn map_set(&mut self, map: Value, args: &[Value]) -> bool {
         if !matches!(self.heap.get(map), Some(Cell::Map { .. })) {
             return false;
@@ -1332,8 +1387,8 @@ impl<H: Host> Vm<H> {
         // Map.prototype.set stores -0 as +0 (`canonical_collection_key`).
         let key = canonical_collection_key(args.first().copied().unwrap_or(Value::UNDEFINED));
         let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let index = self.map_entry_index(map, key);
         let key_hash = self.same_value_zero_hash(key);
+        let index = self.map_entry_index_hashed(map, key, key_hash);
         let Some(Cell::Map { entries, .. }) = self.heap.get_mut(map) else {
             unreachable!("a Map was checked above")
         };
@@ -1346,23 +1401,38 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn map_entry_index(&self, map: Value, key: Value) -> Option<usize> {
+        self.map_entry_index_hashed(map, key, self.same_value_zero_hash(key))
+    }
+
+    pub(super) fn set_entry_index(&self, set: Value, value: Value) -> Option<usize> {
+        self.set_entry_index_hashed(set, value, self.same_value_zero_hash(value))
+    }
+
+    fn map_entry_index_hashed(&self, map: Value, key: Value, key_hash: u64) -> Option<usize> {
         let Some(Cell::Map { entries, .. }) = self.heap.get(map) else {
             return None;
         };
-        entries.position(
-            self.same_value_zero_hash(key),
-            |candidate| self.same_value_zero_hash(candidate),
-            |candidate| self.same_value_zero(candidate, key),
-        )
+        self.collection_entry_index(entries, key, key_hash)
     }
-    pub(super) fn set_entry_index(&self, set: Value, value: Value) -> Option<usize> {
+
+    fn set_entry_index_hashed(&self, set: Value, value: Value, key_hash: u64) -> Option<usize> {
         let Some(Cell::Set { entries, .. }) = self.heap.get(set) else {
             return None;
         };
+        self.collection_entry_index(entries, value, key_hash)
+    }
+
+    /// The slot of the entry whose key is SameValueZero to `key`, whose hash is `key_hash`.
+    fn collection_entry_index<T: crate::heap::CollectionEntry>(
+        &self,
+        entries: &crate::heap::CollectionEntries<T>,
+        key: Value,
+        key_hash: u64,
+    ) -> Option<usize> {
         entries.position(
-            self.same_value_zero_hash(value),
+            key_hash,
             |candidate| self.same_value_zero_hash(candidate),
-            |candidate| self.same_value_zero(candidate, value),
+            |candidate| self.same_value_zero(candidate, key),
         )
     }
     pub(super) fn same_value_zero(&self, left: Value, right: Value) -> bool {
