@@ -1685,9 +1685,9 @@ impl ProgramStore {
         decision.compile
     }
 
-    /// Whether the general baseline could ever pay for a body of `instructions`: unpriced,
-    /// or its entries save something past the baseline's entry overhead. A body that cannot
-    /// is not counted toward it at all.
+    /// Whether the general baseline could ever pay through entries for a body of
+    /// `instructions`: unpriced, or its entries save something past the baseline's entry
+    /// overhead. A loop-free body that cannot is not counted toward it at all.
     pub(super) fn general_baseline_may_pay(&self, instructions: usize) -> bool {
         !self.general_baseline_priced || general_saved_per_entry(instructions).is_some()
     }
