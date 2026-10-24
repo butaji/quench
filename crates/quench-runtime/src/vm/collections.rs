@@ -1322,8 +1322,8 @@ impl<H: Host> Vm<H> {
             return false;
         }
         let value = canonical_collection_key(value);
-        let exists = self.set_entry_index(set, value).is_some();
         let value_hash = self.same_value_zero_hash(value);
+        let exists = self.set_entry_index_hashed(set, value, value_hash).is_some();
         let Some(Cell::Set { entries, .. }) = self.heap.get_mut(set) else {
             unreachable!("a Set was checked above")
         };
@@ -1348,8 +1348,19 @@ impl<H: Host> Vm<H> {
             return false;
         };
         if native == Native::Set {
+            // A Set's values are already distinct under SameValueZero, so filling an empty Set
+            // from one appends without looking any up.
+            let distinct = matches!(self.heap.get(iterable), Some(Cell::Set { .. }))
+                && matches!(self.heap.get(collection), Some(Cell::Set { entries, .. }) if entries.len() == 0);
             for value in values {
-                self.set_add(collection, value);
+                if distinct {
+                    let hash = self.same_value_zero_hash(value);
+                    if let Some(Cell::Set { entries, .. }) = self.heap.get_mut(collection) {
+                        entries.push(value, hash);
+                    }
+                } else {
+                    self.set_add(collection, value);
+                }
             }
             return true;
         }
@@ -1376,8 +1387,8 @@ impl<H: Host> Vm<H> {
         // Map.prototype.set stores -0 as +0 (`canonical_collection_key`).
         let key = canonical_collection_key(args.first().copied().unwrap_or(Value::UNDEFINED));
         let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let index = self.map_entry_index(map, key);
         let key_hash = self.same_value_zero_hash(key);
+        let index = self.map_entry_index_hashed(map, key, key_hash);
         let Some(Cell::Map { entries, .. }) = self.heap.get_mut(map) else {
             unreachable!("a Map was checked above")
         };
@@ -1390,23 +1401,38 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn map_entry_index(&self, map: Value, key: Value) -> Option<usize> {
+        self.map_entry_index_hashed(map, key, self.same_value_zero_hash(key))
+    }
+
+    pub(super) fn set_entry_index(&self, set: Value, value: Value) -> Option<usize> {
+        self.set_entry_index_hashed(set, value, self.same_value_zero_hash(value))
+    }
+
+    fn map_entry_index_hashed(&self, map: Value, key: Value, key_hash: u64) -> Option<usize> {
         let Some(Cell::Map { entries, .. }) = self.heap.get(map) else {
             return None;
         };
-        entries.position(
-            self.same_value_zero_hash(key),
-            |candidate| self.same_value_zero_hash(candidate),
-            |candidate| self.same_value_zero(candidate, key),
-        )
+        self.collection_entry_index(entries, key, key_hash)
     }
-    pub(super) fn set_entry_index(&self, set: Value, value: Value) -> Option<usize> {
+
+    fn set_entry_index_hashed(&self, set: Value, value: Value, key_hash: u64) -> Option<usize> {
         let Some(Cell::Set { entries, .. }) = self.heap.get(set) else {
             return None;
         };
+        self.collection_entry_index(entries, value, key_hash)
+    }
+
+    /// The slot of the entry whose key is SameValueZero to `key`, whose hash is `key_hash`.
+    fn collection_entry_index<T: crate::heap::CollectionEntry>(
+        &self,
+        entries: &crate::heap::CollectionEntries<T>,
+        key: Value,
+        key_hash: u64,
+    ) -> Option<usize> {
         entries.position(
-            self.same_value_zero_hash(value),
+            key_hash,
             |candidate| self.same_value_zero_hash(candidate),
-            |candidate| self.same_value_zero(candidate, value),
+            |candidate| self.same_value_zero(candidate, key),
         )
     }
     pub(super) fn same_value_zero(&self, left: Value, right: Value) -> bool {
