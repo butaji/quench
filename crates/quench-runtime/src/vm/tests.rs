@@ -12240,34 +12240,57 @@ fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
 
 #[cfg(not(quench_profiled))]
 #[test]
-fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
+fn js_jit_rejected_functions_promote_to_general_dispatch_and_keep_frames() {
     let program = Engine::compile(crate::ExecutionRequest::script(
-        "function add(a, b) { return a + b; } add(1, 2);",
+        "function add(a, b) { return a + b; } for (let i = 0; i < 48; i++) globalThis.last = add('s', i);",
         "js-jit-rejected-lane.js",
     ))
     .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|body| {
+            body.header()
+                .name
+                .or(body.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "add")
+        })
+        .unwrap() as u32;
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
     let mut vm = Vm::new(TestHost::default());
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    let id = vm.programs.insert(program.clone()).unwrap();
+    vm.execute(&program).unwrap();
 
-    assert!(vm.js_tier_may_claim(&program, id, 1));
-    vm.programs
-        .reject_js_function(id, 1, "unsupported-shape");
-    assert!(vm.programs.js_tier_declined(id, 1));
-    for _ in 0..30 {
-        assert!(!vm.js_tier_may_claim(&program, id, 1));
+    let Some(super::program_store::JsTierState::Compiled(native)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("the rejected numeric candidate should promote to the general JavaScript tier");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let name = vm.intern_atom("last");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, name)
+        .unwrap();
+    let actual = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(actual, expected);
+
+    let mut exhausted = Vm::new(TestHost::default());
+    exhausted.set_execution_mode(crate::ExecutionMode::Compiled);
+    let exhausted_id = exhausted.programs.insert(program.clone()).unwrap();
+    for _ in 0..32 {
+        exhausted
+            .programs
+            .note_js_function_entry(exhausted_id, function, false, false, true);
     }
+    exhausted
+        .programs
+        .install_js_tier(exhausted_id, function, None);
     assert!(
-        vm.js_tier_may_claim(&program, id, 1),
-        "a rejected bounded legacy candidate should promote to general dispatch"
-    );
-    assert!(matches!(
-        vm.programs.js_tier(id, 1),
-        Some(super::program_store::JsTierState::GeneralPromotionPending)
-    ));
-    vm.programs.install_js_tier(id, 1, None);
-    assert!(
-        !vm.js_tier_may_claim(&program, id, 1),
+        !exhausted.js_tier_may_claim(&program, exhausted_id, function),
         "code-cache or codegen exhaustion remains terminal"
     );
 }

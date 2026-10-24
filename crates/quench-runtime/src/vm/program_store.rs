@@ -1453,15 +1453,6 @@ impl ProgramStore {
         self.entry(id)?.jit_tiers.js(function)
     }
 
-    /// Whether the JavaScript tier settled on not compiling `function`.
-    pub(super) fn js_tier_declined(&self, id: ProgramId, function: u32) -> bool {
-        self.entry(id)
-            .and_then(|entry| entry.jit_tiers.js(function))
-            .is_some_and(|state| {
-                matches!(state, JsTierState::Unsupported | JsTierState::Rejected { .. })
-            })
-    }
-
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {
         self.js_jit_diagnostics.is_some()
     }
