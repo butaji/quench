@@ -126,10 +126,14 @@ impl LoopOutcome {
 }
 
 /// An array a region indexes, by its register; `written` when the region stores into it.
+/// The array is the register's value at entry, or, with `field`, the value of that cached
+/// field (`LoopRegion::fields`), which the field's one `GetField` in the region writes to
+/// the register.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ArrayUse {
     pub(crate) register: Register,
     pub(crate) written: bool,
+    pub(crate) field: Option<usize>,
 }
 
 /// A loop's admissible region and the facts its entry needs.
@@ -176,6 +180,20 @@ pub(crate) enum RegionRejection {
 pub(crate) enum FieldReceiver {
     This,
     Register(Register),
+}
+
+/// The cached field a named `GetField` reads, as a region holds it.
+fn field_use(instruction: WideInstruction, tagged: bool) -> Option<FieldUse> {
+    (instruction.op() == Op::GetField && instruction.result_flags() == 0).then_some(())?;
+    let FieldLookup::Atom { atom, base, cache_site } = instruction.field_lookup()? else {
+        return None;
+    };
+    let receiver = if base == FieldBase::THIS {
+        FieldReceiver::This
+    } else {
+        FieldReceiver::Register(base.register_index()?)
+    };
+    Some(FieldUse { receiver, atom, cache_site, tagged })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -258,6 +276,31 @@ fn tagged_registers(
     }
 }
 
+/// The registers the region indexes as arrays that exactly one `GetField` of it defines,
+/// with that read: each holds the array the cached field does, whose element pointer and
+/// length the entry record carries like an entry array's (`ArrayUse::field`).
+fn field_array_registers(instructions: &[WideInstruction]) -> std::collections::BTreeMap<Register, FieldUse> {
+    let bases: std::collections::BTreeSet<Register> = instructions
+        .iter()
+        .filter_map(|instruction| match instruction.op() {
+            Op::GetIndex => instruction.operand_b().register_index(),
+            Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
+            _ => None,
+        })
+        .collect();
+    bases
+        .into_iter()
+        .filter_map(|register| {
+            let mut definitions =
+                instructions.iter().filter(|instruction| number_definition(**instruction) == Some(register));
+            let (Some(read), None) = (definitions.next(), definitions.next()) else {
+                return None;
+            };
+            Some((register, field_use(*read, true)?))
+        })
+        .collect()
+}
+
 impl LoopRegion {
     fn entry_count(&self) -> usize {
         self.numbers.len() + self.tagged.len()
@@ -286,9 +329,10 @@ impl LoopRegion {
 }
 
 /// The entry record native code reads: each capture's value, then each array's element
-/// pointer and length.
+/// pointer and length, then each cached field. Only the words pushed are ever read, by
+/// native code and by `captures`, so the rest stay uninitialized.
 pub(crate) struct LoopEntry {
-    words: [u64; ENTRY_WORDS],
+    words: [std::mem::MaybeUninit<u64>; ENTRY_WORDS],
     length: usize,
 }
 
@@ -307,22 +351,26 @@ const ENTRY_WORDS: usize =
 
 impl LoopEntry {
     pub(crate) fn new() -> Self {
-        Self { words: [0; ENTRY_WORDS], length: ENTRY_CAPTURES }
+        let mut words = [std::mem::MaybeUninit::uninit(); ENTRY_WORDS];
+        // The backward-edge counter is the one leading word native code reads before any push.
+        words[ENTRY_BACKEDGE_COUNT].write(0);
+        Self { words, length: ENTRY_CAPTURES }
     }
 
     /// Number of taken executions of this region's backward edge in the most recent run.
     pub(crate) fn backedge_count(&self) -> u64 {
-        self.words[ENTRY_BACKEDGE_COUNT]
+        // SAFETY: `new` initializes the counter word.
+        unsafe { self.words[ENTRY_BACKEDGE_COUNT].assume_init() }
     }
 
     /// The record's words. Native OSR may also update the private first counter word.
     pub(super) fn words_mut(&mut self) -> *mut u64 {
         debug_assert!(self.length <= ENTRY_WORDS);
-        self.words.as_mut_ptr()
+        self.words.as_mut_ptr().cast()
     }
 
     fn push(&mut self, word: u64) {
-        self.words[self.length] = word;
+        self.words[self.length].write(word);
         self.length += 1;
     }
 
@@ -333,7 +381,12 @@ impl LoopEntry {
 
     /// The first `count` capture values, as pushed.
     pub(crate) fn captures(&self, count: usize) -> Vec<Value> {
-        self.words[ENTRY_CAPTURES..ENTRY_CAPTURES + count].iter().map(|bits| Value::from_bits(*bits)).collect()
+        debug_assert!(ENTRY_CAPTURES + count <= self.length);
+        self.words[ENTRY_CAPTURES..ENTRY_CAPTURES + count]
+            .iter()
+            // SAFETY: the first `count` words after the leading ones are the pushed captures.
+            .map(|word| Value::from_bits(unsafe { word.assume_init() }))
+            .collect()
     }
 
     /// Arrays follow the captures, in the region's order. An array longer than
@@ -343,6 +396,16 @@ impl LoopEntry {
         self.push(elements.addr() as u64);
         self.push(length as u64);
         Some(())
+    }
+
+    /// The value of the region's `index`th field as pushed: its word follows the captures
+    /// and arrays. A Number field reads back as its double's Number.
+    pub(crate) fn field_value(&self, region: &LoopRegion, index: usize) -> Value {
+        let word = ENTRY_CAPTURES + region.captures.len() + ARRAY_WORDS * region.arrays.len() + index;
+        debug_assert!(word < self.length);
+        // SAFETY: every field of the region was pushed after its captures and arrays.
+        let bits = unsafe { self.words[word].assume_init() };
+        if region.fields[index].tagged { Value::from_bits(bits) } else { Value::number(f64::from_bits(bits)) }
     }
 
     pub(crate) fn push_field(&mut self, value: Value, tagged: bool) -> Option<()> {
@@ -405,9 +468,23 @@ struct Admission<'a> {
     pub(crate) fields: Vec<FieldUse>,
     numbers: std::collections::BTreeMap<u16, f64>,
     values: std::collections::BTreeMap<u16, Value>,
+    /// The registers holding an array a field read gives (`field_array_registers`), each
+    /// with whether the region stores into it.
+    field_arrays: std::collections::BTreeMap<Register, bool>,
 }
 
 impl Admission<'_> {
+    /// Notes `register` as an indexed array: one a field read defines, else an entry array.
+    fn array(&mut self, register: Register, written: bool) -> Option<()> {
+        match self.field_arrays.get_mut(&register) {
+            Some(stored) => {
+                *stored |= written;
+                Some(())
+            }
+            None => self.note(register, Role::Array { written }),
+        }
+    }
+
     fn note(&mut self, register: Register, role: Role) -> Option<()> {
         match (self.roles.get(&register).copied(), role) {
             (None, role) => {
@@ -478,8 +555,10 @@ pub(super) fn region(
     if start > end || end >= decoded.len() || end - start >= MAX_REGION_INSTRUCTIONS {
         return Err(RegionRejection::RegionTooLarge);
     }
-    let tagged = tagged_registers(&decoded[start..=end], constants)
+    let mut tagged = tagged_registers(&decoded[start..=end], constants)
         .ok_or(RegionRejection::UnsupportedInstruction(Op::JumpBinaryFalse))?;
+    let field_arrays = field_array_registers(&decoded[start..=end]);
+    tagged.extend(field_arrays.keys().copied());
     let mut admission = Admission {
         constants,
         roles: std::collections::BTreeMap::new(),
@@ -487,6 +566,7 @@ pub(super) fn region(
         fields: Vec::new(),
         numbers: std::collections::BTreeMap::new(),
         values: std::collections::BTreeMap::new(),
+        field_arrays: field_arrays.keys().map(|register| (*register, false)).collect(),
     };
     for instruction in &decoded[start..=end] {
         admit(&mut admission, *instruction, constants, &tagged)
@@ -535,14 +615,23 @@ pub(super) fn region(
         .filter(|(_, role)| **role == Role::Tagged)
         .map(|(register, _)| *register)
         .collect();
-    let arrays: Vec<ArrayUse> = admission
+    let mut arrays: Vec<ArrayUse> = admission
         .roles
         .iter()
         .filter_map(|(register, role)| match role {
-            Role::Array { written } => Some(ArrayUse { register: *register, written: *written }),
+            Role::Array { written } => Some(ArrayUse { register: *register, written: *written, field: None }),
             Role::Number | Role::Tagged => None,
         })
         .collect();
+    for (register, written) in &admission.field_arrays {
+        let field = field_arrays[register];
+        let index = admission
+            .fields
+            .iter()
+            .position(|use_| *use_ == field)
+            .ok_or(RegionRejection::UnsupportedInstruction(Op::GetField))?;
+        arrays.push(ArrayUse { register: *register, written: *written, field: Some(index) });
+    }
     if arrays.len() > MAX_REGION_ARRAYS {
         return Err(RegionRejection::ArrayLimit);
     }
@@ -618,29 +707,16 @@ fn admit(
         }
         // An array the entry guard proved is an object passes.
         Op::RequireObjectCoercible => {
-            admission.note(instruction.register_b(), Role::Array { written: false })?;
+            admission.array(instruction.register_b(), false)?;
         }
         Op::GetIndex => {
             admission.result(instruction)?;
             let base = instruction.operand_b().register_index()?;
-            admission.note(base, Role::Array { written: false })?;
+            admission.array(base, false)?;
             admission.source(instruction.operand_c())?;
         }
         Op::GetField => {
-            let FieldLookup::Atom { atom, base, cache_site } = instruction.field_lookup()? else {
-                return None;
-            };
-            let receiver = if base == FieldBase::THIS {
-                FieldReceiver::This
-            } else {
-                FieldReceiver::Register(base.register_index()?)
-            };
-            let field = FieldUse {
-                receiver,
-                atom,
-                cache_site,
-                tagged: tagged.contains(&instruction.result_register()),
-            };
+            let field = field_use(instruction, tagged.contains(&instruction.result_register()))?;
             if !admission.fields.contains(&field) {
                 admission.fields.push(field);
             }
@@ -652,7 +728,7 @@ fn admit(
         }
         Op::SetIndex => {
             admission.number(instruction.register_a())?;
-            admission.note(instruction.register_b(), Role::Array { written: true })?;
+            admission.array(instruction.register_b(), true)?;
             admission.number(instruction.register_c())?;
         }
         Op::Jump => {}
@@ -2684,19 +2760,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             Op::RequireObjectCoercible => self.fall_through(pc),
             Op::GetField => {
-                let FieldLookup::Atom { atom, base, cache_site } = instruction.field_lookup()? else {
-                    return None;
-                };
-                let receiver = if base == FieldBase::THIS {
-                    FieldReceiver::This
-                } else {
-                    FieldReceiver::Register(base.register_index()?)
-                };
-                let field = self
-                    .region
-                    .fields
-                    .iter()
-                    .position(|field| field.receiver == receiver && field.atom == atom && field.cache_site == cache_site)?;
+                let read = field_use(instruction, false)?;
+                let field = self.region.fields.iter().position(|field| {
+                    field.receiver == read.receiver && field.atom == read.atom && field.cache_site == read.cache_site
+                })?;
                 let value = self.fields[field];
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
