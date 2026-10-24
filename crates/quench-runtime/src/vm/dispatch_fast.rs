@@ -8389,7 +8389,7 @@ impl<H: Host> Vm<H> {
         // A numeric body's target differs from its plain closures' (below), so only plain
         // closures share their function's.
         if !numeric && let Some(known) = self.lane_stack.function_target(program, function, cross) {
-            let capture = if known.entry == CallEntry::Frame {
+            let capture = if known.view.is_null() {
                 std::ptr::null()
             } else {
                 self.target_capture(code, program, env)
@@ -8485,7 +8485,11 @@ impl<H: Host> Vm<H> {
         let shape = *unsafe { &*view }.target_body.get_or_init(|| {
             let constructs = Self::inline_constructible(body);
             TargetBody {
-                entry: if body.code.first().is_some_and(|packed| {
+                // A class constructor's calls throw on the general path, so they take a
+                // frame; only its constructions activate frameless (`lane_script_construct`).
+                entry: if body.is_class_constructor {
+                    CallEntry::Frame
+                } else if body.code.first().is_some_and(|packed| {
                     returning_kind(decoded_instruction(body, *packed)) == Some(RETURNING_FIELD)
                 }) {
                     CallEntry::Reads
@@ -8547,7 +8551,9 @@ impl<H: Host> Vm<H> {
             initializes: shape.initializes && !environment && !cross && !body.rest,
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
-            entry: if environment {
+            entry: if body.is_class_constructor {
+                shape.entry
+            } else if environment {
                 CallEntry::Environment
             } else if body.rest {
                 CallEntry::Gathers
@@ -10046,7 +10052,8 @@ script_handler! {
         // SAFETY: as `Vm::script_call_entry`; the planned construction below resolves no
         // target, and any other path copies the target first.
         let target = unsafe { &*entry };
-        if target.entry == CallEntry::Frame || !target.constructs {
+        // A class constructor's target constructs with entry `Frame`, which its calls take.
+        if !target.constructs {
             sibling!(lane_native_construct::<H>, r, ip, Carried::script(cx))
         }
         // A planned construction into a register, the common `new C(…)`: the receiver is
