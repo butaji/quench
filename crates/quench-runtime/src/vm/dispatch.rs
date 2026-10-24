@@ -43,7 +43,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Starts a plain `Call` of a same-realm, same-program user function as an activation of
+    /// Starts a plain call of a same-realm, same-program user function as an activation of
     /// the running dispatch loop, or returns `None` to leave the instruction to `step`. Such a
     /// call involves no direct eval (its callee is not the eval intrinsic) and neither eval mode
     /// is set before it, so the frame push leaves both untouched.
@@ -60,7 +60,8 @@ impl<H: Host> Vm<H> {
         // Hosts permitting proper tail calls leave strict terminal calls to `step`. Wasm programs run in
         // the loop (as in-loop Wasm frames), and their calls keep Wasm's own activation and
         // exhaustion accounting, so they are never inlined as user calls.
-        if i.op() != Op::Call
+        if !matches!(i.op(), Op::Call | Op::CallArray)
+            || i.direct_eval()
             || self.direct_eval
             || self.parameter_eval
             || p.kind == crate::bytecode::ProgramKind::Wasm
@@ -76,6 +77,11 @@ impl<H: Host> Vm<H> {
         let entry = self.in_loop_call_entry(p, callee)?;
         let target = (entry.program, entry.function, entry.env);
         if entry.push == super::InLoopPush::Settles {
+            // Settling calls consume the ordinary register window and cannot take
+            // CallArray's materialized argument vector through this continuation.
+            if i.op() == Op::CallArray {
+                return None;
+            }
             return self.try_settling_call(p, f, i, pc, callee, target);
         }
         #[cfg(feature = "profile-lane-exits")]
@@ -88,21 +94,55 @@ impl<H: Host> Vm<H> {
         );
         self.profile.call_source(0);
         let window = i.call_window();
+        // CallArray's input is an already materialized argument array. Copy its
+        // indexed values before pushing the frame, just as `Vm::step` does. The
+        // copied Values are rooted through activation setup below because the
+        // caller resumes past the temporary array register before its frame is pushed.
+        let array_arguments = if i.op() == Op::CallArray {
+            match self.array_values(self.read(f, window.base)) {
+                Ok(arguments) => Some(arguments),
+                Err(error) => return Some(Err(error)),
+            }
+        } else {
+            None
+        };
         // Collection happens only at back edges, tail calls and explicit host safepoints, none
         // of which can run while a frame is pushed; afterwards the new frame itself roots the
         // callee, receiver and arguments.
-        let arguments: *const [Value] = self.register_window(f, window);
+        let register_arguments: *const [Value] = self.register_window(f, window);
         // SAFETY: the window lies in the caller frame, which the tier's direct call only reads.
-        if let Some(value) =
-            self.js_jit_compiled_call(p, (target.0, target.1), i.returns_from_frame(), unsafe { &*arguments })
+        let arguments: &[Value] = array_arguments
+            .as_deref()
+            .unwrap_or_else(|| unsafe { &*register_arguments });
+        if i.op() == Op::Call
+            && let Some(value) =
+                self.js_jit_compiled_call(p, (target.0, target.1), i.returns_from_frame(), arguments)
         {
             self.write(f, i.result_register(), value);
             return Some(Ok(StepResult::Continue));
         }
         let this = self.read(f, i.register_c());
-        self.profile.call_target(1, usize::from(window.count));
+        self.profile.call_target(1, arguments.len());
         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
-        self.push_in_loop_call(p, f, pc, target, callee, this, unsafe { &*arguments }, i.result_register())
+        if array_arguments.is_some() {
+            let roots = std::iter::once(callee)
+                .chain(std::iter::once(this))
+                .chain(arguments.iter().copied());
+            self.with_call_roots(roots, |vm| {
+                vm.push_in_loop_call(
+                    p,
+                    f,
+                    pc,
+                    target,
+                    callee,
+                    this,
+                    arguments,
+                    i.result_register(),
+                )
+            })
+        } else {
+            self.push_in_loop_call(p, f, pc, target, callee, this, arguments, i.result_register())
+        }
     }
 
     /// A field read's `getter`, a user function the loop may push in place, run as the next
