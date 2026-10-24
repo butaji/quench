@@ -171,7 +171,7 @@ fn resumes_into_handler(op: Op) -> bool {
     op.control_flow_layout() == ControlFlowLayout::Call || matches!(op, Op::Await | Op::Yield | Op::YieldStar)
 }
 
-fn add_suspended_exception_roots(function: &Function, live: &mut [RegisterSet]) {
+pub(super) fn add_suspended_exception_roots(function: &Function, live: &mut [RegisterSet]) {
     for (pc, instruction) in function.instructions().enumerate() {
         if !resumes_into_handler(instruction.op()) {
             continue;
