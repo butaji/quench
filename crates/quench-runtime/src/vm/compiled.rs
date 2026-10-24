@@ -1341,7 +1341,25 @@ pub(super) fn compile_js_general_dispatch(
         .map(|_| builder.create_block())
         .collect();
     let mut general_dispatch_native_pcs = vec![0; instruction_count];
-    builder.ins().jump(blocks[0], &[]);
+    // Start from the caller's exact resume PC. The artifact is shared by normal
+    // function entry, call-return re-entry and hot-loop OSR; its canonical frame
+    // homes remain the same in all three cases.
+    let payload = builder.ins().load(
+        types::I64,
+        invariant(),
+        context,
+        std::mem::offset_of!(CallContext, adapter_payload) as i32,
+    );
+    let start_pc_address = builder.ins().iadd_imm_s(
+        payload,
+        std::mem::offset_of!(JsStepDispatch, start_pc) as i64,
+    );
+    let start_pc = builder
+        .ins()
+        .load(types::I64, MemFlagsData::trusted(), start_pc_address, 0);
+    builder
+        .ins()
+        .jump(continue_block, &[ir::BlockArg::Value(start_pc)]);
 
     let mut callout_signature = Signature::new(isa.default_call_conv());
     for _ in 0..4 {
@@ -2277,23 +2295,54 @@ const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
 
+/// An opt-in JIT switch the environment sets ("1" or "true"), read once per process: a
+/// compiled call consults several, and reading the environment on each call cost more than
+/// the calls (HashSet-wasm `--jit`: `getenv` was 68% of the run's instructions).
+struct EnvSwitch {
+    name: &'static str,
+    enabled: std::sync::OnceLock<bool>,
+}
+
+impl EnvSwitch {
+    const fn new(name: &'static str) -> Self {
+        Self { name, enabled: std::sync::OnceLock::new() }
+    }
+
+    fn enabled(&self) -> bool {
+        *self.enabled.get_or_init(|| {
+            std::env::var(self.name).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+        })
+    }
+}
+
+static JIT_WASM_SELECTIVE: EnvSwitch = EnvSwitch::new(JIT_WASM_SELECTIVE_ENV);
+static JIT_DIRECT_COMPARE_BRANCHES: EnvSwitch = EnvSwitch::new(JIT_DIRECT_COMPARE_BRANCHES_ENV);
+static JIT_AFFINE_PAIR: EnvSwitch = EnvSwitch::new(JIT_AFFINE_PAIR_ENV);
+static JIT_REFERENCE_BODY_CACHE: EnvSwitch = EnvSwitch::new(JIT_REFERENCE_BODY_CACHE_ENV);
+static JIT_EMSCRIPTEN_MEMCPY_LEAF: EnvSwitch = EnvSwitch::new(JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV);
+static JIT_ROOT_ONLY: EnvSwitch = EnvSwitch::new(JIT_ROOT_ONLY_ENV);
+static JIT_ROOT_FIRST: EnvSwitch = EnvSwitch::new(JIT_ROOT_FIRST_ENV);
+
 fn jit_root_override() -> Result<Option<usize>, ()> {
     #[cfg(test)]
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return Ok(mode.root);
     }
-    let Some(root) = std::env::var_os(JIT_ROOT_ENV) else {
-        return Ok(None);
-    };
-    root.to_str()
-        .ok_or(())?
-        .parse::<usize>()
-        .map(Some)
-        .map_err(|_| ())
+    static ROOT: std::sync::OnceLock<Result<Option<usize>, ()>> = std::sync::OnceLock::new();
+    *ROOT.get_or_init(|| {
+        let Some(root) = std::env::var_os(JIT_ROOT_ENV) else {
+            return Ok(None);
+        };
+        root.to_str()
+            .ok_or(())?
+            .parse::<usize>()
+            .map(Some)
+            .map_err(|_| ())
+    })
 }
 
 fn jit_wasm_selective_enabled() -> bool {
-    std::env::var(JIT_WASM_SELECTIVE_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_WASM_SELECTIVE.enabled()
 }
 
 fn jit_direct_compare_branches_enabled() -> bool {
@@ -2302,24 +2351,21 @@ fn jit_direct_compare_branches_enabled() -> bool {
     {
         return enabled;
     }
-    std::env::var(JIT_DIRECT_COMPARE_BRANCHES_ENV)
-        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_DIRECT_COMPARE_BRANCHES.enabled()
 }
 
 /// Keep the screened affine pair loop opt-in; the benchmark harness can still
 /// run a same-binary, same-host comparison arm with it enabled.
 fn jit_affine_pair_enabled() -> bool {
-    std::env::var(JIT_AFFINE_PAIR_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_AFFINE_PAIR.enabled()
 }
 
 fn jit_reference_body_cache_enabled() -> bool {
-    std::env::var(JIT_REFERENCE_BODY_CACHE_ENV)
-        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_REFERENCE_BODY_CACHE.enabled()
 }
 
 fn jit_emscripten_memcpy_leaf_enabled() -> bool {
-    std::env::var(JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV)
-        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_EMSCRIPTEN_MEMCPY_LEAF.enabled()
 }
 
 /// Run the guarded numeric hash-map loop by default. Set the environment
@@ -2337,7 +2383,7 @@ fn jit_wasm_root_only_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_only;
     }
-    std::env::var(JIT_ROOT_ONLY_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_ROOT_ONLY.enabled()
 }
 
 fn jit_wasm_root_first_enabled() -> bool {
@@ -2345,7 +2391,7 @@ fn jit_wasm_root_first_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_first;
     }
-    std::env::var(JIT_ROOT_FIRST_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_ROOT_FIRST.enabled()
 }
 
 #[cfg(test)]
@@ -3984,7 +4030,8 @@ impl Drop for CompiledProgram {
 }
 
 fn jit_diagnostics_enabled() -> bool {
-    std::env::var_os("QUENCH_WASM_JIT_STATS").is_some_and(|value| value == "1")
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("QUENCH_WASM_JIT_STATS").is_some_and(|value| value == "1"))
 }
 
 impl CompiledProgram {
@@ -4421,19 +4468,20 @@ pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
     LOOP_TIER_OPT_LEVELS[policy as usize].is_some()
 }
 
-/// Whether the general-dispatch tier compiles whole functions under each memory policy
-/// (`MemoryPolicy` order). Its functions are the largest the JavaScript tiers compile, and
-/// regalloc2's state for one set memory-first's peak, as a loop region's did
-/// (`LOOP_TIER_OPT_LEVELS`): V8-v7 Crypto `--jit` peaked at the end of its run while one
-/// compiled (static BOLT x86_64, memory-first: 3220 -> 5496 KiB median once the tier
-/// landed, 2026-10-24). Memory-first compiles none, on the owner's direction that it may
-/// trade Score for memory under `--jit` (TOD-123).
-const GENERAL_DISPATCH_TIER: [bool; crate::MemoryPolicy::ALL.len()] = [true, false];
+/// Whether the JavaScript function tiers (the per-function tier and the general-dispatch
+/// tier, and the loop tier's site analysis) compile under each memory policy (`MemoryPolicy`
+/// order). Memory-first compiles
+/// none, on the owner's direction that it may trade Score for memory under `--jit` (TOD-123).
+/// Under memory-first their code and regalloc2 state set the `--jit` peaks: the general-dispatch
+/// tier took V8-v7 Crypto `--jit` from 3220 to 5496 KiB (median, bolted static x86_64). With
+/// both off, every V8-v7 `--jit` row peaked 84-380 KiB lower, at its no-JIT level. Scores moved
+/// both ways: EarleyBoyer +125%, Splay +15%, RayTrace +11%, NavierStokes +8%, but DeltaBlue -9%,
+/// Richards -7%, RegExp -7% (same unbolted static binary, 5 runs, 2026-10-24).
+const JS_FUNCTION_TIERS: [bool; crate::MemoryPolicy::ALL.len()] = [true, false];
 
-/// Whether the general-dispatch tier compiles functions under `policy`
-/// (`GENERAL_DISPATCH_TIER`).
-pub(super) fn general_dispatch_compiles(policy: crate::MemoryPolicy) -> bool {
-    GENERAL_DISPATCH_TIER[policy as usize]
+/// Whether the JavaScript function tiers compile under `policy` (`JS_FUNCTION_TIERS`).
+pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
+    JS_FUNCTION_TIERS[policy as usize]
 }
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
@@ -4646,6 +4694,7 @@ struct JsStepDispatch {
     program_id: ProgramId,
     frame: usize,
     allow_inline_calls: bool,
+    start_pc: usize,
     native_registers: *mut Value,
     register_count: usize,
     native_locals: *mut Value,
@@ -4890,13 +4939,56 @@ unsafe extern "C" fn js_step_callout<H: Host>(
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
-            let step = vm.step(
-                &program,
-                dispatch.frame,
-                current_instruction,
-                &mut next,
-                dispatch.allow_inline_calls,
-            );
+            let step = if dispatch.allow_inline_calls && current_instruction.op() == Op::Call {
+                match vm.try_inline_user_call(
+                    &program,
+                    dispatch.frame,
+                    current_instruction,
+                    next,
+                ) {
+                    Some(step) => step,
+                    None => vm.step(
+                        &program,
+                        dispatch.frame,
+                        current_instruction,
+                        &mut next,
+                        dispatch.allow_inline_calls,
+                    ),
+                }
+            } else if current_instruction.op() == Op::LoadCapture {
+                if let Some(value) = vm.cached_direct_capture(
+                    dispatch.frame,
+                    current_instruction.capture_depth(),
+                    current_instruction.capture_slot(),
+                ) {
+                    let destination = vm.frames[dispatch.frame]
+                        .registers
+                        .get_mut(usize::from(current_instruction.result_register()))
+                        .ok_or_else(|| {
+                            JsError::validation(
+                                "native JS capture result register is invalid".into(),
+                            )
+                        })?;
+                    *destination = value;
+                    Ok(super::StepResult::Continue)
+                } else {
+                    vm.step(
+                        &program,
+                        dispatch.frame,
+                        current_instruction,
+                        &mut next,
+                        dispatch.allow_inline_calls,
+                    )
+                }
+            } else {
+                vm.step(
+                    &program,
+                    dispatch.frame,
+                    current_instruction,
+                    &mut next,
+                    dispatch.allow_inline_calls,
+                )
+            };
             match step {
                 Ok(super::StepResult::Continue) => {
                     if next >= body.code.len() {
@@ -9771,10 +9863,13 @@ impl<H: Host> Vm<H> {
         native_poll_page(&self.execution_interrupt)
     }
 
-    /// Whether the per-function JavaScript tier runs: compiled execution, in a build whose
-    /// profiles do not count interpreted work exactly.
+    /// Whether the JavaScript function tiers run: compiled execution under a memory policy
+    /// that compiles them (`JS_FUNCTION_TIERS`), in a build whose profiles do not count
+    /// interpreted work exactly.
     pub(super) fn js_tier_runs(&self) -> bool {
-        !cfg!(quench_profiled) && self.execution_mode == ExecutionMode::Compiled
+        !cfg!(quench_profiled)
+            && self.execution_mode == ExecutionMode::Compiled
+            && js_function_tiers_compile(self.memory_policy())
     }
 
     /// Keep usable legacy specialized candidates first. If that tier rejects a
@@ -9970,7 +10065,7 @@ impl<H: Host> Vm<H> {
         if allow_inline_calls
             && facts.general
             && let Some(outcome) = self.js_jit_general_dispatch_at_entry(
-                program, frame, true, false,
+                program, frame, 0, true, false,
             )
         {
             return match outcome {
@@ -10013,7 +10108,7 @@ impl<H: Host> Vm<H> {
         }
         if allow_inline_calls && (general_candidate || promote_general) {
             if let Some(outcome) = self.js_jit_general_dispatch_at_entry(
-                program, frame, true, promote_general,
+                program, frame, 0, true, promote_general,
             ) {
                 return match outcome {
                     JsNativeDispatchResult::Step(step) => JsTierFrameEntry::NativeStep(step),
@@ -10033,16 +10128,17 @@ impl<H: Host> Vm<H> {
         JsTierFrameEntry::Interpreter
     }
 
-    fn js_jit_general_dispatch_at_entry(
+    pub(super) fn js_jit_general_dispatch_at_entry(
         &mut self,
         program: &ResidualProgram,
         frame: usize,
+        start_pc: usize,
         allow_inline_calls: bool,
         promote: bool,
     ) -> Option<JsNativeDispatchResult> {
         if !self.js_tier_runs()
             || program.kind == crate::bytecode::ProgramKind::Wasm
-            || self.frames.get(frame)?.pc != 0
+            || start_pc >= program.function_get(self.frames.get(frame)?.function as usize)?.code.len()
         {
             return None;
         }
@@ -10108,6 +10204,7 @@ impl<H: Host> Vm<H> {
             program_id,
             frame,
             allow_inline_calls,
+            start_pc,
             native_registers: std::ptr::null_mut(),
             register_count: 0,
             native_locals: std::ptr::null_mut(),
@@ -10120,6 +10217,10 @@ impl<H: Host> Vm<H> {
             global_name_cache_hits: 0,
             outcome: None,
         };
+        // Native dispatch starts at the next unexecuted bytecode. Callouts
+        // overwrite this with the exact failing PC before invoking VM semantics.
+        self.frames[frame].pc = start_pc;
+        self.frames[frame].pc_is_resume = false;
         let interrupt = self.execution_interrupt.atomic_flag();
         let interrupt = interrupt as *const std::sync::atomic::AtomicBool;
         let poll_page = self.compiled_poll_page();
@@ -11725,6 +11826,7 @@ impl<H: Host> Vm<H> {
                         function.code.len() <= MAX_JIT_TIER_BYTECODES_PER_FUNCTION
                     })
             })
+            && self.programs.wasm_tier_has_room()
             && self.programs.note_wasm_tier_entry(program, id)
         {
             let tier = self
