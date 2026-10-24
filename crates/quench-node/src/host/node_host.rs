@@ -249,6 +249,24 @@ pub(crate) enum ChildProcessEvent {
 }
 
 impl SharedNodeState {
+    /// Child output pipes with pending guest demand. The event loop polls them
+    /// with the transport descriptors, so a child's write wakes the loop at once
+    /// instead of being found on the fallback poll interval.
+    #[cfg(unix)]
+    pub(crate) fn child_output_descriptors(&self) -> Vec<std::os::fd::RawFd> {
+        let mut descriptors = Vec::new();
+        for process in self.child_processes.values() {
+            for pipe in [&process.stdout_pipe, &process.stderr_pipe] {
+                if pipe.wants_read() {
+                    if let Some(fd) = pipe.descriptor() {
+                        descriptors.push(fd);
+                    }
+                }
+            }
+        }
+        descriptors
+    }
+
     /// Forget cached guest handles before bootstrapping a replacement VM heap.
     pub(crate) fn reset_cached_vm_roots(&mut self) {
         self.performance_native = Default::default();

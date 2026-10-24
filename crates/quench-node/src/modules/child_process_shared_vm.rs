@@ -464,6 +464,7 @@ fn spawn_child_with_stdio(
             let thread_owner = wait_owner.clone();
             let (cancel, cancellation) = Cancellation::new(pid);
             let (reap, reaping) = mpsc::channel::<()>();
+            let wake = crate::modules::napi::thread_wake().ok();
             let wait_thread = std::thread::Builder::new()
                 .name("quench-child-wait".into())
                 .spawn(move || {
@@ -498,6 +499,7 @@ fn spawn_child_with_stdio(
                         match unreaped_exit_status(pid) {
                             Some(status) => {
                                 send_exit(&sender, Some(status));
+                                if let Some(wake) = &wake { crate::modules::napi::notify_wake(wake); }
                                 let _ = reaping.recv();
                                 let _ = child.wait();
                                 return;
@@ -506,6 +508,7 @@ fn spawn_child_with_stdio(
                         }
                     };
                     send_exit(&sender, status);
+                    if let Some(wake) = &wake { crate::modules::napi::notify_wake(wake); }
                 })
                 ;
             if let Err(error) = wait_thread {

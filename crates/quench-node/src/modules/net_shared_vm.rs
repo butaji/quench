@@ -730,6 +730,7 @@ fn bind_listener(address: SocketAddr, reuse_port: bool, backlog: i32) -> std::io
 pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Result<u64, String> {
     let id = transport.id()?;
     let (sender, receiver) = mpsc::channel();
+    let wake = crate::modules::napi::thread_wake().ok();
     std::thread::Builder::new()
         .name(format!("quench-node-tcp-{id}"))
         .spawn(move || {
@@ -742,6 +743,7 @@ pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Res
                         .map_err(TcpConnectFailure::Setup)
                 });
             let _ = sender.send(result.map_err(ConnectFailure::Tcp));
+            if let Some(wake) = &wake { crate::modules::napi::notify_wake(wake); }
         })
         .map_err(|error| format!("cannot start TCP connect: {error}"))?;
     transport.connecting.insert(
@@ -789,6 +791,7 @@ pub(super) fn connect_resolved(
         return Ok(());
     }
     let (sender, receiver) = mpsc::channel();
+    let wake = crate::modules::napi::thread_wake().ok();
     std::thread::Builder::new()
         .name(format!("quench-node-tcp-{id}"))
         .spawn(move || {
@@ -809,6 +812,7 @@ pub(super) fn connect_resolved(
                 })
                 .map_err(ConnectFailure::Tcp);
             let _ = sender.send(result);
+            if let Some(wake) = &wake { crate::modules::napi::notify_wake(wake); }
         })
         .map_err(|error| format!("cannot start TCP connect: {error}"))?;
     transport
@@ -1068,7 +1072,11 @@ pub(crate) fn cleanup(transport: &mut Transport) {
 /// loop's idle wait: readiness ends it at once, where a fixed sleep made every arrival wait
 /// out the interval. Sources outside the transport keep the interval as their bound, and a
 /// transport with nothing to watch sleeps it.
-pub(crate) fn wait_ready(transport: &Transport, timeout: std::time::Duration) {
+pub(crate) fn wait_ready(
+    transport: &Transport,
+    extra: &[std::os::fd::RawFd],
+    timeout: std::time::Duration,
+) {
     use std::os::fd::AsRawFd;
     let watch = |fd: std::os::fd::RawFd, events: libc::c_short| libc::pollfd { fd, events, revents: 0 };
     let mut descriptors = transport
@@ -1099,6 +1107,9 @@ pub(crate) fn wait_ready(transport: &Transport, timeout: std::time::Duration) {
             };
             descriptors.push(watch(fd, events));
         }
+    }
+    for &fd in extra {
+        descriptors.push(watch(fd, libc::POLLIN));
     }
     if let Some(fd) = crate::modules::napi::wake_fd() {
         descriptors.push(watch(fd, libc::POLLIN));
@@ -2120,6 +2131,7 @@ fn connect_local(
 ) -> Result<u64, String> {
     let id = transport.id()?;
     let (sender, receiver) = mpsc::channel();
+    let wake = crate::modules::napi::thread_wake().ok();
     std::thread::Builder::new()
         .name(format!("quench-node-local-{id}"))
         .spawn(move || {
@@ -2133,6 +2145,7 @@ fn connect_local(
                 error,
                 path: display,
             }));
+            if let Some(wake) = &wake { crate::modules::napi::notify_wake(wake); }
         })
         .map_err(|error| error.to_string())?;
     transport.connecting.insert(
@@ -3018,5 +3031,28 @@ impl Transport {
     pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
         self.next_id = crate::host::startup_snapshot::HostSnap::read(reader)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Transport;
+    use std::time::{Duration, Instant};
+
+    /// A cross-thread completion must end the idle wait at once instead of
+    /// leaving the event loop to discover it on the poll interval.
+    #[test]
+    fn wait_ready_returns_when_a_completion_wakes_the_thread() {
+        let wake = crate::modules::napi::thread_wake().expect("wake signal");
+        let notifier = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(25));
+            crate::modules::napi::notify_wake(&wake);
+        });
+        let transport = Transport::new();
+        let started = Instant::now();
+        super::wait_ready(&transport, &[], Duration::from_secs(5));
+        let elapsed = started.elapsed();
+        notifier.join().expect("notifier thread");
+        assert!(elapsed < Duration::from_secs(1), "wait_ready slept {elapsed:?}");
     }
 }

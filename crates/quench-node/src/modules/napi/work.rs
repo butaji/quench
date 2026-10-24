@@ -46,7 +46,7 @@ pub(super) struct EventQueue {
     wake: Arc<WakeSignal>,
 }
 
-struct WakeSignal {
+pub(crate) struct WakeSignal {
     #[cfg(target_os = "linux")]
     fd: RawFd,
     #[cfg(not(target_os = "linux"))]
@@ -56,7 +56,7 @@ struct WakeSignal {
 }
 
 impl WakeSignal {
-    fn new() -> std::io::Result<Self> {
+    pub(crate) fn new() -> std::io::Result<Self> {
         #[cfg(target_os = "linux")]
         {
             // SAFETY: eventfd owns no pointers; the descriptor stays live with this signal.
@@ -78,7 +78,7 @@ impl WakeSignal {
         }
     }
 
-    fn notify(&self) {
+    pub(crate) fn notify(&self) {
         #[cfg(target_os = "linux")]
         {
             let value: u64 = 1;
@@ -106,7 +106,7 @@ impl WakeSignal {
         }
     }
 
-    fn raw_fd(&self) -> RawFd {
+    pub(crate) fn raw_fd(&self) -> RawFd {
         #[cfg(target_os = "linux")]
         {
             self.fd
@@ -120,7 +120,7 @@ impl WakeSignal {
         }
     }
 
-    fn drain(&self) {
+    pub(crate) fn drain(&self) {
         #[cfg(target_os = "linux")]
         {
             let mut value = 0u64;
@@ -172,6 +172,19 @@ impl Drop for WakeSignal {
 
 thread_local! {
     static WAKE_SIGNAL: RefCell<Option<Arc<WakeSignal>>> = const { RefCell::new(None) };
+}
+
+/// The calling thread's wake signal, created on first use. A producer that
+/// completes work for this thread retains the returned handle and notifies it
+/// after publishing the completion, so the event loop wakes without waiting for
+/// the poll interval.
+pub(crate) fn thread_wake() -> std::io::Result<Arc<WakeSignal>> {
+    wake_signal()
+}
+
+/// Wake the thread that owns `signal` after a cross-thread completion.
+pub(crate) fn notify_wake(signal: &WakeSignal) {
+    signal.notify();
 }
 
 fn wake_signal() -> std::io::Result<Arc<WakeSignal>> {

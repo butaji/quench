@@ -34,6 +34,16 @@ pub(crate) fn wake_fd() -> Option<std::os::fd::RawFd> {
     work::wake_fd()
 }
 
+/// The calling thread's wake signal for cross-thread completions outside N-API.
+pub(crate) fn thread_wake() -> std::io::Result<std::sync::Arc<work::WakeSignal>> {
+    work::thread_wake()
+}
+
+/// Notify a retained wake signal after a completion is visible to its thread.
+pub(crate) fn notify_wake(signal: &work::WakeSignal) {
+    work::notify_wake(signal);
+}
+
 pub(crate) fn drain_wake() {
     work::drain_wake();
 }

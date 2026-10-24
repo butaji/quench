@@ -2237,7 +2237,15 @@ fn drain_checkpoint(
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
                 if !wait.is_zero() {
-                    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, wait);
+                    #[cfg(unix)]
+                    let extra = shared_state.borrow().child_output_descriptors();
+                    #[cfg(not(unix))]
+                    let extra = Vec::new();
+                    crate::modules::net_shared_vm::wait_ready(
+                        &shared_state.borrow().tcp,
+                        &extra,
+                        wait,
+                    );
                 }
                 continue;
             }
@@ -2296,7 +2304,15 @@ fn drain_checkpoint(
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
                 if !wait.is_zero() {
-                    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, wait);
+                    #[cfg(unix)]
+                    let extra = shared_state.borrow().child_output_descriptors();
+                    #[cfg(not(unix))]
+                    let extra = Vec::new();
+                    crate::modules::net_shared_vm::wait_ready(
+                        &shared_state.borrow().tcp,
+                        &extra,
+                        wait,
+                    );
                 }
                 continue;
             }
