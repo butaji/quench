@@ -9911,7 +9911,8 @@ impl<H: Host> Vm<H> {
     ) -> bool {
         facts.general
             && program.function_get(function as usize).is_some_and(|body| {
-                self.programs.general_tier_admits(body.code.len(), self.memory_policy())
+                self.programs
+                    .general_tier_admits(body.code.len(), facts.general_acyclic, self.memory_policy())
             })
     }
 
