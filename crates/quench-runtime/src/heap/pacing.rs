@@ -288,18 +288,6 @@ impl MemoryPolicy {
         matches!(self, Self::MemoryFirst)
     }
 
-    /// Whether compiled execution (`ExecutionMode::Compiled`) runs native code under this
-    /// policy. Memory-first runs the interpreter instead, on the owner's direction of
-    /// 2026-10-24 (TOD-123: memory-first may trade Score for memory under `--jit`): Cranelift's
-    /// code and one compile's scratch weigh more than the whole 20% margin. V8-v7
-    /// NavierStokes, static BOLT x86_64, memory-first: 3920 KiB interpreted against 7596
-    /// compiled, of which ~1.3 MB is Cranelift's code pages and 1.5-3 MB the transient
-    /// register-allocation and e-graph scratch of a 4K-instruction loop region; the cheapest
-    /// setting that cut it (single-pass register allocation) still kept 6.1 MB.
-    pub const fn compiles_native_code(self) -> bool {
-        matches!(self, Self::Throughput)
-    }
-
     /// The policy's own pacing table.
     const fn table(self) -> GenerationalPacing {
         match self {

@@ -13435,20 +13435,3 @@ fn set_iteration_copies_only_while_the_intrinsics_iterate() {
         Vm::new(TestHost::default()).execute(&program).unwrap();
     }
 }
-
-#[test]
-fn memory_first_runs_compiled_execution_interpreted() {
-    for policy_first in [false, true] {
-        let mut vm = Vm::new(TestHost::default());
-        if policy_first {
-            vm.set_memory_policy(crate::MemoryPolicy::MemoryFirst);
-            vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        } else {
-            vm.set_execution_mode(crate::ExecutionMode::Compiled);
-            vm.set_memory_policy(crate::MemoryPolicy::MemoryFirst);
-        }
-        assert_eq!(vm.execution_mode(), crate::ExecutionMode::Interpreted);
-        vm.set_memory_policy(crate::MemoryPolicy::Throughput);
-        assert_eq!(vm.execution_mode(), crate::ExecutionMode::Compiled);
-    }
-}

@@ -1732,10 +1732,7 @@ pub(crate) struct Vm<H> {
     pending_call_stacks: Vec<Vec<dispatch_frame::PendingGeneralCall>>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
-    /// The execution mode the embedder chose (`set_execution_mode`).
-    requested_execution_mode: ExecutionMode,
-    /// The mode that runs: the requested one where the memory policy compiles native code
-    /// (`MemoryPolicy::compiles_native_code`), else interpreted (`apply_execution_mode`).
+    /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
     execution_interrupt: crate::ExecutionInterrupt,
     /// Invalidates monomorphic `call_indirect` certificates after a table
