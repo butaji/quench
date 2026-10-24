@@ -49,7 +49,7 @@ use std::rc::{Rc, Weak};
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 pub(super) use osr_loop::{
-    FieldReceiver, LoopEntry, LoopOutcome, LoopRegion, Observation, RegionRejection, Widening,
+    ArrayUse, FieldReceiver, FieldUse, LoopEntry, LoopOutcome, LoopRegion, Observation, RegionRejection, Widening,
 };
 
 #[derive(Clone, Copy)]
