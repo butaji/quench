@@ -8,7 +8,6 @@
 //! collector reads only the slots.
 
 use crate::value::Value;
-use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 
 /// Collections up to this size are searched by a linear scan: comparing a few keys costs
@@ -44,23 +43,38 @@ impl CollectionEntry for (Value, Value) {
     }
 }
 
-/// Slots of the entries whose keys share one hash.
-#[derive(Clone, Debug)]
-enum Slots {
-    One(usize),
-    Many(Vec<usize>),
+/// One indexed entry: its slot and its key's hash folded to 32 bits, which also rehashes
+/// the index as it grows without reading the keys.
+#[derive(Clone, Copy, Debug)]
+struct IndexedSlot {
+    hash: u32,
+    slot: u32,
 }
 
-impl Slots {
-    fn as_slice(&self) -> &[usize] {
-        match self {
-            Self::One(slot) => std::slice::from_ref(slot),
-            Self::Many(slots) => slots,
-        }
-    }
+/// Maps each live key's hash to its slot; keys sharing a hash hold separate entries.
+type KeyIndex = hashbrown::HashTable<IndexedSlot>;
+
+/// A key hash folded to the 32 bits an index entry keeps.
+fn folded_hash(hash: u64) -> u32 {
+    (hash ^ (hash >> u32::BITS)) as u32
 }
 
-type KeyIndex = FxHashMap<u64, Slots>;
+/// The table hash of a folded hash: hashbrown picks buckets from the low bits and tags
+/// from the high bits, so the folded bits fill both halves.
+fn table_hash(folded: u32) -> u64 {
+    u64::from(folded) | (u64::from(folded) << u32::BITS)
+}
+
+fn index_slot(slot: usize) -> u32 {
+    u32::try_from(slot).expect("a collection's slots fit its index")
+}
+
+fn insert_slot(index: &mut KeyIndex, hash: u64, slot: usize) {
+    let hash = folded_hash(hash);
+    index.insert_unique(table_hash(hash), IndexedSlot { hash, slot: index_slot(slot) }, |entry| {
+        table_hash(entry.hash)
+    });
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct CollectionEntries<T> {
@@ -181,7 +195,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
         }
         let mut index = self.index.borrow_mut();
         let index = index.get_or_insert_with(|| {
-            let mut index = KeyIndex::default();
+            let mut index = KeyIndex::with_capacity(self.live);
             for (slot, entry) in self.slots.iter().enumerate() {
                 if entry.key() != HOLE {
                     insert_slot(&mut index, hash(entry.key()), slot);
@@ -189,12 +203,12 @@ impl<T: CollectionEntry> CollectionEntries<T> {
             }
             index
         });
+        let folded = folded_hash(key_hash);
         index
-            .get(&key_hash)?
-            .as_slice()
-            .iter()
-            .copied()
-            .find(|slot| same(self.slots[*slot].key()))
+            .find(table_hash(folded), |entry| {
+                entry.hash == folded && same(self.slots[entry.slot as usize].key())
+            })
+            .map(|entry| entry.slot as usize)
     }
 
     /// Appends an entry whose key is absent; `key_hash` is its key's hash.
@@ -211,16 +225,9 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     /// iterators (`take_iterators`).
     pub(crate) fn remove(&mut self, slot: usize, key_hash: u64) -> Option<Compaction> {
         if let Some(index) = self.index.get_mut() {
-            let emptied = match index.get_mut(&key_hash) {
-                Some(Slots::One(_)) => true,
-                Some(Slots::Many(slots)) => {
-                    slots.retain(|candidate| *candidate != slot);
-                    slots.is_empty()
-                }
-                None => false,
-            };
-            if emptied {
-                index.remove(&key_hash);
+            let indexed = index_slot(slot);
+            if let Ok(entry) = index.find_entry(table_hash(folded_hash(key_hash)), |entry| entry.slot == indexed) {
+                entry.remove();
             }
         }
         self.slots[slot] = T::hole();
@@ -289,18 +296,5 @@ impl CollectionEntries<(Value, Value)> {
     pub(crate) fn set_value(&mut self, slot: usize, value: Value) {
         debug_assert!(self.slots[slot].0 != HOLE);
         self.slots[slot].1 = value;
-    }
-}
-
-fn insert_slot(index: &mut KeyIndex, hash: u64, slot: usize) {
-    match index.get_mut(&hash) {
-        None => {
-            index.insert(hash, Slots::One(slot));
-        }
-        Some(Slots::One(first)) => {
-            let first = *first;
-            index.insert(hash, Slots::Many(vec![first, slot]));
-        }
-        Some(Slots::Many(slots)) => slots.push(slot),
     }
 }

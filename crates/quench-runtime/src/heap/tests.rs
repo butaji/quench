@@ -7,7 +7,7 @@ fn plain_object() -> Object {
 }
 
 fn collect_minor(heap: &mut Heap, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
-    heap.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, false)
+    heap.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, None, false)
 }
 
 #[test]
@@ -758,7 +758,8 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     let mut heap = Heap::new();
     let object = heap.alloc(Cell::Object(plain_object()));
     let before = heap.memory_stats().3;
-    let data = heap.get_mut(object).unwrap().object_mut().unwrap();
+    // An object lives in its record family or a legacy cell; `Heap::object_mut` finds either.
+    let data = heap.object_mut(object).unwrap();
     data.set_arguments_object();
     data.set_arguments_map(vec![0; 32]);
     data.set_module_namespace();
@@ -1012,7 +1013,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     assert_eq!(heap.environment_slot_owner(second, 7), Some(owner));
     assert_eq!(heap.environment_slot(second, 3), Some(Value::number(30.0)));
     // The copies keep the original and its values alive.
-    heap.collect_with_object_roots([second], |_, _, _, _, _| {}, None, true);
+    heap.collect_with_object_roots([second], |_, _, _, _, _| {}, None, None, true);
     assert_eq!(heap.environment_slot(second, width - 1), Some(kept));
     assert!(matches!(heap.get(kept), Some(Cell::Error(_))));
     // A narrow environment's copy stays dense.
