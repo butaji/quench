@@ -502,6 +502,9 @@ fn admit(admission: &mut Admission<'_>, instruction: WideInstruction) -> Option<
             admission.source(instruction.operand_b())?;
             admission.source(instruction.operand_c())?;
         }
+        Op::JumpFalse | Op::JumpTrue => {
+            admission.number(instruction.register_a())?;
+        }
         _ => return None,
     }
     Some(())
@@ -591,9 +594,14 @@ fn number_reads(instruction: WideInstruction) -> Vec<Register> {
     let register = |operand: Operand| operand.register_index();
     match instruction.op() {
         Op::Move | Op::IncDec | Op::Unary | Op::ToNumeric => vec![instruction.register_b()],
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => {
-            [register(instruction.operand_b()), register(instruction.operand_c())].into_iter().flatten().collect()
-        }
+        Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => [
+            register(instruction.operand_b()),
+            register(instruction.operand_c()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+        Op::JumpFalse | Op::JumpTrue => vec![instruction.register_a()],
         Op::GetIndex => register(instruction.operand_c()).into_iter().collect(),
         Op::SetIndex => vec![instruction.register_a(), instruction.register_c()],
         _ => Vec::new(),
@@ -1014,6 +1022,7 @@ fn counted_loop(
                 test = Some(pc);
             }
             Op::JumpBinaryFalse => return None,
+            Op::JumpFalse | Op::JumpTrue => return None,
             _ => {}
         }
     }
@@ -1021,8 +1030,10 @@ fn counted_loop(
     // Control enters only at the header.
     let enters_inside = (region.header..=region.backedge).any(|pc| {
         let instruction = at(pc);
-        matches!(instruction.op(), Op::Jump | Op::JumpBinaryFalse)
-            && (header + 1..=backedge).contains(&instruction.jump_target())
+        matches!(
+            instruction.op(),
+            Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
+        ) && (header + 1..=backedge).contains(&instruction.jump_target())
     });
     if enters_inside {
         return None;
@@ -2015,6 +2026,41 @@ impl<'a, 'b> Lowering<'a, 'b> {
         Some(())
     }
 
+    /// Branches on the bytecode condition, preserving whether its true or false arm takes
+    /// `target`; a branch arm that leaves the region resumes at that exact PC.
+    fn branch(
+        &mut self,
+        pc: u32,
+        target: u32,
+        condition: ir::Value,
+        jump_when: bool,
+    ) -> Option<()> {
+        let taken = self.body.builder.create_block();
+        let not_taken = self.body.builder.create_block();
+        let tested = self
+            .body
+            .builder
+            .current_block()
+            .expect("lowering inside a block");
+        let (on_true, on_false) = if jump_when {
+            (taken, not_taken)
+        } else {
+            (not_taken, taken)
+        };
+        self.body
+            .builder
+            .ins()
+            .brif(condition, on_true, &[], on_false, &[]);
+        self.body.builder.switch_to_block(taken);
+        self.body.builder.seal_block(taken);
+        self.jump(pc, target)?;
+        let chain = self.chain(tested);
+        self.chains.insert(not_taken, chain);
+        self.body.builder.switch_to_block(not_taken);
+        self.body.builder.seal_block(not_taken);
+        self.fall_through(pc)
+    }
+
     fn fall_through(&mut self, pc: u32) -> Option<()> {
         match self.target_block(Some(pc), pc + 1) {
             Some(block) => {
@@ -2490,6 +2536,22 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.switch_to_block(not_taken);
                 self.body.builder.seal_block(not_taken);
                 self.fall_through(pc)
+            }
+            Op::JumpFalse | Op::JumpTrue => {
+                let value = self.read(Source::Register(instruction.register_a()));
+                let truthy = match value.representation {
+                    Representation::Int32 => {
+                        self.body
+                            .builder
+                            .ins()
+                            .icmp_imm_s(IntCC::NotEqual, value.value, 0)
+                    }
+                    Representation::Float64 => {
+                        super::emit_number_truthiness(&mut self.body.builder, value.value)
+                    }
+                };
+                let jump_when = instruction.op() == Op::JumpTrue;
+                self.branch(pc, instruction.jump_target(), truthy, jump_when)
             }
             _ => None,
         }
