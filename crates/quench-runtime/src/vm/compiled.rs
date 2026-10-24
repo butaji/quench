@@ -1362,27 +1362,56 @@ pub(super) fn compile_js_general_dispatch(
                         && !instruction.returns_from_frame()
                         && !instruction.writes_current_this() =>
                 {
-                    let value = program.constants.get(instruction.constant_index()).and_then(
-                        |constant| match constant {
-                            crate::bytecode::Constant::Number(value) => {
-                                Some(Value::number(*value))
-                            }
-                            crate::bytecode::Constant::Boolean(value) => {
-                                Some(Value::boolean(*value))
-                            }
-                            crate::bytecode::Constant::Null => Some(Value::NULL),
-                            crate::bytecode::Constant::Undefined => Some(Value::UNDEFINED),
-                            crate::bytecode::Constant::String(_)
-                            | crate::bytecode::Constant::StringUnits(_)
-                            | crate::bytecode::Constant::BigInt(_)
-                            | crate::bytecode::Constant::WasmBits64(_)
-                            | crate::bytecode::Constant::WasmV128(_) => None,
-                        },
-                    );
-                    if let (Some(value), Some(destination)) =
-                        (value, register_offset(instruction.result_register()))
+                    let constant_index = instruction.constant_index();
+                    let byte_offset = program
+                        .constants
+                        .get(constant_index)
+                        .and_then(|_| {
+                            constant_index.checked_mul(std::mem::size_of::<Value>())
+                        })
+                        .and_then(|offset| i32::try_from(offset).ok());
+                    if let (Some(byte_offset), Some(destination)) =
+                        (byte_offset, register_offset(instruction.result_register()))
                     {
-                        let value = builder.ins().iconst(types::I64, value.to_bits() as i64);
+                        let fast = builder.create_block();
+                        let fallback = builder.create_block();
+                        let constant_count = builder.ins().load(
+                            types::I64,
+                            MemFlagsData::trusted(),
+                            context,
+                            CONTEXT_JS_CONSTANT_COUNT,
+                        );
+                        let in_bounds = builder.ins().icmp_imm_u(
+                            IntCC::UnsignedGreaterThan,
+                            constant_count,
+                            i64::try_from(constant_index)
+                                .expect("validated JS constant index"),
+                        );
+                        builder.ins().brif(in_bounds, fast, &[], fallback, &[]);
+                        builder.switch_to_block(fallback);
+                        emit_js_step_fallback(
+                            &mut builder,
+                            context,
+                            callout,
+                            callout_signature,
+                            result_pointer,
+                            stopped_block,
+                            continue_block,
+                            pc,
+                        );
+                        builder.switch_to_block(fast);
+                        let constants = builder.ins().load(
+                            types::I64,
+                            MemFlagsData::trusted(),
+                            context,
+                            CONTEXT_JS_CONSTANTS,
+                        );
+                        let value = builder.ins().load(
+                            types::I64,
+                            MemFlagsData::trusted(),
+                            constants,
+                            byte_offset,
+                        );
                         builder.ins().store(
                             MemFlagsData::trusted(),
                             value,
@@ -2341,6 +2370,11 @@ struct CallContext {
     /// A stack-owned adapter payload for JS and OSR entries that use this
     /// module's common native-entry trampoline without Wasm callouts.
     adapter_payload: *mut (),
+    /// Rooted materialized JS constants for the active program. Appended to
+    /// preserve all existing generated-code ABI offsets. ProgramStore does not
+    /// replace a running program's constant allocation.
+    js_constants: *const Value,
+    js_constant_count: usize,
 }
 
 impl CallContext {
@@ -2385,6 +2419,8 @@ impl CallContext {
             import_callout_counts: std::ptr::null(),
             import_callout_count: 0,
             adapter_payload,
+            js_constants: std::ptr::null(),
+            js_constant_count: 0,
         }
     }
 
@@ -2428,6 +2464,8 @@ impl CallContext {
             import_callout_counts: std::ptr::null(),
             import_callout_count: 0,
             adapter_payload: std::ptr::null_mut(),
+            js_constants: std::ptr::null(),
+            js_constant_count: 0,
         }
     }
 
@@ -2478,6 +2516,8 @@ impl CallContext {
             import_callout_counts: self.import_callout_counts,
             import_callout_count: self.import_callout_count,
             adapter_payload: std::ptr::null_mut(),
+            js_constants: self.js_constants,
+            js_constant_count: self.js_constant_count,
         }
     }
 }
@@ -2507,6 +2547,9 @@ const CONTEXT_EMSCRIPTEN_MEMCPY_CACHE: i32 =
     std::mem::offset_of!(CallContext, emscripten_memcpy_cache) as i32;
 const CONTEXT_EMSCRIPTEN_MEMCPY_LEAF: i32 =
     std::mem::offset_of!(CallContext, emscripten_memcpy_leaf) as i32;
+const CONTEXT_JS_CONSTANTS: i32 = std::mem::offset_of!(CallContext, js_constants) as i32;
+const CONTEXT_JS_CONSTANT_COUNT: i32 =
+    std::mem::offset_of!(CallContext, js_constant_count) as i32;
 const MEMCPY_CACHE_VALID: i32 = std::mem::offset_of!(EmscriptenMemcpyCache, valid) as i32;
 const MEMCPY_CACHE_FUNCTION: i32 = std::mem::offset_of!(EmscriptenMemcpyCache, function) as i32;
 
@@ -4996,6 +5039,9 @@ impl CompiledJsFunction {
         context.vm = vm.cast();
         context.program = program;
         context.callout = js_step_callout::<H> as Callout as usize;
+        let constants = unsafe { &(*vm.cast::<Vm<H>>()).programs }.constants(program);
+        context.js_constants = constants.as_ptr();
+        context.js_constant_count = constants.len();
         let dispatch_frame = unsafe { (*payload.cast::<JsStepDispatch>()).frame };
         let (native_registers, register_count, native_locals, local_count) = unsafe {
             let vm = &mut *vm.cast::<Vm<H>>();
@@ -11479,6 +11525,8 @@ impl<H: Host> Vm<H> {
                     .as_ref()
                     .map_or(0, |stats| stats.import_callout_counts.len()),
                 adapter_payload: std::ptr::null_mut(),
+                js_constants: std::ptr::null(),
+                js_constant_count: 0,
             };
             let mut out = 0u64;
             let native_entry_should_sample = compiled.note_native_entry(id as usize);
@@ -12085,6 +12133,8 @@ mod tests {
             import_callout_counts: std::ptr::null(),
             import_callout_count: 0,
             adapter_payload: std::ptr::null_mut(),
+            js_constants: std::ptr::null(),
+            js_constant_count: 0,
         }
     }
 

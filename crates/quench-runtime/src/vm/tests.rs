@@ -12181,8 +12181,6 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
         .unwrap();
     let mut interpreter = Vm::new(TestHost::default());
     interpreter.execute(&program).unwrap();
-    let name = interpreter.intern_atom("result");
-    let expected = interpreter.own_property(interpreter.realm.globals, name).unwrap();
 
     let mut compiled = Vm::new(TestHost::default());
 
@@ -12211,6 +12209,93 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
         };
         assert!(native.is_general_dispatch(), "{name} should not need a source shape");
         assert!(native.native_entries() > 0, "{name} should enter its native CFG");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_loads_rooted_string_and_bigint_constants_natively() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function literal(flag) {
+            const value = flag
+              ? 'shared constant'
+              : 123456789012345678901234567890n;
+            $262.gc();
+            return value;
+          }
+          for (let index = 0; index < 48; index++) globalThis.result = literal(index % 2 === 0);
+          if (literal(true) !== 'shared constant') throw Error('string constant');
+          if (literal(false) !== 123456789012345678901234567890n) throw Error('bigint constant');
+        "#,
+        "js-jit-general-constants.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|body| {
+            body.header()
+                .name
+                .or(body.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "literal")
+        })
+        .unwrap() as u32;
+    let body = program.function(function as usize);
+    let constant_pcs = body
+        .code
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, packed)| {
+            let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+            let is_heap_constant = matches!(
+                program.constants.get(instruction.constant_index()),
+                Some(
+                    crate::bytecode::Constant::String(_)
+                        | crate::bytecode::Constant::StringUnits(_)
+                        | crate::bytecode::Constant::BigInt(_)
+                )
+            );
+            (instruction.op() == crate::bytecode::Op::LoadConst && is_heap_constant)
+                .then_some(pc)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        constant_pcs.len() >= 2,
+        "the function should load string and BigInt constants"
+    );
+
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let result_name = interpreter.intern_atom("result");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, result_name)
+        .unwrap();
+    let expected_text = interpreter.to_string(&program, expected).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let result_name = compiled.intern_atom("result");
+    let actual = compiled
+        .own_property(compiled.realm.globals, result_name)
+        .unwrap();
+    assert_eq!(compiled.to_string(&program, actual).unwrap(), expected_text);
+
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("literal should use the shared general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    for pc in constant_pcs {
+        assert!(
+            native.general_dispatch_pc_is_native(pc),
+            "heap-valued LoadConst at bytecode PC {pc} should be native"
+        );
     }
 }
 
@@ -12409,6 +12494,10 @@ fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
     .unwrap();
     let mut interpreter = Vm::new(TestHost::default());
     interpreter.execute(&program).unwrap();
+    let name = interpreter.intern_atom("result");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, name)
+        .unwrap();
 
     let mut compiled = Vm::new(TestHost::default());
 
