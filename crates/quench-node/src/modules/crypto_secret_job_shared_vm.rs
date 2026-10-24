@@ -4,6 +4,12 @@ use crate::host::NodeHost;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 type Context<'a> = NativeContext<'a, NodeHost>;
+#[cfg(quench_openssl_provider)]
+#[path = "crypto_kem_request.rs"]
+pub(crate) mod kem_request;
+#[cfg(quench_openssl_provider)]
+#[path = "crypto_kmac_request.rs"]
+pub(crate) mod kmac_request;
 const ASYNC: u32 = 0;
 const SYNC: u32 = 1;
 const WEBCRYPTO: u32 = 2;
@@ -34,13 +40,50 @@ struct HashRequest {
     output_length: Option<usize>,
 }
 #[cfg(quench_openssl_provider)]
+struct HmacRequest {
+    digest: std::sync::Arc<super::crypto_digest::Digest>,
+    key: std::sync::Arc<Material>,
+    data: Vec<u8>,
+    signature: Option<Vec<u8>>,
+}
+#[cfg(quench_openssl_provider)]
+struct RsaCipherRequest {
+    key: std::sync::Arc<super::crypto_asymmetric::OwnedKey>,
+    encrypt: bool,
+    data: Vec<u8>,
+    digest: std::sync::Arc<super::crypto_digest::Digest>,
+    label: Vec<u8>,
+}
+#[cfg(quench_openssl_provider)]
+struct DhBitsRequest {
+    private_key: std::sync::Arc<super::crypto_asymmetric::OwnedKey>,
+    public_key: std::sync::Arc<super::crypto_asymmetric::OwnedKey>,
+}
+#[cfg(quench_openssl_provider)]
 enum NativeRequest {
     Random(usize),
+    Aes(AesRequest),
+    Argon2(Argon2Request),
     Pbkdf2(Pbkdf2Request),
     Sign(super::crypto_signature_request::Request),
+    Hmac(HmacRequest),
+    RsaCipher(RsaCipherRequest),
+    DhBits(DhBitsRequest),
+    Kmac(kmac_request::Request),
+    Kem(kem_request::Request),
     Hash(HashRequest),
     Hkdf(HkdfRequest),
     KeyPair(super::crypto_keypair_request::Request),
+}
+#[cfg(quench_openssl_provider)]
+struct AesRequest {
+    encrypt: bool,
+    key: std::sync::Arc<Material>,
+    data: Vec<u8>,
+    variant: u32,
+    iv: Vec<u8>,
+    tag_length: usize,
+    additional_data: Vec<u8>,
 }
 #[cfg(quench_openssl_provider)]
 struct HkdfRequest {
@@ -58,6 +101,18 @@ struct Pbkdf2Request {
     iterations: u32,
     length: usize,
 }
+#[cfg(quench_openssl_provider)]
+struct Argon2Request {
+    algorithm: u32,
+    message: std::sync::Arc<Material>,
+    nonce: Vec<u8>,
+    parallelism: u32,
+    tag_length: usize,
+    memory: u32,
+    passes: u32,
+    secret: Vec<u8>,
+    associated_data: Vec<u8>,
+}
 enum Output {
     #[cfg(quench_openssl_provider)]
     Random(Material),
@@ -67,23 +122,43 @@ enum Output {
     #[cfg(quench_openssl_provider)]
     Digest(Vec<u8>),
     #[cfg(quench_openssl_provider)]
+    Cipher(Vec<u8>),
+    #[cfg(quench_openssl_provider)]
     Derived(Material),
     #[cfg(quench_openssl_provider)]
     KeyPair(super::crypto_keypair_request::Pair),
+    #[cfg(quench_openssl_provider)]
+    Kem(kem_request::Result),
 }
 enum Failure {
     #[cfg(quench_openssl_provider)]
     Pbkdf2(openssl::error::ErrorStack),
     #[cfg(quench_openssl_provider)]
+    Argon2(openssl::error::ErrorStack),
+    #[cfg(quench_openssl_provider)]
     Sign(super::crypto_asymmetric::KeyError),
+    #[cfg(quench_openssl_provider)]
+    RsaCipher(super::crypto_asymmetric::KeyError),
+    #[cfg(quench_openssl_provider)]
+    DhBits(openssl::error::ErrorStack),
+    #[cfg(quench_openssl_provider)]
+    Hmac(super::crypto_digest::DigestError),
     Crypto(openssl::error::ErrorStack),
     WorkerDisconnected,
     #[cfg(quench_openssl_provider)]
     Digest(super::crypto_digest::DigestError),
     #[cfg(quench_openssl_provider)]
+    Cipher(openssl::error::ErrorStack),
+    #[cfg(quench_openssl_provider)]
     Hkdf(openssl::error::ErrorStack),
     #[cfg(quench_openssl_provider)]
+    Kmac(openssl::error::ErrorStack),
+    #[cfg(quench_openssl_provider)]
     KeyPair(super::crypto_asymmetric::KeyError),
+    #[cfg(quench_openssl_provider)]
+    Kem {
+        decapsulation: bool,
+    },
 }
 type Outcome = Result<Output, Failure>;
 enum Delivery {
@@ -108,6 +183,147 @@ fn generate(bits: u32, mode: u32) -> Outcome {
         }
     }
     Ok(Output::Key(material))
+}
+#[cfg(quench_openssl_provider)]
+fn aes_cipher(request: AesRequest) -> Result<Vec<u8>, openssl::error::ErrorStack> {
+    use openssl::symm::{Cipher, Crypter, Mode};
+
+    if (9..=11).contains(&request.variant) {
+        return aes_key_wrap(request);
+    }
+    let (cipher, kind) = match request.variant {
+        0 => (Cipher::aes_128_ctr(), 0),
+        1 => (Cipher::aes_192_ctr(), 0),
+        2 => (Cipher::aes_256_ctr(), 0),
+        3 => (Cipher::aes_128_cbc(), 1),
+        4 => (Cipher::aes_192_cbc(), 1),
+        5 => (Cipher::aes_256_cbc(), 1),
+        6 => (Cipher::aes_128_gcm(), 2),
+        7 => (Cipher::aes_192_gcm(), 2),
+        8 => (Cipher::aes_256_gcm(), 2),
+        12 => (Cipher::aes_128_ocb(), 2),
+        13 => (Cipher::aes_192_ocb(), 2),
+        14 => (Cipher::aes_256_ocb(), 2),
+        15 => (Cipher::chacha20_poly1305(), 2),
+        _ => (Cipher::aes_128_cbc(), u8::MAX),
+    };
+    let mut crypter = Crypter::new(
+        cipher,
+        if request.encrypt {
+            Mode::Encrypt
+        } else {
+            Mode::Decrypt
+        },
+        &request.key,
+        Some(&request.iv),
+    )?;
+    if kind == 2 {
+        if !request.additional_data.is_empty() {
+            crypter.aad_update(&request.additional_data)?;
+        }
+    }
+
+    let (input, decrypt_tag) = if kind == 2 && !request.encrypt {
+        let split = request.data.len().saturating_sub(request.tag_length);
+        let (ciphertext, tag) = request.data.split_at(split);
+        crypter.set_tag(tag)?;
+        (ciphertext, Some(tag))
+    } else {
+        (request.data.as_slice(), None)
+    };
+    let mut output = vec![0; input.len() + cipher.block_size()];
+    let mut written = crypter.update(input, &mut output)?;
+    written += crypter.finalize(&mut output[written..])?;
+    output.truncate(written);
+    if kind == 2 && request.encrypt {
+        let mut tag = vec![0; request.tag_length];
+        crypter.get_tag(&mut tag)?;
+        output.extend_from_slice(&tag);
+    }
+    let _ = decrypt_tag;
+    Ok(output)
+}
+#[cfg(quench_openssl_provider)]
+fn aes_key_wrap(request: AesRequest) -> Result<Vec<u8>, openssl::error::ErrorStack> {
+    use openssl::symm::{Cipher, Crypter, Mode};
+
+    let cipher = match request.variant {
+        9 => Cipher::aes_128_ecb(),
+        10 => Cipher::aes_192_ecb(),
+        _ => Cipher::aes_256_ecb(),
+    };
+    let transform = |block: &[u8; 16], mode| {
+        let mut crypter = Crypter::new(cipher, mode, &request.key, None)?;
+        crypter.pad(false);
+        let mut output = [0u8; 32];
+        let length = crypter.update(block, &mut output)?;
+        let length = length + crypter.finalize(&mut output[length..])?;
+        let mut result = [0u8; 16];
+        result.copy_from_slice(&output[..length]);
+        Ok::<_, openssl::error::ErrorStack>(result)
+    };
+    let input_blocks = request.data.len() / 8;
+    let n = if request.encrypt {
+        input_blocks
+    } else {
+        input_blocks.saturating_sub(1)
+    };
+    if request.data.len() % 8 != 0 || n < 2 {
+        return Err(openssl::error::ErrorStack::get());
+    }
+    let mut blocks = request
+        .data
+        .chunks_exact(8)
+        .map(|chunk| <[u8; 8]>::try_from(chunk).expect("chunk is eight bytes"))
+        .collect::<Vec<_>>();
+    if request.encrypt {
+        let mut a = [0xa6u8; 8];
+        let mut r = blocks;
+        for j in 0..6u64 {
+            for i in 0..n {
+                let mut block = [0u8; 16];
+                block[..8].copy_from_slice(&a);
+                block[8..].copy_from_slice(&r[i]);
+                let mut encrypted = transform(&block, Mode::Encrypt)?;
+                let t = j * n as u64 + i as u64 + 1;
+                for (byte, mask) in encrypted[..8].iter_mut().zip(t.to_be_bytes()) {
+                    *byte ^= mask;
+                }
+                a.copy_from_slice(&encrypted[..8]);
+                r[i].copy_from_slice(&encrypted[8..]);
+            }
+        }
+        let mut output = Vec::with_capacity((n + 1) * 8);
+        output.extend_from_slice(&a);
+        for block in r {
+            output.extend_from_slice(&block);
+        }
+        Ok(output)
+    } else {
+        let mut a = blocks.remove(0);
+        let mut r = blocks;
+        for j in (0..6u64).rev() {
+            for i in (0..n).rev() {
+                let t = j * n as u64 + i as u64 + 1;
+                let mut block = [0u8; 16];
+                for ((out, left), right) in block[..8].iter_mut().zip(a).zip(t.to_be_bytes()) {
+                    *out = left ^ right;
+                }
+                block[8..].copy_from_slice(&r[i]);
+                let decrypted = transform(&block, Mode::Decrypt)?;
+                a.copy_from_slice(&decrypted[..8]);
+                r[i].copy_from_slice(&decrypted[8..]);
+            }
+        }
+        if a != [0xa6; 8] {
+            return Err(openssl::error::ErrorStack::get());
+        }
+        let mut output = Vec::with_capacity(n * 8);
+        for block in r {
+            output.extend_from_slice(&block);
+        }
+        Ok(output)
+    }
 }
 fn get(c: &mut Context<'_>, o: RootId, name: &str) -> Result<RootId, RootedError> {
     let name = c.string_rooted(name);
@@ -169,11 +385,54 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
     #[cfg(quench_openssl_provider)]
     install_job_class(c, binding, "HashJob", "cryptoHashJobNew")?;
     #[cfg(quench_openssl_provider)]
+    install_job_class(c, binding, "AESCipherJob", "cryptoAesJobNew")?;
+    #[cfg(quench_openssl_provider)]
+    install_job_class(
+        c,
+        binding,
+        "ChaCha20Poly1305CipherJob",
+        "cryptoChaChaJobNew",
+    )?;
+    #[cfg(quench_openssl_provider)]
+    install_job_class(c, binding, "RSACipherJob", "cryptoRsaCipherJobNew")?;
+    #[cfg(quench_openssl_provider)]
+    install_job_class(c, binding, "DHBitsJob", "cryptoDhBitsJobNew")?;
+    #[cfg(quench_openssl_provider)]
     install_job_class(c, binding, "HKDFJob", "cryptoHkdfJobNew")?;
     #[cfg(quench_openssl_provider)]
     install_job_class(c, binding, "PBKDF2Job", "cryptoPbkdf2JobNew")?;
     #[cfg(quench_openssl_provider)]
+    if super::crypto_argon2::available() {
+        install_job_class(c, binding, "Argon2Job", "cryptoArgon2JobNew")?;
+        for (name, value) in [
+            ("kTypeArgon2d", 0),
+            ("kTypeArgon2i", 1),
+            ("kTypeArgon2id", 2),
+        ] {
+            let value = c.number(value as f64);
+            put(c, binding, name, value)?;
+        }
+    }
+    #[cfg(quench_openssl_provider)]
     install_job_class(c, binding, "SignJob", "cryptoSignJobNew")?;
+    #[cfg(quench_openssl_provider)]
+    install_job_class(c, binding, "HmacJob", "cryptoHmacJobNew")?;
+    #[cfg(quench_openssl_provider)]
+    install_job_class(c, binding, "KmacJob", "cryptoKmacJobNew")?;
+    #[cfg(quench_openssl_provider)]
+    install_job_class(
+        c,
+        binding,
+        "KEMEncapsulateJob",
+        "cryptoKemEncapsulateJobNew",
+    )?;
+    #[cfg(quench_openssl_provider)]
+    install_job_class(
+        c,
+        binding,
+        "KEMDecapsulateJob",
+        "cryptoKemDecapsulateJobNew",
+    )?;
     #[cfg(quench_openssl_provider)]
     install_job_class(c, binding, "RandomBytesJob", "cryptoRandomJobNew")?;
     #[cfg(quench_openssl_provider)]
@@ -206,6 +465,29 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
         ("kCryptoJobAsync", ASYNC),
         ("kCryptoJobSync", SYNC),
         ("kCryptoJobWebCrypto", WEBCRYPTO),
+        ("kWebCryptoCipherEncrypt", 0),
+        ("kWebCryptoCipherDecrypt", 1),
+    ] {
+        let value = c.number(value as f64);
+        put(c, binding, name, value)?;
+    }
+    #[cfg(quench_openssl_provider)]
+    for (name, value) in [
+        ("kKeyVariantAES_CTR_128", 0),
+        ("kKeyVariantAES_CTR_192", 1),
+        ("kKeyVariantAES_CTR_256", 2),
+        ("kKeyVariantAES_CBC_128", 3),
+        ("kKeyVariantAES_CBC_192", 4),
+        ("kKeyVariantAES_CBC_256", 5),
+        ("kKeyVariantAES_GCM_128", 6),
+        ("kKeyVariantAES_GCM_192", 7),
+        ("kKeyVariantAES_GCM_256", 8),
+        ("kKeyVariantAES_KW_128", 9),
+        ("kKeyVariantAES_KW_192", 10),
+        ("kKeyVariantAES_KW_256", 11),
+        ("kKeyVariantAES_OCB_128", 12),
+        ("kKeyVariantAES_OCB_192", 13),
+        ("kKeyVariantAES_OCB_256", 14),
     ] {
         let value = c.number(value as f64);
         put(c, binding, name, value)?;
@@ -273,17 +555,237 @@ pub(crate) fn create(
     )
 }
 #[cfg(quench_openssl_provider)]
-pub(crate) fn create_random(c: &mut Context<'_>, job: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn create_random(
+    c: &mut Context<'_>,
+    job: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     let missing = c.undefined();
     let arg = |index: usize| args.get(index).copied().unwrap_or(missing);
     let mode = uint(c, arg(0))?;
-    if mode != ASYNC && mode != SYNC { return Err(fail(c, "Invalid random bytes job mode")); }
+    if mode != ASYNC && mode != SYNC {
+        return Err(fail(c, "Invalid random bytes job mode"));
+    }
     let offset = uint(c, arg(2))? as usize;
     let size = uint(c, arg(3))? as usize;
     // Capture intrinsic backing/byte range before init hooks can change public
     // properties. This rooted view never crosses the worker boundary.
-    let (destination, setter) = super::crypto_provider_shared_vm::random_destination(c, arg(1), offset, size)?;
-    register(c, job, &[("mode",arg(0)),("randomDestination",destination),("randomSetter",setter)], "RANDOMBYTESREQUEST", Some(NativeRequest::Random(size)))
+    let (destination, setter) =
+        super::crypto_provider_shared_vm::random_destination(c, arg(1), offset, size)?;
+    register(
+        c,
+        job,
+        &[
+            ("mode", arg(0)),
+            ("randomDestination", destination),
+            ("randomSetter", setter),
+        ],
+        "RANDOMBYTESREQUEST",
+        Some(NativeRequest::Random(size)),
+    )
+}
+#[cfg(quench_openssl_provider)]
+pub(crate) fn create_aes(
+    c: &mut Context<'_>,
+    job: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    let arg = |index: usize| args.get(index).copied().unwrap_or(missing);
+    let mode = uint(c, arg(0))?;
+    if mode != WEBCRYPTO {
+        return Err(fail(c, "Invalid AES crypto job mode"));
+    }
+    let cipher_mode = uint(c, arg(1))?;
+    if cipher_mode > 1 {
+        return Err(fail(c, "Invalid AES cipher mode"));
+    }
+    let key = super::crypto_key_material_shared_vm::secret(c, arg(2))?
+        .ok_or_else(|| fail(c, "Invalid AES CryptoKey handle"))?;
+    let data = c
+        .bytes_prefix_rooted(arg(3), usize::MAX)
+        .ok_or_else(|| fail(c, "AES input must be a byte source"))?;
+    let variant = uint(c, arg(4))?;
+    let iv = c
+        .bytes_prefix_rooted(arg(5), usize::MAX)
+        .unwrap_or_default();
+    // AES-CBC jobs reject invalid IV sizes when the job is constructed. Keep
+    // this synchronous check here; deferring it to OpenSSL changes the public
+    // CryptoJob contract and causes jobPromise() to observe a different path.
+    if (3..=5).contains(&variant) && iv.len() != 16 {
+        return Err(fail(c, "Invalid initialization vector"));
+    }
+    let tag_length = c
+        .rooted_value(arg(6))
+        .and_then(quench_runtime::Value::as_number)
+        .filter(|length| length.is_finite() && *length >= 0.0 && length.fract() == 0.0)
+        .map(|length| length as usize)
+        .unwrap_or(16);
+    let additional_data = c
+        .bytes_prefix_rooted(arg(7), usize::MAX)
+        .unwrap_or_default();
+    let request = AesRequest {
+        encrypt: cipher_mode == 0,
+        key,
+        data,
+        variant,
+        iv,
+        tag_length,
+        additional_data,
+    };
+    register(
+        c,
+        job,
+        &[("mode", arg(0))],
+        "AES_CIPHERJOB",
+        Some(NativeRequest::Aes(request)),
+    )
+}
+
+#[cfg(quench_openssl_provider)]
+pub(crate) fn create_chacha(
+    c: &mut Context<'_>,
+    job: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    let arg = |index: usize| args.get(index).copied().unwrap_or(missing);
+    if uint(c, arg(0))? != WEBCRYPTO {
+        return Err(fail(c, "Invalid ChaCha20-Poly1305 crypto job mode"));
+    }
+    let cipher_mode = uint(c, arg(1))?;
+    if cipher_mode > 1 {
+        return Err(fail(c, "Invalid ChaCha20-Poly1305 cipher mode"));
+    }
+    let key = super::crypto_key_material_shared_vm::secret(c, arg(2))?
+        .ok_or_else(|| fail(c, "Invalid ChaCha20-Poly1305 CryptoKey handle"))?;
+    let data = c
+        .bytes_prefix_rooted(arg(3), usize::MAX)
+        .ok_or_else(|| fail(c, "ChaCha20-Poly1305 input must be a byte source"))?;
+    let iv = c
+        .bytes_prefix_rooted(arg(4), usize::MAX)
+        .unwrap_or_default();
+    let additional_data = c
+        .bytes_prefix_rooted(arg(5), usize::MAX)
+        .unwrap_or_default();
+    let request = AesRequest {
+        encrypt: cipher_mode == 0,
+        key,
+        data,
+        variant: 15,
+        iv,
+        tag_length: 16,
+        additional_data,
+    };
+    register(
+        c,
+        job,
+        &[("mode", arg(0))],
+        "CHACHA20_POLY1305_CIPHERJOB",
+        Some(NativeRequest::Aes(request)),
+    )
+}
+
+#[cfg(quench_openssl_provider)]
+pub(crate) fn create_rsa_cipher(
+    c: &mut Context<'_>,
+    job: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    let arg = |index: usize| args.get(index).copied().unwrap_or(missing);
+    let mode = uint(c, arg(0))?;
+    if mode != WEBCRYPTO {
+        return Err(fail(c, "Invalid RSA crypto job mode"));
+    }
+    let cipher_mode = uint(c, arg(1))?;
+    if cipher_mode > 1 {
+        return Err(fail(c, "Invalid RSA cipher mode"));
+    }
+    let handle = arg(2);
+    let key = super::crypto_asymmetric_shared_vm::key(c, handle)?
+        .ok_or_else(|| fail(c, "Invalid RSA CryptoKey handle"))?;
+    let expected_kind = if cipher_mode == 0 {
+        super::crypto_asymmetric::KeyKind::Public
+    } else {
+        super::crypto_asymmetric::KeyKind::Private
+    };
+    if key.kind() != expected_kind {
+        return Err(fail(c, "Invalid RSA CryptoKey type"));
+    }
+    let data = c
+        .bytes_prefix_rooted(arg(3), usize::MAX)
+        .ok_or_else(|| fail(c, "RSA input must be a byte source"))?;
+    if uint(c, arg(4))? != 2 {
+        return Err(fail(c, "Unsupported RSA cipher key variant"));
+    }
+    let name = c
+        .string_text(arg(5))?
+        .ok_or_else(|| fail(c, "RSA digest must be a string"))?;
+    let digest = std::sync::Arc::new(
+        super::crypto_digest::Digest::from_sdk_name(&name)
+            .map_err(|_| invalid_digest(c, &format!("Invalid digest: {name}")))?,
+    );
+    let label = c
+        .bytes_prefix_rooted(arg(6), usize::MAX)
+        .unwrap_or_default();
+    register(
+        c,
+        job,
+        &[("mode", arg(0))],
+        "RSA_CIPHERREQUEST",
+        Some(NativeRequest::RsaCipher(RsaCipherRequest {
+            key,
+            encrypt: cipher_mode == 0,
+            data,
+            digest,
+            label,
+        })),
+    )
+}
+
+#[cfg(quench_openssl_provider)]
+pub(crate) fn create_dh_bits(
+    c: &mut Context<'_>,
+    job: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    let arg = |index: usize| args.get(index).copied().unwrap_or(missing);
+    let mode = uint(c, arg(0))?;
+    if mode != WEBCRYPTO {
+        return Err(fail(c, "Invalid Diffie-Hellman crypto job mode"));
+    }
+    let public_kind = c.number(1.0);
+    let private_kind = c.number(2.0);
+    let public_args = [public_kind, arg(1), arg(2), arg(3), arg(4), arg(5)];
+    let private_args = [private_kind, arg(6), arg(7), arg(8), arg(9), arg(10)];
+    let public_key = super::crypto_asymmetric_shared_vm::import_input(
+        c,
+        super::crypto_asymmetric::KeyKind::Public,
+        &public_args,
+    )?;
+    let private_key = super::crypto_asymmetric_shared_vm::import_input(
+        c,
+        super::crypto_asymmetric::KeyKind::Private,
+        &private_args,
+    )?;
+    if !matches!(
+        (public_key.key_type(), private_key.key_type()),
+        (Some(public), Some(private)) if public == private
+    ) {
+        return Err(fail(c, "Incompatible key types for Diffie-Hellman"));
+    }
+    register(
+        c,
+        job,
+        &[("mode", arg(0))],
+        "DHBITSREQUEST",
+        Some(NativeRequest::DhBits(DhBitsRequest {
+            private_key,
+            public_key,
+        })),
+    )
 }
 fn register(
     c: &mut Context<'_>,
@@ -527,9 +1029,31 @@ fn encode_output(
         #[cfg(quench_openssl_provider)]
         Output::Digest(bytes) => encode_bytes(c, &bytes),
         #[cfg(quench_openssl_provider)]
+        Output::Cipher(bytes) => encode_bytes(c, &bytes),
+        #[cfg(quench_openssl_provider)]
         Output::Derived(material) => encode_bytes(c, &material),
         #[cfg(quench_openssl_provider)]
         Output::KeyPair(pair) => encode_pair(c, record, pair, mode),
+        #[cfg(quench_openssl_provider)]
+        Output::Kem(result) => {
+            if mode == WEBCRYPTO {
+                let shared_key = encode_bytes(c, &result.shared_key)?;
+                if result.decapsulation {
+                    return Ok(shared_key);
+                }
+                let ciphertext = encode_bytes(c, &result.ciphertext)?;
+                let output = c.object_rooted()?;
+                put(c, output, "sharedKey", shared_key)?;
+                put(c, output, "ciphertext", ciphertext)?;
+                return Ok(output);
+            }
+            let shared_key = super::buffer_shared_vm::from_bytes(c, &result.shared_key)?;
+            if result.decapsulation {
+                return Ok(shared_key);
+            }
+            let ciphertext = super::buffer_shared_vm::from_bytes(c, &result.ciphertext)?;
+            c.array_rooted(&[shared_key, ciphertext])
+        }
     }
 }
 #[cfg(quench_openssl_provider)]
@@ -554,8 +1078,36 @@ fn native_error(c: &mut Context<'_>, failure: Failure) -> RootedError {
             super::crypto_error_shared_vm::job_failure(c, &stack, "PBKDF2 derivation failed")
         }
         #[cfg(quench_openssl_provider)]
+        Failure::Argon2(stack) => {
+            super::crypto_error_shared_vm::job_failure(c, &stack, "Argon2 derivation failed")
+        }
+        #[cfg(quench_openssl_provider)]
         Failure::Sign(super::crypto_asymmetric::KeyError::OpenSsl(stack)) => {
-            super::crypto_error_shared_vm::job_failure(c, &stack, "Signature job failed")
+            let reason = stack.errors().iter().find_map(|error| error.reason());
+            let text = match reason {
+                Some(reason)
+                    if reason.eq_ignore_ascii_case("operation not supported for this keytype") =>
+                {
+                    "operation not supported for this keytype"
+                }
+                Some(reason) if reason.eq_ignore_ascii_case("digest too big for rsa key") => {
+                    "digest too big for rsa key"
+                }
+                Some(reason) if reason.eq_ignore_ascii_case("invalid digest") => "invalid digest",
+                Some(reason) if reason.eq_ignore_ascii_case("digest not allowed") => {
+                    "digest not allowed"
+                }
+                Some(reason) if reason.eq_ignore_ascii_case("pss saltlen too small") => {
+                    "pss saltlen too small"
+                }
+                Some(reason)
+                    if reason.eq_ignore_ascii_case("illegal or unsupported padding mode") =>
+                {
+                    "illegal or unsupported padding mode"
+                }
+                _ => "Signature job failed",
+            };
+            super::crypto_error_shared_vm::job_failure(c, &stack, text)
         }
         #[cfg(quench_openssl_provider)]
         Failure::Sign(error) => {
@@ -574,11 +1126,51 @@ fn native_error(c: &mut Context<'_>, failure: Failure) -> RootedError {
                 Err(error) => error,
             }
         }
+        #[cfg(quench_openssl_provider)]
+        Failure::RsaCipher(super::crypto_asymmetric::KeyError::OpenSsl(stack)) => {
+            super::crypto_error_shared_vm::job_failure(c, &stack, "RSA cipher job failed")
+        }
+        #[cfg(quench_openssl_provider)]
+        Failure::RsaCipher(error) => {
+            let message = match error {
+                super::crypto_asymmetric::KeyError::Unsupported(message) => message,
+                _ => "RSA cipher job failed",
+            };
+            match c.error_rooted(message) {
+                Ok(error) => {
+                    let code = c.string_rooted("ERR_CRYPTO_OPERATION_FAILED");
+                    match put(c, error, "code", code) {
+                        Ok(()) => c.throw(error),
+                        Err(error) => error,
+                    }
+                }
+                Err(error) => error,
+            }
+        }
+        #[cfg(quench_openssl_provider)]
+        Failure::DhBits(stack) => super::crypto_error_shared_vm::job_failure(
+            c,
+            &stack,
+            "Diffie-Hellman derivation failed",
+        ),
+        #[cfg(quench_openssl_provider)]
+        Failure::Hmac(super::crypto_digest::DigestError::OpenSsl(stack)) => {
+            super::crypto_error_shared_vm::job_failure(c, &stack, "HMAC operation failed")
+        }
+        #[cfg(quench_openssl_provider)]
+        Failure::Hmac(error) => match c.error_rooted(&error.to_string()) {
+            Ok(error) => c.throw(error),
+            Err(error) => error,
+        },
 
         Failure::Crypto(stack) => super::crypto_error_shared_vm::decorated(c, stack),
         #[cfg(quench_openssl_provider)]
         Failure::Digest(super::crypto_digest::DigestError::OpenSsl(stack)) => {
             super::crypto_error_shared_vm::decorated(c, stack)
+        }
+        #[cfg(quench_openssl_provider)]
+        Failure::Cipher(stack) => {
+            super::crypto_error_shared_vm::job_failure(c, &stack, "AES cipher operation failed")
         }
         #[cfg(quench_openssl_provider)]
         Failure::Digest(error) => match c.error_rooted(&error.to_string()) {
@@ -590,16 +1182,51 @@ fn native_error(c: &mut Context<'_>, failure: Failure) -> RootedError {
             super::crypto_error_shared_vm::job_failure(c, &stack, "HKDF derivation failed")
         }
         #[cfg(quench_openssl_provider)]
+        Failure::Kmac(stack) => {
+            super::crypto_error_shared_vm::job_failure(c, &stack, "KMAC derivation failed")
+        }
+        #[cfg(quench_openssl_provider)]
         Failure::KeyPair(super::crypto_asymmetric::KeyError::OpenSsl(stack))
             if !stack.errors().is_empty() =>
         {
             super::crypto_error_shared_vm::decorated(c, stack)
         }
         #[cfg(quench_openssl_provider)]
+        Failure::KeyPair(super::crypto_asymmetric::KeyError::Unsupported("unknown cipher")) => {
+            match c.error_rooted("Unknown cipher") {
+                Ok(error) => {
+                    let value = c.string_rooted("ERR_CRYPTO_UNKNOWN_CIPHER");
+                    match put(c, error, "code", value) {
+                        Ok(()) => c.throw(error),
+                        Err(error) => error,
+                    }
+                }
+                Err(error) => error,
+            }
+        }
+        #[cfg(quench_openssl_provider)]
         Failure::KeyPair(_) => match c.error_rooted("Key generation job failed") {
             Ok(error) => c.throw(error),
             Err(error) => error,
         },
+        #[cfg(quench_openssl_provider)]
+        Failure::Kem { decapsulation, .. } => {
+            let message = if decapsulation {
+                "Decapsulation failed"
+            } else {
+                "Encapsulation failed"
+            };
+            match c.error_rooted(message) {
+                Ok(error) => {
+                    let code = c.string_rooted("ERR_CRYPTO_OPERATION_FAILED");
+                    match put(c, error, "code", code) {
+                        Ok(()) => c.throw(error),
+                        Err(error) => error,
+                    }
+                }
+                Err(error) => error,
+            }
+        }
         Failure::WorkerDisconnected => match c.error_rooted("Secret key worker disconnected") {
             Ok(error) => c.throw(error),
             Err(error) => error,
@@ -712,6 +1339,44 @@ pub(crate) fn run(c: &mut Context<'_>, job: RootId, _: &[RootId]) -> Result<Root
             openssl::rand::rand_bytes(&mut bytes).map_err(Failure::Crypto)?;
             Ok(Output::Random(bytes))
         }),
+        Some(NativeRequest::Aes(request)) => Box::new(move || {
+            aes_cipher(request)
+                .map(Output::Cipher)
+                .map_err(Failure::Cipher)
+        }),
+        Some(NativeRequest::RsaCipher(request)) => Box::new(move || {
+            let operation = if request.encrypt {
+                super::crypto_asymmetric_operations::RsaOperation::PublicEncrypt
+            } else {
+                super::crypto_asymmetric_operations::RsaOperation::PrivateDecrypt
+            };
+            let options = super::crypto_asymmetric_operations::RsaOptions {
+                padding: openssl::rsa::Padding::PKCS1_OAEP,
+                digest: Some(&request.digest),
+                mgf1_digest: Some(&request.digest),
+                label: (!request.label.is_empty()).then_some(request.label.as_slice()),
+            };
+            super::crypto_asymmetric_operations::rsa(
+                &request.key,
+                operation,
+                &request.data,
+                &options,
+            )
+            .map(Output::Cipher)
+            .map_err(Failure::RsaCipher)
+        }),
+        Some(NativeRequest::DhBits(request)) => Box::new(move || {
+            let private_key = request
+                .private_key
+                .private_ref()
+                .ok_or_else(|| Failure::DhBits(openssl::error::ErrorStack::get()))?;
+            let mut derive = openssl::derive::Deriver::new(private_key).map_err(Failure::DhBits)?;
+            derive
+                .set_peer(request.public_key.public_ref())
+                .map_err(Failure::DhBits)?;
+            let secret = derive.derive_to_vec().map_err(Failure::DhBits)?;
+            Ok(Output::Derived(Material::new(secret)))
+        }),
         Some(NativeRequest::Pbkdf2(mut request)) => {
             let password = match request.password.take() {
                 Some(bytes) => bytes,
@@ -733,7 +1398,21 @@ pub(crate) fn run(c: &mut Context<'_>, job: RootId, _: &[RootId]) -> Result<Root
                 .map_err(Failure::Pbkdf2)
             })
         }
-
+        Some(NativeRequest::Argon2(request)) => Box::new(move || {
+            super::crypto_argon2::derive(
+                request.algorithm,
+                &request.message,
+                &request.nonce,
+                request.parallelism,
+                request.tag_length,
+                request.memory,
+                request.passes,
+                &request.secret,
+                &request.associated_data,
+            )
+            .map(Output::Derived)
+            .map_err(Failure::Argon2)
+        }),
         Some(NativeRequest::Sign(mut sign)) => {
             let data = match sign.data.take() {
                 Some(data) => data,
@@ -764,6 +1443,35 @@ pub(crate) fn run(c: &mut Context<'_>, job: RootId, _: &[RootId]) -> Result<Root
                 sign.run(data, signature)
                     .map(Output::Signature)
                     .map_err(Failure::Sign)
+            })
+        }
+
+        Some(NativeRequest::Hmac(request)) => Box::new(move || {
+            let mac = request
+                .digest
+                .hmac(&request.key, &request.data)
+                .map_err(Failure::Hmac)?;
+            let output = if let Some(expected) = request.signature {
+                let valid = !mac.is_empty()
+                    && mac.len() == expected.len()
+                    && openssl::memcmp::eq(&mac, &expected);
+                super::crypto_signature_request::Output::Verified(valid)
+            } else {
+                super::crypto_signature_request::Output::Signature(mac)
+            };
+            Ok(Output::Signature(output))
+        }),
+
+        Some(NativeRequest::Kmac(request)) => {
+            Box::new(move || request.run().map(Output::Signature).map_err(Failure::Kmac))
+        }
+        Some(NativeRequest::Kem(request)) => {
+            let decapsulation = request.is_decapsulation();
+            Box::new(move || {
+                request
+                    .run()
+                    .map(Output::Kem)
+                    .map_err(|_| Failure::Kem { decapsulation })
             })
         }
 
@@ -971,17 +1679,21 @@ pub(crate) fn complete(
     } else {
         match result {
             Ok(key) => {
-                // Fresh SDK InternalCryptoKey has no own then. Suppress inherited
-                // then hooks during intrinsic promise resolution, as Node does.
-                let then = c.string_rooted("then");
-                c.define_data_property_rooted(key, then, undefined, true, false, true)?;
                 let resolve = get(c, record, "resolve")?;
-                let settled = c.call_rooted(resolve, undefined, &[key]);
-                let api = api(c)?;
-                let delete = get(c, api, "delete")?;
-                let cleanup = c.call_rooted(delete, undefined, &[key, then]);
-                settled?;
-                cleanup?;
+                if c.is_object_rooted(key)? {
+                    // Suppress inherited then hooks during intrinsic promise
+                    // resolution for object results (CryptoKeys and byte arrays).
+                    let then = c.string_rooted("then");
+                    c.define_data_property_rooted(key, then, undefined, true, false, true)?;
+                    let settled = c.call_rooted(resolve, undefined, &[key]);
+                    let api = api(c)?;
+                    let delete = get(c, api, "delete")?;
+                    let cleanup = c.call_rooted(delete, undefined, &[key, then]);
+                    settled?;
+                    cleanup?;
+                } else {
+                    c.call_rooted(resolve, undefined, &[key])?;
+                }
             }
             Err(error) => {
                 let cause = exception(c, error)?;
@@ -1273,10 +1985,10 @@ fn encode_pair_key(
             let target = c.object_rooted()?;
             return super::crypto_asymmetric_shared_vm::export_owned_jwk(c, &key, target, false);
         }
-        OutputEncoding::RawPublic | OutputEncoding::RawPrivate => {
+        OutputEncoding::RawPublic { .. } | OutputEncoding::RawPrivate => {
             let bytes = Material::new(
                 match encoding {
-                    OutputEncoding::RawPublic => key.raw_public(false),
+                    OutputEncoding::RawPublic { compressed } => key.raw_public(compressed),
                     _ => key.raw_private(),
                 }
                 .map_err(|error| native_error(c, Failure::KeyPair(error)))?,
@@ -1424,6 +2136,191 @@ pub(crate) fn create_sign(
 }
 
 #[cfg(quench_openssl_provider)]
+pub(crate) fn create_hmac(
+    c: &mut Context<'_>,
+    job: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    let arg = |index: usize| args.get(index).copied().unwrap_or(missing);
+    let mode = uint(c, arg(0))?;
+    if mode > WEBCRYPTO {
+        return Err(fail(c, "Invalid crypto job mode"));
+    }
+    let verify = match uint(c, arg(1))? {
+        value if value == super::crypto_signature_request::Mode::Sign as u32 => false,
+        value if value == super::crypto_signature_request::Mode::Verify as u32 => true,
+        _ => return Err(fail(c, "Invalid HMAC operation")),
+    };
+    let name = c
+        .string_text(arg(2))?
+        .ok_or_else(|| fail(c, "HMAC digest must be a string"))?;
+    let digest = super::crypto_digest::Digest::from_sdk_name(&name)
+        .map(std::sync::Arc::new)
+        .map_err(|_| {
+            invalid_digest(
+                c,
+                &format!(
+                    "Invalid digest: {}",
+                    super::crypto_strings::null_terminated_prefix(&name)
+                ),
+            )
+        })?;
+    let key = super::crypto_key_shared_vm::secret_bytes(c, arg(3))?;
+    let data = c
+        .bytes_prefix_rooted(arg(4), i32::MAX as usize)
+        .ok_or_else(|| fail(c, "HMAC data must be a BufferSource"))?;
+    let signature = if c
+        .rooted_value(arg(5))
+        .is_some_and(|value| value.is_undefined())
+    {
+        None
+    } else {
+        Some(
+            c.bytes_prefix_rooted(arg(5), i32::MAX as usize)
+                .ok_or_else(|| fail(c, "HMAC signature must be a BufferSource"))?,
+        )
+    };
+    let request = HmacRequest {
+        digest,
+        key,
+        data,
+        signature: if verify { signature } else { None },
+    };
+    register(
+        c,
+        job,
+        &[("mode", arg(0))],
+        "SIGNREQUEST",
+        Some(NativeRequest::Hmac(request)),
+    )
+}
+
+#[cfg(quench_openssl_provider)]
+pub(crate) fn create_kem_encapsulate(
+    c: &mut Context<'_>,
+    job: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    let arg = |index: usize| args.get(index).copied().unwrap_or(missing);
+    let mode = uint(c, arg(0))?;
+    if mode != ASYNC && mode != SYNC && mode != WEBCRYPTO {
+        return Err(fail(c, "Invalid KEM crypto job mode"));
+    }
+    let key = super::crypto_asymmetric_shared_vm::import_input(
+        c,
+        super::crypto_asymmetric::KeyKind::Public,
+        args,
+    )?;
+    let request = kem_request::Request::encapsulate(key);
+    register(
+        c,
+        job,
+        &[("mode", arg(0))],
+        "KEM_ENCAPSULATEJOB",
+        Some(NativeRequest::Kem(request)),
+    )
+}
+
+#[cfg(quench_openssl_provider)]
+pub(crate) fn create_kem_decapsulate(
+    c: &mut Context<'_>,
+    job: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    let arg = |index: usize| args.get(index).copied().unwrap_or(missing);
+    let mode = uint(c, arg(0))?;
+    if mode != ASYNC && mode != SYNC && mode != WEBCRYPTO {
+        return Err(fail(c, "Invalid KEM crypto job mode"));
+    }
+    let key = super::crypto_asymmetric_shared_vm::import_input(
+        c,
+        super::crypto_asymmetric::KeyKind::Private,
+        args,
+    )?;
+    let ciphertext = c
+        .bytes_prefix_rooted(arg(6), i32::MAX as usize)
+        .ok_or_else(|| fail(c, "KEM ciphertext must be a BufferSource"))?;
+    let request = kem_request::Request::decapsulate(key, ciphertext);
+    register(
+        c,
+        job,
+        &[("mode", arg(0))],
+        "KEM_DECAPSULATEJOB",
+        Some(NativeRequest::Kem(request)),
+    )
+}
+
+#[cfg(quench_openssl_provider)]
+pub(crate) fn create_kmac(
+    c: &mut Context<'_>,
+    job: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    let arg = |index: usize| args.get(index).copied().unwrap_or(missing);
+    let mode = uint(c, arg(0))?;
+    if mode > WEBCRYPTO {
+        return Err(fail(c, "Invalid crypto job mode"));
+    }
+    let verify = match uint(c, arg(1))? {
+        value if value == super::crypto_signature_request::Mode::Sign as u32 => false,
+        value if value == super::crypto_signature_request::Mode::Verify as u32 => true,
+        _ => return Err(fail(c, "Invalid KMAC operation")),
+    };
+    let key = super::crypto_key_shared_vm::secret_bytes(c, arg(2))?;
+    let variant = match c.string_text(arg(3))?.as_deref() {
+        Some("KMAC128") => kmac_request::Variant::Kmac128,
+        Some("KMAC256") => kmac_request::Variant::Kmac256,
+        _ => return Err(fail(c, "Invalid KMAC algorithm")),
+    };
+    let customization = if c
+        .rooted_value(arg(4))
+        .is_some_and(|value| value.is_undefined())
+    {
+        Vec::new()
+    } else {
+        c.bytes_prefix_rooted(arg(4), i32::MAX as usize)
+            .ok_or_else(|| fail(c, "KMAC customization must be a BufferSource"))?
+    };
+    let output_bits = uint(c, arg(5))?;
+    if output_bits % u8::BITS != 0 {
+        return Err(fail(c, "Invalid KMAC output length"));
+    }
+    let data = c
+        .bytes_prefix_rooted(arg(6), i32::MAX as usize)
+        .ok_or_else(|| fail(c, "KMAC data must be a BufferSource"))?;
+    let signature = if c
+        .rooted_value(arg(7))
+        .is_some_and(|value| value.is_undefined())
+    {
+        None
+    } else {
+        Some(
+            c.bytes_prefix_rooted(arg(7), i32::MAX as usize)
+                .ok_or_else(|| fail(c, "KMAC signature must be a BufferSource"))?,
+        )
+    };
+    let request = kmac_request::Request {
+        key,
+        variant,
+        data,
+        customization,
+        output_length: (output_bits / u8::BITS) as usize,
+        signature: if verify { signature } else { None },
+    };
+    register(
+        c,
+        job,
+        &[("mode", arg(0))],
+        "SIGNREQUEST",
+        Some(NativeRequest::Kmac(request)),
+    )
+}
+
+#[cfg(quench_openssl_provider)]
 pub(crate) fn create_pbkdf2(
     c: &mut Context<'_>,
     job: RootId,
@@ -1494,5 +2391,57 @@ pub(crate) fn create_pbkdf2(
         &fields,
         "PBKDF2REQUEST",
         Some(NativeRequest::Pbkdf2(request)),
+    )
+}
+
+#[cfg(quench_openssl_provider)]
+pub(crate) fn create_argon2(
+    c: &mut Context<'_>,
+    job: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    let arg = |index: usize| args.get(index).copied().unwrap_or(missing);
+    let mode = uint(c, arg(0))?;
+    if mode > WEBCRYPTO {
+        return Err(fail(c, "Invalid crypto job mode"));
+    }
+    let message = match c.bytes_prefix_rooted(arg(1), i32::MAX as usize) {
+        Some(bytes) => std::sync::Arc::new(Material::new(bytes)),
+        None => super::crypto_key_shared_vm::secret_bytes(c, arg(1))?,
+    };
+    let nonce = c
+        .bytes_prefix_rooted(arg(2), i32::MAX as usize)
+        .ok_or_else(|| fail(c, "Argon2 salt must be a BufferSource"))?;
+    let parallelism = uint(c, arg(3))?;
+    let tag_length = uint(c, arg(4))? as usize;
+    let memory = uint(c, arg(5))?;
+    let passes = uint(c, arg(6))?;
+    let secret = c
+        .bytes_prefix_rooted(arg(7), i32::MAX as usize)
+        .ok_or_else(|| fail(c, "Argon2 secret must be a BufferSource"))?;
+    let associated_data = c
+        .bytes_prefix_rooted(arg(8), i32::MAX as usize)
+        .ok_or_else(|| fail(c, "Argon2 associated data must be a BufferSource"))?;
+    let algorithm = uint(c, arg(9))?;
+    if algorithm > 2 {
+        return Err(fail(c, "Invalid Argon2 algorithm type"));
+    }
+    register(
+        c,
+        job,
+        &[("mode", arg(0))],
+        "ARGON2REQUEST",
+        Some(NativeRequest::Argon2(Argon2Request {
+            algorithm,
+            message,
+            nonce,
+            parallelism,
+            tag_length,
+            memory,
+            passes,
+            secret,
+            associated_data,
+        })),
     )
 }

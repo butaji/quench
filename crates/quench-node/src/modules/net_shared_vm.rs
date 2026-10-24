@@ -25,19 +25,150 @@ const CALLABLE_FACADE: &str = quench_js_check::checked_js!(
 })"#
 );
 
-const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation, serverOptionsOperation, initEndOperation, onReadableStreamEnd, initServerEmitterOperation, initSocketOptionsOperation, setNoDelay, setKeepAlive, initServerOptionsOperation, getConnections, initializeRead, readSocket, endStreamOperation) => {
+const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation, serverOptionsOperation, initEndOperation, onReadableStreamEnd, initServerEmitterOperation, initSocketOptionsOperation, setNoDelay, setKeepAlive, initServerOptionsOperation, getConnections, initializeRead, readSocket, endStreamOperation, normalizedArgsSymbol, ownerSymbol, asyncIdSymbol) => {
   class Socket extends Duplex {
     constructor(options = {}) {
       options = { ...socketOptionsOperation(options, false) };
+      // Child-process and cluster extra stdio pipes are passed as raw file
+      // descriptors. Node's net.Socket adopts those descriptors with a native
+      // Pipe handle; the TCP facade must do the same so fd-backed sockets can
+      // participate in normal Readable and Writable flow.
+      if (options.handle == null && options.fd !== undefined) {
+        const permission = process.permission;
+        const audit = (process.execArgv || []).includes('--permission-audit');
+        if (permission && !audit && !permission.has('net') && options.fd > 2) {
+          throw Object.assign(
+            new Error('Access to this API has been restricted. Use --allow-net to manage permissions.'),
+            { code: 'ERR_ACCESS_DENIED', permission: 'Net' },
+          );
+        }
+        const { Pipe, constants } = process.binding('pipe_wrap');
+        const handle = new Pipe(constants.SOCKET);
+        const status = handle.open(options.fd);
+        if (status < 0) {
+          handle.close();
+          const error = new Error(`open fd ${options.fd} failed`);
+          error.errno = status;
+          throw error;
+        }
+        Object.defineProperty(handle, '__quenchPipeHandle', { value: true });
+        options.handle = handle;
+      }
       super({
-        ...options, autoDestroy: true, allowHalfOpen: true, emitClose: false,
-        write(chunk, encoding, callback) { try { writeOperation(this, chunk, callback); } catch (error) { callback(error); } },
+        ...options, autoDestroy: true, allowHalfOpen: options.allowHalfOpen ?? false, emitClose: false,
+        write(chunk, encoding, callback) {
+          const handle = this._handle;
+          if (handle?.__quenchJSStream) {
+            try {
+              handle.onwrite({ oncomplete: callback }, [chunk]);
+            } catch (error) {
+              callback(error);
+            }
+            return;
+          }
+          if (handle?.__quenchPipeHandle) {
+            try {
+              const { WriteWrap } = process.binding('stream_wrap');
+              const { streamBaseState, kLastWriteWasAsync, kLastWriteErr } = process.binding('stream_wrap');
+              const request = new WriteWrap();
+              request.oncomplete = (status) => callback(status < 0
+                ? Object.assign(new Error(`write failed with status ${status}`), { errno: status })
+                : undefined);
+              const status = handle.writeBuffer(request, chunk);
+              if (status < 0) {
+                callback(Object.assign(new Error(`write failed with status ${status}`), { errno: status }));
+              } else if (streamBaseState[kLastWriteWasAsync] === 0) {
+                const writeError = streamBaseState[kLastWriteErr];
+                queueMicrotask(() => callback(writeError < 0
+                  ? Object.assign(new Error(`write failed with status ${writeError}`), { errno: writeError })
+                  : undefined));
+              }
+            } catch (error) {
+              callback(error);
+            }
+            return;
+          }
+          try { writeOperation(this, chunk, callback); } catch (error) { callback(error); }
+        },
         final(callback) { try { endOperation(this); callback(); } catch (error) { callback(error); } },
-        destroy(error, callback) { try { destroyOperation(this, error, callback); } catch (failure) { callback(failure); } },
+        destroy(error, callback) {
+          const handle = this._handle;
+          if (handle?.__quenchJSStream) {
+            // Node closes an adopted JSStream handle before completing the
+            // Socket destroy callback. That close gives JSStreamSocket a
+            // chance to cancel pending write/shutdown requests with
+            // UV_ECANCELED. Clear the owner slot first, as net.js does.
+            try {
+              handle.close(() => {
+                try { destroyOperation(this, error, callback); } catch (failure) { callback(failure); }
+              });
+              // close() must first let JSStreamSocket capture its handle for
+              // the deferred request cancellation, then the Socket drops its
+              // public owner slot as Node's closeSocketHandle() does.
+              this._handle = null;
+            } catch (failure) {
+              this._handle = null;
+              callback(failure);
+            }
+            return;
+          }
+          if (handle?.__quenchPipeHandle) {
+            try {
+              handle.close(() => {
+                this._handle = null;
+                try { destroyOperation(this, error, callback); } catch (failure) { callback(failure); }
+              });
+              this._handle = null;
+            } catch (failure) {
+              this._handle = null;
+              callback(failure);
+            }
+            return;
+          }
+          try { destroyOperation(this, error, callback); } catch (failure) { callback(failure); }
+        },
       });
       initEndOperation(this, options, onReadableStreamEnd);
       this._encoding = null;
       this._handle = options.handle || null;
+      this[asyncIdSymbol] = this._handle && typeof this._handle.getAsyncId === 'function'
+        ? this._handle.getAsyncId() : -1;
+      if (this._handle && this._handle.__quenchJSStream) {
+        // Node's initSocketHandle() associates the adopted stream handle with
+        // its owning Socket. JSStream callbacks use this symbol to reach back
+        // into the JSStreamSocket adapter for reads, writes, and shutdowns.
+        this._handle[ownerSymbol] = this;
+        this._handle.__quenchOwner = this;
+      }
+      if (this._handle?.__quenchPipeHandle) {
+        this._handle.onread = (buffer) => {
+          if (buffer === null) this.push(null);
+          else this.push(Buffer.from(buffer));
+        };
+      } else if (this._handle && !this._handle.__quenchJSStream) {
+        // Node's initSocketHandle installs onStreamRead on adopted handles.
+        // Custom handles (including the small handles used by embedders and
+        // tests) invoke this callback with stream_wrap's shared read state.
+        this._handle[ownerSymbol] = this;
+        this._handle.onread = function onStreamRead(arrayBuffer) {
+          const { streamBaseState, kReadBytesOrError, kArrayBufferOffset } =
+            process.binding('stream_wrap');
+          const nread = streamBaseState[kReadBytesOrError];
+          const socket = this[ownerSymbol];
+          if (nread > 0 && !socket.destroyed) {
+            const offset = streamBaseState[kArrayBufferOffset];
+            socket.push(Buffer.from(arrayBuffer, offset, nread));
+          } else if (nread === -4095) {
+            socket.push(null);
+            socket.read(0);
+          } else if (nread < 0) {
+            const error = new Error(`read ${nread}`);
+            error.errno = nread;
+            error.syscall = 'read';
+            socket.destroy(error);
+          }
+        };
+      }
       initSocketOptionsOperation(this, options);
       this.connecting = false;
       this.pending = true;
@@ -72,10 +203,32 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       return 'closed';
     }
     get bufferSize() { return this.writableLength || 0; }
+    _unrefTimer() {
+      // Match Node's loose null check: socket teardown can leave `_parent`
+      // undefined, and each parent in the chain may own a refreshed timeout.
+      for (let socket = this; socket != null; socket = socket._parent) {
+        if (socket._quenchTimeoutTimer !== null) socket._quenchTimeoutTimer.refresh();
+      }
+    }
     address() { return this._getsockname(); }
+    get writableLength() {
+      const streamLength = this._writableState?.length || 0;
+      const nativeLength = this._handle?.writeQueueSize || 0;
+      const httpRequestLength = this.__quenchHttpRequestWritePending || 0;
+      return Math.max(streamLength, nativeLength, httpRequestLength);
+    }
     setTimeout(timeout, callback) {
-      if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout < 0) throw new TypeError('The "msecs" argument must be a non-negative number');
+      if (typeof timeout !== 'number') {
+        throw Object.assign(new TypeError(`The "msecs" argument must be of type number. Received ${String(timeout)}`), { code: 'ERR_INVALID_ARG_TYPE' });
+      }
+      if (!Number.isFinite(timeout) || timeout < 0) {
+        throw Object.assign(new RangeError(`The value of "msecs" is out of range. It must be >= 0. Received ${String(timeout)}`), { code: 'ERR_OUT_OF_RANGE' });
+      }
+      if (callback !== undefined && typeof callback !== 'function') {
+        throw Object.assign(new TypeError(`The "callback" argument must be of type function. Received ${String(callback)}`), { code: 'ERR_INVALID_ARG_TYPE' });
+      }
       if (typeof callback === 'function') this.once('timeout', callback);
+      this.timeout = timeout;
       this._quenchTimeout = timeout;
       this._quenchResetTimeout();
       return this;
@@ -100,15 +253,42 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       return endStreamOperation(this, chunk, encoding, callback);
     }
     connect(port, host, callback) {
+      if (Array.isArray(port) && port[normalizedArgsSymbol] === true) {
+        callback = port[1] || callback;
+        port = port[0];
+        host = undefined;
+      }
       const plan = endpointOperation(port, host, callback, true);
       port = plan.address; host = plan.host; callback = plan.callback;
       const options = plan.options;
       const blockList = options?.blockList;
-      if (options?.hints !== undefined && (!Number.isInteger(options.hints) || (options.hints & ~49) !== 0)) {
+      if (options?.hints !== undefined && !Number.isInteger(options.hints)) {
         const error = new TypeError(`The argument 'hints' is invalid. Received ${String(options.hints)}`);
         error.code = 'ERR_INVALID_ARG_VALUE'; throw error;
       }
+      // connect(options) applies TCP_NODELAY and keep-alive once the socket is
+      // connected. Cache the requested values on the socket so
+      // apply_connected() can project them onto the native transport.
+      if (options?.noDelay !== undefined) this.setNoDelay(options.noDelay);
+      if (options?.keepAlive !== undefined) this.setKeepAlive(options.keepAlive, options.keepAliveInitialDelay);
       if (typeof callback === 'function') this.once('connect', callback);
+      const permission = process.permission;
+      const permissionAudit = (process.execArgv || []).includes('--permission-audit');
+      if (permission && !permissionAudit && !permission.has('net', `${host}:${port}`)) {
+        const numericHost = typeof host === 'string' &&
+          (host.includes(':') || /^\d+(?:\.\d+){3}$/.test(host));
+        queueMicrotask(() => {
+          this.connecting = false;
+          this.pending = false;
+          const syscall = numericHost ? 'connect' : 'getaddrinfo';
+          const detail = numericHost ? 'Access to this API has been restricted. Use --allow-net to manage permissions.' : String(host);
+          this.emit('error', Object.assign(
+            new Error(`${syscall} ERR_ACCESS_DENIED ${detail}`),
+            { code: 'ERR_ACCESS_DENIED', syscall },
+          ));
+        });
+        return this;
+      }
       this.connecting = true;
       this.pending = true;
       const blockedHost = host === 'localhost' && blockList?.check?.('127.0.0.1', 'ipv4')
@@ -122,31 +302,265 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
         return this;
       }
       connectOperation(this, port, host, options);
+      if (this._quenchTypeOfService !== undefined && this._handle?.setTypeOfService) {
+        this._handle.setTypeOfService(this._quenchTypeOfService);
+      }
+      if (this._handle && typeof this._handle.getAsyncId === 'function') {
+        this[asyncIdSymbol] = this._handle.getAsyncId();
+      }
       return this;
     }
   }
-  Socket.prototype.ref = function() { 'use strict'; return socketReferenceOperation(this,true); };
-  Socket.prototype.unref = function() { 'use strict'; return socketReferenceOperation(this,false); };
+  Socket.prototype.ref = function() { 'use strict'; return this._handle?.__quenchPipeHandle ? (this._handle.ref(), this) : socketReferenceOperation(this,true); };
+  Socket.prototype.unref = function() { 'use strict'; return this._handle?.__quenchPipeHandle ? (this._handle.unref(), this) : socketReferenceOperation(this,false); };
   const connect = function connect(port, host, callback) {
     const socket = new Socket(socketOptionsOperation(port, true));
     return socket.connect(port, host, callback);
   };
+  function normalizeArgs(args) {
+    let options;
+    if (args.length === 0) {
+      options = {};
+    } else {
+      const first = args[0];
+      if (typeof first === 'object' && first !== null) {
+        options = first;
+      } else if (typeof first === 'string' && !(Number(first) >= 0)) {
+        options = { path: first };
+      } else {
+        options = { port: first };
+        if (args.length > 1 && typeof args[1] === 'string') options.host = args[1];
+      }
+    }
+    const last = args[args.length - 1];
+    const normalized = [options, typeof last === 'function' ? last : null];
+    normalized[normalizedArgsSymbol] = true;
+    return normalized;
+  }
   Socket.prototype._read = readSocket;
   Socket.prototype.setNoDelay = setNoDelay;
   Socket.prototype.setKeepAlive = setKeepAlive;
+  Socket.prototype.setTypeOfService = function setTypeOfService(value) {
+    if (typeof value !== 'number' || Number.isNaN(value)) {
+      const error = new TypeError('The "tos" argument must be of type number.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (!Number.isInteger(value) || value < 0 || value > 255) {
+      const error = new RangeError('The value of "tos" is out of range. It must be an integer >= 0 && <= 255.');
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
+    this._quenchTypeOfService = value;
+    if (this._handle?.setTypeOfService) this._handle.setTypeOfService(value);
+    return this;
+  };
+  Socket.prototype.getTypeOfService = function getTypeOfService() {
+    return this._handle?.getTypeOfService ? this._handle.getTypeOfService() : 0;
+  };
+  Socket.prototype.resetAndDestroy = function resetAndDestroy() {
+    if (this._handle) {
+      if (this.connecting) this.once('connect', () => this._reset());
+      else this._reset();
+    } else {
+      const error = new Error('Socket is closed');
+      error.code = 'ERR_SOCKET_CLOSED';
+      this.destroy(error);
+    }
+    return this;
+  };
+  Socket.prototype._reset = function _reset() {
+    this.resetAndClosing = true;
+    return this.destroy();
+  };
   function Server(options, listener) {
     if (!(this instanceof Server)) return new Server(options, listener);
     initServerEmitterOperation(this);
     this._handle = null; this._unref = false;
+    this._workers = []; this._usingWorkers = false;
     if (typeof options === 'function') listener = options;
     serverOptionsOperation(options);
     if (typeof listener === 'function') this.on('connection', listener);
     initServerOptionsOperation(this, options);
   }
-  Server.prototype.listen = listenOperation;
-  Server.prototype.getConnections = getConnections;
+  Server.prototype.listen = function listen(...args) {
+    this._quenchCloseScheduled = false;
+    this._quenchCloseEmitted = false;
+    this._quenchCloseStarted = false;
+    // BoundSocket keeps its TCPWrap in a private class field, so the native
+    // listen operation cannot discover the already-bound endpoint by looking
+    // for `{ port }` or `{ path }`. Adopt it here through the SDK's private
+    // consume hook, then let the native path register that handle as this
+    // Server's listener. Node 26 gives the hook a stable symbol description.
+    const first = args[0];
+    if (first !== null && typeof first === 'object') {
+      const prototype = Object.getPrototypeOf(first);
+      const consume = prototype && Object.getOwnPropertySymbols(prototype)
+        .find((symbol) => symbol.description === 'kBoundSocketConsume');
+      if (consume && typeof first[consume] === 'function') {
+        const pathSymbol = Object.getOwnPropertySymbols(prototype)
+          .find((symbol) => symbol.description === 'kBoundSocketPath');
+        const path = pathSymbol ? first[pathSymbol] : undefined;
+        args[0] = first[consume]();
+        if (path !== undefined) this._pipeName = path;
+      }
+    }
+    const options = args[0];
+    const signal = options && typeof options === 'object' ? options.signal : undefined;
+    if (signal !== undefined) {
+      if (signal === null || typeof signal !== 'object' || !('aborted' in signal) ||
+          typeof signal.addEventListener !== 'function' ||
+          typeof signal.removeEventListener !== 'function') {
+        const received = typeof signal === 'string' ?
+          ` Received type string ('${signal}')` : '';
+        throw Object.assign(
+          new TypeError(`The "options.signal" property must be an instance of AbortSignal.${received}`),
+          { code: 'ERR_INVALID_ARG_TYPE' },
+        );
+      }
+      const onAborted = () => this.close();
+      if (signal.aborted) {
+        process.nextTick(onAborted);
+      } else {
+        signal.addEventListener('abort', onAborted, { once: true });
+        this.once('close', () => signal.removeEventListener('abort', onAborted));
+      }
+    }
+    // The native server backend binds worker listeners locally, so Node's
+    // internal net.js listenInCluster() path never reports the resulting
+    // endpoint to the cluster primary. Preserve the cluster lifecycle event
+    // for this direct-bind path; workers that request exclusive listeners are
+    // intentionally omitted, matching Node's listenInCluster behavior.
+    const clusterWorker =
+      !(options && typeof options === 'object' && options.exclusive === true);
+    if (clusterWorker) {
+      let cluster;
+      try { cluster = process.getBuiltinModule('cluster'); } catch {}
+      if (cluster?.isWorker) {
+        // A worker can start running its entry point after the IPC channel has
+        // already disconnected. In that case the disconnect event is gone, so
+        // seed the state from process.connected before listening for future
+        // disconnects.
+        let clusterDisconnected = process.connected === false;
+        // The native direct-bind path does not register its listener in
+        // internal/cluster/child.js's handle table. Cluster's disconnect
+        // handshake therefore cannot close this listener itself. Close it
+        // when the IPC channel disconnects so the worker can finish exiting.
+        process.once('disconnect', () => {
+          clusterDisconnected = true;
+          if (this.listening) this.close();
+        });
+        this.once('listening', () => {
+          // cluster.disconnect() may reach the worker before this asynchronous
+          // listen finishes. Close the newly opened handle instead of leaving
+          // it alive after the earlier disconnect hook already ran.
+          if (clusterDisconnected) {
+            this.close();
+            return;
+          }
+          const address = this.address();
+          if (!address || typeof process.send !== 'function') return;
+          cluster.worker.state = 'listening';
+          const isPipe = typeof address === 'string';
+          process.send({
+            cmd: 'NODE_CLUSTER',
+            act: 'listening',
+            addressType: isPipe ? -1 : address.family === 'IPv6' ? 6 : 4,
+            address: isPipe ? address : address.address,
+            port: isPipe ? -1 : address.port,
+            fd: undefined,
+          }, () => {});
+        });
+      }
+    }
+    return Reflect.apply(listenOperation, this, args);
+  };
+  Server.prototype.getConnections = function getConnectionsWithWorkers(callback) {
+    if (!this._usingWorkers || this._workers.length === 0) {
+      return getConnections.call(this, callback);
+    }
+    let remaining = this._workers.length;
+    let total = this._connections;
+    let completed = false;
+    const finish = (error, count) => {
+      if (completed) return;
+      if (error) {
+        completed = true;
+        callback(error);
+        return;
+      }
+      total += count;
+      if (--remaining === 0) {
+        completed = true;
+        callback(null, total);
+      }
+    };
+    for (const worker of this._workers) worker.getConnections(finish);
+    return this;
+  };
   Server.prototype.address = addressOperation;
-  Server.prototype.close = closeOperation;
+  // Native close completion and worker SocketList drain can both race to
+  // announce the Server's close event. Coalesce those notifications while the
+  // server is closing, without changing the behavior of other event types.
+  Server.prototype.emit = function emitServerEvent(event, ...args) {
+    if (event === 'close' && this._quenchCloseStarted) {
+      if (this._quenchCloseEmitted) return false;
+      this._quenchCloseEmitted = true;
+      this._quenchCloseScheduled = false;
+    }
+    return Reflect.apply(Object.getPrototypeOf(Server.prototype).emit,
+      this, [event, ...args]);
+  };
+  Server.prototype.close = function closeWithWorkers(callback) {
+    this._quenchCloseStarted = true;
+    if (!this._usingWorkers || this._workers.length === 0) {
+      const result = Reflect.apply(closeOperation, this,
+        callback === undefined ? [] : [callback]);
+      this._emitCloseIfDrained();
+      return result;
+    }
+    const workers = this._workers.slice();
+    // Keep the native listener close from emitting `close` before remote
+    // SocketListSend instances report that their transferred sockets drained.
+    this._connections++;
+    const result = Reflect.apply(closeOperation, this,
+      callback === undefined ? [] : [callback]);
+    this._emitCloseIfDrained();
+    let remaining = workers.length;
+    const workerClosed = () => {
+      if (--remaining !== 0) return;
+      this._connections = 0;
+      this._emitCloseIfDrained();
+    };
+    for (const worker of workers) worker.close(workerClosed);
+    return result;
+  };
+  // Match Node's Server drain rule. Native close clears _handle immediately;
+  // transferred connections keep _connections nonzero until their IPC socket
+  // lists drain, at which point this schedules the one observable close event.
+  Server.prototype._emitCloseIfDrained = function emitCloseIfDrained() {
+    if (this._handle || this._connections || this._quenchCloseScheduled ||
+        this._quenchCloseEmitted) return this;
+    this._quenchCloseScheduled = true;
+    process.nextTick(() => {
+      this._quenchCloseScheduled = false;
+      if (this._handle || this._connections || this._quenchCloseEmitted) return;
+      this.emit('close');
+    });
+    return this;
+  };
+  Server.prototype[Symbol.for('nodejs.rejection')] = function(error, event, socket) {
+    if (event === 'connection') socket.destroy(error);
+    else this.emit('error', error);
+  };
+  Server.prototype._setupWorker = function(socketList) {
+    this._usingWorkers = true;
+    this._workers.push(socketList);
+    socketList.once('exit', (socketList) => {
+      const index = this._workers.indexOf(socketList);
+      if (index !== -1) this._workers.splice(index, 1);
+    });
+  };
   Server.prototype.ref = function() { 'use strict'; return referenceOperation(this, true); };
   Server.prototype.unref = function() { 'use strict'; return referenceOperation(this, false); };
   const createServer = function createServer(options, listener) { return new Server(options, listener); };
@@ -157,6 +571,20 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
     code === 'ERR_OUT_OF_RANGE' ? new RangeError(`${code}: ${message}`) : new TypeError(`${code}: ${message}`),
     { code },
   );
+  const invalidArrayArgument = (name, value) => {
+    let received;
+    if (value === null) received = 'null';
+    else if (value === undefined) received = 'undefined';
+    else if (typeof value === 'string') received = `type string ('${value}')`;
+    else if (typeof value === 'number' || typeof value === 'boolean') received = `type ${typeof value} (${value})`;
+    else if (typeof value === 'bigint') received = `type bigint (${value}n)`;
+    else if (typeof value === 'symbol') received = `type symbol (${String(value)})`;
+    else received = `an instance of ${value?.constructor?.name || 'Object'}`;
+    return Object.assign(
+      new TypeError(`The \"${name}\" argument must be an instance of Array. Received ${received}`),
+      { code: 'ERR_INVALID_ARG_TYPE' },
+    );
+  };
   const parseAddress = (value, family) => {
     if (value && typeof value === 'object') {
       family = value.family === 'IPv6' ? 'ipv6' : 'ipv4';
@@ -172,6 +600,14 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       if (parts.length !== 4 || parts.some((part) => !/^\d{1,3}$/.test(part) || Number(part) > 255)) throw blockError('ERR_INVALID_ARG_VALUE', `Invalid IPv4 address: ${value}`);
       const n = parts.reduce((acc, part) => (acc << 8n) | BigInt(Number(part)), 0n);
       return { text, family, value: n, bits: 32 };
+    }
+    const zone = text.indexOf('%');
+    if (zone !== -1) {
+      // libuv accepts an IPv6 scope suffix but parses only an INET6_ADDRSTRLEN
+      // address prefix (39 bytes) before it. Unknown and overlong scope names
+      // are ignored by uv_ip6_addr, while an overlong address itself fails.
+      if (zone > 39) throw blockError('ERR_INVALID_ARG_VALUE', `Invalid IPv6 address: ${value}`);
+      text = text.slice(0, zone);
     }
     if (text.includes('.')) {
       const lastColon = text.lastIndexOf(':');
@@ -211,7 +647,11 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
   class BlockList {
     constructor() {
       this._rules = [];
-      this[blockListHandleKey] = { check: (address) => this.check(address?.address, address?.family) };
+        this[blockListHandleKey] = {
+          check: (address) => this.check(address?.address, address?.family),
+          checkString: (address, family) =>
+            this.check(address, family === 10 || family === 'ipv6' || family === 'IPv6' ? 'ipv6' : 'ipv4'),
+        };
     }
     _insert(kind, first, last = first, prefix) {
       if (this._rules.some((rule) => rule.kind === kind && rule.family === first.family && rule.start === first.value && rule.end === last.value)) return;
@@ -219,7 +659,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
     }
     addAddress(address, type) { const first = addressValue(address, type); this._insert('Address', first); }
     addAddresses(addresses, type) {
-      if (!Array.isArray(addresses)) throw blockError('ERR_INVALID_ARG_TYPE', 'The "addresses" argument must be an array');
+      if (!Array.isArray(addresses)) throw invalidArrayArgument('addresses', addresses);
       const parsed = addresses.map((address) => parseAddress(address, type));
       for (const address of parsed) this._insert('Address', address);
     }
@@ -244,7 +684,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       this.addSubnet(address, Number(prefixText));
     }
     addCIDRs(cidrs) {
-      if (!Array.isArray(cidrs)) throw blockError('ERR_INVALID_ARG_TYPE', 'The "cidrs" argument must be an array');
+      if (!Array.isArray(cidrs)) throw invalidArrayArgument('cidrs', cidrs);
       const parsed = cidrs.map((cidr) => {
         if (typeof cidr !== 'string') throw blockError('ERR_INVALID_ARG_TYPE', 'CIDR entries must be strings');
         const slash = cidr.lastIndexOf('/'); if (slash < 0 || !/^\d+$/.test(cidr.slice(slash + 1))) throw blockError('ERR_INVALID_ARG_VALUE', 'Invalid CIDR');
@@ -310,7 +750,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
   }
   BlockList.isBlockList = (value) => value instanceof BlockList;
   BlockList.PRIVATE_RANGES = Object.freeze(['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '169.254.0.0/16', '::1/128', 'fe80::/10', 'fc00::/7']);
-  return { Socket, Stream, Server, BlockList, SocketAddress, connect, createConnection: connect, createServer };
+  return { Socket, Stream, Server, BlockList, SocketAddress, connect, createConnection: connect, createServer, _normalizeArgs: normalizeArgs };
 })"#;
 
 /// TCP resources for the shared-VM projection. Protocol modules keep only
@@ -324,6 +764,7 @@ pub(crate) struct Transport {
     sockets: HashMap<u64, SharedSocket>,
     connecting: HashMap<u64, ConnectingSocket>,
     closing_sockets: VecDeque<(CloseTarget, ClosingSocket)>,
+    pending_events: VecDeque<TransportEvent>,
 }
 
 pub(crate) enum RawStream {
@@ -332,6 +773,33 @@ pub(crate) enum RawStream {
     Local(UnixStream),
 }
 impl RawStream {
+    fn has_pending_read(&self) -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            let fd = match self {
+                Self::Tcp(stream) => stream.as_raw_fd(),
+                #[cfg(unix)]
+                Self::Local(stream) => stream.as_raw_fd(),
+            };
+            let mut byte = 0u8;
+            // SAFETY: recv with MSG_PEEK does not mutate the socket buffer;
+            // the one-byte output is valid for the duration of the call.
+            let result = unsafe {
+                libc::recv(
+                    fd,
+                    (&mut byte as *mut u8).cast(),
+                    1,
+                    libc::MSG_PEEK | libc::MSG_DONTWAIT,
+                )
+            };
+            result > 0
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
+    }
     fn set_nonblocking(&self, enabled: bool) -> std::io::Result<()> {
         match self {
             Self::Tcp(stream) => stream.set_nonblocking(enabled),
@@ -387,6 +855,9 @@ impl SocketStream {
     fn set_nonblocking(&self, enabled: bool) -> std::io::Result<()> {
         self.raw().set_nonblocking(enabled)
     }
+    fn has_pending_read(&self) -> bool {
+        self.raw().has_pending_read()
+    }
     fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
         match self {
             Self::Plain(raw) => raw.read(bytes),
@@ -399,6 +870,19 @@ impl SocketStream {
             Self::Encrypted(tls) => tls.write(bytes, offset),
         }
     }
+    fn write_raw(&mut self, bytes: &[u8], offset: usize) -> std::io::Result<usize> {
+        match self {
+            Self::Plain(raw) => raw.write(&bytes[offset..]),
+            Self::Encrypted(tls) => tls.write_raw(&bytes[offset..]),
+        }
+    }
+    fn write_pending(&mut self, bytes: &[u8], offset: usize, raw: bool) -> std::io::Result<usize> {
+        if raw {
+            self.write_raw(bytes, offset)
+        } else {
+            self.write(bytes, offset)
+        }
+    }
     fn shutdown_write(&mut self) -> std::io::Result<bool> {
         match self {
             Self::Plain(raw) => {
@@ -407,6 +891,9 @@ impl SocketStream {
             }
             Self::Encrypted(tls) => tls.shutdown_write(),
         }
+    }
+    fn shutdown_write_raw(&self) -> std::io::Result<()> {
+        self.raw().shutdown(std::net::Shutdown::Write)
     }
 }
 
@@ -487,13 +974,18 @@ struct ConnectingSocket {
     protocol: SocketProtocol,
     options: TcpOptions,
     read_demand: ReadDemand,
+    pending_write: Vec<u8>,
 }
 #[derive(Clone, Copy)]
-enum SocketProtocol { Tcp, Local }
+enum SocketProtocol {
+    Tcp,
+    Local,
+}
 #[derive(Default)]
 struct TcpOptions {
     no_delay: Option<bool>,
     keep_alive: Option<TcpKeepAlive>,
+    type_of_service: Option<u8>,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct TcpKeepAlive {
@@ -523,7 +1015,10 @@ enum DeliveryPhase {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ReadDemand { Idle, Active }
+enum ReadDemand {
+    Idle,
+    Active,
+}
 
 struct SharedSocket {
     stream: SocketStream,
@@ -535,6 +1030,8 @@ struct SharedSocket {
     write_offset: usize,
     completions: VecDeque<WriteBoundary>,
     end_after_write: bool,
+    raw_write: bool,
+    raw_end_after_write: bool,
     read_ended: bool,
     write_ended: bool,
     shutdown_request: Option<RootId>,
@@ -542,15 +1039,33 @@ struct SharedSocket {
 
 impl SharedSocket {
     fn new(stream: SocketStream, read_demand: ReadDemand, referenced: bool) -> Self {
-        Self { stream, read_demand, delivery: DeliveryPhase::Pending, referenced,
-            pending_write: Vec::new(), write_failure: None, write_offset: 0,
-            completions: VecDeque::new(), end_after_write: false, read_ended: false,
-            write_ended: false, shutdown_request: None }
+        Self {
+            stream,
+            read_demand,
+            delivery: DeliveryPhase::Pending,
+            referenced,
+            pending_write: Vec::new(),
+            write_failure: None,
+            write_offset: 0,
+            completions: VecDeque::new(),
+            end_after_write: false,
+            raw_write: false,
+            raw_end_after_write: false,
+            read_ended: false,
+            write_ended: false,
+            shutdown_request: None,
+        }
     }
 }
 
-struct WriteBoundary { end: usize, owner: WriteOwner }
-enum WriteOwner { Guest, Native(RootId) }
+struct WriteBoundary {
+    end: usize,
+    owner: WriteOwner,
+}
+enum WriteOwner {
+    Guest,
+    Native(RootId),
+}
 
 pub(crate) enum TransportEvent {
     Accepted {
@@ -566,9 +1081,16 @@ pub(crate) enum TransportEvent {
     WriteComplete {
         socket: u64,
     },
-    NativeWriteComplete { request: RootId },
-    NativeConnectComplete { request: RootId, status: i32 },
-    NativeShutdownComplete { request: RootId },
+    NativeWriteComplete {
+        request: RootId,
+    },
+    NativeConnectComplete {
+        request: RootId,
+        status: i32,
+    },
+    NativeShutdownComplete {
+        request: RootId,
+    },
     ConnectError {
         socket: u64,
         failure: TcpConnectFailure,
@@ -586,7 +1108,9 @@ pub(crate) enum TransportEvent {
     End {
         socket: u64,
     },
-    DatagramCloseCompleted { id:u64 },
+    DatagramCloseCompleted {
+        id: u64,
+    },
     CloseCompleted {
         socket: u64,
     },
@@ -607,6 +1131,7 @@ impl Transport {
             sockets: HashMap::new(),
             connecting: HashMap::new(),
             closing_sockets: VecDeque::new(),
+            pending_events: VecDeque::new(),
         }
     }
 
@@ -630,7 +1155,7 @@ pub(crate) fn listen_with_backlog(
     address: SocketAddr,
     backlog: i32,
 ) -> Result<u64, String> {
-    listen_with_reuse_port(transport, address, false, backlog)
+    listen_with_reuse_port(transport, address, false, backlog).map_err(|error| error.to_string())
 }
 
 pub(super) fn listen_with_reuse_port(
@@ -638,13 +1163,10 @@ pub(super) fn listen_with_reuse_port(
     address: SocketAddr,
     reuse_port: bool,
     backlog: i32,
-) -> Result<u64, String> {
-    let listener = bind_listener(address, reuse_port, backlog)
-        .map_err(|error| error.to_string())?;
-    listener
-        .set_nonblocking(true)
-        .map_err(|error| error.to_string())?;
-    let id = transport.id()?;
+) -> Result<u64, std::io::Error> {
+    let listener = bind_listener(address, reuse_port, backlog)?;
+    listener.set_nonblocking(true)?;
+    let id = transport.id().map_err(std::io::Error::other)?;
     transport
         .listeners
         .insert(id, Listener::new(ListenerSocket::Tcp(listener)));
@@ -658,10 +1180,14 @@ pub(crate) fn listen_backlog(
     context: &mut NativeContext<'_, NodeHost>,
     options: Option<RootId>,
 ) -> Result<i32, RootedError> {
-    let Some(options) = options else { return Ok(DEFAULT_TCP_LISTEN_BACKLOG); };
+    let Some(options) = options else {
+        return Ok(DEFAULT_TCP_LISTEN_BACKLOG);
+    };
     let key = context.string_rooted("backlog");
     let value = context.get_property_rooted(options, key)?;
-    if !context.truthy_rooted(value)? { return Ok(DEFAULT_TCP_LISTEN_BACKLOG); }
+    if !context.truthy_rooted(value)? {
+        return Ok(DEFAULT_TCP_LISTEN_BACKLOG);
+    }
     convert_listen_backlog(context, value)
 }
 
@@ -674,14 +1200,22 @@ pub(super) fn convert_listen_backlog(
     let number = context.to_number(value)?;
     let number = context.number(number);
     let mask = context.number(super::net_socket_options::SIGNED_INTEGER_MASK);
-    let bits = context.arithmetic_rooted(quench_runtime::NativeArithmetic::BitwiseAnd, number, mask)?;
+    let bits =
+        context.arithmetic_rooted(quench_runtime::NativeArithmetic::BitwiseAnd, number, mask)?;
     Ok(context.to_number(bits)? as i32)
 }
 
-fn bind_listener(address: SocketAddr, reuse_port: bool, backlog: i32) -> std::io::Result<TcpListener> {
+fn bind_listener(
+    address: SocketAddr,
+    reuse_port: bool,
+    backlog: i32,
+) -> std::io::Result<TcpListener> {
     #[cfg(not(any(
-        target_os = "linux", target_os = "android", target_os = "freebsd",
-        target_os = "dragonfly", target_os = "aix"
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "aix"
     )))]
     if reuse_port {
         return Err(std::io::Error::new(
@@ -694,14 +1228,30 @@ fn bind_listener(address: SocketAddr, reuse_port: bool, backlog: i32) -> std::io
         socket2::Type::STREAM,
         Some(socket2::Protocol::TCP),
     )?;
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let fd = socket.as_raw_fd();
+        // Node listeners are close-on-exec. `process.execve()` must release a
+        // listening port when the process image is replaced.
+        let descriptor_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if descriptor_flags < 0
+            || unsafe { libc::fcntl(fd, libc::F_SETFD, descriptor_flags | libc::FD_CLOEXEC) } < 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
     // libuv enables address reuse for Unix TCP listeners and keeps
     // SO_REUSEADDR disabled for Windows TCP binds.
     #[cfg(unix)]
     socket.set_reuse_address(true)?;
     if reuse_port {
         #[cfg(any(
-            target_os = "linux", target_os = "android", target_os = "freebsd",
-            target_os = "dragonfly", target_os = "aix"
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "dragonfly",
+            target_os = "aix"
         ))]
         {
             #[cfg(target_os = "freebsd")]
@@ -740,6 +1290,7 @@ pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Res
             protocol: SocketProtocol::Tcp,
             options: TcpOptions::default(),
             read_demand: ReadDemand::Active,
+            pending_write: Vec::new(),
         },
     );
     Ok(id)
@@ -755,6 +1306,7 @@ pub(super) fn reserve_lookup(transport: &mut Transport) -> Result<u64, String> {
             protocol: SocketProtocol::Tcp,
             options: TcpOptions::default(),
             read_demand: ReadDemand::Active,
+            pending_write: Vec::new(),
         },
     );
     Ok(id)
@@ -772,6 +1324,8 @@ pub(super) fn connect_resolved(
     id: u64,
     addresses: Vec<String>,
     port: u16,
+    local_address: Option<IpAddr>,
+    local_port: u16,
 ) -> Result<(), String> {
     if !is_looking_up(transport, id) {
         return Ok(());
@@ -782,7 +1336,7 @@ pub(super) fn connect_resolved(
         .spawn(move || {
             let mut result = Err(TcpConnectFailure::EmptyDestinations);
             for address in addresses {
-                result = connect_with_timeout(&address, port);
+                result = connect_resolved_address(&address, port, local_address, local_port);
                 if result.is_ok() {
                     break;
                 }
@@ -819,20 +1373,84 @@ pub(crate) fn address(transport: &Transport, listener: u64) -> Option<SocketAddr
         })
 }
 
-pub(crate) fn socket_address(transport: &Transport, id: u64, peer: bool) -> std::io::Result<SocketAddr> {
+pub(crate) fn socket_address(
+    transport: &Transport,
+    id: u64,
+    peer: bool,
+) -> std::io::Result<SocketAddr> {
     match transport.sockets.get(&id).map(|socket| socket.stream.raw()) {
-        Some(RawStream::Tcp(stream)) => if peer { stream.peer_addr() } else { stream.local_addr() },
+        Some(RawStream::Tcp(stream)) => {
+            if peer {
+                stream.peer_addr()
+            } else {
+                stream.local_addr()
+            }
+        }
         _ => Err(std::io::Error::from_raw_os_error(libc::EBADF)),
     }
 }
 
 pub(crate) fn write(transport: &mut Transport, socket: u64, bytes: &[u8]) -> Result<(), String> {
+    if let Some(stream) = transport.sockets.get_mut(&socket) {
+        stream.pending_write.extend_from_slice(bytes);
+        return Ok(());
+    }
+    if let Some(connecting) = transport.connecting.get_mut(&socket) {
+        // Node accepts writes as soon as a socket is assigned, even while the
+        // native connection is still pending. Flush them once connect completes.
+        connecting.pending_write.extend_from_slice(bytes);
+        return Ok(());
+    }
+    Err("shared TCP socket is not connected".to_owned())
+}
+
+/// Attempt a socket write synchronously before falling back to the normal
+/// event-loop queue. Node's `net.Socket.write()` reaches the kernel in the
+/// caller's turn when possible; this matters for callers that immediately
+/// inspect pending receive data on the peer without allowing an I/O poll.
+pub(crate) fn write_immediate(
+    transport: &mut Transport,
+    socket: u64,
+    bytes: &[u8],
+) -> Result<(), String> {
     let stream = transport
         .sockets
         .get_mut(&socket)
         .ok_or_else(|| "shared TCP socket is not connected".to_owned())?;
-    stream.pending_write.extend_from_slice(bytes);
-    Ok(())
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    if stream.write_offset < stream.pending_write.len() {
+        stream.pending_write.extend_from_slice(bytes);
+        return Ok(());
+    }
+    if !stream.pending_write.is_empty() {
+        stream.pending_write.clear();
+        stream.write_offset = 0;
+        stream.raw_write = false;
+    }
+    match stream.stream.write(bytes, 0) {
+        Ok(written) if written == bytes.len() => Ok(()),
+        Ok(0) => Err(std::io::Error::from(std::io::ErrorKind::WriteZero).to_string()),
+        Ok(written) => {
+            stream.pending_write.extend_from_slice(bytes);
+            stream.write_offset = written;
+            stream.raw_write = false;
+            Ok(())
+        }
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+            ) =>
+        {
+            stream.pending_write.extend_from_slice(bytes);
+            stream.write_offset = 0;
+            stream.raw_write = false;
+            Ok(())
+        }
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 /// Record the byte boundary for a guest stream write. Raw protocol writes
@@ -841,35 +1459,69 @@ pub(crate) fn write_with_completion(
     transport: &mut Transport,
     socket: u64,
     bytes: &[u8],
+    raw: bool,
 ) -> Result<(), String> {
     write(transport, socket, bytes)?;
     let stream = transport
         .sockets
         .get_mut(&socket)
         .expect("write checked live socket");
-    stream.completions.push_back(WriteBoundary { end: stream.pending_write.len(), owner: WriteOwner::Guest });
+    stream.raw_write = raw;
+    stream.completions.push_back(WriteBoundary {
+        end: stream.pending_write.len(),
+        owner: WriteOwner::Guest,
+    });
     // Match uv_try_write admission for plain native streams. Keep callback
     // boundaries until poll, including completely synchronous writes.
-    if stream.write_failure.is_none() && matches!(&stream.stream, SocketStream::Plain(_))
+    if stream.write_failure.is_none()
+        && (raw || matches!(&stream.stream, SocketStream::Plain(_)))
         && stream.write_offset < stream.pending_write.len()
     {
-        match stream.stream.write(&stream.pending_write, stream.write_offset) {
+        match stream
+            .stream
+            .write_pending(&stream.pending_write, stream.write_offset, raw)
+        {
             Ok(0) => stream.write_failure = Some(std::io::ErrorKind::WriteZero.into()),
             Ok(written) => stream.write_offset += written,
-            Err(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted) => {},
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ) => {}
             Err(error) => stream.write_failure = Some(error),
         }
     }
     Ok(())
 }
 
+/// A TLS wrapper and its supplied net.Socket share a transport ID. The
+/// current net socket root tracks the active wrapper; an older receiver is
+/// the original raw socket and must keep raw TCP write/end semantics.
+fn is_raw_wrapped_socket(
+    context: &mut NativeContext<'_, NodeHost>,
+    socket: RootId,
+    id: u64,
+) -> Result<bool, RootedError> {
+    let state = context.host_mut().shared_state();
+    let current = state
+        .borrow()
+        .net_sockets
+        .get(&id)
+        .map(|socket| socket.root);
+    match current {
+        Some(current) => Ok(!context.same_value_rooted(socket, current)?),
+        None => Ok(false),
+    }
+}
+
 /// Application bytes accepted by the native transport but not yet written.
 /// Derive this from the write buffer: advancing/clearing it is the only owner
 /// of transport progress. Connecting and closed sockets have no native queue.
 pub(crate) fn socket_write_queue_size(transport: &Transport, id: u64) -> usize {
-    transport.sockets.get(&id).map_or(0, |socket| {
-        socket.pending_write.len() - socket.write_offset
-    })
+    transport
+        .sockets
+        .get(&id)
+        .map_or(0, |socket| socket.pending_write.len() - socket.write_offset)
 }
 
 pub(crate) fn socket_is_open(transport: &Transport, id: u64) -> bool {
@@ -880,9 +1532,10 @@ pub(crate) fn is_connected(transport: &Transport, socket: u64) -> bool {
     transport.sockets.contains_key(&socket)
 }
 
-pub(crate) fn end(transport: &mut Transport, socket: u64) -> Result<(), String> {
+pub(crate) fn end(transport: &mut Transport, socket: u64, raw: bool) -> Result<(), String> {
     if let Some(stream) = transport.sockets.get_mut(&socket) {
         stream.end_after_write = true;
+        stream.raw_end_after_write = raw;
     }
     Ok(())
 }
@@ -911,6 +1564,20 @@ pub(crate) fn close_socket(transport: &mut Transport, id: u64) {
     }
 }
 
+pub(crate) fn reset_socket(transport: &Transport, id: u64) -> std::io::Result<()> {
+    let socket = transport
+        .sockets
+        .get(&id)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::ENOTCONN))?;
+    match socket.stream.raw() {
+        RawStream::Tcp(stream) => {
+            socket2::SockRef::from(stream).set_linger(Some(std::time::Duration::ZERO))
+        }
+        #[cfg(unix)]
+        RawStream::Local(_) => Err(std::io::Error::from_raw_os_error(libc::EOPNOTSUPP)),
+    }
+}
+
 pub(crate) fn poll(transport: &mut Transport) -> Vec<TransportEvent> {
     transport
         .listeners
@@ -922,12 +1589,15 @@ pub(crate) fn poll(transport: &mut Transport) -> Vec<TransportEvent> {
             }
             ListenerState::Open(_) => true,
         });
-    let mut events = Vec::new();
+    let mut events = transport.pending_events.drain(..).collect::<Vec<_>>();
     transport
         .closing_sockets
         .retain_mut(|(id, socket)| match socket.phase {
             SocketClosePhase::Closing => {
-                events.push(match *id {CloseTarget::Stream(socket)=>TransportEvent::CloseCompleted{socket},CloseTarget::Datagram(id)=>TransportEvent::DatagramCloseCompleted{id}});
+                events.push(match *id {
+                    CloseTarget::Stream(socket) => TransportEvent::CloseCompleted { socket },
+                    CloseTarget::Datagram(id) => TransportEvent::DatagramCloseCompleted { id },
+                });
                 false
             }
             SocketClosePhase::Requested => {
@@ -942,14 +1612,22 @@ pub(crate) fn poll(transport: &mut Transport) -> Vec<TransportEvent> {
     events
 }
 
+pub(crate) fn queue_http_data(transport: &mut Transport, socket: u64) {
+    transport.pending_events.push_back(TransportEvent::Data {
+        socket,
+        bytes: Vec::new(),
+    });
+}
+
 pub(crate) fn has_work(transport: &Transport) -> bool {
-    !transport.native_tcp_connecting.is_empty() || transport
-        .listeners
-        .values()
-        .any(|listener| match listener.state {
-            ListenerState::Open(_) => listener.referenced,
-            ListenerState::CloseRequested | ListenerState::Closing => true,
-        })
+    !transport.native_tcp_connecting.is_empty()
+        || transport
+            .listeners
+            .values()
+            .any(|listener| match listener.state {
+                ListenerState::Open(_) => listener.referenced,
+                ListenerState::CloseRequested | ListenerState::Closing => true,
+            })
         || transport.sockets.values().any(|socket| {
             (socket.referenced && !socket.read_ended && socket.read_demand == ReadDemand::Active)
                 || socket.write_offset < socket.pending_write.len()
@@ -1003,13 +1681,19 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
         match result {
             Ok(stream) => {
                 if let RawStream::Tcp(tcp) = stream.raw() {
-                    if let Some(enabled) = connection.options.no_delay { let _ = tcp.set_nodelay(enabled); }
-                    if let Some(options) = connection.options.keep_alive { let _ = apply_tcp_keep_alive(tcp, options); }
+                    if let Some(enabled) = connection.options.no_delay {
+                        let _ = tcp.set_nodelay(enabled);
+                    }
+                    if let Some(options) = connection.options.keep_alive {
+                        let _ = apply_tcp_keep_alive(tcp, options);
+                    }
+                    if let Some(tos) = connection.options.type_of_service {
+                        let _ = apply_tcp_type_of_service(tcp, tos);
+                    }
                 }
-                transport.sockets.insert(
-                    id,
-                    SharedSocket::new(stream, connection.read_demand, referenced),
-                );
+                let mut socket = SharedSocket::new(stream, connection.read_demand, referenced);
+                socket.pending_write = connection.pending_write;
+                transport.sockets.insert(id, socket);
                 events.push(TransportEvent::Connected { socket: id });
             }
             Err(ConnectFailure::Tcp(failure)) => {
@@ -1060,14 +1744,10 @@ fn poll_accepts(transport: &mut Transport) -> Vec<TransportEvent> {
         let Ok(socket) = transport.id() else {
             continue;
         };
-        transport.sockets.insert(
-            socket,
-            SharedSocket::new(stream, ReadDemand::Active, true),
-        );
-        events.push(TransportEvent::Accepted {
-            listener,
-            socket,
-        });
+        transport
+            .sockets
+            .insert(socket, SharedSocket::new(stream, ReadDemand::Active, true));
+        events.push(TransportEvent::Accepted { listener, socket });
     }
     events
 }
@@ -1091,7 +1771,7 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
                 Err(error) => {
                     events.push(TransportEvent::Error {
                         socket: id,
-                        error: encrypted::io_error(error),
+                        error,
                         syscall: "read",
                     });
                     terminal.push(id);
@@ -1105,15 +1785,20 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
         // Deliver completed requests before attempting a later failing write.
         poll_write_completions(socket, id, &mut events);
         if let Some(error) = socket.write_failure.take() {
-            events.push(TransportEvent::Error { socket: id, error, syscall: "write" });
+            events.push(TransportEvent::Error {
+                socket: id,
+                error,
+                syscall: "write",
+            });
             terminal.push(id);
             continue;
         }
         if socket.write_offset < socket.pending_write.len() {
-            match socket
-                .stream
-                .write(&socket.pending_write, socket.write_offset)
-            {
+            match socket.stream.write_pending(
+                &socket.pending_write,
+                socket.write_offset,
+                socket.raw_write,
+            ) {
                 Ok(0) => {
                     events.push(TransportEvent::Error {
                         socket: id,
@@ -1144,15 +1829,41 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
         if socket.write_offset == socket.pending_write.len() {
             socket.pending_write.clear();
             socket.write_offset = 0;
+            socket.raw_write = false;
         }
         if socket.end_after_write && socket.pending_write.is_empty() {
-            match socket.stream.shutdown_write() {
+            let shutdown = if socket.raw_end_after_write {
+                socket.stream.shutdown_write_raw().map(|()| true)
+            } else {
+                socket.stream.shutdown_write()
+            };
+            match shutdown {
                 Ok(true) => {
                     socket.end_after_write = false;
+                    socket.raw_end_after_write = false;
                     socket.write_ended = true;
-                    if let Some(request)=socket.shutdown_request.take() { events.push(TransportEvent::NativeShutdownComplete {request}); }
+                    if let Some(request) = socket.shutdown_request.take() {
+                        events.push(TransportEvent::NativeShutdownComplete { request });
+                    }
                 }
                 Ok(false) => {}
+                Err(error)
+                    if socket.raw_end_after_write
+                        && error.raw_os_error() == Some(libc::ENOTCONN) =>
+                {
+                    // A caller may half-close the original raw socket while
+                    // its TLS wrapper still owns the read side. If the peer
+                    // closes immediately after receiving the final raw record,
+                    // shutdown(Write) can report ENOTCONN even though the peer
+                    // has already queued a TLS alert for us to read. Preserve
+                    // the receive half and let the pending alert reach TLS.
+                    socket.end_after_write = false;
+                    socket.raw_end_after_write = false;
+                    socket.write_ended = true;
+                    if let Some(request) = socket.shutdown_request.take() {
+                        events.push(TransportEvent::NativeShutdownComplete { request });
+                    }
+                }
                 Err(error) => {
                     events.push(TransportEvent::Error {
                         socket: id,
@@ -1166,7 +1877,9 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
         }
         // Writes and TLS handshakes have independent progress; application
         // bytes are consumed only while the native read request is active.
-        if socket.read_demand == ReadDemand::Idle { continue; }
+        if socket.read_demand == ReadDemand::Idle {
+            continue;
+        }
         let mut received = Vec::new();
         let mut ended = false;
         let mut failure = None;
@@ -1239,10 +1952,62 @@ fn connect_with_timeout(host: &str, port: u16) -> Result<TcpStream, TcpConnectFa
     }))
 }
 
+fn connect_resolved_address(
+    host: &str,
+    port: u16,
+    local_address: Option<IpAddr>,
+    local_port: u16,
+) -> Result<TcpStream, TcpConnectFailure> {
+    let address = host
+        .parse::<IpAddr>()
+        .map(|ip| SocketAddr::new(ip, port))
+        .map_err(|error| TcpConnectFailure::Connect {
+            error: std::io::Error::new(std::io::ErrorKind::InvalidInput, error),
+            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
+        })?;
+    if local_address.is_none() && local_port == 0 {
+        return TcpStream::connect_timeout(&address, TCP_CONNECT_TIMEOUT).map_err(|error| {
+            TcpConnectFailure::Connect { error, address }
+        });
+    }
+
+    let source_ip = local_address.unwrap_or_else(|| match address.ip() {
+        IpAddr::V4(_) => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        IpAddr::V6(_) => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+    });
+    if source_ip.is_ipv4() != address.is_ipv4() {
+        return Err(TcpConnectFailure::Connect {
+            error: std::io::Error::from(std::io::ErrorKind::AddrNotAvailable),
+            address,
+        });
+    }
+    let socket = socket2::Socket::new(
+        socket2::Domain::for_address(address),
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )
+    .map_err(|error| TcpConnectFailure::Connect { error, address })?;
+    socket
+        .bind(&SocketAddr::new(source_ip, local_port).into())
+        .map_err(|error| TcpConnectFailure::Connect { error, address })?;
+    socket
+        .connect_timeout(&address.into(), TCP_CONNECT_TIMEOUT)
+        .map_err(|error| TcpConnectFailure::Connect { error, address })?;
+    Ok(socket.into())
+}
+
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
-    let initialize=context.host_function_with_data(crate::host::shared_vm::operation("netBoundSocketProjection"),module)?;
-    context.define_lazy_data_properties_rooted(module,&["BoundSocket"],true,initialize)?;
+    let initialize = context.host_function_with_data(
+        crate::host::shared_vm::operation("netBoundSocketProjection"),
+        module,
+    )?;
+    context.define_lazy_data_properties_rooted(
+        module,
+        &["BoundSocket", "_TransferredBoundSocket"],
+        true,
+        initialize,
+    )?;
 
     for (name, operation) in [
         ("isIP", "netIsIP"),
@@ -1318,9 +2083,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .net_socket_close_completed = Some(close_completed);
     let encoding =
         context.host_function(crate::host::shared_vm::operation("netSocketSetEncoding"))?;
-    let listen = context.host_constructor_named(crate::host::shared_vm::operation("netServerListen"), "")?;
-    let close = context.host_constructor_named(crate::host::shared_vm::operation("netServerClose"), "")?;
-    let address = context.host_constructor_named(crate::host::shared_vm::operation("netServerAddress"), "")?;
+    let listen =
+        context.host_constructor_named(crate::host::shared_vm::operation("netServerListen"), "")?;
+    let close =
+        context.host_constructor_named(crate::host::shared_vm::operation("netServerClose"), "")?;
+    let address = context
+        .host_constructor_named(crate::host::shared_vm::operation("netServerAddress"), "")?;
     let stream = crate::host::shared_vm::commonjs::stream_module(context)?;
     let duplex_key = context.string_rooted("Duplex");
     let duplex = context.get_property_rooted(stream, duplex_key)?;
@@ -1378,24 +2146,55 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         crate::host::shared_vm::operation("netServerInitEmitter"),
         emitter,
     )?;
-    let [init_socket_options, set_no_delay, set_keep_alive, init_server_options] = super::net_socket_options::install(context)?;
-    let connections = context.host_function(crate::host::shared_vm::operation("netServerGetConnections"))?;
-    let connections_factory = context.evaluate_script_rooted(quench_js_check::checked_js!(
-        "operation=>function(cb){'use strict';return operation(this,cb);}"
-    ), "node:net/get-connections.js")?;
+    let internal_net = crate::host::shared_vm::commonjs::node_library_module(
+        context,
+        "net.js",
+        "internal/net.js",
+    )?;
+    let [init_socket_options, set_no_delay, set_keep_alive, init_server_options] =
+        super::net_socket_options::install(context, internal_net)?;
+    let connections =
+        context.host_function(crate::host::shared_vm::operation("netServerGetConnections"))?;
+    let connections_factory = context.evaluate_script_rooted(
+        quench_js_check::checked_js!(
+            "operation=>function(cb){'use strict';return operation(this,cb);}"
+        ),
+        "node:net/get-connections.js",
+    )?;
     let get_connections = context.call_rooted(connections_factory, undefined, &[connections])?;
-    let initialize_read = context.host_function(crate::host::shared_vm::operation("netSocketInitializeRead"))?;
-    let read_operation = context.host_function(crate::host::shared_vm::operation("netSocketRead"))?;
-    let read_factory = context.evaluate_script_rooted(quench_js_check::checked_js!(
-        "operation=>function(n){'use strict';return operation(this,n);}"
-    ), "node:net/read.js")?;
+    let initialize_read =
+        context.host_function(crate::host::shared_vm::operation("netSocketInitializeRead"))?;
+    let read_operation =
+        context.host_function(crate::host::shared_vm::operation("netSocketRead"))?;
+    let read_factory = context.evaluate_script_rooted(
+        quench_js_check::checked_js!(
+            "operation=>function(n){'use strict';return operation(this,n);}"
+        ),
+        "node:net/read.js",
+    )?;
     let read_socket = context.call_rooted(read_factory, undefined, &[read_operation])?;
     let end_key = context.string_rooted("end");
     let prototype_key = context.string_rooted("prototype");
     let prototype = context.get_property_rooted(duplex, prototype_key)?;
     let original_end = context.get_property_rooted(prototype, end_key)?;
     let end_data = context.array_rooted(&[original_end, byte_length])?;
-    let end_stream = context.host_function_with_data(crate::host::shared_vm::operation("netSocketEndStream"), end_data)?;
+    let end_stream = context.host_function_with_data(
+        crate::host::shared_vm::operation("netSocketEndStream"),
+        end_data,
+    )?;
+    let normalized_args_key = context.string_rooted("normalizedArgsSymbol");
+    let normalized_args_symbol = context.get_property_rooted(internal_net, normalized_args_key)?;
+    let async_hooks = crate::host::shared_vm::commonjs::node_library_module(
+        context,
+        "async_hooks.js",
+        "internal/async_hooks.js",
+    )?;
+    let symbols_key = context.string_rooted("symbols");
+    let symbols = context.get_property_rooted(async_hooks, symbols_key)?;
+    let owner_symbol_key = context.string_rooted("owner_symbol");
+    let owner_symbol = context.get_property_rooted(symbols, owner_symbol_key)?;
+    let async_id_symbol_key = context.string_rooted("async_id_symbol");
+    let async_id_symbol = context.get_property_rooted(symbols, async_id_symbol_key)?;
     let factory = context.evaluate_script_rooted(NET_MODULE_FACTORY, "node:net/module.js")?;
     let undefined = context.undefined();
     let surface = context.call_rooted(
@@ -1429,9 +2228,16 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             initialize_read,
             read_socket,
             end_stream,
+            normalized_args_symbol,
+            owner_symbol,
+            async_id_symbol,
         ],
     )?;
-    let options_data = context.host_mut().shared_state().borrow().net_socket_option_keys
+    let options_data = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .net_socket_option_keys
         .ok_or_else(|| RootedError::host("socket option metadata missing"))?;
     let key = context.string_rooted("module");
     context.define_data_property_rooted(options_data, key, surface, false, false, false)?;
@@ -1452,6 +2258,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         "connect",
         "createConnection",
         "createServer",
+        "_normalizeArgs",
     ] {
         let key = context.string_rooted(name);
         let value = context.get_property_rooted(surface, key)?;
@@ -1534,6 +2341,14 @@ pub(crate) fn connect_operation(
         .first()
         .copied()
         .ok_or_else(|| RootedError::host("net.connect requires a socket"))?;
+    let message = context.object_rooted()?;
+    let socket_key = context.string_rooted("socket");
+    context.define_data_property_rooted(message, socket_key, socket, true, true, true)?;
+    crate::modules::diagnostics_channel_shared_vm::publish_named(
+        context,
+        "net.client.socket",
+        message,
+    )?;
     #[cfg(unix)]
     if let Some(path) = args
         .get(1)
@@ -1543,8 +2358,8 @@ pub(crate) fn connect_operation(
         .flatten()
     {
         let shared = context.host_mut().shared_state();
-        let resolved = resolve_local_path(&shared.borrow().cwd, &path);
-        let id = connect_local(&mut shared.borrow_mut().tcp, resolved, path)
+        let bind_path = resolve_local_path(&shared.borrow().cwd, &path);
+        let id = connect_local(&mut shared.borrow_mut().tcp, bind_path, path)
             .map_err(RootedError::host)?;
         return register_socket(context, socket, id);
     }
@@ -1570,8 +2385,17 @@ pub(crate) fn connect_operation(
     let id = reserve_lookup(&mut shared.borrow_mut().tcp).map_err(RootedError::host)?;
     register_socket(context, socket, id)?;
     super::net_options_shared_vm::connect_family_options(context, options)?;
-    connect_resolved(&mut shared.borrow_mut().tcp, id, vec![host], port)
-        .map_err(RootedError::host)?;
+    let (local_address, local_port) =
+        super::net_options_shared_vm::connect_source(context, options)?;
+    connect_resolved(
+        &mut shared.borrow_mut().tcp,
+        id,
+        vec![host],
+        port,
+        local_address,
+        local_port,
+    )
+    .map_err(RootedError::host)?;
     Ok(socket)
 }
 
@@ -1591,14 +2415,25 @@ pub(crate) fn account_write_operation(
         return Ok(undefined);
     }
     let byte_length = context.host_function_data()?;
-    account_write(context, byte_length, args[0], args.get(1).copied().unwrap_or(undefined), args.get(2).copied().unwrap_or(undefined))
+    account_write(
+        context,
+        byte_length,
+        args[0],
+        args.get(1).copied().unwrap_or(undefined),
+        args.get(2).copied().unwrap_or(undefined),
+    )
 }
 
-fn account_write(context: &mut NativeContext<'_, NodeHost>, byte_length: RootId, socket: RootId, chunk: RootId, encoding: RootId) -> Result<RootId, RootedError> {
+fn account_write(
+    context: &mut NativeContext<'_, NodeHost>,
+    byte_length: RootId,
+    socket: RootId,
+    chunk: RootId,
+    encoding: RootId,
+) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
 
     let count = if context.string_text(chunk)?.is_some() {
-
         let length = context.call_rooted(byte_length, undefined, &[chunk, encoding])?;
         context
             .rooted_value(length)
@@ -1628,7 +2463,11 @@ fn account_write(context: &mut NativeContext<'_, NodeHost>, byte_length: RootId,
     Ok(undefined)
 }
 
-pub(crate) fn end_stream(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn end_stream(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     let socket = args[0];
     let data = context.host_function_data()?;
     let key = context.string_rooted("0");
@@ -1648,7 +2487,13 @@ pub(crate) fn end_stream(context: &mut NativeContext<'_, NodeHost>, _: RootId, a
             let key = context.string_rooted("1");
             let byte_length = context.get_property_rooted(data, key)?;
             let missing = context.undefined();
-            account_write(context, byte_length, socket, args.get(1).copied().unwrap_or(missing), args.get(2).copied().unwrap_or(missing))?;
+            account_write(
+                context,
+                byte_length,
+                socket,
+                args.get(1).copied().unwrap_or(missing),
+                args.get(2).copied().unwrap_or(missing),
+            )?;
         }
     }
     Ok(result)
@@ -1664,6 +2509,7 @@ pub(crate) fn write_operation(
         .copied()
         .ok_or_else(|| RootedError::host("net.Socket.write requires a socket"))?;
     let id = socket_id(context, socket)?;
+    let raw = is_raw_wrapped_socket(context, socket, id)?;
     let bytes = args
         .get(1)
         .copied()
@@ -1696,11 +2542,11 @@ pub(crate) fn write_operation(
     // writeQueueSize excludes bytes synchronously accepted by the OS.
     let connected = is_connected(&state.borrow().tcp, id);
     if connected {
-        write_with_completion(&mut state.borrow_mut().tcp, id, &bytes)
+        write_with_completion(&mut state.borrow_mut().tcp, id, &bytes, raw)
             .map_err(RootedError::host)?;
     } else {
         // Connecting sockets keep their existing deferred submission path.
-        context.host_mut().net_pending_writes.push((id, bytes));
+        context.host_mut().net_pending_writes.push((id, bytes, raw));
     }
     Ok(context.boolean(true))
 }
@@ -1718,9 +2564,12 @@ pub(crate) fn end_operation(
     // callback still completes its writable side.
     let key = context.string_rooted("__quenchNetSocketId");
     let id = context.get_property_rooted(socket, key)?;
-    if context.rooted_value(id).is_some_and(Value::is_undefined) { return Ok(socket); }
+    if context.rooted_value(id).is_some_and(Value::is_undefined) {
+        return Ok(socket);
+    }
     let id = socket_id(context, socket)?;
-    context.host_mut().net_pending_ends.push(id);
+    let raw = is_raw_wrapped_socket(context, socket, id)?;
+    context.host_mut().net_pending_ends.push((id, raw));
     Ok(socket)
 }
 
@@ -1767,13 +2616,19 @@ pub(crate) fn destroy_operation(
     context
         .host_mut()
         .net_pending_writes
-        .retain(|(socket, _)| *socket != id);
+        .retain(|(socket, _, _)| *socket != id);
     context
         .host_mut()
         .net_pending_ends
-        .retain(|socket| *socket != id);
+        .retain(|(socket, _)| *socket != id);
     let state = context.host_mut().shared_state();
     let was_connected = is_connected(&state.borrow().tcp, id);
+    let reset_key = context.string_rooted("resetAndClosing");
+    let reset = context.get_property_rooted(socket, reset_key)?;
+    if context.truthy_rooted(reset)? {
+        reset_socket(&state.borrow().tcp, id)
+            .map_err(|error| RootedError::host(error.to_string()))?;
+    }
     close_socket(&mut state.borrow_mut().tcp, id);
     context
         .host_mut()
@@ -1799,7 +2654,13 @@ pub(crate) fn set_encoding_operation(
         .first()
         .copied()
         .ok_or_else(|| RootedError::host("net.Socket.setEncoding requires a socket"))?;
-    let id = socket_id(context, socket)?;
+    // `net.Socket({ fd })` can adopt a native Pipe handle that is not one of
+    // the TCP transports tracked by this facade. Readable.setEncoding still
+    // performs its own decoding; only the native TCP read queue needs this
+    // encoding hint for its byte accounting.
+    let Ok(id) = socket_id(context, socket) else {
+        return Ok(context.undefined());
+    };
     let encoding = args
         .get(1)
         .copied()
@@ -1824,9 +2685,19 @@ pub(super) fn listen_local_server(
     path: &str,
 ) -> Result<RootId, RootedError> {
     let shared = context.host_mut().shared_state();
-    let resolved = resolve_local_path(&shared.borrow().cwd, path);
-    let result = resolved.and_then(|resolved| {
-        listen_local(&mut shared.borrow_mut().tcp, resolved, path.to_owned())
+    let cwd = shared.borrow().cwd.clone();
+    let bind_path = resolve_local_path(&cwd, path);
+    let cleanup_path = cleanup_local_path(&cwd, path);
+    let result = bind_path.and_then(|bind_path| {
+        cleanup_path.and_then(|cleanup_path| {
+            listen_local(
+                &mut shared.borrow_mut().tcp,
+                bind_path,
+                path.to_owned(),
+                cleanup_path,
+                DEFAULT_TCP_LISTEN_BACKLOG,
+            )
+        })
     });
     match result {
         Ok(id) => register_server(context, server, id),
@@ -1834,12 +2705,40 @@ pub(super) fn listen_local_server(
     }
 }
 
+/// Bind a Unix-domain listener for a consumer that owns its own public server
+/// bookkeeping (for example HTTP). Unlike `listen_local_server`, this leaves
+/// registration of the accepted listener to the caller.
+#[cfg(unix)]
+pub(crate) fn listen_local_endpoint(
+    context: &mut NativeContext<'_, NodeHost>,
+    path: &str,
+    backlog: i32,
+) -> Result<u64, String> {
+    let shared = context.host_mut().shared_state();
+    let cwd = shared.borrow().cwd.clone();
+    let bind_path = resolve_local_path(&cwd, path).map_err(|error| error.to_string())?;
+    let cleanup_path = cleanup_local_path(&cwd, path).map_err(|error| error.to_string())?;
+    let result = {
+        let mut state = shared.borrow_mut();
+        listen_local(
+            &mut state.tcp,
+            bind_path,
+            path.to_owned(),
+            cleanup_path,
+            backlog,
+        )
+    };
+    result.map_err(|error| error.to_string())
+}
+
 pub(crate) fn server_address_operation(
     context: &mut NativeContext<'_, NodeHost>,
     server: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let Some(id) = optional_server_id(context, server)? else { return Ok(context.null()); };
+    let Some(id) = optional_server_id(context, server)? else {
+        return Ok(context.null());
+    };
     let shared = context.host_mut().shared_state();
     let local = listener_path(&shared.borrow().tcp, id).map(str::to_owned);
     if let Some(path) = local {
@@ -1872,13 +2771,14 @@ pub(super) fn optional_server_id(
 ) -> Result<Option<u64>, RootedError> {
     let key = context.string_rooted("__quenchNetServerId");
     let value = context.get_property_rooted(server, key)?;
-    Ok(context.rooted_value(value)
+    Ok(context
+        .rooted_value(value)
         .and_then(Value::as_number)
         .filter(|id| id.is_finite() && id.fract() == 0.0 && *id >= 0.0)
         .map(|id| id as u64))
 }
 
-fn socket_id(
+pub(super) fn socket_id(
     context: &mut NativeContext<'_, NodeHost>,
     socket: RootId,
 ) -> Result<u64, RootedError> {
@@ -1890,6 +2790,31 @@ fn socket_id(
         .filter(|id| id.is_finite() && id.fract() == 0.0 && *id >= 0.0)
         .map(|id| id as u64)
         .ok_or_else(|| RootedError::host("net socket identifier is invalid"))
+}
+
+/// Return the live descriptor for a TCP socket supplied as child stdio.
+/// `child_process` duplicates this descriptor before handing it to the child,
+/// so the parent socket remains usable while the child writes to its endpoint.
+#[cfg(unix)]
+pub(crate) fn child_stdio_socket_descriptor(
+    context: &mut NativeContext<'_, NodeHost>,
+    socket: RootId,
+) -> Result<Option<i32>, RootedError> {
+    let Ok(id) = socket_id(context, socket) else {
+        return Ok(None);
+    };
+    let shared = context.host_mut().shared_state();
+    let state = shared.borrow();
+    let fd = native_tcp_fd(&state.tcp, id);
+    Ok((fd >= 0).then_some(fd))
+}
+
+#[cfg(not(unix))]
+pub(crate) fn child_stdio_socket_descriptor(
+    _: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+) -> Result<Option<i32>, RootedError> {
+    Ok(None)
 }
 
 pub(crate) fn get_timeout(
@@ -1927,8 +2852,14 @@ fn listen_local(
     transport: &mut Transport,
     path: std::path::PathBuf,
     display: String,
+    cleanup_path: Option<std::path::PathBuf>,
+    backlog: i32,
 ) -> std::io::Result<u64> {
-    let (socket, unlink) = bind_local_address(&path, &display)?;
+    let (socket, unlink) = bind_local_address(&path, &display, cleanup_path)?;
+    use std::os::fd::AsRawFd;
+    if unsafe { libc::listen(socket.as_raw_fd(), backlog) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
     let socket = ListenerSocket::Local {
         listener: socket,
         path: unlink,
@@ -1972,11 +2903,12 @@ fn connect_local(
             protocol: SocketProtocol::Local,
             options: TcpOptions::default(),
             read_demand: ReadDemand::Active,
+            pending_write: Vec::new(),
         },
     );
     Ok(id)
 }
-fn listener_path(transport: &Transport, id: u64) -> Option<&str> {
+pub(crate) fn listener_path(transport: &Transport, id: u64) -> Option<&str> {
     match transport.listeners.get(&id)?.socket()? {
         #[cfg(unix)]
         ListenerSocket::Local { display, .. } => Some(display),
@@ -2009,6 +2941,50 @@ pub(super) fn register_socket(
     super::stream_binding::release_reader(context, id);
     super::net_reference_shared_vm::install_socket_handle(context, id, socket)?;
     Ok(socket)
+}
+
+/// Duplicate a live plain TCP socket for Node's `child.send(message, socket,
+/// { keepOpen: true })` IPC handle transfer. Passing the duplicate with
+/// SCM_RIGHTS leaves the sender's socket usable, as Node's keep-open mode does.
+#[cfg(unix)]
+pub(crate) fn ipc_socket_handle(
+    context: &mut NativeContext<'_, NodeHost>,
+    handle: RootId,
+) -> Result<Option<std::os::fd::OwnedFd>, RootedError> {
+    use std::os::fd::AsFd;
+
+    let Ok(id) = socket_id(context, handle) else {
+        return Ok(None);
+    };
+    let shared = context.host_mut().shared_state();
+    let state = shared.borrow();
+    let Some(socket) = state.tcp.sockets.get(&id) else {
+        return Ok(None);
+    };
+    let SocketStream::Plain(RawStream::Tcp(stream)) = &socket.stream else {
+        return Ok(None);
+    };
+    stream
+        .as_fd()
+        .try_clone_to_owned()
+        .map(Some)
+        .map_err(|error| RootedError::host(format!("cannot duplicate TCP socket: {error}")))
+}
+
+/// Close the sender's Socket after a successful default (non-keep-open) IPC
+/// transfer. This is called only after the descriptor is on the IPC channel.
+#[cfg(unix)]
+pub(crate) fn close_ipc_socket(
+    context: &mut NativeContext<'_, NodeHost>,
+    socket: RootId,
+) -> Result<(), RootedError> {
+    if socket_id(context, socket).is_err() {
+        return Ok(());
+    }
+    let key = context.string_rooted("destroy");
+    let destroy = context.get_property_rooted(socket, key)?;
+    context.call_rooted(destroy, socket, &[])?;
+    Ok(())
 }
 
 pub(super) fn register_server(
@@ -2111,6 +3087,7 @@ fn validate_local_path(path: &std::path::Path) -> std::io::Result<()> {
 fn bind_local_address(
     path: &std::path::Path,
     _display: &str,
+    cleanup_path: Option<std::path::PathBuf>,
 ) -> std::io::Result<(UnixListener, Option<std::path::PathBuf>)> {
     #[cfg(target_os = "linux")]
     if let Some(name) = _display.strip_prefix('\0') {
@@ -2120,7 +3097,7 @@ fn bind_local_address(
         return UnixListener::bind_addr(&address).map(|listener| (listener, None));
     }
     validate_local_path(path)?;
-    UnixListener::bind(path).map(|listener| (listener, Some(path.to_owned())))
+    UnixListener::bind(path).map(|listener| (listener, cleanup_path))
 }
 #[cfg(unix)]
 fn connect_local_address(path: &std::path::Path, _display: &str) -> std::io::Result<UnixStream> {
@@ -2147,7 +3124,35 @@ fn resolve_local_path(
     {
         return Ok(path.to_owned());
     }
-    cwd.current_path().map(|directory| directory.join(path))
+    // ProcessCwd is virtual, so the host process cwd may differ from the cwd
+    // observed by Node. Resolve through its retained directory descriptor; on
+    // Linux this produces a short /proc/self/fd path and preserves directory
+    // identity if the directory is renamed. Keep the original relative path
+    // when the resolved host path cannot fit sockaddr_un, since some valid
+    // relative socket names are shorter than their absolute form.
+    let resolved = cwd.resolve_io_path(path);
+    let address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    if resolved.as_os_str().as_encoded_bytes().len() < address.sun_path.len() {
+        return Ok(resolved);
+    }
+    // The relative name itself may still fit sockaddr_un.
+    Ok(path.to_owned())
+}
+
+#[cfg(unix)]
+fn cleanup_local_path(
+    cwd: &super::process_state::ProcessCwd,
+    path: &str,
+) -> std::io::Result<Option<std::path::PathBuf>> {
+    let path = std::path::Path::new(path);
+    if path.as_os_str().as_encoded_bytes().first() == Some(&0) {
+        return Ok(None);
+    }
+    if path.is_absolute() {
+        return Ok(Some(path.to_owned()));
+    }
+    cwd.current_path()
+        .map(|directory| Some(directory.join(path)))
 }
 
 pub(crate) fn listener_reference(transport: &mut Transport, id: u64, referenced: bool) {
@@ -2167,7 +3172,11 @@ pub(crate) fn socket_reference(transport: &mut Transport, id: u64, referenced: b
         socket.referenced = referenced;
     } else if let Some(socket) = transport.sockets.get_mut(&id) {
         socket.referenced = referenced;
-    } else if let Some(socket) = transport.closing_sockets.iter_mut().find_map(|(existing, socket)| (*existing == CloseTarget::Stream(id)).then_some(socket)) {
+    } else if let Some(socket) = transport
+        .closing_sockets
+        .iter_mut()
+        .find_map(|(existing, socket)| (*existing == CloseTarget::Stream(id)).then_some(socket))
+    {
         socket.referenced = referenced;
     }
 }
@@ -2181,7 +3190,9 @@ pub(crate) fn socket_has_ref(transport: &Transport, id: u64) -> Option<bool> {
             transport
                 .closing_sockets
                 .iter()
-                .find_map(|(existing, socket)| (*existing == CloseTarget::Stream(id)).then_some(socket.referenced))
+                .find_map(|(existing, socket)| {
+                    (*existing == CloseTarget::Stream(id)).then_some(socket.referenced)
+                })
         })
 }
 
@@ -2259,9 +3270,9 @@ pub(crate) fn start_tls(transport: &mut Transport, id: u64) {
     }
 }
 pub(crate) fn tls_is_dormant(transport: &Transport, id: u64) -> bool {
-    transport.sockets.get(&id).is_some_and(|socket| {
-        matches!(&socket.stream, SocketStream::Encrypted(tls) if tls.dormant())
-    })
+    transport.sockets.get(&id).is_some_and(
+        |socket| matches!(&socket.stream, SocketStream::Encrypted(tls) if tls.dormant()),
+    )
 }
 pub(crate) fn receive_tls(transport: &mut Transport, id: u64, bytes: &[u8]) {
     if let Some(SharedSocket {
@@ -2306,6 +3317,12 @@ pub(crate) fn deliver_data(
         .ok_or_else(|| RootedError::host("queued socket input owner is unavailable"))?
         as u64;
     let result = (|| {
+        let guard_key = context.string_rooted("__quenchHttpFreeSocketGuard");
+        let guard = context.get_property_rooted(receiver, guard_key)?;
+        if context.is_callable_rooted(guard)? {
+            context.call_rooted(guard, receiver, &[])?;
+            return Ok(context.undefined());
+        }
         let key = context.string_rooted("bytesRead");
         let previous = context.get_property_rooted(receiver, key)?;
         let count =
@@ -2324,12 +3341,23 @@ pub(crate) fn deliver_data(
     );
     result
 }
-enum ConnectionDelivery { Accepted, Connected }
-pub(crate) fn deliver_connect(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+enum ConnectionDelivery {
+    Accepted,
+    Connected,
+}
+pub(crate) fn deliver_connect(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     complete_connection_delivery(context, receiver, args, ConnectionDelivery::Connected)
 }
 
-pub(crate) fn deliver_connection(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn deliver_connection(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     complete_connection_delivery(context, receiver, args, ConnectionDelivery::Accepted)
 }
 
@@ -2456,16 +3484,25 @@ pub(crate) fn connection_delivery_started(transport: &Transport, id: u64) -> boo
         .is_none_or(|socket| !matches!(socket.delivery, DeliveryPhase::Pending))
 }
 
-
 pub(crate) fn socket_is_tcp(transport: &Transport, id: u64) -> bool {
-    transport.sockets.get(&id).map(|socket| matches!(socket.stream.raw(), RawStream::Tcp(_)))
-        .or_else(|| transport.connecting.get(&id).map(|socket| matches!(socket.protocol, SocketProtocol::Tcp)))
+    transport
+        .sockets
+        .get(&id)
+        .map(|socket| matches!(socket.stream.raw(), RawStream::Tcp(_)))
+        .or_else(|| {
+            transport
+                .connecting
+                .get(&id)
+                .map(|socket| matches!(socket.protocol, SocketProtocol::Tcp))
+        })
         .unwrap_or(false)
 }
 fn apply_tcp_keep_alive(stream: &TcpStream, options: TcpKeepAlive) -> std::io::Result<()> {
     let socket = socket2::SockRef::from(stream);
     socket.set_keepalive(options.enabled)?;
-    if !options.enabled { return Ok(()); }
+    if !options.enabled {
+        return Ok(());
+    }
     if options.delay == 0 || options.interval == 0 || options.count == 0 {
         return Err(std::io::Error::from_raw_os_error(libc::EINVAL));
     }
@@ -2475,7 +3512,14 @@ fn apply_tcp_keep_alive(stream: &TcpStream, options: TcpKeepAlive) -> std::io::R
         .with_retries(options.count);
     socket.set_tcp_keepalive(&keep_alive)
 }
-pub(crate) fn tcp_no_delay(transport: &mut Transport, id: u64, enabled: bool) -> std::io::Result<()> {
+fn apply_tcp_type_of_service(stream: &TcpStream, tos: u8) -> std::io::Result<()> {
+    socket2::SockRef::from(stream).set_tos_v4(u32::from(tos))
+}
+pub(crate) fn tcp_no_delay(
+    transport: &mut Transport,
+    id: u64,
+    enabled: bool,
+) -> std::io::Result<()> {
     if let Some(socket) = transport.connecting.get_mut(&id) {
         socket.options.no_delay = Some(enabled);
         return Ok(());
@@ -2485,7 +3529,11 @@ pub(crate) fn tcp_no_delay(transport: &mut Transport, id: u64, enabled: bool) ->
         _ => Err(std::io::Error::from_raw_os_error(libc::EBADF)),
     }
 }
-pub(crate) fn tcp_keep_alive(transport: &mut Transport, id: u64, options: TcpKeepAlive) -> std::io::Result<()> {
+pub(crate) fn tcp_keep_alive(
+    transport: &mut Transport,
+    id: u64,
+    options: TcpKeepAlive,
+) -> std::io::Result<()> {
     if let Some(socket) = transport.connecting.get_mut(&id) {
         socket.options.keep_alive = Some(options);
         return Ok(());
@@ -2496,29 +3544,82 @@ pub(crate) fn tcp_keep_alive(transport: &mut Transport, id: u64, options: TcpKee
     }
 }
 
+pub(crate) fn tcp_set_type_of_service(
+    transport: &mut Transport,
+    id: u64,
+    tos: u8,
+) -> std::io::Result<()> {
+    if let Some(socket) = transport.connecting.get_mut(&id) {
+        socket.options.type_of_service = Some(tos);
+        return Ok(());
+    }
+    match transport.sockets.get(&id).map(|socket| socket.stream.raw()) {
+        Some(RawStream::Tcp(stream)) => apply_tcp_type_of_service(stream, tos),
+        _ => Err(std::io::Error::from_raw_os_error(libc::EBADF)),
+    }
+}
+
+pub(crate) fn tcp_get_type_of_service(transport: &Transport, id: u64) -> std::io::Result<u32> {
+    match transport.sockets.get(&id).map(|socket| socket.stream.raw()) {
+        Some(RawStream::Tcp(stream)) => socket2::SockRef::from(stream).tos_v4(),
+        _ => Err(std::io::Error::from_raw_os_error(libc::EBADF)),
+    }
+}
 
 pub(crate) fn start_read(transport: &mut Transport, id: u64) -> std::io::Result<()> {
-    let socket = transport.sockets.get_mut(&id)
+    let socket = transport
+        .sockets
+        .get_mut(&id)
         .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EINVAL))?;
-    if socket.read_ended { return Err(std::io::Error::from_raw_os_error(libc::EINVAL)); }
-    if socket.read_demand == ReadDemand::Active { return Err(std::io::Error::from_raw_os_error(libc::EALREADY)); }
+    if socket.read_ended {
+        return Err(std::io::Error::from_raw_os_error(libc::EINVAL));
+    }
+    if socket.read_demand == ReadDemand::Active {
+        return Err(std::io::Error::from_raw_os_error(libc::EALREADY));
+    }
     socket.read_demand = ReadDemand::Active;
     Ok(())
 }
 pub(crate) fn stop_read(transport: &mut Transport, id: u64) {
-    if let Some(socket) = transport.sockets.get_mut(&id) { socket.read_demand = ReadDemand::Idle; }
-    if let Some(socket) = transport.connecting.get_mut(&id) { socket.read_demand = ReadDemand::Idle; }
+    if let Some(socket) = transport.sockets.get_mut(&id) {
+        socket.read_demand = ReadDemand::Idle;
+    }
+    if let Some(socket) = transport.connecting.get_mut(&id) {
+        socket.read_demand = ReadDemand::Idle;
+    }
 }
 
 pub(crate) fn read_active(transport: &Transport, id: u64) -> bool {
-    transport.sockets.get(&id).map(|socket| socket.read_demand)
-        .or_else(|| transport.connecting.get(&id).map(|socket| socket.read_demand))
+    transport
+        .sockets
+        .get(&id)
+        .map(|socket| socket.read_demand)
+        .or_else(|| {
+            transport
+                .connecting
+                .get(&id)
+                .map(|socket| socket.read_demand)
+        })
         == Some(ReadDemand::Active)
 }
 
+pub(crate) fn socket_has_pending_read(transport: &Transport, id: u64) -> bool {
+    transport
+        .sockets
+        .get(&id)
+        .is_some_and(|socket| socket.stream.has_pending_read())
+}
+
 fn poll_write_completions(socket: &mut SharedSocket, id: u64, events: &mut Vec<TransportEvent>) {
-    while socket.completions.front().is_some_and(|boundary| boundary.end <= socket.write_offset) {
-        let boundary = socket.completions.pop_front().expect("checked completion boundary");
+    while socket
+        .completions
+        .front()
+        .is_some_and(|boundary| boundary.end <= socket.write_offset)
+    {
+        let boundary = socket
+            .completions
+            .pop_front()
+            .expect("checked completion boundary");
         events.push(match boundary.owner {
             WriteOwner::Guest => TransportEvent::WriteComplete { socket: id },
             WriteOwner::Native(request) => TransportEvent::NativeWriteComplete { request },
@@ -2578,30 +3679,45 @@ pub(crate) fn native_tcp_listen(
 #[cfg(unix)]
 pub(crate) fn native_tcp_fd(transport: &Transport, id: u64) -> i32 {
     use std::os::fd::AsRawFd;
-    if let Some(socket)=transport.native_tcp_unbound.get(&id) { return socket.fd(); }
-    if let Some(socket)=transport.native_tcp_connecting.get(&id) { return socket.socket.fd(); }
-    if let Some(listener)=transport.listeners.get(&id).and_then(Listener::socket) {
-        return match listener { ListenerSocket::Tcp(socket)=>socket.as_raw_fd(), ListenerSocket::Local{listener,..}=>listener.as_raw_fd() };
+    if let Some(socket) = transport.native_tcp_unbound.get(&id) {
+        return socket.fd();
     }
-    if let Some(socket)=transport.sockets.get(&id) {
-        return match socket.stream.raw() { RawStream::Tcp(socket)=>socket.as_raw_fd(), RawStream::Local(socket)=>socket.as_raw_fd() };
+    if let Some(socket) = transport.native_tcp_connecting.get(&id) {
+        return socket.socket.fd();
+    }
+    if let Some(listener) = transport.listeners.get(&id).and_then(Listener::socket) {
+        return match listener {
+            ListenerSocket::Tcp(socket) => socket.as_raw_fd(),
+            ListenerSocket::Local { listener, .. } => listener.as_raw_fd(),
+        };
+    }
+    if let Some(socket) = transport.sockets.get(&id) {
+        return match socket.stream.raw() {
+            RawStream::Tcp(socket) => socket.as_raw_fd(),
+            RawStream::Local(socket) => socket.as_raw_fd(),
+        };
     }
     -libc::EBADF
 }
 #[cfg(not(unix))]
-pub(crate) fn native_tcp_fd(_: &Transport,_:u64)->i32 { -libc::EBADF }
+pub(crate) fn native_tcp_fd(_: &Transport, _: u64) -> i32 {
+    -libc::EBADF
+}
 pub(crate) fn native_tcp_address(transport: &Transport, id: u64) -> std::io::Result<SocketAddr> {
     if let Some(socket) = transport.native_tcp_unbound.get(&id) {
         return socket.address();
     }
-    if let Some(connection)=transport.native_tcp_connecting.get(&id) { return connection.socket.address(); }
+    if let Some(connection) = transport.native_tcp_connecting.get(&id) {
+        return connection.socket.address();
+    }
     if let Some(address) = address(transport, id) {
         return Ok(address);
     }
     socket_address(transport, id, false)
 }
 pub(crate) fn native_tcp_is_open(transport: &Transport, id: u64) -> bool {
-    transport.native_tcp_connecting.contains_key(&id) || transport.native_tcp_unbound.contains_key(&id)
+    transport.native_tcp_connecting.contains_key(&id)
+        || transport.native_tcp_unbound.contains_key(&id)
         || transport.listeners.contains_key(&id)
         || socket_is_open(transport, id)
 }
@@ -2612,7 +3728,12 @@ pub(crate) fn native_tcp_close(transport: &mut Transport, id: u64) {
         .native_tcp_unbound
         .remove(&id)
         .map(|socket| socket.referenced)
-        .or_else(|| transport.native_tcp_connecting.remove(&id).map(|connection|connection.socket.referenced))
+        .or_else(|| {
+            transport
+                .native_tcp_connecting
+                .remove(&id)
+                .map(|connection| connection.socket.referenced)
+        })
         .or_else(|| {
             transport
                 .listeners
@@ -2628,8 +3749,8 @@ pub(crate) fn native_tcp_close(transport: &mut Transport, id: u64) {
 pub(crate) fn native_tcp_reference(transport: &mut Transport, id: u64, referenced: bool) {
     if let Some(socket) = transport.native_tcp_unbound.get_mut(&id) {
         socket.referenced = referenced;
-    } else if let Some(connection)=transport.native_tcp_connecting.get_mut(&id) {
-        connection.socket.referenced=referenced;
+    } else if let Some(connection) = transport.native_tcp_connecting.get_mut(&id) {
+        connection.socket.referenced = referenced;
     } else if transport.listeners.contains_key(&id) {
         listener_reference(transport, id, referenced);
     } else {
@@ -2641,7 +3762,12 @@ pub(crate) fn native_tcp_has_ref(transport: &Transport, id: u64) -> bool {
         .native_tcp_unbound
         .get(&id)
         .map(|socket| socket.referenced)
-        .or_else(|| transport.native_tcp_connecting.get(&id).map(|connection|connection.socket.referenced))
+        .or_else(|| {
+            transport
+                .native_tcp_connecting
+                .get(&id)
+                .map(|connection| connection.socket.referenced)
+        })
         .or_else(|| listener_has_ref(transport, id))
         .or_else(|| socket_has_ref(transport, id))
         .unwrap_or(false)
@@ -2650,44 +3776,73 @@ pub(crate) fn native_tcp_has_ref(transport: &Transport, id: u64) -> bool {
 /// The synchronous syscall frontier precedes request construction. Queued
 /// bytes stay with the caller until init hooks have completed, so reentrant
 /// native writes/close observe the same submission order as libuv.
-pub(crate) enum NativeWriteAdmission { Synchronous, Queued { written: usize } }
+pub(crate) enum NativeWriteAdmission {
+    Synchronous,
+    Queued { written: usize },
+}
 pub(crate) fn try_native_write(
-    transport: &mut Transport, socket: u64, bytes: &[u8],
+    transport: &mut Transport,
+    socket: u64,
+    bytes: &[u8],
 ) -> std::io::Result<NativeWriteAdmission> {
-    let stream=transport.sockets.get_mut(&socket)
-        .ok_or_else(||std::io::Error::from_raw_os_error(libc::EBADF))?;
-    if !matches!(&stream.stream,SocketStream::Plain(_)) {
+    let stream = transport
+        .sockets
+        .get_mut(&socket)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
+    if !matches!(&stream.stream, SocketStream::Plain(_)) {
         return Err(std::io::Error::from_raw_os_error(libc::ENOTSUP));
     }
-    if let Some(error)=&stream.write_failure {
-        return Err(std::io::Error::from_raw_os_error(error.raw_os_error().unwrap_or(libc::EPIPE)));
+    if let Some(error) = &stream.write_failure {
+        return Err(std::io::Error::from_raw_os_error(
+            error.raw_os_error().unwrap_or(libc::EPIPE),
+        ));
     }
-    if stream.write_offset<stream.pending_write.len() {
-        return Ok(NativeWriteAdmission::Queued {written:0});
+    if stream.write_offset < stream.pending_write.len() {
+        return Ok(NativeWriteAdmission::Queued { written: 0 });
     }
-    if bytes.is_empty() {return Ok(NativeWriteAdmission::Synchronous);}
-    let written=match stream.stream.write(bytes,0) {
-        Ok(0)=>return Err(std::io::ErrorKind::WriteZero.into()),
-        Ok(written)=>written,
-        Err(error) if matches!(error.kind(),std::io::ErrorKind::WouldBlock|std::io::ErrorKind::Interrupted)=>0,
-        Err(error)=>return Err(error),
+    if bytes.is_empty() {
+        return Ok(NativeWriteAdmission::Synchronous);
+    }
+    let written = match stream.stream.write(bytes, 0) {
+        Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+        Ok(written) => written,
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+            ) =>
+        {
+            0
+        }
+        Err(error) => return Err(error),
     };
-    Ok(if written==bytes.len(){NativeWriteAdmission::Synchronous}
-       else {NativeWriteAdmission::Queued {written}})
+    Ok(if written == bytes.len() {
+        NativeWriteAdmission::Synchronous
+    } else {
+        NativeWriteAdmission::Queued { written }
+    })
 }
 /// Admit only the remaining real bytes after the request's init hooks. This
 /// revalidates the stream because an init hook may close it or queue a write.
 pub(crate) fn queue_native_write(
-    transport:&mut Transport,socket:u64,request:RootId,bytes:&[u8],
-)->std::io::Result<()> {
-    let stream=transport.sockets.get_mut(&socket)
-        .ok_or_else(||std::io::Error::from_raw_os_error(libc::EBADF))?;
-    if let Some(error)=&stream.write_failure {
-        return Err(std::io::Error::from_raw_os_error(error.raw_os_error().unwrap_or(libc::EPIPE)));
+    transport: &mut Transport,
+    socket: u64,
+    request: RootId,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    let stream = transport
+        .sockets
+        .get_mut(&socket)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
+    if let Some(error) = &stream.write_failure {
+        return Err(std::io::Error::from_raw_os_error(
+            error.raw_os_error().unwrap_or(libc::EPIPE),
+        ));
     }
     stream.pending_write.extend_from_slice(bytes);
     stream.completions.push_back(WriteBoundary {
-        end:stream.pending_write.len(),owner:WriteOwner::Native(request),
+        end: stream.pending_write.len(),
+        owner: WriteOwner::Native(request),
     });
     Ok(())
 }
@@ -2776,55 +3931,135 @@ pub(crate) fn native_shutdown_request(
 /// libuv prepends genuine close requests to its closing-handle list. Keep
 /// lifecycle metadata in that same authoritative order until completion.
 fn request_socket_close(transport: &mut Transport, id: u64, referenced: bool) {
-    transport.closing_sockets.push_front((CloseTarget::Stream(id), ClosingSocket {
-        referenced,
-        phase: SocketClosePhase::Requested,
-    }));
+    transport.closing_sockets.push_front((
+        CloseTarget::Stream(id),
+        ClosingSocket {
+            referenced,
+            phase: SocketClosePhase::Requested,
+        },
+    ));
 }
 
-#[derive(Clone,Copy,PartialEq,Eq)]
-enum CloseTarget { Stream(u64), Datagram(u64) }
-pub(crate) fn request_udp_close(transport:&mut Transport,id:u64,referenced:bool){transport.closing_sockets.push_front((CloseTarget::Datagram(id),ClosingSocket{referenced,phase:SocketClosePhase::Requested}));}
-pub(crate) fn udp_close_reference(transport:&mut Transport,id:u64,referenced:bool){if let Some((_,owner))=transport.closing_sockets.iter_mut().find(|(key,_)|*key==CloseTarget::Datagram(id)){owner.referenced=referenced;}}
-pub(crate) fn udp_close_has_ref(transport:&Transport,id:u64)->Option<bool>{transport.closing_sockets.iter().find_map(|(key,owner)|(*key==CloseTarget::Datagram(id)).then_some(owner.referenced))}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CloseTarget {
+    Stream(u64),
+    Datagram(u64),
+}
+pub(crate) fn request_udp_close(transport: &mut Transport, id: u64, referenced: bool) {
+    transport.closing_sockets.push_front((
+        CloseTarget::Datagram(id),
+        ClosingSocket {
+            referenced,
+            phase: SocketClosePhase::Requested,
+        },
+    ));
+}
+pub(crate) fn udp_close_reference(transport: &mut Transport, id: u64, referenced: bool) {
+    if let Some((_, owner)) = transport
+        .closing_sockets
+        .iter_mut()
+        .find(|(key, _)| *key == CloseTarget::Datagram(id))
+    {
+        owner.referenced = referenced;
+    }
+}
+pub(crate) fn udp_close_has_ref(transport: &Transport, id: u64) -> Option<bool> {
+    transport
+        .closing_sockets
+        .iter()
+        .find_map(|(key, owner)| (*key == CloseTarget::Datagram(id)).then_some(owner.referenced))
+}
 
 /// Load the unchanged SDK owner of BoundSocket's private handle and bind policy.
-pub(crate) fn bound_socket_projection(context:&mut NativeContext<'_,NodeHost>,_:RootId,_:&[RootId])->Result<RootId,RootedError>{
-    let owner=context.host_function_data()?;
-    let policy=crate::host::shared_vm::commonjs::node_library_module(context,"net.js","net.js")?;
-    let key=context.string_rooted("BoundSocket");
-    let constructor=context.get_property_rooted(policy,key)?;
-    context.define_data_property_rooted(owner,key,constructor,true,true,true)?;
+pub(crate) fn bound_socket_projection(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let owner = context.host_function_data()?;
+    let policy =
+        crate::host::shared_vm::commonjs::node_library_module(context, "net.js", "net.js")?;
+    for name in ["BoundSocket", "_TransferredBoundSocket"] {
+        let key = context.string_rooted(name);
+        let constructor = context.get_property_rooted(policy, key)?;
+        context.define_data_property_rooted(owner, key, constructor, true, true, true)?;
+    }
     Ok(context.undefined())
 }
 
 /// New kernel descriptor received over SCM_RIGHTS becomes this endpoint's sole
 /// physical owner. The sender's endpoint/consumer metadata is never copied.
 #[cfg(unix)]
-pub(crate) fn native_tcp_receive(transport:&mut Transport,id:u64,fd:std::os::fd::OwnedFd)->std::io::Result<()> {
+pub(crate) fn native_tcp_receive(
+    transport: &mut Transport,
+    id: u64,
+    fd: std::os::fd::OwnedFd,
+) -> std::io::Result<()> {
     use std::os::fd::AsRawFd;
-    let raw=fd.as_raw_fd();
-    let mut accepts:libc::c_int=0;let mut length=std::mem::size_of_val(&accepts) as libc::socklen_t;
-    if unsafe {libc::getsockopt(raw,libc::SOL_SOCKET,libc::SO_ACCEPTCONN,(&mut accepts as *mut libc::c_int).cast(),&mut length)}<0 {return Err(std::io::Error::last_os_error());}
-    let socket=socket2::Socket::from(fd);socket.set_nonblocking(true)?;
-    if socket.local_addr()?.as_socket().is_none() {return Err(std::io::Error::from_raw_os_error(libc::EINVAL));}
-    enum Received {Listener(TcpListener),Stream(std::net::TcpStream),Bound(super::tcp_owned::TcpOwned)}
-    let received=if accepts!=0 {Received::Listener(socket.into())}
-        else if socket.peer_addr().is_ok() {Received::Stream(socket.into())}
-        else {Received::Bound(super::tcp_owned::TcpOwned::from_owned_descriptor(socket.into())?)};
+    let raw = fd.as_raw_fd();
+    let mut accepts: libc::c_int = 0;
+    let mut length = std::mem::size_of_val(&accepts) as libc::socklen_t;
+    if unsafe {
+        libc::getsockopt(
+            raw,
+            libc::SOL_SOCKET,
+            libc::SO_ACCEPTCONN,
+            (&mut accepts as *mut libc::c_int).cast(),
+            &mut length,
+        )
+    } < 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    let socket = socket2::Socket::from(fd);
+    socket.set_nonblocking(true)?;
+    if socket.local_addr()?.as_socket().is_none() {
+        return Err(std::io::Error::from_raw_os_error(libc::EINVAL));
+    }
+    enum Received {
+        Listener(TcpListener),
+        Stream(std::net::TcpStream),
+        Bound(super::tcp_owned::TcpOwned),
+    }
+    let received = if accepts != 0 {
+        Received::Listener(socket.into())
+    } else if socket.peer_addr().is_ok() {
+        Received::Stream(socket.into())
+    } else {
+        Received::Bound(super::tcp_owned::TcpOwned::from_owned_descriptor(
+            socket.into(),
+        )?)
+    };
     // Prepare all fallible ownership transitions before replacing the constructor
     // socket; import failure leaves the real shell closeable for retirement.
-    transport.native_tcp_unbound.remove(&id).ok_or_else(||std::io::Error::from_raw_os_error(libc::EINVAL))?;
+    transport
+        .native_tcp_unbound
+        .remove(&id)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EINVAL))?;
     match received {
-        Received::Listener(listener)=>{transport.listeners.insert(id,Listener::new(ListenerSocket::Tcp(listener)));}
-        Received::Stream(socket)=>{
-            let mut stream=SharedSocket::new(SocketStream::Plain(RawStream::Tcp(socket)),ReadDemand::Idle,true);
-            stream.delivery=DeliveryPhase::Delivered;transport.sockets.insert(id,stream);
+        Received::Listener(listener) => {
+            transport
+                .listeners
+                .insert(id, Listener::new(ListenerSocket::Tcp(listener)));
         }
-        Received::Bound(socket)=>{transport.native_tcp_unbound.insert(id,socket);}
+        Received::Stream(socket) => {
+            let mut stream = SharedSocket::new(
+                SocketStream::Plain(RawStream::Tcp(socket)),
+                ReadDemand::Idle,
+                true,
+            );
+            stream.delivery = DeliveryPhase::Delivered;
+            transport.sockets.insert(id, stream);
+        }
+        Received::Bound(socket) => {
+            transport.native_tcp_unbound.insert(id, socket);
+        }
     }
     Ok(())
 }
-pub(crate) fn listener_is_tcp(transport:&Transport,id:u64)->bool {
-    matches!(transport.listeners.get(&id).and_then(Listener::socket),Some(ListenerSocket::Tcp(_)))
+pub(crate) fn listener_is_tcp(transport: &Transport, id: u64) -> bool {
+    matches!(
+        transport.listeners.get(&id).and_then(Listener::socket),
+        Some(ListenerSocket::Tcp(_))
+    )
 }

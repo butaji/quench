@@ -91,6 +91,7 @@ pub(crate) const ZLIB_CONSTANTS: &[(&str, f64)] = &[
     ("BROTLI_DECODER_SUCCESS", 1.0),
     ("BROTLI_DECODER_NEEDS_MORE_INPUT", 2.0),
     ("BROTLI_DECODER_NEEDS_MORE_OUTPUT", 3.0),
+    ("BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH", -17.0),
     ("ZSTD_e_continue", 0.0),
     ("ZSTD_e_flush", 1.0),
     ("ZSTD_e_end", 2.0),
@@ -124,4 +125,7 @@ pub(crate) const ZLIB_CONSTANTS: &[(&str, f64)] = &[
     ("ZSTD_c_overlapLog", 402.0),
     ("ZSTD_CLEVEL_DEFAULT", 3.0),
     ("ZSTD_d_windowLogMax", 100.0),
+    // Exposed by Node's zstd binding and used as the errno on a pledged
+    // source-size mismatch.
+    ("ZSTD_error_srcSize_wrong", 72.0),
 ];

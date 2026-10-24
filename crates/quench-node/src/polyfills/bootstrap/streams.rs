@@ -31,16 +31,75 @@ const __nodeFsReadStreamClose = (stream) => {
     return;
   }
   if (stream.fd !== null) {
+    const fd = stream.fd;
+    stream.fd = null;
+    if (typeof stream._fs?.close === "function") {
+      stream._fs.close(fd, (error) => {
+        if (error) stream.emit("error", error);
+        else stream.emit("close");
+      });
+      return;
+    }
     try {
-      globalThis.__nodeFs.closeSync(stream.fd);
+      globalThis.__nodeFs.closeSync(fd);
     } catch (error) {
       if (error.code !== "EBADF") throw error;
     }
-    stream.fd = null;
   }
   stream.emit("close");
 };
 globalThis.__nodeFs.createReadStream = function (value, options = {}) {
+  const fileHandle = options.fd && typeof options.fd === "object"
+    ? options.fd
+    : null;
+  const suppliedFd = fileHandle ? fileHandle.fd : options.fd;
+  if (options.fd !== undefined && options.fd !== null && typeof suppliedFd !== "number") {
+    throw Object.assign(new TypeError('The "fd" argument must be of type number or FileHandle.'), {
+      code: "ERR_INVALID_ARG_TYPE",
+    });
+  }
+  if (options.windowsHandle !== undefined) {
+    if (options.fd !== undefined && options.fd !== null) {
+      throw Object.assign(new Error('The "fd" and "windowsHandle" options cannot be used together.'), {
+        code: "ERR_INCOMPATIBLE_OPTION_PAIR",
+      });
+    }
+    if (process.platform !== "win32") {
+      throw Object.assign(new Error('The "windowsHandle" option is only supported on Windows.'), {
+        code: "ERR_FEATURE_UNAVAILABLE_ON_PLATFORM",
+      });
+    }
+  }
+  if (value !== null && value !== undefined && typeof value !== "string" &&
+      !(value instanceof NodeBuffer) && !(value instanceof globalThis.__nodeURL)) {
+    throw Object.assign(new TypeError('The "path" argument must be of type string, Buffer, or URL.'), {
+      code: "ERR_INVALID_ARG_TYPE",
+    });
+  }
+  if ((value === null || value === undefined) && typeof suppliedFd !== "number") {
+    throw Object.assign(new TypeError('The "path" argument must be of type string, Buffer, or URL.'), {
+      code: "ERR_INVALID_ARG_TYPE",
+    });
+  }
+  if (options.signal !== undefined && !(options.signal instanceof AbortSignal)) {
+    throw Object.assign(new TypeError('The "options.signal" property must be an instance of AbortSignal.'), {
+      code: "ERR_INVALID_ARG_TYPE",
+    });
+  }
+  if (options.fs !== undefined) {
+    for (const name of ["open", "close", "read"]) {
+      const value = options.fs?.[name];
+      if (typeof value !== "function") {
+        const received = value === null ? "null" : typeof value === "string"
+          ? `type string ('${value}')`
+          : typeof value === "object" ? `an instance of ${Array.isArray(value) ? "Array" : "Object"}`
+            : `type ${typeof value} (${String(value)})`;
+        throw Object.assign(new TypeError(`The "options.fs.${name}" property must be of type function. Received ${received}`), {
+          code: "ERR_INVALID_ARG_TYPE",
+        });
+      }
+    }
+  }
   const encoding = typeof options === "string"
     ? options
     : options && options.encoding;
@@ -49,10 +108,11 @@ globalThis.__nodeFs.createReadStream = function (value, options = {}) {
   }
   const { start, end } = __nodeFsReadStreamOptions(options);
   const stream = options.__target || new NodeReadable(options);
-  const fileHandle = options.fd && typeof options.fd === "object"
-    ? options.fd
-    : null;
-  const suppliedFd = fileHandle ? fileHandle.fd : options.fd;
+  // Node's ReadStream exposes the range options as public instance fields.
+  // Keep inherited options too: Node reads these through ordinary property
+  // access, and callers inspect `stream.start` / `stream.end` after creation.
+  stream.start = options.start;
+  stream.end = options.end;
   const hasSuppliedFd = typeof suppliedFd === "number";
   const path = hasSuppliedFd
     ? globalThis.__nodeFdPaths[suppliedFd]
@@ -60,18 +120,26 @@ globalThis.__nodeFs.createReadStream = function (value, options = {}) {
   stream.path = path;
   stream.fd = hasSuppliedFd ? suppliedFd : null;
   stream._fileHandle = fileHandle;
+  stream._fs = options.fs;
   stream.bytesRead = 0;
   stream.close = (callback) => {
     __nodeFsReadStreamClose(stream);
     if (typeof callback === "function") queueMicrotask(() => callback());
     return stream;
   };
+  if (fileHandle && typeof fileHandle.once === "function") {
+    fileHandle.once("close", () => {
+      stream.fd = null;
+      if (!stream.destroyed) stream.destroy();
+    });
+  }
   stream.length = 30000;
   if (options.encoding) stream.length = 10000;
   if (options.encoding) setTimeout(() => (stream.length = 10000), 1);
   if (options.encoding !== undefined) stream.setEncoding(options.encoding);
   setTimeout(() => {
     try {
+      if (stream.destroyed) return;
       if (options.__target && typeof stream.open === "function") {
         stream.open();
         return;
@@ -107,8 +175,79 @@ globalThis.__nodeFs.createReadStream = function (value, options = {}) {
   return stream;
 };
 globalThis.__nodeFs.openAsBlob = async (value, options = {}) => {
+  // Node reports a missing path as a stat failure before it opens the file.
+  const stat = globalThis.__nodeFs.statSync(value);
   const data = globalThis.__nodeFs.readFileSync(value);
-  return new Blob([data], { type: options.type || "" });
+  const blob = new Blob([data], { type: options.type || "" });
+  Object.defineProperty(blob, "\0quench:file-backed:clone-unsupported", { value: true });
+  if (typeof value === "string") {
+    Object.defineProperties(blob, {
+      "\0quench:file-backed:path": { value },
+      "\0quench:file-backed:size": { value: Number(stat.size) },
+      "\0quench:file-backed:mtime": { value: Math.trunc(Number(stat.mtimeMs)) },
+    });
+    const nativeStream = blob.stream;
+    if (typeof nativeStream === "function") {
+      Object.defineProperty(blob, "stream", {
+        configurable: true,
+        value(...args) {
+          const source = Reflect.apply(nativeStream, this, args);
+          const ensureReadable = () => {
+            let current;
+            try { current = globalThis.__nodeFs.statSync(value); } catch {}
+            if (!current || Number(current.size) !== Number(stat.size) ||
+                Math.trunc(Number(current.mtimeMs)) !== Math.trunc(Number(stat.mtimeMs))) {
+              throw new DOMException("The file has been modified", "NotReadableError");
+            }
+          };
+          // openAsBlob is installed after the fs permission wrapper, so its
+          // returned stream must enforce file consistency directly.
+          const iteratorKey = Symbol.asyncIterator;
+          const iteratorFactory = source?.[iteratorKey];
+          if (typeof iteratorFactory === "function") {
+            try {
+              Object.defineProperty(source, iteratorKey, {
+                configurable: true,
+                value() {
+                  const iterator = Reflect.apply(iteratorFactory, this, []);
+                  return {
+                    next(...nextArgs) {
+                      try { ensureReadable(); } catch (error) { return Promise.reject(error); }
+                      return Reflect.apply(iterator.next, iterator, nextArgs);
+                    },
+                    return(...returnArgs) {
+                      return typeof iterator.return === "function"
+                        ? Reflect.apply(iterator.return, iterator, returnArgs)
+                        : Promise.resolve({ done: true, value: undefined });
+                    },
+                    [iteratorKey]() { return this; },
+                  };
+                },
+              });
+            } catch {}
+          }
+          if (typeof source?.getReader !== "function") return source;
+          const reader = source.getReader();
+          const Stream = globalThis.ReadableStream || globalThis.__quenchReadableStream;
+          if (typeof Stream !== "function") return source;
+          return new Stream({
+            async pull(controller) {
+              try {
+                ensureReadable();
+                const item = await reader.read();
+                if (item.done) controller.close();
+                else controller.enqueue(item.value);
+              } catch (error) {
+                controller.error(error);
+              }
+            },
+            cancel(reason) { return reader.cancel(reason); },
+          }, { highWaterMark: 0 });
+        },
+      });
+    }
+  }
+  return blob;
 };
 globalThis.__nodeFs.ReadStream = function ReadStream(value, options = {}) {
   Object.assign(

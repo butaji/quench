@@ -76,6 +76,7 @@ pub(super) fn codec(name: &str) -> Option<Codec> {
         .find_map(|(candidate, _, codec)| (*candidate == name).then_some(*codec))
 }
 
+#[allow(dead_code)]
 const FACTORY: &str = quench_js_check::checked_js!(
     r#"(Transform, Buffer, constants, codecs, open, crc32Operation, queueCallback, prepare) => {
   function crc32(data, value = 0) { return crc32Operation(data, value); }
@@ -106,15 +107,60 @@ const FACTORY: &str = quench_js_check::checked_js!(
     _destroy(error, callback) { return nativeStreams.get(this).destroy(error, callback); }
     close(callback) { return nativeStreams.get(this).close(callback); }
     get _closed() { return nativeStreams.get(this).closed(); }
+    params(level, strategy = 0, callback) {
+      const check = (value, name, min, max) => {
+        if (typeof value !== "number") {
+          const received = typeof value === "string"
+            ? `type string ('${value}')`
+            : value === null
+              ? "null"
+              : typeof value === "object"
+                ? `an instance of ${value?.constructor?.name || "Object"}`
+                : `type ${typeof value} (${String(value)})`;
+          const error = new TypeError(
+            `The "${name}" argument must be of type number. Received ${received}`
+          );
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        if (!Number.isFinite(value)) {
+          const error = new RangeError(
+            `The value of "${name}" is out of range. It must be a finite number. Received ${String(value)}`
+          );
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+        if (value < min || value > max) {
+          const error = new RangeError(
+            `The value of "${name}" is out of range. It must be >= ${min} and <= ${max}. Received ${String(value)}`
+          );
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+      };
+      check(level, "level", -1, 9);
+      check(strategy, "strategy", 0, 4);
+      if (callback !== undefined && typeof callback !== "function") {
+        throw new TypeError("The \"callback\" argument must be of type function");
+      }
+      if (callback) queueMicrotask(callback);
+      return undefined;
+    }
 
   }
 
   const codecClass = (name, mode) => {
-    const Codec = class extends Zlib {
+    const CodecBase = class extends Zlib {
       constructor(options) {
         super(mode, options);
       }
     };
+    function Codec(options) {
+      if (!new.target) return new Codec(options);
+      return Reflect.construct(CodecBase, [options], new.target);
+    }
+    Object.setPrototypeOf(Codec.prototype, CodecBase.prototype);
+    Object.setPrototypeOf(Codec, CodecBase);
     Object.defineProperty(Codec, "name", { value: name });
     return Codec;
   };
@@ -150,6 +196,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
 
 /// Build the shared realm's Node `zlib` exports using its actual stream and
 /// Buffer authorities.
+#[allow(dead_code)]
 pub(crate) fn module(
     context: &mut NativeContext<'_, NodeHost>,
     stream: RootId,
@@ -170,7 +217,8 @@ pub(crate) fn module(
     let codecs = context.array_rooted(&rows)?;
     let finished = get(context, stream, "finished")?;
     let buffer_prototype = get(context, buffer, "prototype")?;
-    let open_data = context.array_rooted(&[finished, buffer_prototype])?;
+    let buffer_from = get(context, buffer, "from")?;
+    let open_data = context.array_rooted(&[finished, buffer_prototype, buffer_from])?;
     let open = context.host_function_with_data(
         crate::host::shared_vm::operation("zlibStreamOpen"),
         open_data,
@@ -288,6 +336,19 @@ pub(super) fn codec_input(
         return Ok(text.into_bytes());
     }
     if let Some(bytes) = context.view_bytes_rooted(input) {
+        // Node validates the observable view length before handing the raw
+        // view to zlib. Keep a forged byteLength from silently compressing a
+        // shorter backing view than the caller requested.
+        let byte_length = get(context, input, "byteLength")?;
+        let reported = context.to_number(byte_length)?;
+        if reported.is_finite() && reported != bytes.len() as f64 {
+            let error = context.range_error_rooted(&format!(
+                "The value of \"buffer.byteLength\" is out of range. Received {reported}"
+            ))?;
+            let code = context.string_rooted("ERR_OUT_OF_RANGE");
+            set(context, error, "code", code)?;
+            return Err(context.throw(error));
+        }
         return Ok(bytes);
     }
     if context.has_builtin_brand_rooted(input, quench_runtime::BuiltinBrand::AnyArrayBuffer)? {
@@ -308,17 +369,21 @@ pub(super) fn codec_input(
 pub(crate) fn constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     const CACHE_KEY: &str = "\0builtin:zlib/constants";
     let shared = context.host_mut().shared_state();
-    if let Some(value) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() { return Ok(value); }
+    if let Some(value) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
+        return Ok(value);
+    }
     let object = context.object_rooted()?;
     for (name, number) in crate::modules::zlib_constants::ZLIB_CONSTANTS {
         let key = context.string_rooted(name);
         let value = context.number(*number);
-        if !context.set_property_rooted(object, key, value, object)? {
-            return Err(RootedError::host("cannot install zlib constant"));
-        }
+        context.define_data_property_rooted(object, key, value, false, true, false)?;
     }
+    context.prevent_extensions_rooted(object)?;
     let retained = context.retain(object)?;
-    shared.borrow_mut().builtin_cache.insert(CACHE_KEY.to_owned(), retained);
+    shared
+        .borrow_mut()
+        .builtin_cache
+        .insert(CACHE_KEY.to_owned(), retained);
     Ok(object)
 }
 
@@ -538,7 +603,8 @@ pub(crate) fn queue_callback(
     state.borrow_mut().scheduler.queue_shared_immediate(
         id,
         crate::modules::shared_event_loop::SharedImmediateOwner::Host,
-        crate::modules::shared_event_loop::SharedCallback { execution: None,
+        crate::modules::shared_event_loop::SharedCallback {
+            execution: None,
             callback: pump,
             receiver,
             args: Vec::new(),

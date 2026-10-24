@@ -42,7 +42,10 @@ impl ConstructedShape {
     }
 }
 
-pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option<(Value, bool)>, bool) {
+pub(super) fn shape_names(
+    shapes: &[Shape],
+    shape: u32,
+) -> (Option<Atom>, Option<(Value, bool)>, bool) {
     let (mut function, mut constructed, mut reconfigured) = (None, None, false);
     let mut current = Some(shape);
     while let Some(id) = current {
@@ -65,7 +68,12 @@ pub(super) fn shape_function_length_reconfigured(shapes: &[Shape], shape: u32) -
     let mut current = Some(shape);
     while let Some(id) = current {
         let shape = &shapes[id as usize];
-        if matches!(shape.transition, ShapeTransition::FunctionLengthReconfigured) { return true; }
+        if matches!(
+            shape.transition,
+            ShapeTransition::FunctionLengthReconfigured
+        ) {
+            return true;
+        }
         current = shape.parent();
     }
     false
@@ -85,18 +93,30 @@ impl<H: Host> Vm<H> {
     }
 
     fn capture_function_name_atom(&mut self, function: Value, name: Atom) {
-        let Some(shape) = self.object_data(function).map(Object::shape) else { return; };
+        let Some(shape) = self.object_data(function).map(Object::shape) else {
+            return;
+        };
         // A first original name makes the function record what it constructs.
         if shape_names(&self.shapes, shape).0.is_none() {
             self.constructed_shapes.fill(ConstructedShape::EMPTY);
         }
-        let shape = self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
-        self.object_data_mut(function).expect("function object").set_shape(shape);
+        let shape =
+            self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
+        self.object_data_mut(function)
+            .expect("function object")
+            .set_shape(shape);
     }
 
     pub(super) fn set_function_debug_name(&mut self, function: Value, name: Atom) {
-        if matches!(self.heap.get(function), Some(Cell::Function { kind: FunctionKind::User(..) | FunctionKind::NumericUser(..), .. }))
-            && self.original_function_name(function).is_some_and(|original| self.atom_units_equal_str(original, ""))
+        if matches!(
+            self.heap.get(function),
+            Some(Cell::Function {
+                kind: FunctionKind::User(..) | FunctionKind::NumericUser(..),
+                ..
+            })
+        ) && self
+            .original_function_name(function)
+            .is_some_and(|original| self.atom_units_equal_str(original, ""))
         {
             self.capture_function_name_atom(function, name);
         }
@@ -105,28 +125,51 @@ impl<H: Host> Vm<H> {
     pub(super) fn default_function_name_info(&self, function: Value, key: PropertyKey) -> bool {
         if !matches!(key, PropertyKey::String(atom) if self.atom_units_equal_str(atom, "name"))
             || !matches!(self.heap.get(function), Some(Cell::Function { .. }))
-        { return false; }
-        let Some(object) = self.object_data(function) else { return false; };
+        {
+            return false;
+        }
+        let Some(object) = self.object_data(function) else {
+            return false;
+        };
         let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
-        name.is_some() && !reconfigured
-            && self.shape_entries(object.shape()).get(FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX)
+        name.is_some()
+            && !reconfigured
+            && self
+                .shape_entries(object.shape())
+                .get(FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX)
                 .is_some_and(|(candidate, _)| *candidate == key)
             && (!object.was_used_as_prototype() || object.prototype_lookup_ready())
     }
 
     pub(super) fn reconfigure_function_name(&mut self, function: Value, key: PropertyKey) {
-        if !matches!(self.heap.get(function), Some(Cell::Function { .. })) { return; }
-        let Some(object) = self.object_data(function) else { return; };
+        if !matches!(self.heap.get(function), Some(Cell::Function { .. })) {
+            return;
+        }
+        let Some(object) = self.object_data(function) else {
+            return;
+        };
         let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
-        if name.is_none() { return; }
+        if name.is_none() {
+            return;
+        }
         let transition = match key {
-            PropertyKey::String(atom) if self.atom_units_equal_str(atom, "name") && !reconfigured => ShapeTransition::FunctionNameReconfigured,
-            PropertyKey::String(atom) if self.atom_units_equal_str(atom, "length")
-                && !shape_function_length_reconfigured(&self.shapes, object.shape()) => ShapeTransition::FunctionLengthReconfigured,
+            PropertyKey::String(atom)
+                if self.atom_units_equal_str(atom, "name") && !reconfigured =>
+            {
+                ShapeTransition::FunctionNameReconfigured
+            }
+            PropertyKey::String(atom)
+                if self.atom_units_equal_str(atom, "length")
+                    && !shape_function_length_reconfigured(&self.shapes, object.shape()) =>
+            {
+                ShapeTransition::FunctionLengthReconfigured
+            }
             _ => return,
         };
         let shape = self.append_cached_shape_transition(object.shape(), transition);
-        self.object_data_mut(function).expect("function object").set_shape(shape);
+        self.object_data_mut(function)
+            .expect("function object")
+            .set_shape(shape);
     }
 
     /// V8's named native-info load enters prototype lookup mode, whereas
@@ -138,7 +181,10 @@ impl<H: Host> Vm<H> {
         }
         // An array's own `length` answers the read before any function's could.
         let array_length = atom == self.length_atom
-            && self.heap.array(object).is_some_and(|array| !array.is_arguments_object());
+            && self
+                .heap
+                .array(object)
+                .is_some_and(|array| !array.is_arguments_object());
         if !array_length {
             self.prepare_function_info_prototypes(object, atom, atom == self.runtime_atoms.name);
         }
@@ -157,25 +203,41 @@ impl<H: Host> Vm<H> {
     fn prepare_function_info_prototypes(&mut self, mut object: Value, atom: Atom, name: bool) {
         let receiver = object;
         while let Some(data) = self.object_data(object) {
-            if self.proxy_parts(object).is_some() { return; }
+            if self.proxy_parts(object).is_some() {
+                return;
+            }
             if self.own_property(object, atom).is_some() {
                 if matches!(self.heap.get(object), Some(Cell::Function { .. })) {
                     let (original, _, reconfigured) = shape_names(&self.shapes, data.shape());
-                    let default = original.is_some() && if name { !reconfigured }
-                        else { !shape_function_length_reconfigured(&self.shapes, data.shape()) };
+                    let default = original.is_some()
+                        && if name {
+                            !reconfigured
+                        } else {
+                            !shape_function_length_reconfigured(&self.shapes, data.shape())
+                        };
                     if default {
                         let mut current = receiver;
                         while let Some(data) = self.object_data(current) {
-                            if self.proxy_parts(current).is_some() || data.prototype_lookup_ready() { break; }
+                            if self.proxy_parts(current).is_some() || data.prototype_lookup_ready()
+                            {
+                                break;
+                            }
                             let next = data.proto();
-                            self.object_data_mut(current).expect("lookup object").prepare_prototype_lookup();
+                            self.object_data_mut(current)
+                                .expect("lookup object")
+                                .prepare_prototype_lookup();
                             current = next;
                         }
                     }
                 }
                 return;
             }
-            if self.property_attributes(object, PropertyKey::string(atom)).is_some_and(|attributes| attributes.accessor) { return; }
+            if self
+                .property_attributes(object, PropertyKey::string(atom))
+                .is_some_and(|attributes| attributes.accessor)
+            {
+                return;
+            }
             object = data.proto();
         }
     }
@@ -188,10 +250,17 @@ impl<H: Host> Vm<H> {
     /// The source/debug name can differ from the public creation name: dynamic
     /// Function constructors expose "anonymous" while their source name is empty.
     pub(super) fn original_debug_name(&self, function: Value) -> Option<JsString> {
-        if let Some(Cell::Function { kind: FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id), .. }) = self.heap.get(function) {
-            if self.programs.is_function_constructor_body(*program, *id) { return None; }
+        if let Some(Cell::Function {
+            kind: FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id),
+            ..
+        }) = self.heap.get(function)
+        {
+            if self.programs.is_function_constructor_body(*program, *id) {
+                return None;
+            }
         }
-        self.original_function_name(function).map(|name| self.atom_value(name))
+        self.original_function_name(function)
+            .map(|name| self.atom_value(name))
     }
 
     /// V8's debug name reads data properties but never invokes a name accessor.
@@ -216,14 +285,22 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         new_target_is_base: bool,
     ) -> u32 {
-        let entry = ConstructedShape { shape, constructor, new_target_is_base, constructed: shape };
+        let entry = ConstructedShape {
+            shape,
+            constructor,
+            new_target_is_base,
+            constructed: shape,
+        };
         let index = entry.cache_index();
         let cached = self.constructed_shapes[index];
         if cached.same_construction(&entry) {
             return cached.constructed;
         }
         let constructed = self.derive_constructed_shape(shape, constructor, new_target_is_base);
-        self.constructed_shapes[index] = ConstructedShape { constructed, ..entry };
+        self.constructed_shapes[index] = ConstructedShape {
+            constructed,
+            ..entry
+        };
         constructed
     }
 
@@ -324,7 +401,8 @@ impl<H: Host> Vm<H> {
         if object.was_used_as_prototype() {
             return None;
         }
-        if let Some((constructor, new_target_is_base)) = shape_names(&self.shapes, object.shape()).1 {
+        if let Some((constructor, new_target_is_base)) = shape_names(&self.shapes, object.shape()).1
+        {
             return new_target_is_base
                 .then(|| self.debug_function_name(constructor))
                 .flatten();
@@ -351,5 +429,4 @@ impl<H: Host> Vm<H> {
         };
         Some(JsString::from_str(name))
     }
-
 }

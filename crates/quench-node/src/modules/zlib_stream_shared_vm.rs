@@ -65,6 +65,7 @@ pub(crate) fn open(
     let open_data = context.host_function_data()?;
     let finished = get(context, open_data, "0")?;
     let buffer_prototype = get(context, open_data, "1")?;
+    let buffer_from = get(context, open_data, "2")?;
     let prepared = *args
         .get(2)
         .ok_or_else(|| RootedError::host("zlib prepared options missing"))?;
@@ -122,6 +123,7 @@ pub(crate) fn open(
     set(context, api, "stream", stream)?;
     set(context, api, "finished", finished)?;
     set(context, api, "bufferPrototype", buffer_prototype)?;
+    set(context, api, "bufferFrom", buffer_from)?;
     let handle = context.object_rooted()?;
     set(context, stream, "_handle", handle)?;
     let undefined = context.undefined();
@@ -547,13 +549,8 @@ fn buffer_bytes(
     api: RootId,
     bytes: &[u8],
 ) -> Result<RootId, RootedError> {
-    let buffer = context.uint8_array_rooted(bytes)?;
-    let prototype = get(context, api, "bufferPrototype")?;
-    if context.set_prototype_rooted(buffer, prototype)? {
-        Ok(buffer)
-    } else {
-        Err(RootedError::host(
-            "zlib intrinsic Buffer prototype installation failed",
-        ))
-    }
+    let bytes = context.uint8_array_rooted(bytes)?;
+    let from = get(context, api, "bufferFrom")?;
+    let undefined = context.undefined();
+    context.call_rooted(from, undefined, &[bytes])
 }

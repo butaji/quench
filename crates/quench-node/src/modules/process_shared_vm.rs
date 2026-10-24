@@ -2,25 +2,36 @@
 
 use crate::host::node_host::NodeHost;
 use crate::modules::process_state::{self, ProcessFact, UnhandledRejectionMode};
-use quench_runtime::{NativeArithmetic, NativeContext, PromiseRejectionEvent, RootId, RootedError, Value};
+use quench_runtime::{
+    NativeArithmetic, NativeContext, PromiseRejectionEvent, RootId, RootedError, Value,
+};
 use std::cell::RefCell;
+use std::ffi::CString;
 use std::io::Write;
 use std::rc::Rc;
-use std::sync::OnceLock;
-use std::time::Instant;
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn tzset();
+}
 
 pub(crate) fn collect_garbage(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
+    let started = std::time::Instant::now();
     context.collect()?;
+    crate::modules::performance_binding_shared_vm::notify_forced_gc(
+        context,
+        started.elapsed().as_secs_f64() * 1000.0,
+    )?;
     Ok(context.undefined())
 }
 
 const STDOUT_FD: i32 = 1;
 const STDERR_FD: i32 = 2;
-static HRTIME_ORIGIN: OnceLock<Instant> = OnceLock::new();
+const CASE_RESULT_ENV: &str = "QUENCH_NODE_TEST_CASE_RESULT";
 const MAX_SAFE_EXIT_CODE: f64 = 9_007_199_254_740_991.0;
 const UNHANDLED_REJECTION_CLI_GUIDANCE: &str = "To terminate the node process on unhandled promise rejection, use the CLI flag `--unhandled-rejections=strict` (see https://nodejs.org/api/cli.html#cli_unhandled_rejections_mode).";
 
@@ -36,12 +47,20 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let null = context.null();
     let auxiliary = context.array_rooted(&[])?;
     let report_flag = context.boolean(false);
-    for (name, value) in [("captureFn", null), ("auxiliaryCallbacks", auxiliary), ("reportFlag", report_flag)] {
+    for (name, value) in [
+        ("captureFn", null),
+        ("auxiliaryCallbacks", auxiliary),
+        ("reportFlag", report_flag),
+    ] {
         let key = context.string_rooted(name);
         context.define_data_property_rooted(capture_state, key, value, true, true, true)?;
     }
     let capture_state = context.retain(capture_state)?;
-    context.host_mut().shared_state().borrow_mut().process_capture_state = Some(capture_state);
+    context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .process_capture_state = Some(capture_state);
     let function = context.host_function(crate::host::shared_vm::operation("uptime"))?;
     install(context, process, "uptime", function)?;
     install_exit_code(context, process)?;
@@ -116,10 +135,21 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "_rawDebug", raw_debug)?;
     for (name, operation) in [
         ("binding", "processBinding"),
-        ("setUncaughtExceptionCaptureCallback", "processSetUncaughtExceptionCaptureCallback"),
-        ("hasUncaughtExceptionCaptureCallback", "processHasUncaughtExceptionCaptureCallback"),
+        (
+            "setUncaughtExceptionCaptureCallback",
+            "processSetUncaughtExceptionCaptureCallback",
+        ),
+        (
+            "hasUncaughtExceptionCaptureCallback",
+            "processHasUncaughtExceptionCaptureCallback",
+        ),
+        (
+            "addUncaughtExceptionCaptureCallback",
+            "processAddUncaughtExceptionCaptureCallback",
+        ),
     ] {
-        let function = context.host_constructor_named(crate::host::shared_vm::operation(operation), name)?;
+        let function =
+            context.host_constructor_named(crate::host::shared_vm::operation(operation), name)?;
         install(context, process, name, function)?;
     }
     let active_handles =
@@ -134,8 +164,15 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         "__quenchGetActiveNetworkResources",
         active_network_resources,
     )?;
-    let active_timer_resources = context.host_function(crate::host::shared_vm::operation("processGetActiveTimerResources"))?;
-    install(context, process, "__quenchGetActiveTimerResources", active_timer_resources)?;
+    let active_timer_resources = context.host_function(crate::host::shared_vm::operation(
+        "processGetActiveTimerResources",
+    ))?;
+    install(
+        context,
+        process,
+        "__quenchGetActiveTimerResources",
+        active_timer_resources,
+    )?;
     let hrtime_raw =
         context.host_function(crate::host::shared_vm::operation("processHrtimeNow"))?;
     let hrtime_factory = context.evaluate_script_rooted(
@@ -149,7 +186,12 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "_exiting", exiting)?;
     let shared_state = context.host_mut().shared_state();
     let argv = shared_state.borrow().process_argv.clone();
-    let exec_argv = shared_state.borrow().exec_argv.clone();
+    let exec_argv = shared_state
+        .borrow()
+        .workers
+        .exec_argv
+        .clone()
+        .unwrap_or_else(|| shared_state.borrow().exec_argv.clone());
     if let Some(pair) = exec_argv.windows(2).rev().find(|pair| {
         matches!(
             pair[0].as_str(),
@@ -160,33 +202,45 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     }
     let title = exec_argv
         .iter()
-        .find_map(|argument| argument.strip_prefix("--title="));
+        .find_map(|argument| argument.strip_prefix("--title="))
+        .map(str::to_owned)
+        .or_else(|| {
+            shared_state
+                .borrow()
+                .cli_options
+                .string_value("--title")
+                .filter(|title| !title.is_empty())
+                .map(str::to_owned)
+        });
     if let Some(title) = title {
         let global = context.global_root()?;
         let key = context.string_rooted("__quench_cli_title");
-        let value = context.string_rooted(title);
+        let value = context.string_rooted(&title);
         if !context.set_property_rooted(global, key, value, global)? {
             return Err(RootedError::host("cannot install CLI process title"));
         }
-        set_text(context, process, "title", title)?;
+        set_text(context, process, "title", &title)?;
     }
-    if !super::worker_threads_shared_vm::is_child(context) { super::child_process_ipc_shared_vm::initialize(context)?; }
+    if !super::worker_threads_shared_vm::is_child(context) {
+        super::child_process_ipc_shared_vm::initialize(context)?;
+    }
     let env = context.object_rooted()?;
-    for (name, value) in std::env::vars() {
-        if context
-            .host_mut()
-            .shared_state()
-            .borrow()
-            .process_ipc
-            .channel
-            .is_some()
-            && matches!(
-                name.as_str(),
-                "NODE_CHANNEL_FD" | "NODE_CHANNEL_SERIALIZATION_MODE"
-            )
-        {
+    let env_values = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_env_override
+        .clone()
+        .unwrap_or_else(|| std::env::vars().collect());
+    for (name, value) in env_values {
+        if name == CASE_RESULT_ENV {
             continue;
         }
+        // Keep the IPC bootstrap values visible to Node's pre_execution.js:
+        // setupChildProcessIpcChannel() consumes them and calls
+        // child_process._forkChild(), which installs process.send and the JS
+        // message/disconnect surface. The native channel may already own the
+        // descriptor here, but that alone does not initialize process.send.
         // One entry's handles at a time, however large the environment.
         context.scoped(|context| {
             let key = context.string_rooted(&name);
@@ -197,15 +251,36 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
             Ok(())
         })?;
     }
+    let global = context.global_root()?;
+    let proxy_key = context.string_rooted("Proxy");
+    let proxy = context.get_property_rooted(global, proxy_key)?;
+    let handler = context.object_rooted()?;
+    let define_property = context.host_function_named(
+        crate::host::shared_vm::operation("processEnvDefineProperty"),
+        "defineProperty",
+    )?;
+    install(context, handler, "defineProperty", define_property)?;
+    let env = context.construct_rooted(proxy, proxy, &[env, handler])?;
     install(context, process, "env", env)?;
     let load_env_file =
         context.host_function(crate::host::shared_vm::operation("processLoadEnvFile"))?;
     install(context, process, "loadEnvFile", load_env_file)?;
+    install_execve(context, process)?;
     let set_env = context.host_function(crate::host::shared_vm::operation("processSetEnv"))?;
     install(context, process, "__quenchSetEnv", set_env)?;
     let delete_env =
         context.host_function(crate::host::shared_vm::operation("processDeleteEnv"))?;
     install(context, process, "__quenchDeleteEnv", delete_env)?;
+    let get_shared_env =
+        context.host_function(crate::host::shared_vm::operation("processGetSharedEnv"))?;
+    install(context, process, "__quenchGetSharedEnv", get_shared_env)?;
+    let is_shared_env = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_env_shared;
+    let shared_env = context.boolean(is_shared_env);
+    install(context, process, "__quenchEnvShared", shared_env)?;
     for (name, values) in [
         ("argv", argv.as_slice()),
         ("execArgv", exec_argv.as_slice()),
@@ -221,19 +296,35 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     set_text(context, process, "platform", &process_state::platform())?;
     let executable =
         std::env::current_exe().map_err(|error| RootedError::host(error.to_string()))?;
-    let node_executable = crate::shared_run::executable_path()
-        .map_err(|error| RootedError::host(error.to_string()))?;
+    let host_argv0 = std::env::args_os().next().map(std::path::PathBuf::from);
+    // In the parallel harness the runner itself embeds Quench, so its argv0
+    // matches current_exe even though the harness selects a separate Node CLI
+    // for process.execPath and child launches. A copied quench-node normally
+    // selects itself (or has no override), and remains the runtime in that case.
+    let selected_executable_is_distinct = std::env::var_os("QUENCH_NODE_TEST_EXECUTABLE")
+        .and_then(|path| std::fs::canonicalize(path).ok())
+        .is_some_and(|selected| selected != executable);
+    let argv0_is_runtime = !selected_executable_is_distinct
+        && host_argv0
+            .as_deref()
+            .and_then(|argv0| std::fs::canonicalize(argv0).ok())
+            .is_some_and(|argv0| argv0 == executable);
+    // A copied or renamed quench-node binary launched by child_process.fork
+    // is the actual Node executable for that child. The test-harness override
+    // remains useful when Quench is embedded in run-parallel, where argv0 is
+    // the harness executable rather than this runtime.
+    let node_executable = if argv0_is_runtime {
+        executable.clone()
+    } else {
+        crate::shared_run::executable_path()
+            .map_err(|error| RootedError::host(error.to_string()))?
+    };
     set_text(
         context,
         process,
         "execPath",
         &node_executable.to_string_lossy(),
     )?;
-    let host_argv0 = std::env::args_os().next().map(std::path::PathBuf::from);
-    let argv0_is_runtime = host_argv0
-        .as_deref()
-        .and_then(|argv0| std::fs::canonicalize(argv0).ok())
-        .is_some_and(|argv0| argv0 == executable);
     let argv0 = if argv0_is_runtime {
         node_executable.clone()
     } else {
@@ -281,6 +372,46 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     Ok(())
 }
 
+pub(crate) fn env_define_property(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let target = args.first().copied().unwrap_or_else(|| context.undefined());
+    let key = args.get(1).copied().unwrap_or_else(|| context.undefined());
+    let descriptor = args.get(2).copied().unwrap_or_else(|| context.undefined());
+    let mut valid = true;
+    for name in ["configurable", "enumerable", "writable"] {
+        let key = context.string_rooted(name);
+        let field = context.get_property_rooted(descriptor, key)?;
+        valid &= context.rooted_value(field).and_then(Value::as_bool) == Some(true);
+    }
+    for name in ["get", "set"] {
+        let key = context.string_rooted(name);
+        let field = context.get_property_rooted(descriptor, key)?;
+        valid &= context
+            .rooted_value(field)
+            .is_some_and(|value| value.is_undefined());
+    }
+    if !valid {
+        let error = context.type_error_rooted(
+            "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
+        )?;
+        crate::modules::node_errors_shared_vm::decorate_type_error(
+            context,
+            error,
+            "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
+        )?;
+        return Err(context.throw(error));
+    }
+    let global = context.global_root()?;
+    let reflect_key = context.string_rooted("Reflect");
+    let reflect = context.get_property_rooted(global, reflect_key)?;
+    let define_key = context.string_rooted("defineProperty");
+    let define = context.get_property_rooted(reflect, define_key)?;
+    context.call_rooted(define, reflect, &[target, key, descriptor])
+}
+
 fn install_exit_code(
     context: &mut NativeContext<'_, NodeHost>,
     process: RootId,
@@ -323,7 +454,192 @@ fn create_stream(
         data,
     )?;
     install(context, stream, "write", write)?;
+    // process.stdout/stderr are special Node streams: calling end() flushes
+    // any final chunk, but it must not close the underlying process file
+    // descriptor. Quench writes synchronously, so an end callback can run in
+    // the next microtask after the final write has completed.
+    let end_factory = context.evaluate_script_rooted(
+        r#"(stream) => function end(chunk, encoding, callback) {
+          if (typeof chunk === 'function') {
+            callback = chunk;
+            chunk = undefined;
+          } else if (typeof encoding === 'function') {
+            callback = encoding;
+            encoding = undefined;
+          }
+          if (chunk !== undefined && chunk !== null) stream.write(chunk, encoding);
+          if (typeof callback === 'function') queueMicrotask(() => callback.call(stream));
+          return stream;
+        }"#,
+        "node:process/stdio-end.js",
+    )?;
+    let undefined = context.undefined();
+    let end = context.call_rooted(end_factory, undefined, &[stream])?;
+    install(context, stream, "end", end)?;
+    // Quench writes process stdio synchronously, so it has no native stream
+    // handle whose reference state needs changing. Keep the Node stream API
+    // shape available to callers which ref/unref stdio around IPC reads.
+    let reference = context.evaluate_script_rooted(
+        "() => function() { return this; }",
+        "node:process/stdio-reference.js",
+    )?;
+    let undefined = context.undefined();
+    let reference = context.call_rooted(reference, undefined, &[])?;
+    install(context, stream, "ref", reference)?;
+    install(context, stream, "unref", reference)?;
     Ok(stream)
+}
+
+fn install_execve(
+    context: &mut NativeContext<'_, NodeHost>,
+    process: RootId,
+) -> Result<(), RootedError> {
+    let native = context.host_function(crate::host::shared_vm::operation("processExecve"))?;
+    let factory = context.evaluate_script_rooted(
+        r#"(native) => {
+          const inspect = (value) => {
+            if (typeof value === 'string') {
+              return `'${value.replace(/\\/g, '\\\\').replace(/\0/g, '\\x00').replace(/'/g, "\\'")}'`;
+            }
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+              const entries = Object.entries(value).map(([key, entry]) => `${key}: ${inspect(entry)}`);
+              return entries.length ? `{ ${entries.join(', ')} }` : '{}';
+            }
+            return String(value);
+          };
+          const typeError = (message, code) => Object.assign(new TypeError(message), { code });
+          const received = (value) => {
+            if (value === null) return 'null';
+            if (Array.isArray(value)) return 'an instance of Array';
+            if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+              return `type ${typeof value} (${inspect(value)})`;
+            }
+            return typeof value;
+          };
+          function execve(execPath, args = [], env = process.env) {
+            if (typeof execPath !== 'string') {
+              throw typeError(`The "execPath" argument must be of type string. Received ${received(execPath)}`, 'ERR_INVALID_ARG_TYPE');
+            }
+            if (execPath.includes('\0')) {
+              throw typeError(`The argument 'execPath' must be a string without null bytes. Received ${inspect(execPath)}`, 'ERR_INVALID_ARG_VALUE');
+            }
+            if (!Array.isArray(args)) {
+              throw typeError(`The "args" argument must be an instance of Array. Received ${received(args)}`, 'ERR_INVALID_ARG_TYPE');
+            }
+            for (let i = 0; i < args.length; i++) {
+              const arg = args[i];
+              if (typeof arg !== 'string' || arg.includes('\0')) {
+                throw typeError(`The argument 'args[${i}]' must be a string without null bytes. Received ${inspect(arg)}`, 'ERR_INVALID_ARG_VALUE');
+              }
+            }
+            if (env === null || typeof env !== 'object') {
+              throw typeError(`The "env" argument must be of type object. Received ${received(env)}`, 'ERR_INVALID_ARG_TYPE');
+            }
+            const envArray = [];
+            for (const [key, value] of Object.entries(env)) {
+              if (typeof key !== 'string' || typeof value !== 'string' || key.includes('\0') || value.includes('\0')) {
+                throw typeError(`The argument 'env' must be an object with string keys and values without null bytes. Received ${inspect(env)}`, 'ERR_INVALID_ARG_VALUE');
+              }
+              envArray.push(`${key}=${value}`);
+            }
+            if (process.execArgv.includes('--permission') &&
+                !process.execArgv.some((argument) => argument === '--allow-child-process' || argument.startsWith('--allow-child-process='))) {
+              const error = new Error('Access to this API has been restricted. Use --allow-child-process to manage permissions.');
+              error.code = 'ERR_ACCESS_DENIED';
+              error.permission = 'ChildProcess';
+              error.resource = execPath;
+              throw error;
+            }
+            return native(execPath, JSON.stringify(args), JSON.stringify(envArray));
+          }
+          return execve;
+        }"#,
+        "node:process/shared-execve.js",
+    )?;
+    let undefined = context.undefined();
+    let function = context.call_rooted(factory, undefined, &[native])?;
+    install(context, process, "execve", function)
+}
+
+pub(crate) fn execve(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    if super::worker_threads_shared_vm::is_child(context) {
+        let error =
+            context.type_error_rooted("Calling process.execve is not supported in Workers")?;
+        set_text(context, error, "code", "ERR_WORKER_UNSUPPORTED_OPERATION")?;
+        return Err(context.throw(error));
+    }
+    let exec_path = args
+        .first()
+        .copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .ok_or_else(|| RootedError::host("process.execve is missing execPath"))?;
+    let argv_json = args
+        .get(1)
+        .copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .ok_or_else(|| RootedError::host("process.execve is missing args"))?;
+    let env_json = args
+        .get(2)
+        .copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .ok_or_else(|| RootedError::host("process.execve is missing env"))?;
+    let argv: Vec<String> =
+        serde_json::from_str(&argv_json).map_err(|error| RootedError::host(error.to_string()))?;
+    let mut env: Vec<String> =
+        serde_json::from_str(&env_json).map_err(|error| RootedError::host(error.to_string()))?;
+    // Keep the isolated case harness alive when a fixture replaces its own
+    // executable with the quench CLI. Node's process.env would not contain
+    // this private marker, so restore it only at the exec boundary.
+    if std::env::var_os(crate::shared_run::CHILD_RUNNER_ENV).is_some() {
+        let prefix = format!("{}=", crate::shared_run::CHILD_RUNNER_ENV);
+        if !env.iter().any(|entry| entry.starts_with(&prefix)) {
+            env.push(format!("{prefix}1"));
+        }
+    }
+    if let Some(result_path) = std::env::var_os(CASE_RESULT_ENV) {
+        let prefix = format!("{CASE_RESULT_ENV}=");
+        if !env.iter().any(|entry| entry.starts_with(&prefix)) {
+            env.push(format!("{prefix}{}", result_path.to_string_lossy()));
+        }
+    }
+    let exec_path_c = CString::new(exec_path.as_bytes())
+        .map_err(|_| RootedError::host("process.execve path contains a null byte"))?;
+    let argv_c = argv
+        .iter()
+        .map(|value| CString::new(value.as_bytes()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| RootedError::host("process.execve argument contains a null byte"))?;
+    let env_c = env
+        .iter()
+        .map(|value| CString::new(value.as_bytes()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| RootedError::host("process.execve environment contains a null byte"))?;
+    let mut argv_ptrs: Vec<*const libc::c_char> =
+        argv_c.iter().map(|value| value.as_ptr()).collect();
+    argv_ptrs.push(std::ptr::null());
+    let mut env_ptrs: Vec<*const libc::c_char> = env_c.iter().map(|value| value.as_ptr()).collect();
+    env_ptrs.push(std::ptr::null());
+    #[cfg(unix)]
+    unsafe {
+        libc::execve(exec_path_c.as_ptr(), argv_ptrs.as_ptr(), env_ptrs.as_ptr());
+    }
+    #[cfg(not(unix))]
+    let _ = (exec_path_c, argv_ptrs, env_ptrs);
+    let error = std::io::Error::last_os_error();
+    let errno = error.raw_os_error().unwrap_or(libc::EINVAL);
+    let code = errno_name(errno);
+    let error_root = context.error_rooted(&format!("{code}, {}", error))?;
+    set_text(context, error_root, "code", code)?;
+    set_text(context, error_root, "syscall", "execve")?;
+    let path = context.string_rooted(&exec_path);
+    install(context, error_root, "path", path)?;
+    let errno_value = context.number(errno.unsigned_abs() as f64);
+    install(context, error_root, "errno", errno_value)?;
+    Err(context.throw(error_root))
 }
 
 fn define_global_process(
@@ -336,13 +652,28 @@ fn define_global_process(
     let define_key = context.string_rooted("defineProperty");
     let define = context.get_property_rooted(object, define_key)?;
     let name = context.string_rooted("process");
+    let factory = context.evaluate_script_rooted(
+        r#"(initial) => {
+          let current = initial;
+          return {
+            get() { return current; },
+            set(value) { current = value; },
+          };
+        }"#,
+        "node:process/global-accessor.js",
+    )?;
+    let undefined = context.undefined();
+    let accessors = context.call_rooted(factory, undefined, &[process])?;
+    let getter_key = context.string_rooted("get");
+    let getter = context.get_property_rooted(accessors, getter_key)?;
+    let setter_key = context.string_rooted("set");
+    let setter = context.get_property_rooted(accessors, setter_key)?;
     let descriptor = context.object_rooted()?;
-    let writable = context.boolean(true);
     let enumerable = context.boolean(false);
     let configurable = context.boolean(true);
     for (key, value) in [
-        ("value", process),
-        ("writable", writable),
+        ("get", getter),
+        ("set", setter),
         ("enumerable", enumerable),
         ("configurable", configurable),
     ] {
@@ -415,7 +746,12 @@ fn install_versions(
 ) -> Result<(), RootedError> {
     let versions = context.object_rooted()?;
     for (name, version) in process_state::version_facts() {
-        let value = context.string_rooted(version);
+        let version = if *name == "openssl" {
+            process_state::openssl_version()
+        } else {
+            (*version).to_owned()
+        };
+        let value = context.string_rooted(&version);
         let key = context.string_rooted(name);
         context.define_data_property_rooted(versions, key, value, false, true, true)?;
     }
@@ -551,6 +887,29 @@ pub(crate) fn exit(
         .ok_or_else(|| RootedError::host("process is not initialized"))?;
     if let Some(code) = args.first() {
         set_exit_property(context, process, "exitCode", *code)?;
+    }
+    let exec_argv_key = context.string_rooted("execArgv");
+    let exec_argv = context.get_property_rooted(process, exec_argv_key)?;
+    let trace_flag = context.string_rooted("--trace-exit");
+    let includes_key = context.string_rooted("includes");
+    let includes = context.get_property_rooted(exec_argv, includes_key)?;
+    let trace_exit = if context.is_callable_rooted(includes)? {
+        let found = context.call_rooted(includes, exec_argv, &[trace_flag])?;
+        context.truthy_rooted(found)?
+    } else {
+        false
+    };
+    if trace_exit {
+        let code = public_exit_code(context, process)?;
+        let code = context.to_string(code)?;
+        let error = context.error_rooted("Process exiting")?;
+        let stack_key = context.string_rooted("stack");
+        let stack = context.get_property_rooted(error, stack_key)?;
+        let stack = context.to_string(stack)?;
+        let mut stderr = std::io::stderr().lock();
+        stderr
+            .write_all(format!("Process exiting with code {code}\n{stack}\n").as_bytes())
+            .map_err(|error| RootedError::host(error.to_string()))?;
     }
     let key = context.string_rooted("_exiting");
     let exiting = context.get_property_rooted(process, key)?;
@@ -762,12 +1121,35 @@ pub(crate) fn stream_write(
         )?);
     };
     if fd == STDERR_FD {
-        std::io::stderr()
-            .lock()
-            .write_all(&bytes)
-            .map_err(|error| RootedError::host(error.to_string()))?;
+        // Node's Worker `{ stderr: true }` option exposes child stderr through
+        // `worker.stderr`. Worker hosts install an output sink that queues
+        // those bytes back to the parent; ordinary process stderr remains a
+        // direct OS write.
+        let (capture, output) = {
+            let shared = context.host_mut().shared_state();
+            let state = shared.borrow();
+            (state.workers.captures_stderr(), state.output.clone())
+        };
+        if capture {
+            if let Some(output) = output {
+                output(&String::from_utf8_lossy(&bytes));
+            } else {
+                std::io::stderr()
+                    .lock()
+                    .write_all(&bytes)
+                    .map_err(|error| RootedError::host(error.to_string()))?;
+            }
+        } else {
+            std::io::stderr()
+                .lock()
+                .write_all(&bytes)
+                .map_err(|error| RootedError::host(error.to_string()))?;
+        }
     } else {
-        let output = context.host_mut().shared_state().borrow().output.clone();
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        let output = state.stdout_output.clone().or_else(|| state.output.clone());
+        drop(state);
         if let Some(output) = output {
             // Preserve the embedding API's existing text-only sink contract.
             output(&String::from_utf8_lossy(&bytes));
@@ -1359,6 +1741,16 @@ fn errno_name(errno: i32) -> &'static str {
     match errno {
         libc::EPERM => "EPERM",
         libc::EACCES => "EACCES",
+        libc::ENOENT => "ENOENT",
+        libc::EIO => "EIO",
+        libc::EBADF => "EBADF",
+        libc::EAGAIN => "EAGAIN",
+        libc::ENOMEM => "ENOMEM",
+        libc::EFAULT => "EFAULT",
+        libc::ENOTDIR => "ENOTDIR",
+        libc::ELOOP => "ELOOP",
+        libc::ETXTBSY => "ETXTBSY",
+        libc::E2BIG => "E2BIG",
         libc::EINVAL => "EINVAL",
         libc::ENOSYS => "ENOSYS",
         _ => "UNKNOWN",
@@ -1370,9 +1762,22 @@ pub(crate) fn hrtime_now(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let elapsed = HRTIME_ORIGIN.get_or_init(Instant::now).elapsed();
-    let seconds = context.number(elapsed.as_secs() as f64);
-    let nanoseconds = context.number(elapsed.subsec_nanos() as f64);
+    let control = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .clone();
+    let monotonic_ns = control
+        .monotonic_now_ns()
+        .or_else(|| {
+            control
+                .performance_origins()
+                .map(|(origin, _)| origin + control.uptime() * 1_000_000_000.0)
+        })
+        .ok_or_else(|| RootedError::host("Monotonic clock is unavailable"))?;
+    let seconds = context.number((monotonic_ns / 1_000_000_000.0).floor());
+    let nanoseconds = context.number(monotonic_ns.rem_euclid(1_000_000_000.0));
     context.array_rooted(&[seconds, nanoseconds])
 }
 
@@ -1384,6 +1789,9 @@ pub(crate) fn chdir(
     let Some(directory) = args.first().copied() else {
         return Err(chdir_type_error(context)?);
     };
+    if context.is_object_rooted(directory)? {
+        return Err(chdir_type_error(context)?);
+    }
     let Some(directory) = context.string_text(directory)? else {
         return Err(chdir_type_error(context)?);
     };
@@ -1519,7 +1927,11 @@ pub(crate) fn raw_debug(
 }
 
 fn capture_state(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    context.host_mut().shared_state().borrow().process_capture_state
+    context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_capture_state
         .ok_or_else(|| RootedError::host("process capture state is not initialized"))
 }
 
@@ -1539,16 +1951,27 @@ pub(crate) fn set_uncaught_exception_capture_callback(
     if !is_null {
         let current_key = context.string_rooted("captureFn");
         let current = context.get_property_rooted(state, current_key)?;
-        if context.rooted_value(current).is_some_and(|value| !value.is_null()) {
+        if context
+            .rooted_value(current)
+            .is_some_and(|value| !value.is_null())
+        {
             let error = context.error_rooted(
                 "`process.setupUncaughtExceptionCapture()` was called while a capture callback was already active",
             )?;
-            super::node_errors_shared_vm::decorate_error(context, error, "ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET")?;
+            super::node_errors_shared_vm::decorate_error(
+                context,
+                error,
+                "ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET",
+            )?;
             return Err(context.throw(error));
         }
     }
     context.assign_named_property_rooted(state, "captureFn", callback)?;
-    let process = context.host_mut().shared_state().borrow().process_module
+    let process = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_module
         .ok_or_else(|| RootedError::host("process is not initialized"))?;
     use super::event_constructor_shared_vm::get;
     if is_null {
@@ -1582,8 +2005,50 @@ pub(crate) fn has_uncaught_exception_capture_callback(
     let state = capture_state(context)?;
     let key = context.string_rooted("captureFn");
     let callback = context.get_property_rooted(state, key)?;
-    let has_callback = context.rooted_value(callback).is_some_and(|value| !value.is_null());
+    let has_callback = context
+        .rooted_value(callback)
+        .is_some_and(|value| !value.is_null());
     Ok(context.boolean(has_callback))
+}
+
+pub(crate) fn add_uncaught_exception_capture_callback(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(callback) = args.first().copied() else {
+        return Err(uncaught_capture_type_error(context, None)?);
+    };
+    if !context.is_callable_rooted(callback)? {
+        return Err(uncaught_capture_type_error(context, Some(callback))?);
+    }
+
+    let state = capture_state(context)?;
+    let auxiliary = super::event_constructor_shared_vm::get(context, state, "auxiliaryCallbacks")?;
+    let length = super::event_constructor_shared_vm::get(context, auxiliary, "length")?;
+    let zero = context.number(0.0);
+    let capture_fn = super::event_constructor_shared_vm::get(context, state, "captureFn")?;
+    let no_primary = context.rooted_value(capture_fn).is_some_and(Value::is_null);
+    let no_auxiliary = context.strict_equal_rooted(length, zero)?;
+    let process = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_module
+        .ok_or_else(|| RootedError::host("process is not initialized"))?;
+    if no_primary && no_auxiliary {
+        let report = super::event_constructor_shared_vm::get(context, process, "report")?;
+        let flag =
+            super::event_constructor_shared_vm::get(context, report, "reportOnUncaughtException")?;
+        context.assign_named_property_rooted(state, "reportFlag", flag)?;
+        let no = context.boolean(false);
+        context.assign_named_property_rooted(report, "reportOnUncaughtException", no)?;
+    }
+
+    let push_key = context.string_rooted("push");
+    let push = context.get_property_rooted(auxiliary, push_key)?;
+    context.call_rooted(push, auxiliary, &[callback])?;
+    Ok(context.undefined())
 }
 
 pub(crate) fn get_active_handles(
@@ -1669,7 +2134,13 @@ pub(crate) fn set_env(
     }
     // SAFETY: the shared VM serializes host environment reads and writes for
     // this process, matching Node's process.env behavior.
-    unsafe { std::env::set_var(key, value) };
+    unsafe { std::env::set_var(&key, &value) };
+    #[cfg(unix)]
+    if key == "TZ" {
+        // POSIX local-time conversion caches TZ; Node refreshes it when the
+        // environment variable changes so Date observes process.env.TZ.
+        unsafe { tzset() };
+    }
     Ok(context.undefined())
 }
 
@@ -1687,8 +2158,38 @@ pub(crate) fn delete_env(
         return Err(context.throw(error));
     }
     // SAFETY: see `set_env`; this is the matching process.env deletion path.
-    unsafe { std::env::remove_var(key) };
+    unsafe { std::env::remove_var(&key) };
+    #[cfg(unix)]
+    if key == "TZ" {
+        unsafe { tzset() };
+    }
     Ok(context.undefined())
+}
+
+pub(crate) fn get_shared_env(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(key) = args.first().copied() else {
+        return Ok(context.undefined());
+    };
+    let key = context.string_text(key)?.unwrap_or_default();
+    let shared = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_env_shared;
+    if !shared {
+        return Ok(context.undefined());
+    }
+    match std::env::var_os(key) {
+        Some(value) => {
+            let value = value.to_string_lossy();
+            Ok(context.string_rooted(&value))
+        }
+        None => Ok(context.undefined()),
+    }
 }
 
 pub(crate) fn load_env_file(
@@ -1868,7 +2369,8 @@ pub(crate) fn finish_execution(
     // own captured identity and stores while they execute.
     let native_state = runtime.host_mut().shared_state();
     let _native_context = super::async_hooks_shared_vm::enter_context(
-        &native_state, super::async_hooks_state::NATIVE_ASYNC_ID,
+        &native_state,
+        super::async_hooks_state::NATIVE_ASYNC_ID,
     );
     let checkpoint = (|| loop {
         drain_checkpoint(runtime, program)?;
@@ -1891,7 +2393,13 @@ pub(crate) fn finish_execution(
     })();
     if process_control.requested_exit_code().is_some() {
         let exit = finish_requested_exit(runtime, program);
-        return if process_control.fatal_exception_handler_failed() || process_control.fatal_uncaught_requested() { checkpoint.and(exit) } else { exit };
+        return if process_control.fatal_exception_handler_failed()
+            || process_control.fatal_uncaught_requested()
+        {
+            checkpoint.and(exit)
+        } else {
+            exit
+        };
     }
     let shared_state = runtime.host_mut().shared_state();
     cleanup_environment(runtime, &shared_state);
@@ -1923,7 +2431,8 @@ fn emit_before_exit(
         Err(failure) => return route_callback_failure(runtime, program, failure),
     };
     let event = runtime.string_rooted("beforeExit");
-    let callback = crate::modules::shared_event_loop::SharedCallback { execution: None,
+    let callback = crate::modules::shared_event_loop::SharedCallback {
+        execution: None,
         callback: operation,
         receiver: process,
         args: vec![event, code],
@@ -1954,7 +2463,9 @@ pub(crate) fn finish_after_uncaught_error(
             exit?;
             return Ok(true);
         }
-        if control.fatal_uncaught_requested() { return routed.and(exit.map(|_| false)); }
+        if control.fatal_uncaught_requested() {
+            return routed.and(exit.map(|_| false));
+        }
         if control.fatal_exception_handler_failed() {
             return routed.and(exit).map(|_| true);
         }
@@ -2015,10 +2526,17 @@ pub(crate) fn route_uncaught_exception_value(
     exception: RootId,
     origin: &str,
 ) -> Result<bool, String> {
-    let operation = runtime.host_function(crate::host::shared_vm::operation("processDispatchFatalException"))
+    let operation = runtime
+        .host_function(crate::host::shared_vm::operation(
+            "processDispatchFatalException",
+        ))
         .map_err(|error| rooted_error_message(runtime, program, error))?;
     let receiver = runtime.root(Value::UNDEFINED);
-    let from_promise = runtime.root(if origin == "unhandledRejection" { Value::TRUE } else { Value::FALSE });
+    let from_promise = runtime.root(if origin == "unhandledRejection" {
+        Value::TRUE
+    } else {
+        Value::FALSE
+    });
     let result = runtime.call_rooted(operation, receiver, &[exception, from_promise]);
     runtime.release_root(operation);
     runtime.release_root(receiver);
@@ -2026,6 +2544,18 @@ pub(crate) fn route_uncaught_exception_value(
     let result = result.map_err(|error| rooted_error_message(runtime, program, error))?;
     let handled = runtime.rooted_value(result).and_then(Value::as_bool) == Some(true);
     runtime.release_root(result);
+    if !handled && origin == "uncaughtException" {
+        let shared_state = runtime.host_mut().shared_state();
+        let abort_on_uncaught = shared_state.borrow().exec_argv.iter().any(|argument| {
+            matches!(
+                argument.as_str(),
+                "--abort-on-uncaught-exception" | "--abort_on_uncaught_exception"
+            )
+        });
+        if abort_on_uncaught {
+            std::process::abort();
+        }
+    }
     Ok(handled)
 }
 
@@ -2034,9 +2564,12 @@ fn drain_checkpoint(
     program: &quench_runtime::ResidualProgram,
 ) -> Result<(), String> {
     let shared_state = runtime.host_mut().shared_state();
+    super::performance_binding_shared_vm::mark_loop_start(runtime)?;
     loop {
         drain_shared_jobs(runtime, program, &shared_state)?;
-        if crate::modules::worker_threads_shared_vm::poll(runtime,program)? { continue; }
+        if crate::modules::worker_threads_shared_vm::poll(runtime, program)? {
+            continue;
+        }
         if crate::modules::process_stdin_shared_vm::poll(runtime)? {
             continue;
         }
@@ -2044,7 +2577,9 @@ fn drain_checkpoint(
             continue;
         }
 
-        if crate::modules::pipe_binding::poll(runtime, program)? { continue; }
+        if crate::modules::pipe_binding::poll(runtime, program)? {
+            continue;
+        }
         if crate::modules::child_process_ipc_shared_vm::poll(runtime, program)? {
             continue;
         }
@@ -2061,7 +2596,7 @@ fn drain_checkpoint(
         if crate::modules::fetch_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
-        let udp_progress=crate::modules::udp_binding::poll(runtime,&shared_state)?;
+        let udp_progress = crate::modules::udp_binding::poll(runtime, &shared_state)?;
         if crate::modules::http_shared_vm::poll(runtime, program, &shared_state)? || udp_progress {
             continue;
         }
@@ -2089,22 +2624,36 @@ fn drain_checkpoint(
         if let Some(mut timer) = due {
             let _span =
                 crate::modules::trace_state::EnvironmentSpan::enter(&shared_state, "RunTimers");
-            let api = shared_state.borrow().timer_handle_api.expect("queued timer handle API");
-            let (primitive_id, mut callback_result) = match runtime.get_property_rooted(timer.callback.receiver, api.async_id_key) {
-                Ok(id) => (Some(id), invoke_timer_callback(runtime, program, &timer.callback)),
-                Err(error) => (None, route_callback_failure(runtime, program, error)),
-            };
+            let api = shared_state
+                .borrow()
+                .timer_handle_api
+                .expect("queued timer handle API");
+            let (primitive_id, mut callback_result) =
+                match runtime.get_property_rooted(timer.callback.receiver, api.async_id_key) {
+                    Ok(id) => (
+                        Some(id),
+                        invoke_timer_callback(runtime, program, &timer.callback),
+                    ),
+                    Err(error) => (None, route_callback_failure(runtime, program, error)),
+                };
 
             let repeated = runtime.call_rooted(api.repeat_delay, timer.callback.receiver, &[]);
             match repeated {
                 Ok(repeated) => {
-                    timer.interval = runtime.rooted_value(repeated).and_then(|value| value.as_number())
-                        .map(|value| std::time::Duration::from_millis(value.max(0.0).trunc() as u64));
+                    timer.interval = runtime
+                        .rooted_value(repeated)
+                        .and_then(|value| value.as_number())
+                        .map(|value| {
+                            std::time::Duration::from_millis(value.max(0.0).trunc() as u64)
+                        });
                     runtime.release_root(repeated);
                 }
                 Err(error) => {
                     callback_result = route_callback_failure(runtime, program, error);
-                    shared_state.borrow_mut().scheduler.cancel_shared_timer(timer.id);
+                    shared_state
+                        .borrow_mut()
+                        .scheduler
+                        .cancel_shared_timer(timer.id);
                 }
             }
             if callback_result.is_err() {
@@ -2121,20 +2670,30 @@ fn drain_checkpoint(
                 let settled = mark_timer_destroyed(runtime, callback.receiver).and_then(|()| {
                     let undefined = runtime.root(Value::UNDEFINED);
                     let args = [callback.receiver, primitive_id.unwrap_or(undefined)];
-                    let args = if primitive_id.is_some() { &args[..] } else { &args[..1] };
+                    let args = if primitive_id.is_some() {
+                        &args[..]
+                    } else {
+                        &args[..1]
+                    };
                     let result = runtime.call_rooted(api.primitive_cleanup, undefined, args);
                     runtime.release_root(undefined);
-                    result.map(|result| { runtime.release_root(result); })
+                    result.map(|result| {
+                        runtime.release_root(result);
+                    })
                 });
                 release_callback(runtime, callback);
                 if let Err(error) = settled {
-                    if let Some(id) = primitive_id { runtime.release_root(id); }
+                    if let Some(id) = primitive_id {
+                        runtime.release_root(id);
+                    }
                     route_callback_failure(runtime, program, error)?;
                     callback_result?;
                     continue;
                 }
             }
-            if let Some(id) = primitive_id { runtime.release_root(id); }
+            if let Some(id) = primitive_id {
+                runtime.release_root(id);
+            }
             callback_result?;
             continue;
         }
@@ -2151,12 +2710,19 @@ fn drain_checkpoint(
                     .min(crate::modules::net_shared_vm::poll_interval())
                     .min(crate::modules::child_process_shared_vm::poll_interval());
                 #[cfg(quench_node_cares)]
-                let poll_interval = shared_state.borrow().cares.next_timeout().map_or(poll_interval, |timeout| poll_interval.min(timeout));
+                let poll_interval = shared_state
+                    .borrow()
+                    .cares
+                    .next_timeout()
+                    .map_or(poll_interval, |timeout| poll_interval.min(timeout));
                 let wait = next_timer
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
                 if !wait.is_zero() {
+                    let control = shared_state.borrow().process_control.clone();
+                    let started = std::time::Instant::now();
                     std::thread::sleep(wait);
+                    control.record_event_loop_idle(started.elapsed());
                 }
                 continue;
             }
@@ -2210,12 +2776,19 @@ fn drain_checkpoint(
                     .min(crate::modules::net_shared_vm::poll_interval())
                     .min(crate::modules::child_process_shared_vm::poll_interval());
                 #[cfg(quench_node_cares)]
-                let poll_interval = shared_state.borrow().cares.next_timeout().map_or(poll_interval, |timeout| poll_interval.min(timeout));
+                let poll_interval = shared_state
+                    .borrow()
+                    .cares
+                    .next_timeout()
+                    .map_or(poll_interval, |timeout| poll_interval.min(timeout));
                 let wait = next_timer
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
                 if !wait.is_zero() {
+                    let control = shared_state.borrow().process_control.clone();
+                    let started = std::time::Instant::now();
                     std::thread::sleep(wait);
+                    control.record_event_loop_idle(started.elapsed());
                 }
                 continue;
             }
@@ -2250,11 +2823,16 @@ fn run_and_clear_native_immediates(
 }
 
 fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
-    if crate::modules::worker_threads_shared_vm::has_work(&shared_state.borrow().workers) { return true; }
+    if crate::modules::worker_threads_shared_vm::has_work(&shared_state.borrow().workers) {
+        return true;
+    }
     #[cfg(quench_node_cares)]
-    if shared_state.borrow().cares.has_work() { return true; }
+    if shared_state.borrow().cares.has_work() {
+        return true;
+    }
     crate::modules::pipe_binding::has_work(&shared_state.borrow())
-        || shared_state.borrow().udp.has_work() || shared_state.borrow().dns.has_work()
+        || shared_state.borrow().udp.has_work()
+        || shared_state.borrow().dns.has_work()
         || crate::modules::child_process_ipc_shared_vm::has_work(&shared_state.borrow())
         || crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin)
         || crate::modules::fetch_shared_vm::has_pending(shared_state)
@@ -2270,7 +2848,10 @@ fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeS
             .has_refed_shared_immediates()
 }
 
-fn mark_timer_destroyed(runtime: &mut quench_runtime::Runtime<NodeHost>, handle: RootId) -> Result<(), RootedError> {
+fn mark_timer_destroyed(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    handle: RootId,
+) -> Result<(), RootedError> {
     let key = runtime.string_rooted(crate::modules::timers_shared_vm::TIMER_DESTROYED);
     let destroyed = runtime.root(Value::TRUE);
     let result = runtime.set_property_rooted(handle, key, destroyed, handle);
@@ -2289,7 +2870,8 @@ fn settle_immediate_reference(
     match owner {
         crate::modules::shared_event_loop::SharedImmediateOwner::Host => Ok(()),
         crate::modules::shared_event_loop::SharedImmediateOwner::Guest => {
-            mark_timer_destroyed(runtime, handle).map_err(|error| runtime.format_error(program, &error.error))?;
+            mark_timer_destroyed(runtime, handle)
+                .map_err(|error| runtime.format_error(program, &error.error))?;
             let refed_key = shared_state
                 .borrow()
                 .timer_handle_api
@@ -2351,6 +2933,12 @@ fn invoke_timer_callback(
     program: &quench_runtime::ResidualProgram,
     callback: &crate::modules::shared_event_loop::SharedCallback,
 ) -> Result<(), String> {
+    runtime
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .record_event_loop_iteration();
     call_shared_callback(runtime, program, callback)
 }
 
@@ -2359,6 +2947,12 @@ pub(super) fn invoke_async_callback(
     program: &quench_runtime::ResidualProgram,
     callback: crate::modules::shared_event_loop::SharedCallback,
 ) -> Result<(), String> {
+    runtime
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .record_event_loop_iteration();
     let result = call_shared_callback(runtime, program, &callback);
     release_callback(runtime, callback);
     result
@@ -2369,25 +2963,59 @@ fn call_shared_callback(
     program: &quench_runtime::ResidualProgram,
     callback: &crate::modules::shared_event_loop::SharedCallback,
 ) -> Result<(), String> {
-    let resolved = if let Some(key)=callback.execution.as_ref().and_then(|e|e.optional_callback) {
-        let resolver=runtime.host_function(crate::host::shared_vm::operation("nativeOptionalCallbackSlot")).map_err(|e|e.to_string())?;
-        let result=runtime.call_rooted(resolver,callback.receiver,&[key]);
+    let resolved = if let Some(key) = callback
+        .execution
+        .as_ref()
+        .and_then(|e| e.optional_callback)
+    {
+        let resolver = runtime
+            .host_function(crate::host::shared_vm::operation(
+                "nativeOptionalCallbackSlot",
+            ))
+            .map_err(|e| e.to_string())?;
+        let result = runtime.call_rooted(resolver, callback.receiver, &[key]);
         runtime.release_root(resolver);
-        match result { Ok(value)=>{
-            if runtime.rooted_value(value).is_some_and(|v|v.is_undefined()) {runtime.release_root(value);return Ok(())} Some(value)
-        },Err(error)=>return route_callback_failure(runtime,program,error) }
-    }else{None};
-    let actual_callback=resolved.unwrap_or(callback.callback);
+        match result {
+            Ok(value) => {
+                if runtime
+                    .rooted_value(value)
+                    .is_some_and(|v| v.is_undefined())
+                {
+                    runtime.release_root(value);
+                    return Ok(());
+                }
+                Some(value)
+            }
+            Err(error) => return route_callback_failure(runtime, program, error),
+        }
+    } else {
+        None
+    };
+    let actual_callback = resolved.unwrap_or(callback.callback);
     let shared = runtime.host_mut().shared_state();
-    let scope = callback.execution.as_ref().map(|execution|
-        super::async_hooks_shared_vm::enter_resource_context(&shared, execution.id, execution.resource));
+    let scope = callback.execution.as_ref().map(|execution| {
+        super::async_hooks_shared_vm::enter_resource_context(
+            &shared,
+            execution.id,
+            execution.resource,
+        )
+    });
     let before = match &callback.execution {
-        Some(execution) if execution.id != super::domain_trampoline::LEGACY_CALLBACK_ASYNC_ID => super::async_hook_registry_shared_vm::emit_runtime(runtime, super::async_hook_registry_shared_vm::HookKind::Before, execution.id),
+        Some(execution) if execution.id != super::domain_trampoline::LEGACY_CALLBACK_ASYNC_ID => {
+            super::async_hook_registry_shared_vm::emit_runtime(
+                runtime,
+                super::async_hook_registry_shared_vm::HookKind::Before,
+                execution.id,
+            )
+        }
         Some(_) | None => Ok(()),
     };
     let called = before.and_then(|()| {
-        if callback.execution.as_ref().is_some_and(|execution| execution.id == super::domain_trampoline::LEGACY_CALLBACK_ASYNC_ID) {
-            let dispatch = runtime.host_function(crate::host::shared_vm::operation("domainTrampolineCall"))?;
+        if callback.execution.as_ref().is_some_and(|execution| {
+            execution.id == super::domain_trampoline::LEGACY_CALLBACK_ASYNC_ID
+        }) {
+            let dispatch =
+                runtime.host_function(crate::host::shared_vm::operation("domainTrampolineCall"))?;
             let mut arguments = Vec::with_capacity(callback.args.len() + 1);
             arguments.push(actual_callback);
             arguments.extend_from_slice(&callback.args);
@@ -2399,7 +3027,10 @@ fn call_shared_callback(
         }
     });
     let result = match called {
-        Ok(value) => { runtime.release_root(value); Ok(()) }
+        Ok(value) => {
+            runtime.release_root(value);
+            Ok(())
+        }
         Err(mut error) => {
             if error.exception.is_none() {
                 error.exception = error.error.thrown_value().map(|value| runtime.root(value));
@@ -2410,14 +3041,22 @@ fn call_shared_callback(
         }
     };
     let result = result.and_then(|()| match &callback.execution {
-        Some(execution) if execution.id != super::domain_trampoline::LEGACY_CALLBACK_ASYNC_ID => match super::async_hook_registry_shared_vm::emit_runtime(runtime, super::async_hook_registry_shared_vm::HookKind::After, execution.id) {
-            Ok(()) => Ok(()),
-            Err(error) => route_callback_failure(runtime, program, error),
-        },
+        Some(execution) if execution.id != super::domain_trampoline::LEGACY_CALLBACK_ASYNC_ID => {
+            match super::async_hook_registry_shared_vm::emit_runtime(
+                runtime,
+                super::async_hook_registry_shared_vm::HookKind::After,
+                execution.id,
+            ) {
+                Ok(()) => Ok(()),
+                Err(error) => route_callback_failure(runtime, program, error),
+            }
+        }
         Some(_) | None => Ok(()),
     });
     drop(scope);
-    if let Some(root)=resolved {runtime.release_root(root);}
+    if let Some(root) = resolved {
+        runtime.release_root(root);
+    }
     result
 }
 
@@ -2445,7 +3084,10 @@ pub(super) fn route_callback_failure(
     let routed = route_uncaught_exception_value(runtime, program, exception, "uncaughtException");
     let result = match routed {
         Ok(true) => Ok(()),
-        Ok(false) => { super::worker_threads_shared_vm::record_callback_exception(runtime,exception); Err(format_uncaught_error(runtime, program, &mut failure)) },
+        Ok(false) => {
+            super::worker_threads_shared_vm::record_callback_exception(runtime, exception);
+            Err(format_uncaught_error(runtime, program, &mut failure))
+        }
         Err(handler_error) => Err(handler_error),
     };
     runtime.release_root(exception);
@@ -2567,12 +3209,21 @@ fn drain_shared_jobs(
             super::icu_binding_shared_vm::prune(runtime);
             super::net_reference_shared_vm::prune(runtime);
             super::contextify_shared_vm::prune(runtime);
-            if !runtime.host_mut().shared_state().borrow().async_hooks.promise_resources.is_empty() {
-                let prune = runtime.host_function(crate::host::shared_vm::operation("asyncPromisePrune"))
+            if !runtime
+                .host_mut()
+                .shared_state()
+                .borrow()
+                .async_hooks
+                .promise_resources
+                .is_empty()
+            {
+                let prune = runtime
+                    .host_function(crate::host::shared_vm::operation("asyncPromisePrune"))
                     .map_err(|error| rooted_error_message(runtime, program, error))?;
                 let result = runtime.call_rooted(prune, prune, &[]);
                 runtime.release_root(prune);
-                let result = result.map_err(|error| rooted_error_message(runtime, program, error))?;
+                let result =
+                    result.map_err(|error| rooted_error_message(runtime, program, error))?;
                 runtime.release_root(result);
             }
             super::fs_stat_watch_shared_vm::prune(runtime);
@@ -2603,7 +3254,10 @@ pub(crate) fn run_host_jobs_with_uncaught(
             route_uncaught_exception_value(runtime, program, exception, "uncaughtException");
         let result = match routed {
             Ok(true) => Ok(()),
-            Ok(false) => { super::worker_threads_shared_vm::record_callback_exception(runtime,exception); Err(format_uncaught_error(runtime, program, &mut failure)) },
+            Ok(false) => {
+                super::worker_threads_shared_vm::record_callback_exception(runtime, exception);
+                Err(format_uncaught_error(runtime, program, &mut failure))
+            }
             Err(handler_error) => Err(handler_error),
         };
         runtime.release_root(exception);
@@ -2673,7 +3327,10 @@ fn dispatch_promise_rejection(
                     program,
                     "PromiseRejectionHandledWarning",
                     &message,
-                    WarningPayload::Error { stack: None, id: Some(id) },
+                    WarningPayload::Error {
+                        stack: None,
+                        id: Some(id),
+                    },
                 )?;
             }
             Ok(())
@@ -2705,11 +3362,11 @@ fn dispatch_unhandled_rejection(
             let handled =
                 emit_process_event(runtime, program, "unhandledRejection", &[reason, promise])?;
             if !handled {
-                route_unhandled_rejection(runtime, program, reason)?;
+                route_unhandled_rejection(runtime, program, promise, reason)?;
             }
         }
         UnhandledRejectionMode::Strict => {
-            route_unhandled_rejection(runtime, program, reason)?;
+            route_unhandled_rejection(runtime, program, promise, reason)?;
             let handled =
                 emit_process_event(runtime, program, "unhandledRejection", &[reason, promise])?;
             if !handled {
@@ -2723,15 +3380,47 @@ fn dispatch_unhandled_rejection(
 fn route_unhandled_rejection(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
+    promise: RootId,
     reason: RootId,
 ) -> Result<(), String> {
+    let async_id = super::async_hooks_shared_vm::promise_async_id(runtime, promise)
+        .map_err(|error| rooted_error_message(runtime, program, error))?;
     let (exception, owned_exception) = unhandled_rejection_exception(runtime, program, reason)?;
-    let routed = route_uncaught_exception_value(runtime, program, exception, "unhandledRejection");
+    let shared = runtime.host_mut().shared_state();
+    let scope = async_id
+        .map(|id| super::async_hooks_shared_vm::enter_resource_context(&shared, id, promise));
+    let before = match async_id {
+        Some(id) => super::async_hook_registry_shared_vm::emit_runtime(
+            runtime,
+            super::async_hook_registry_shared_vm::HookKind::Before,
+            id,
+        )
+        .map_err(|error| rooted_error_message(runtime, program, error)),
+        None => Ok(()),
+    };
+    let routed = before.and_then(|()| {
+        route_uncaught_exception_value(runtime, program, exception, "unhandledRejection")
+    });
     let result = match routed {
         Ok(true) => Ok(()),
         Ok(false) => terminate_unhandled_rejection(runtime, program, exception),
         Err(handler_error) => Err(handler_error),
     };
+    let result = if result.is_ok() {
+        if let Some(id) = async_id {
+            super::async_hook_registry_shared_vm::emit_runtime(
+                runtime,
+                super::async_hook_registry_shared_vm::HookKind::After,
+                id,
+            )
+            .map_err(|error| rooted_error_message(runtime, program, error))
+        } else {
+            result
+        }
+    } else {
+        result
+    };
+    drop(scope);
     if let Some(exception) = owned_exception {
         runtime.release_root(exception);
     }
@@ -2869,7 +3558,9 @@ fn rooted_error_message(
     program: &quench_runtime::ResidualProgram,
     error: RootedError,
 ) -> String {
-    if let Some(exception)=error.exception { super::worker_threads_shared_vm::record_callback_exception(runtime,exception); }
+    if let Some(exception) = error.exception {
+        super::worker_threads_shared_vm::record_callback_exception(runtime, exception);
+    }
     let message = runtime.format_error(program, &error.error);
     if let Some(exception) = error.exception {
         runtime.release_root(exception);
@@ -2911,8 +3602,12 @@ fn emit_process_event(
     event_name: &str,
     args: &[RootId],
 ) -> Result<bool, String> {
-    let Some(emitted) = call_process_event(runtime, program, event_name, args)? else { return Ok(false); };
-    let handled = runtime.truthy_rooted(emitted).map_err(|error| runtime.format_error(program, &error));
+    let Some(emitted) = call_process_event(runtime, program, event_name, args)? else {
+        return Ok(false);
+    };
+    let handled = runtime
+        .truthy_rooted(emitted)
+        .map_err(|error| runtime.format_error(program, &error));
     runtime.release_root(emitted);
     handled
 }
@@ -2977,7 +3672,10 @@ fn schedule_unhandled_rejection_note(
 
 enum WarningPayload<'a> {
     Message,
-    Error { stack: Option<&'a str>, id: Option<u64> },
+    Error {
+        stack: Option<&'a str>,
+        id: Option<u64>,
+    },
 }
 
 fn schedule_rejection_warning(
@@ -2987,13 +3685,16 @@ fn schedule_rejection_warning(
     message: &str,
     payload_kind: WarningPayload<'_>,
 ) -> Result<(), String> {
-    let Some(process) = shared_process_root(runtime) else { return Ok(()); };
+    let Some(process) = shared_process_root(runtime) else {
+        return Ok(());
+    };
     let emit_warning = get_rooted_property(runtime, program, process, "emitWarning")?;
     let mut roots = vec![emit_warning];
     let result = (|| {
         let object_warning = matches!(payload_kind, WarningPayload::Error { .. });
         let payload = if let WarningPayload::Error { stack, id } = payload_kind {
-            let warning = runtime.error_rooted(message)
+            let warning = runtime
+                .error_rooted(message)
                 .map_err(|error| rooted_error_message(runtime, program, error))?;
             roots.push(warning);
             set_rooted_text_property(runtime, program, warning, "name", name)?;
@@ -3009,17 +3710,22 @@ fn schedule_rejection_warning(
             roots.push(message);
             message
         };
-        let args = if object_warning { vec![payload] } else {
+        let args = if object_warning {
+            vec![payload]
+        } else {
             let name = runtime.string_rooted(name);
             roots.push(name);
             vec![payload, name]
         };
-        let result = runtime.call_rooted(emit_warning, process, &args)
+        let result = runtime
+            .call_rooted(emit_warning, process, &args)
             .map_err(|error| rooted_error_message(runtime, program, error))?;
         runtime.release_root(result);
         Ok(())
     })();
-    for root in roots { runtime.release_root(root); }
+    for root in roots {
+        runtime.release_root(root);
+    }
     result
 }
 
@@ -3058,7 +3764,9 @@ fn cleanup_native_work(runtime: &mut quench_runtime::Runtime<NodeHost>) {
         if let Some(execution) = callback.execution {
             // No destroy dispatch is scheduled during final cancellation.
             super::async_hooks_shared_vm::clear_context(runtime, &shared, execution.id);
-            if let Some(key)=execution.optional_callback {runtime.release_root(key);}
+            if let Some(key) = execution.optional_callback {
+                runtime.release_root(key);
+            }
             runtime.release_root(execution.resource);
         }
         release_callback_roots(runtime, callback.callback, callback.receiver, callback.args);
@@ -3099,6 +3807,7 @@ fn emit_exit_inner(
     {
         return Ok(());
     }
+    super::performance_binding_shared_vm::mark_loop_exit(runtime)?;
     let function = runtime
         .host_function(crate::host::shared_vm::operation("processEmitExitEvent"))
         .map_err(|error| rooted_error_message(runtime, program, error))?;
@@ -3111,7 +3820,25 @@ fn emit_exit_inner(
             runtime.release_root(result);
             Ok(())
         }
-        Err(error) => Err(rooted_error_message(runtime, program, error)),
+        // Node routes exceptions thrown by `exit` listeners through the normal
+        // fatal-exception machinery. In particular, an installed
+        // `uncaughtException` listener can handle an assertion thrown while
+        // the process is already exiting. The default fatal handler sees
+        // `_exiting` and therefore does not emit a second exit event.
+        Err(mut error) => {
+            let Some(exception) = error.exception else {
+                return Err(rooted_error_message(runtime, program, error));
+            };
+            let routed =
+                route_uncaught_exception_value(runtime, program, exception, "uncaughtException");
+            let message = match routed {
+                Ok(true) => None,
+                Ok(false) => Some(format_uncaught_error(runtime, program, &mut error)),
+                Err(message) => Some(message),
+            };
+            runtime.release_root(exception);
+            message.map_or(Ok(()), Err)
+        }
     }
 }
 
@@ -3120,8 +3847,13 @@ pub(super) fn release_callback(
     callback: crate::modules::shared_event_loop::SharedCallback,
 ) {
     if let Some(execution) = callback.execution {
-        if execution.lifetime==super::shared_event_loop::CallbackLifetime::Operation {super::async_hooks_shared_vm::complete_runtime_context(runtime, execution.id);super::native_async_wrap::detach(runtime,execution.id);}
-        if let Some(key)=execution.optional_callback {runtime.release_root(key);}
+        if execution.lifetime == super::shared_event_loop::CallbackLifetime::Operation {
+            super::async_hooks_shared_vm::complete_runtime_context(runtime, execution.id);
+            super::native_async_wrap::detach(runtime, execution.id);
+        }
+        if let Some(key) = execution.optional_callback {
+            runtime.release_root(key);
+        }
         runtime.release_root(execution.resource);
     }
     release_callback_roots(runtime, callback.callback, callback.receiver, callback.args);
@@ -3160,8 +3892,10 @@ fn set_shared_property(
         Ok(true) => Ok(()),
         Ok(false) => Err(format!("cannot update process.{name}")),
         Err(error) => {
-            if let Some(exception)=error.exception { super::worker_threads_shared_vm::record_callback_exception(runtime,exception); }
-    let message = runtime.format_error(program, &error.error);
+            if let Some(exception) = error.exception {
+                super::worker_threads_shared_vm::record_callback_exception(runtime, exception);
+            }
+            let message = runtime.format_error(program, &error.error);
             if let Some(exception) = error.exception {
                 runtime.release_root(exception);
             }
@@ -3278,7 +4012,8 @@ fn poll_process_signals(
         let event = runtime.string_rooted(&name);
         let signal = runtime.string_rooted(&name);
         state.borrow_mut().scheduler.queue_shared_next_tick(
-            crate::modules::shared_event_loop::SharedCallback { execution: None,
+            crate::modules::shared_event_loop::SharedCallback {
+                execution: None,
                 callback,
                 receiver,
                 args: vec![event, signal],
@@ -3415,36 +4150,68 @@ pub(crate) fn getgroups(
     context.array_rooted(&[])
 }
 
-pub(crate) fn start_listening_signal(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn start_listening_signal(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     if let Some(name) = context.string_text(value)? {
-        let result = context.host_mut().shared_state().borrow_mut().process_signals.watch(&name);
-        if let Err(error) = result { return Err(signal_start_error(context, error)?); }
+        let result = context
+            .host_mut()
+            .shared_state()
+            .borrow_mut()
+            .process_signals
+            .watch(&name);
+        if let Err(error) = result {
+            return Err(signal_start_error(context, error)?);
+        }
     }
     Ok(context.undefined())
 }
 
-pub(crate) fn stop_listening_signal(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn stop_listening_signal(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     let event = args.first().copied().unwrap_or_else(|| context.undefined());
     if let Some(name) = context.string_text(event)? {
-        let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+        let process = context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .process_module
+            .ok_or_else(|| RootedError::host("process is not initialized"))?;
         let count = super::event_constructor_shared_vm::get(context, process, "listenerCount")?;
         let count = context.call_rooted(count, process, &[event])?;
         let zero = context.number(0.0);
         if context.strict_equal_rooted(count, zero)? {
-            context.host_mut().shared_state().borrow_mut().process_signals.unwatch(Some(&name));
+            context
+                .host_mut()
+                .shared_state()
+                .borrow_mut()
+                .process_signals
+                .unwatch(Some(&name));
         }
     }
     Ok(context.undefined())
 }
 
 /// Native startup state and the configured SDK own the warning listener together.
-pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+pub(crate) fn initialize_warning_policy(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<(), RootedError> {
     use super::event_constructor_shared_vm::get;
     let state = context.host_mut().shared_state();
     let (process, options) = {
         let state = state.borrow();
-        (state.process_module.ok_or_else(|| RootedError::host("process is not initialized"))?, state.cli_options.clone())
+        (
+            state
+                .process_module
+                .ok_or_else(|| RootedError::host("process is not initialized"))?,
+            state.cli_options.clone(),
+        )
     };
     for (name, value) in [
         ("noDeprecation", !options.enabled("--deprecation")),
@@ -3465,7 +4232,9 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
         install(context, process, "emitWarning", emit_warning)?;
     } else {
         // Node's warning module is loaded on the first read of `process.emitWarning`.
-        let initializer = context.host_function(crate::host::shared_vm::operation("processEmitWarningInitialize"))?;
+        let initializer = context.host_function(crate::host::shared_vm::operation(
+            "processEmitWarningInitialize",
+        ))?;
         context.define_lazy_data_properties_rooted(process, &["emitWarning"], true, initializer)?;
     }
     let env = get(context, process, "env")?;
@@ -3476,12 +4245,54 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
         let event = context.string_rooted("warning");
         context.call_rooted(on, process, &[event, callback])?;
     }
+    if options.enabled("--permission") || options.enabled("--permission-audit") {
+        // Permission startup warnings must be emitted after the process
+        // warning listener is installed. Emitting them during the earlier
+        // post-bootstrap permission projection loses them before Node's
+        // warning pipeline is ready.
+        let ffi_enabled = if options.enabled("--allow-ffi") {
+            let config = get(context, process, "config")?;
+            let variables = get(context, config, "variables")?;
+            let node_use_ffi = get(context, variables, "node_use_ffi")?;
+            context.truthy_rooted(node_use_ffi)?
+        } else {
+            false
+        };
+        let permission_warnings = [
+            ("--allow-addons", "PERM0001", true),
+            ("--allow-child-process", "PERM0002", true),
+            ("--allow-ffi", "PERM0003", ffi_enabled),
+            ("--allow-inspector", "PERM0004", true),
+            ("--allow-wasi", "PERM0005", true),
+            ("--allow-worker", "PERM0006", true),
+            ("--allow-openssl-store", "PERM0007", true),
+        ];
+        let emit_warning = get(context, process, "emitWarning")?;
+        let warning_type = context.string_rooted("SecurityWarning");
+        for (flag, code, enabled) in permission_warnings {
+            if enabled && options.enabled(flag) {
+                let message = context.string_rooted(&format!(
+                    "The flag {flag} must be used with extreme caution. It could invalidate the permission model."
+                ));
+                let code = context.string_rooted(code);
+                context.call_rooted(
+                    emit_warning,
+                    process,
+                    &[message, warning_type, code],
+                )?;
+            }
+        }
+    }
     if options.enabled("--pending-deprecation") {
         let binding = get(context, process, "binding")?;
         let deprecate = crate::host::shared_vm::commonjs::node_library_export(
-            context, "internal/process/pre_execution.js", "internal/util.js", "deprecate",
+            context,
+            "internal/process/pre_execution.js",
+            "internal/util.js",
+            "deprecate",
         )?;
-        let message = context.string_rooted("process.binding() is deprecated. Please use public APIs instead.");
+        let message = context
+            .string_rooted("process.binding() is deprecated. Please use public APIs instead.");
         let code = context.string_rooted("DEP0111");
         let undefined = context.undefined();
         let binding = context.call_rooted(deprecate, undefined, &[binding, message, code])?;
@@ -3490,13 +4301,30 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
     Ok(())
 }
 
-fn warning_export(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Result<RootId, RootedError> {
-    crate::host::shared_vm::commonjs::node_library_export(context, "internal/process/pre_execution.js", "internal/process/warning.js", name)
+fn warning_export(
+    context: &mut NativeContext<'_, NodeHost>,
+    name: &str,
+) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "internal/process/pre_execution.js",
+        "internal/process/warning.js",
+        name,
+    )
 }
 
 /// Defines `process.emitWarning` as Node's.
-pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+pub(crate) fn initialize_emit_warning(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let process = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_module
+        .ok_or_else(|| RootedError::host("process is not initialized"))?;
     let emit_warning = warning_export(context, "emitWarning")?;
     let key = context.string_rooted("emitWarning");
     context.define_data_property_rooted(process, key, emit_warning, true, true, true)?;

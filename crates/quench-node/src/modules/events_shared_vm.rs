@@ -304,11 +304,22 @@ pub(crate) fn initialize_event_globals(
         "node:bootstrap/shared-vm/abort.js",
     )?;
     let abort_max = context.number(super::event_limits_shared_vm::ABORT_SIGNAL_MAX_LISTENERS);
-    let any_convert = context.host_function_with_data(crate::host::shared_vm::operation("abortAnyConvert"), data)?;
-    let dependencies_link = context.host_function_with_data(crate::host::shared_vm::operation("abortDependenciesLink"), data)?;
-    let dependencies_refresh = context.host_function_with_data(crate::host::shared_vm::operation("abortDependenciesRefresh"), data)?;
-    let dependencies_settle = context.host_function_with_data(crate::host::shared_vm::operation("abortDependenciesSettle"), data)?;
-    let abort_timeout = context.host_function_with_data(crate::host::shared_vm::operation("abortTimeout"), data)?;
+    let any_convert = context
+        .host_function_with_data(crate::host::shared_vm::operation("abortAnyConvert"), data)?;
+    let dependencies_link = context.host_function_with_data(
+        crate::host::shared_vm::operation("abortDependenciesLink"),
+        data,
+    )?;
+    let dependencies_refresh = context.host_function_with_data(
+        crate::host::shared_vm::operation("abortDependenciesRefresh"),
+        data,
+    )?;
+    let dependencies_settle = context.host_function_with_data(
+        crate::host::shared_vm::operation("abortDependenciesSettle"),
+        data,
+    )?;
+    let abort_timeout =
+        context.host_function_with_data(crate::host::shared_vm::operation("abortTimeout"), data)?;
     let abort_state = context.call_rooted(
         abort_factory,
         undefined,
@@ -321,19 +332,70 @@ pub(crate) fn initialize_event_globals(
             abort_get_handler,
             abort_set_handler,
             abort_remove,
-            any_convert, dependencies_link, dependencies_refresh, dependencies_settle, abort_timeout,
+            any_convert,
+            dependencies_link,
+            dependencies_refresh,
+            dependencies_settle,
+            abort_timeout,
         ],
     )?;
+    // Publish the guest state lookup before loading `internal/event_target`.
+    // That module imports Web IDL, whose adoption hook installs this exact
+    // callable as the AbortSignal brand predicate while the globals initialize.
+    let state_lookup = get(context, abort_state, "0")?;
+    let state_map = get(context, abort_state, "1")?;
+    set(context, data, "abortStateMap", state_map)?;
+    let abort_operation = get(context, abort_state, "2")?;
+    set(context, data, "abortSignal", abort_operation)?;
+    set(context, data, "abortState", state_lookup)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_abort_polyfill");
+    // Node's `internal/event_target` owns the Event brand checked by
+    // NodeEventTarget.dispatchEvent(). Use that same constructor for the
+    // global Event rather than creating a separate bootstrap-polyfill class;
+    // otherwise `new Event()` from user code fails Node's `instanceof Event`
+    // check even though both constructors are exposed as Event.
+    let event_target_module = crate::host::shared_vm::commonjs::node_library_module(
+        context,
+        "internal/event_target.js",
+        "internal/event_target.js",
+    )?;
+    let node_event = get(context, event_target_module, "Event")?;
+    // Use Node's own EventTarget constructor for the global as well as its
+    // Event constructor. Several internal helpers (notably defineEventHandler)
+    // validate EventTarget's private per-instance fields, so the bootstrap
+    // fallback class is insufficient even when its dispatch behavior matches
+    // the public surface.
+    let node_event_target = get(context, event_target_module, "EventTarget")?;
+    let node_events_key = get(context, event_target_module, "kEvents")?;
+    set(context, data, "nodeEventsKey", node_events_key)?;
+    let trust_event_key = get(context, event_target_module, "kTrustEvent")?;
+    set(context, data, "trustEventKey", trust_event_key)?;
+    let event_target_key = get(context, event_target_module, "kTarget")?;
+    set(context, data, "eventTargetKey", event_target_key)?;
+    let event_dispatching_key = get(context, event_target_module, "kIsBeingDispatched")?;
+    set(context, data, "eventDispatchingKey", event_dispatching_key)?;
+    let set_trust_event_key = get(context, abort_state, "3")?;
+    context.call_rooted(set_trust_event_key, undefined, &[trust_event_key])?;
+    set(context, global, "Event", node_event)?;
+    set(context, global, "EventTarget", node_event_target)?;
     let factory = context.evaluate_script_rooted(
         crate::polyfills::shared_vm::EVENT_TARGET,
         "node:bootstrap/shared-vm/event-target.js",
     )?;
+    let event_target_key = get(context, data, "eventTargetKey")?;
+    let event_dispatching_key = get(context, data, "eventDispatchingKey")?;
     context.call_rooted(
         factory,
         undefined,
-        &[records_key, max_key, warned_key, max_default],
+        &[
+            records_key,
+            max_key,
+            warned_key,
+            max_default,
+            event_target_key,
+            event_dispatching_key,
+        ],
     )?;
     let event = get(context, global, "Event")?;
     set(context, data, "eventCtor", event)?;
@@ -351,17 +413,15 @@ pub(crate) fn initialize_event_globals(
     let target = get(context, global, "EventTarget")?;
     let yes = context.boolean(true);
     context.define_data_property_rooted(target, brand_key, yes, true, true, true)?;
+    let message_port = get(context, global, "MessagePort")?;
+    if context.is_callable_rooted(message_port)? {
+        context.define_data_property_rooted(message_port, brand_key, yes, true, true, true)?;
+    }
     let signal = get(context, global, "AbortSignal")?;
     context.set_prototype_rooted(signal, target)?;
     let signal_prototype = get(context, signal, "prototype")?;
     let target_prototype = get(context, target, "prototype")?;
     context.set_prototype_rooted(signal_prototype, target_prototype)?;
-    let state_lookup=get(context,abort_state,"0")?;
-    let state_map=get(context,abort_state,"1")?;
-    set(context,data,"abortStateMap",state_map)?;
-    let abort_operation=get(context,abort_state,"2")?;
-    set(context,data,"abortSignal",abort_operation)?;
-    set(context, data, "abortState", state_lookup)?;
     Ok(undefined)
 }
 
@@ -373,6 +433,31 @@ pub(crate) fn initialize_abort_state(
 ) -> Result<RootId, RootedError> {
     let global = context.global_root()?;
     get(context, global, "AbortSignal")?;
+    // Keep the native listener bridge aligned with the exact symbols exported
+    // by Node's EventTarget implementation. Recreating Symbol('kWeak') here
+    // gives it the same description but a different identity, so weak listener
+    // registrations were treated as strong and their callbacks were not kept
+    // alive by the supplied retainer.
+    let data = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .event_targets_api
+        .ok_or_else(|| RootedError::host("EventTarget API missing"))?;
+    let weak_key = crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "internal/event_target.js",
+        "internal/event_target.js",
+        "kWeakHandler",
+    )?;
+    set(context, data, "weakKey", weak_key)?;
+    let resist_key = crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "internal/event_target.js",
+        "internal/event_target.js",
+        "kResistStopPropagation",
+    )?;
+    set(context, data, "resistKey", resist_key)?;
     Ok(context.undefined())
 }
 
@@ -403,6 +488,19 @@ pub(crate) fn listener_count(
     if context.string_text(event)?.is_none() && !context.is_symbol_rooted(event)? {
         return Ok(context.number(0.0));
     }
+    // Node's native EventTarget stores listener roots in a private Map keyed
+    // by its exported kEvents symbol. The bootstrap fallback used an object
+    // of arrays, so read both representations for compatibility.
+    let node_events_key = get(context, data, "nodeEventsKey")?;
+    let node_events = context.get_property_rooted(emitter, node_events_key)?;
+    if context.truthy_rooted(node_events)? {
+        let map_get = get(context, node_events, "get")?;
+        let root = context.call_rooted(map_get, node_events, &[event])?;
+        if !context.truthy_rooted(root)? {
+            return Ok(context.number(0.0));
+        }
+        return get(context, root, "size");
+    }
     let key = get(context, data, "recordsKey")?;
     let records = context.get_property_rooted(emitter, key)?;
     if !context.truthy_rooted(records)? {
@@ -420,17 +518,44 @@ fn validate_event_target(
     data: RootId,
     emitter: RootId,
 ) -> Result<(), RootedError> {
-    let constructor = get(context, emitter, "constructor")?;
-    let constructor_value = context
-        .rooted_value(constructor)
-        .ok_or_else(|| RootedError::host("constructor root missing"))?;
-    let branded = if constructor_value.is_null() || constructor_value.is_undefined() {
-        false
-    } else {
-        let key = get(context, data, "brandKey")?;
-        let brand = context.get_property_rooted(constructor, key)?;
-        context.truthy_rooted(brand)?
-    };
+    // EventTarget subclasses (notably MessagePort) inherit the marker from the
+    // base constructor in Node's API. Walk the constructor chain so those
+    // instances are accepted by setMaxListeners/listenerCount as well.
+    let brand_key = get(context, data, "brandKey")?;
+    let mut constructor = get(context, emitter, "constructor")?;
+    let mut branded = false;
+    for _ in 0..32 {
+        if context
+            .rooted_value(constructor)
+            .is_none_or(|value| value.is_null() || value.is_undefined())
+        {
+            break;
+        }
+        let brand = context.get_property_rooted(constructor, brand_key)?;
+        if context.truthy_rooted(brand)? {
+            branded = true;
+            break;
+        }
+        let prototype = get(context, constructor, "prototype")?;
+        if context
+            .rooted_value(prototype)
+            .is_none_or(|value| value.is_null() || value.is_undefined())
+        {
+            break;
+        }
+        let parent = context.prototype_rooted(prototype)?;
+        if context
+            .rooted_value(parent)
+            .is_none_or(|value| value.is_null() || value.is_undefined())
+        {
+            break;
+        }
+        let next = get(context, parent, "constructor")?;
+        if context.strict_equal_rooted(next, constructor)? {
+            break;
+        }
+        constructor = next;
+    }
     if !branded {
         return Err(super::util_shared_vm::argument_type_error(
             context,
@@ -469,6 +594,41 @@ pub(crate) fn get_event_listeners(
         if context.string_text(event)?.is_none() && !context.is_symbol_rooted(event)? {
             return context.array_rooted(&[]);
         }
+        // Node's canonical EventTarget stores listeners in a linked list under
+        // its private kEvents map. The fallback EventTarget used by older
+        // bootstrap paths stores arrays under recordsKey instead.
+        let node_events_key = get(context, data, "nodeEventsKey")?;
+        let node_events = context.get_property_rooted(emitter, node_events_key)?;
+        if context.truthy_rooted(node_events)? {
+            let map_get = get(context, node_events, "get")?;
+            let root = context.call_rooted(map_get, node_events, &[event])?;
+            if !context.truthy_rooted(root)? {
+                return context.array_rooted(&[]);
+            }
+            let mut listeners = Vec::new();
+            let mut handler = get(context, root, "next")?;
+            while context
+                .rooted_value(handler)
+                .is_some_and(|value| !value.is_undefined())
+            {
+                let listener = get(context, handler, "listener")?;
+                if context
+                    .rooted_value(listener)
+                    .is_none_or(|value| value.is_undefined())
+                {
+                    break;
+                }
+                let deref = get(context, listener, "deref")?;
+                let listener = if context.is_callable_rooted(deref)? {
+                    context.call_rooted(deref, listener, &[])?
+                } else {
+                    listener
+                };
+                listeners.push(listener);
+                handler = get(context, handler, "next")?;
+            }
+            return context.array_rooted(&listeners);
+        }
         let key = get(context, data, "recordsKey")?;
         let records = context.get_property_rooted(emitter, key)?;
         if !context.truthy_rooted(records)? {
@@ -505,22 +665,28 @@ pub(super) fn listener_records(
 
 /// The configured Web IDL converter uses the original provider's actual private
 /// WeakMap brand, independent of guest prototypes or public WeakMap methods.
-pub(crate) fn adopt_abort_converter(context: &mut NativeContext<'_, NodeHost>, webidl: RootId) -> Result<(),RootedError> {
+pub(crate) fn adopt_abort_converter(
+    context: &mut NativeContext<'_, NodeHost>,
+    webidl: RootId,
+) -> Result<(), RootedError> {
     context.with_startup_intrinsics(|context| {
-        let global=context.global_root()?;get(context,global,"AbortSignal")?;
-        let data=context.host_mut().shared_state().borrow().event_targets_api
-            .ok_or_else(||RootedError::host("EventTarget API missing"))?;
-        let map=get(context,data,"abortStateMap")?;
-        let predicate=context.host_function_with_data(crate::host::shared_vm::operation("abortSignalBrand"),map)?;
-        let factory=get(context,webidl,"createInterfaceConverter")?;
-        let name=context.string_rooted("AbortSignal");let undefined=context.undefined();
-        let converter=context.call_rooted(factory,undefined,&[name,predicate])?;
-        let converters=get(context,webidl,"converters")?;set(context,converters,"AbortSignal",converter)
+        let global = context.global_root()?;
+        get(context, global, "AbortSignal")?;
+        let data = context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .event_targets_api
+            .ok_or_else(|| RootedError::host("EventTarget API missing"))?;
+        // This guest closure reads the original private WeakMap and returns
+        // state only for genuine AbortSignals; it remains callable here across
+        // the guest/native boundary where passing the WeakMap itself does not.
+        let predicate = get(context, data, "abortState")?;
+        let factory = get(context, webidl, "createInterfaceConverter")?;
+        let name = context.string_rooted("AbortSignal");
+        let undefined = context.undefined();
+        let converter = context.call_rooted(factory, undefined, &[name, predicate])?;
+        let converters = get(context, webidl, "converters")?;
+        set(context, converters, "AbortSignal", converter)
     })
-}
-pub(crate) fn abort_signal_brand(context: &mut NativeContext<'_,NodeHost>,_:RootId,args:&[RootId])->Result<RootId,RootedError>{
-    let value=args.first().copied().unwrap_or_else(||context.undefined());
-    if !context.is_object_rooted(value)? { return Ok(context.boolean(false)); }
-    let map=context.host_function_data()?;let state=context.weak_map_get_rooted(map,value)?;
-    let branded=!context.rooted_value(state).is_some_and(|v|v.is_undefined());Ok(context.boolean(branded))
 }

@@ -19,6 +19,17 @@ const __quenchDnsIsIP = (value) => {
   return typeof value === "string" &&
     (/^\d+(?:\.\d+){3}$/.test(value) ? 4 : 0);
 };
+const __quenchDnsPermissionError = (hostname, syscall) => {
+  const permission = globalThis.process?.permission;
+  const audit = (globalThis.process?.execArgv || []).includes("--permission-audit");
+  if (!permission || audit || permission.has("net", hostname)) return null;
+  return Object.assign(new Error(`${syscall} ERR_ACCESS_DENIED ${hostname}`), {
+    code: "ERR_ACCESS_DENIED",
+    syscall,
+    hostname,
+    permission: "Net",
+  });
+};
 const __quenchDnsQueryStub = (rrtype) => {
   try {
     const binding = __quenchOriginalRequireWithDns("internal/test/binding").internalBinding("cares_wrap");
@@ -162,6 +173,13 @@ const __quenchDnsLookup = (hostname, options, callback) => {
     );
   }
   queueMicrotask(() => {
+    const permissionError = __quenchDnsIsIP(hostname)
+      ? null
+      : __quenchDnsPermissionError(hostname, "getaddrinfo");
+    if (permissionError) {
+      callback(permissionError);
+      return;
+    }
     try {
       const addresses = __quenchDnsIsIP(hostname)
         ? [hostname]
@@ -242,6 +260,11 @@ const __quenchDnsResolve = (hostname, rrtype, callback) => {
     );
   }
   queueMicrotask(() => {
+    const permissionError = __quenchDnsPermissionError(hostname, `query${rrtype}`);
+    if (permissionError) {
+      callback?.(permissionError);
+      return;
+    }
     try {
       const stub = __quenchDnsQueryStub(rrtype);
       if (stub) {
@@ -288,6 +311,11 @@ const __quenchDnsResolveAny = (hostname, callback) => {
     throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   queueMicrotask(() => {
+    const permissionError = __quenchDnsPermissionError(hostname, "queryAny");
+    if (permissionError) {
+      callback(permissionError);
+      return;
+    }
     try {
       const addresses = globalThis.__quench_dns_lookup(hostname, 0);
       const result = addresses.map((address) => ({
@@ -316,7 +344,11 @@ const __quenchDnsResolveNs = (hostname, callback) => {
   if (typeof callback !== "function") {
     throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
-  queueMicrotask(() => callback(null, []));
+  queueMicrotask(() => {
+    const permissionError = __quenchDnsPermissionError(hostname, "queryNs");
+    if (permissionError) callback(permissionError);
+    else callback(null, []);
+  });
 };
 const __quenchDnsLookupService = function __quenchDnsLookupService(
   address,
@@ -349,6 +381,11 @@ const __quenchDnsLookupService = function __quenchDnsLookupService(
     });
   }
   queueMicrotask(() => {
+    const permissionError = __quenchDnsPermissionError(address, "getnameinfo");
+    if (permissionError) {
+      callback(permissionError);
+      return;
+    }
     try {
       callback(
         null,
@@ -383,6 +420,11 @@ const __quenchDnsReverse = (address, callback) => {
     );
   }
   queueMicrotask(() => {
+    const permissionError = __quenchDnsPermissionError(address, "getnameinfo");
+    if (permissionError) {
+      callback(permissionError);
+      return;
+    }
     try {
       callback(null, [globalThis.__quench_dns_reverse(address)]);
     } catch (error) {
@@ -405,7 +447,11 @@ const __quenchDnsResolveMx = (hostname, callback) => {
     queueMicrotask(() => callback(error));
     return;
   }
-  queueMicrotask(() => callback(null, []));
+  queueMicrotask(() => {
+    const permissionError = __quenchDnsPermissionError(hostname, "queryMx");
+    if (permissionError) callback(permissionError);
+    else callback(null, []);
+  });
 };
 const __quenchDnsValidateResultOrder = (order) => {
   if (!["verbatim", "ipv4first", "ipv6first"].includes(order)) {

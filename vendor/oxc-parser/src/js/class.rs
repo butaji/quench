@@ -89,8 +89,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             self.check_reserved_type_name(id, "Class");
         }
 
-        let type_parameters =
-            if self.is_ts { self.parse_ts_type_parameters_with_variance() } else { None };
+        let type_parameters = if self.is_ts {
+            self.parse_ts_type_parameters_with_variance()
+        } else {
+            None
+        };
         let (extends, implements) = self.parse_class_heritage_clause();
         let mut heritage = None;
         if let Some(mut extends) = extends
@@ -133,7 +136,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     pub(crate) fn parse_heritage_clause<T, F>(
         &mut self,
         mut parse_extends_clause: F,
-    ) -> (Option<ArenaVec<'a, T>>, Option<ImplementsWithKeywordSpan<'a>>)
+    ) -> (
+        Option<ArenaVec<'a, T>>,
+        Option<ImplementsWithKeywordSpan<'a>>,
+    )
     where
         F: FnMut(&mut Self) -> ArenaVec<'a, T>,
     {
@@ -188,7 +194,13 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         &mut self,
     ) -> (
         Option<
-            ArenaVec<'a, (Expression<'a>, Option<ArenaBox<'a, TSTypeParameterInstantiation<'a>>>)>,
+            ArenaVec<
+                'a,
+                (
+                    Expression<'a>,
+                    Option<ArenaBox<'a, TSTypeParameterInstantiation<'a>>>,
+                ),
+            >,
         >,
         Option<ImplementsWithKeywordSpan<'a>>,
     ) {
@@ -199,8 +211,13 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// extends `LeftHandSideExpression`[?Yield, ?Await]
     fn parse_class_extends_clause(
         &mut self,
-    ) -> ArenaVec<'a, (Expression<'a>, Option<ArenaBox<'a, TSTypeParameterInstantiation<'a>>>)>
-    {
+    ) -> ArenaVec<
+        'a,
+        (
+            Expression<'a>,
+            Option<ArenaBox<'a, TSTypeParameterInstantiation<'a>>>,
+        ),
+    > {
         self.bump_any(); // bump `extends`
 
         let mut extends = ArenaVec::with_capacity_in(1, self);
@@ -412,7 +429,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 if private_ident.name == "constructor" {
                     self.error(diagnostics::private_name_constructor(private_ident.span));
                 }
-                (PropertyKey::PrivateIdentifier(self.alloc(private_ident)), false)
+                (
+                    PropertyKey::PrivateIdentifier(self.alloc(private_ident)),
+                    false,
+                )
             }
             _ => self.parse_property_name(),
         }
@@ -440,7 +460,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         modifiers: &Modifiers,
         decorators: ArenaVec<'a, Decorator<'a>>,
     ) -> ClassElement<'a> {
-        let type_annotation = if self.is_ts { self.parse_ts_type_annotation() } else { None };
+        let type_annotation = if self.is_ts {
+            self.parse_ts_type_annotation()
+        } else {
+            None
+        };
         let value = self.eat(Kind::Eq).then(|| {
             self.context(
                 Context::In | Context::NewTarget,
@@ -475,12 +499,16 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             if value.is_some() {
                 self.error(diagnostics::variable_declarator_definite(definite_span));
             } else if type_annotation.is_none() {
-                self.error(diagnostics::variable_declarator_definite_type_assertion(definite_span));
+                self.error(diagnostics::variable_declarator_definite_type_assertion(
+                    definite_span,
+                ));
             } else if self.ctx.has_ambient()
                 || modifiers.contains(ModifierKind::Static)
                 || r#type.is_abstract()
             {
-                self.error(diagnostics::definite_assignment_assertion_not_permitted(definite_span));
+                self.error(diagnostics::definite_assignment_assertion_not_permitted(
+                    definite_span,
+                ));
             }
         }
         ClassElement::new_accessor_property(
@@ -683,7 +711,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let definite = is_definite.then_some(self.prev_token_end - 1);
 
         if is_definite && let Some(optional_span) = optional_span {
-            self.error(diagnostics::optional_definite_property(optional_span.expand_right(1)));
+            self.error(diagnostics::optional_definite_property(
+                optional_span.expand_right(1),
+            ));
         }
 
         if modifiers.contains(ModifierKind::Accessor) {
@@ -753,7 +783,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         modifiers: &Modifiers,
         decorators: ArenaVec<'a, Decorator<'a>>,
     ) -> ClassElement<'a> {
-        let type_annotation = if self.is_ts { self.parse_ts_type_annotation() } else { None };
+        let type_annotation = if self.is_ts {
+            self.parse_ts_type_annotation()
+        } else {
+            None
+        };
         // Initializer[+In, ?Yield, ?Await]opt
         // `new.target` is allowed in a class field initializer.
         let initializer = self.eat(Kind::Eq).then(|| {
@@ -798,11 +832,15 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         if r#abstract && name.is_private_identifier() {
             let modifier = modifiers.get(ModifierKind::Abstract).unwrap();
-            self.error(diagnostics::abstract_with_private_identifier(modifier.span()));
+            self.error(diagnostics::abstract_with_private_identifier(
+                modifier.span(),
+            ));
         }
         if r#abstract && initializer.is_some() {
             let (name, span) = self.abstract_member_name(&name);
-            self.error(diagnostics::abstract_property_cannot_have_initializer(name, span));
+            self.error(diagnostics::abstract_property_cannot_have_initializer(
+                name, span,
+            ));
         }
         if self.ctx.has_ambient()
             && let Some(initializer) = &initializer
@@ -817,9 +855,13 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             if initializer.is_some() {
                 self.error(diagnostics::variable_declarator_definite(definite_span));
             } else if type_annotation.is_none() {
-                self.error(diagnostics::variable_declarator_definite_type_assertion(definite_span));
+                self.error(diagnostics::variable_declarator_definite_type_assertion(
+                    definite_span,
+                ));
             } else if self.ctx.has_ambient() || r#static || r#abstract {
-                self.error(diagnostics::definite_assignment_assertion_not_permitted(definite_span));
+                self.error(diagnostics::definite_assignment_assertion_not_permitted(
+                    definite_span,
+                ));
             }
         }
         ClassElement::new_property_definition(
@@ -844,7 +886,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     #[cold]
     pub(crate) fn check_getter(&mut self, function: &Function<'a>) {
         if let Some(type_parameters) = &function.type_parameters {
-            self.error(diagnostics::accessor_cannot_have_type_parameters(type_parameters.span));
+            self.error(diagnostics::accessor_cannot_have_type_parameters(
+                type_parameters.span,
+            ));
         } else if function.params.parameters_count() != 0 {
             self.error(diagnostics::getter_parameters(function.params.span));
         }
@@ -853,7 +897,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     #[cold]
     pub(crate) fn check_setter(&mut self, function: &Function<'a>) {
         if let Some(type_parameters) = &function.type_parameters {
-            self.error(diagnostics::accessor_cannot_have_type_parameters(type_parameters.span));
+            self.error(diagnostics::accessor_cannot_have_type_parameters(
+                type_parameters.span,
+            ));
         } else if function.params.parameters_count() != 1 {
             self.error(diagnostics::setter_with_parameters(
                 function.params.span,
@@ -864,9 +910,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         } else if self.is_ts {
             let param = function.params.items.first().unwrap();
             if let Some(return_type) = &function.return_type {
-                self.error(diagnostics::a_set_accessor_cannot_have_a_return_type_annotation(
-                    return_type.span(),
-                ));
+                self.error(
+                    diagnostics::a_set_accessor_cannot_have_a_return_type_annotation(
+                        return_type.span(),
+                    ),
+                );
             } else if param.optional {
                 self.error(diagnostics::setter_with_optional_parameter(param.span));
             } else if param.initializer.is_some() {
@@ -888,7 +936,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
 
     fn check_method_definition(&mut self, method: &MethodDefinition<'a>) {
         if method.r#type.is_abstract() && method.key.is_private_identifier() {
-            self.error(diagnostics::abstract_with_private_identifier(method.key.span()));
+            self.error(diagnostics::abstract_with_private_identifier(
+                method.key.span(),
+            ));
         }
 
         if !method.computed
@@ -899,8 +949,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                     self.error(diagnostics::static_prototype(span));
                 }
             } else if name == "constructor" {
-                let is_accessor =
-                    matches!(method.kind, MethodDefinitionKind::Get | MethodDefinitionKind::Set);
+                let is_accessor = matches!(
+                    method.kind,
+                    MethodDefinitionKind::Get | MethodDefinitionKind::Set
+                );
                 if is_accessor {
                     self.error(diagnostics::constructor_getter_setter(span));
                 }
@@ -914,7 +966,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                     self.error(diagnostics::illegal_abstract_modifier(span));
                 }
                 if !is_accessor && let Some(type_parameters) = &method.value.type_parameters {
-                    self.error(diagnostics::ts_constructor_type_parameter(type_parameters.span));
+                    self.error(diagnostics::ts_constructor_type_parameter(
+                        type_parameters.span,
+                    ));
                 }
             }
         }
@@ -922,7 +976,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         if self.ctx.has_ambient()
             && let Some(body) = &method.value.body
         {
-            self.error(diagnostics::implementation_in_ambient(Span::empty(body.span.start)));
+            self.error(diagnostics::implementation_in_ambient(Span::empty(
+                body.span.start,
+            )));
         }
     }
 
@@ -936,7 +992,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         if method.r#type.is_abstract() && method.value.body.is_some() {
             let (name, span) = self.abstract_member_name(&method.key);
-            self.error(diagnostics::abstract_accessor_cannot_have_implementation(name, span));
+            self.error(diagnostics::abstract_accessor_cannot_have_implementation(
+                name, span,
+            ));
         }
     }
 
@@ -945,7 +1003,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
 
         if method.r#type.is_abstract() && method.value.body.is_some() {
             let (name, span) = self.abstract_member_name(&method.key);
-            self.error(diagnostics::abstract_method_cannot_have_implementation(name, span));
+            self.error(diagnostics::abstract_method_cannot_have_implementation(
+                name, span,
+            ));
         }
     }
 
@@ -957,7 +1017,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             self.error(diagnostics::ts_constructor_this_parameter(this_param.span));
         }
         if let Some(return_type) = &method.value.return_type {
-            self.error(diagnostics::constructor_return_type(return_type.type_annotation.span()));
+            self.error(diagnostics::constructor_return_type(
+                return_type.type_annotation.span(),
+            ));
         }
     }
 }

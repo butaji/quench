@@ -39,6 +39,53 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeDomExceptionCod
   InvalidNodeTypeError: 24,
   DataCloneError: 25,
 };
+if (typeof RegExp.escape !== "function") {
+  Object.defineProperty(RegExp, "escape", {
+    configurable: true,
+    writable: true,
+    value: function escape(value) {
+      const string = `${value}`;
+      let result = "";
+      for (let index = 0; index < string.length; index++) {
+        const character = string[index];
+        const code = string.charCodeAt(index);
+        if (index === 0 && /[0-9A-Za-z]/.test(character)) {
+          result += `\\x${code.toString(16).padStart(2, "0")}`;
+        } else if ("^$\\.*+?()[]{}|/".includes(character)) {
+          result += `\\${character}`;
+        } else if (",-=<>#&!%:;@~'\"`".includes(character)) {
+          result += `\\x${code.toString(16).padStart(2, "0")}`;
+        } else if (character === "\n") {
+          result += "\\n";
+        } else if (character === "\r") {
+          result += "\\r";
+        } else if (character === "\t") {
+          result += "\\t";
+        } else if (character === "\v") {
+          result += "\\v";
+        } else if (character === "\f") {
+          result += "\\f";
+        } else if (character === " ") {
+          result += "\\x20";
+        } else if (code >= 0xd800 && code <= 0xdbff) {
+          const next = string.charCodeAt(index + 1);
+          if (next >= 0xdc00 && next <= 0xdfff) {
+            result += character + string[++index];
+          } else {
+            result += `\\u${code.toString(16).padStart(4, "0")}`;
+          }
+        } else if (code >= 0xdc00 && code <= 0xdfff) {
+          result += `\\u${code.toString(16).padStart(4, "0")}`;
+        } else if (/\s/u.test(character)) {
+          result += `\\u${code.toString(16).padStart(4, "0")}`;
+        } else {
+          result += character;
+        }
+      }
+      return result;
+    },
+  });
+}
 if (typeof globalThis.require === "function" && !globalThis.worker_threads) {
   globalThis.worker_threads = globalThis.require("worker_threads");
 }
@@ -352,6 +399,26 @@ if (typeof globalThis.URLSearchParams !== "function") {
     configurable: true, enumerable: false, writable: true, value: URLSearchParams,
   });
 }
+const __nodeBlobEnsureReadable = (blob) => {
+  const path = blob?.["\0quench:file-backed:path"];
+  if (typeof path !== "string") return;
+  let stat;
+  try {
+    stat = globalThis.__nodeFs?.statSync(path);
+  } catch (_) {
+    stat = undefined;
+  }
+  const size = blob["\0quench:file-backed:size"];
+  const mtime = blob["\0quench:file-backed:mtime"];
+  if (!stat || Number(stat.size) !== Number(size) || Math.trunc(Number(stat.mtimeMs)) !== Number(mtime)) {
+    throw new DOMException("The file has been modified", "NotReadableError");
+  }
+};
+Object.defineProperty(globalThis, "__quenchBlobEnsureReadable", {
+  configurable: true,
+  writable: false,
+  value: __nodeBlobEnsureReadable,
+});
 if (typeof globalThis.Blob !== "function" ||
     typeof globalThis.Blob.prototype?.arrayBuffer !== "function") {
   const __nodeBlobPart = (part) => {
@@ -368,26 +435,6 @@ if (typeof globalThis.Blob !== "function" ||
     }
     return Buffer.from(String(part));
   };
-  const __nodeBlobEnsureReadable = (blob) => {
-    const path = blob?.["\0quench:file-backed:path"];
-    if (typeof path !== "string") return;
-    let stat;
-    try {
-      stat = globalThis.__nodeFs?.statSync(path);
-    } catch (_) {
-      stat = undefined;
-    }
-    const size = blob["\0quench:file-backed:size"];
-    const mtime = blob["\0quench:file-backed:mtime"];
-    if (!stat || Number(stat.size) !== Number(size) || Math.trunc(Number(stat.mtimeMs)) !== Number(mtime)) {
-      throw new DOMException("The file has been modified", "NotReadableError");
-    }
-  };
-  Object.defineProperty(globalThis, "__quenchBlobEnsureReadable", {
-    configurable: true,
-    writable: false,
-    value: __nodeBlobEnsureReadable,
-  });
   class Blob {
     constructor(parts = [], options = {}) {
       if (!Array.isArray(parts)) {
@@ -424,6 +471,11 @@ if (typeof globalThis.Blob !== "function" ||
       // defaults to the empty MIME type.
       const type = String(options?.type ?? "").toLowerCase();
       this._type = /^[\x20-\x7e]*$/.test(type) ? type : "";
+    }
+    [Symbol.for("nodejs.util.inspect.custom")](depth) {
+      if (depth < 0) return "[Blob]";
+      const type = this.type.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      return `Blob { size: ${this.size}, type: '${type}' }`;
     }
     async arrayBuffer() {
       if (!this || !this._data) throw Object.assign(new TypeError("Illegal invocation"), { code: "ERR_INVALID_THIS" });
@@ -463,12 +515,23 @@ if (typeof globalThis.Blob !== "function" ||
       const thisBlob = this;
       let index = 0;
       return new Stream({
+        type: "bytes",
         pull(controller) {
           __nodeBlobEnsureReadable(thisBlob);
-          if (index < chunks.length) controller.enqueue(chunks[index++]);
-          else controller.close();
+          while (index < chunks.length) {
+            const chunk = chunks[index++];
+            if (chunk.byteLength === 0) continue;
+            // Byte stream enqueue detaches its input view. Copy from Blob's
+            // retained bytes so reading the stream does not detach its data.
+            controller.enqueue(new Uint8Array(chunk));
+            return;
+          }
+          controller.close();
+          // A pending BYOB read needs an explicit zero-byte response to
+          // complete after the byte stream closes.
+          controller.byobRequest?.respond(0);
         }
-      }, { highWaterMark: 0, size: (chunk) => chunk.byteLength });
+      }, { highWaterMark: 0 });
     }
     textStream() {
       if (!this || !this._data) throw Object.assign(new TypeError("Illegal invocation"), { code: "ERR_INVALID_THIS" });
@@ -542,33 +605,93 @@ if (typeof globalThis.Blob === "function" && globalThis.Blob.prototype) {
           const error = __quenchBlobInvalidThis();
           return asynchronous ? Promise.reject(error) : (() => { throw error; })();
         }
-        // The embedded Blob fallback stores bytes in `_data`; resolve these
-        // methods explicitly because async class methods can lose their
-        // receiver across the VM's Promise continuation boundary.
-        if (this._data && (name === "text" || name === "bytes" || name === "arrayBuffer")) {
+        if (name === "text" || name === "bytes" || name === "arrayBuffer") {
           try {
             globalThis.__quenchBlobEnsureReadable?.(this);
           } catch (error) {
             return Promise.reject(error);
           }
+        }
+        // The embedded Blob fallback stores bytes in `_data`; resolve these
+        // methods explicitly because async class methods can lose their
+        // receiver across the VM's Promise continuation boundary.
+        if (this._data && (name === "text" || name === "bytes" || name === "arrayBuffer")) {
           if (name === "text") return Promise.resolve(this._data.toString());
           if (name === "bytes") return Promise.resolve(new Uint8Array(this._data));
           const data = this._data;
           return Promise.resolve(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
         }
-        return original.apply(this, args);
+        const result = original.apply(this, args);
+        if (name === "stream" && typeof this["\0quench:file-backed:path"] === "string" &&
+            typeof result?.getReader === "function" && typeof globalThis.ReadableStream === "function") {
+          const blob = this;
+          const reader = result.getReader();
+          return new globalThis.ReadableStream({
+            async pull(controller) {
+              try {
+                globalThis.__quenchBlobEnsureReadable(blob);
+                const item = await reader.read();
+                if (item.done) controller.close();
+                else controller.enqueue(item.value);
+              } catch (error) {
+                controller.error(error);
+              }
+            },
+            cancel(reason) { return reader.cancel(reason); },
+          }, { highWaterMark: 0 });
+        }
+        return result;
       },
     });
   }
 }
 if (typeof globalThis.File !== "function" && typeof globalThis.Blob === "function") {
+  const fileStates = new WeakMap();
+  const invalidFileThis = () => Object.assign(new TypeError("Illegal invocation"), {
+    code: "ERR_INVALID_THIS",
+  });
   class File extends globalThis.Blob {
-    constructor(parts = [], name = "", options = {}) {
+    constructor(parts, name, options = {}) {
+      if (arguments.length < 2) {
+        throw Object.assign(new TypeError('The "fileBits" and "fileName" arguments are required'), {
+          code: "ERR_MISSING_ARGS",
+        });
+      }
       super(parts, options);
-      this.name = String(name);
-      const modified = options && options.lastModified;
-      this.lastModified = modified === undefined ? Date.now() : Number(modified);
+      let lastModified = options?.lastModified;
+      if (lastModified === undefined) lastModified = Date.now();
+      else {
+        lastModified = +lastModified;
+        if (Number.isNaN(lastModified)) lastModified = 0;
+      }
+      let fileName = `${name}`;
+      if (typeof fileName.toWellFormed === "function") fileName = fileName.toWellFormed();
+      fileStates.set(this, { name: fileName, lastModified });
     }
+    get name() {
+      const state = fileStates.get(this);
+      if (!state) throw invalidFileThis();
+      return state.name;
+    }
+    get lastModified() {
+      const state = fileStates.get(this);
+      if (!state) throw invalidFileThis();
+      return state.lastModified;
+    }
+    [Symbol.for("nodejs.util.inspect.custom")]() {
+      return `File { size: ${this.size}, type: '${this.type}', name: '${this.name}', lastModified: ${this.lastModified} }`;
+    }
+  }
+  Object.defineProperty(File.prototype, Symbol.toStringTag, {
+    configurable: true,
+    value: "File",
+  });
+  for (const name of ["name", "lastModified"]) {
+    const descriptor = Object.getOwnPropertyDescriptor(File.prototype, name);
+    Object.defineProperty(File.prototype, name, {
+      ...descriptor,
+      enumerable: true,
+    });
   }
   Object.defineProperty(globalThis, "File", {
     configurable: true,

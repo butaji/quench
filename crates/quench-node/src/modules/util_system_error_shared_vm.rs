@@ -27,7 +27,9 @@ pub(crate) fn uv_binding(context: &mut Context<'_>) -> Result<RootId, RootedErro
         let binding = context.object_rooted()?;
         let warning_state = context.null_object_rooted()?;
         let errname = context.host_function_named_with_data(
-            crate::host::shared_vm::operation("uvErrName"), "errname", warning_state,
+            crate::host::shared_vm::operation("uvErrName"),
+            "errname",
+            warning_state,
         )?;
         let key = context.string_rooted("errname");
         context.define_data_property_rooted(binding, key, errname, true, true, true)?;
@@ -104,16 +106,27 @@ pub(crate) fn error_map(
 fn pending_errname_warning(c: &mut Context<'_>) -> Result<(), RootedError> {
     use super::event_constructor_shared_vm::get;
     let state = c.host_mut().shared_state();
-    if !state.borrow().cli_options.enabled("--pending-deprecation") { return Ok(()); }
+    if !state.borrow().cli_options.enabled("--pending-deprecation") {
+        return Ok(());
+    }
     let data = c.host_function_data()?;
     let warned = get(c, data, "warned")?;
-    if c.rooted_value(warned).is_some_and(|value| value.as_bool() == Some(true)) { return Ok(()); }
+    if c.rooted_value(warned)
+        .is_some_and(|value| value.as_bool() == Some(true))
+    {
+        return Ok(());
+    }
     let key = c.string_rooted("warned");
     let yes = c.boolean(true);
     c.define_data_property_rooted(data, key, yes, true, false, false)?;
-    let process = state.borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let process = state
+        .borrow()
+        .process_module
+        .ok_or_else(|| RootedError::host("process is not initialized"))?;
     let emit = get(c, process, "emitWarning")?;
-    if !c.is_callable_rooted(emit)? { return Ok(()); }
+    if !c.is_callable_rooted(emit)? {
+        return Ok(());
+    }
     let message = c.string_rooted("Directly calling process.binding('uv').errname(<val>) is being deprecated. Please make sure to use util.getSystemErrorName() instead.");
     let kind = c.string_rooted("DeprecationWarning");
     let code = c.string_rooted("DEP0119");

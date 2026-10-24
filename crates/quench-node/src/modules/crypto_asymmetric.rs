@@ -1,7 +1,8 @@
 //! Owned asymmetric key material; VM slots retain this owner, never DER bytes.
 use foreign_types::{ForeignType, ForeignTypeRef};
 use openssl::{
-    bn::{BigNum, BigNumContext},
+    asn1::Asn1Object,
+    bn::{BigNum, BigNumContext, BigNumRef},
     ec::{EcGroup, EcKey, EcPoint, PointConversionForm},
     error::ErrorStack,
     nid::Nid,
@@ -12,7 +13,7 @@ use openssl::{
 };
 use std::{
     collections::BTreeMap,
-    ffi::{CStr, CString, c_char, c_int},
+    ffi::{c_char, c_int, CStr, CString},
 };
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyKind {
@@ -35,6 +36,13 @@ pub enum Encoding {
 pub enum KeyError {
     OpenSsl(ErrorStack),
     Unsupported(&'static str),
+    InvalidRawKey,
+    UnsupportedPrivatePkcs1,
+    InvalidCurve(String),
+    UnsupportedJwkCurve(String),
+    UnsupportedJwkAlgorithm,
+    UnsupportedJwkKeyType,
+    MissingKeySeed,
     InvalidJwk,
     MissingPassphrase,
 }
@@ -62,14 +70,33 @@ pub struct Details {
 pub struct Jwk {
     pub kty: String,
     pub crv: Option<String>,
+    pub alg: Option<String>,
     pub fields: BTreeMap<String, Vec<u8>>,
+    pub oth: Vec<[Vec<u8>; 3]>,
 }
 impl Drop for Jwk {
     fn drop(&mut self) {
         for bytes in self.fields.values_mut() {
             super::crypto_secret_material::cleanse(bytes)
         }
+        for [r, d, t] in &mut self.oth {
+            super::crypto_secret_material::cleanse(r);
+            super::crypto_secret_material::cleanse(d);
+            super::crypto_secret_material::cleanse(t);
+        }
     }
+}
+fn ec_jwk_coordinate(jwk: &Jwk, name: &'static str, size: usize) -> Result<Vec<u8>, KeyError> {
+    let bytes = jwk.fields.get(name).ok_or(KeyError::InvalidJwk)?;
+    let leading_zeroes = bytes.iter().take_while(|byte| **byte == 0).count();
+    let magnitude = &bytes[leading_zeroes..];
+    if magnitude.len() > size {
+        return Err(KeyError::InvalidJwk);
+    }
+    let mut coordinate = vec![0; size];
+    let offset = size - magnitude.len();
+    coordinate[offset..].copy_from_slice(magnitude);
+    Ok(coordinate)
 }
 fn secure_bn(bytes: &[u8]) -> Result<BigNum, ErrorStack> {
     let mut n = BigNum::new_secure()?;
@@ -77,6 +104,23 @@ fn secure_bn(bytes: &[u8]) -> Result<BigNum, ErrorStack> {
     Ok(n)
 }
 unsafe extern "C" {
+    fn RSA_set0_multi_prime_params(
+        rsa: *mut openssl_sys::RSA,
+        primes: *mut *mut openssl_sys::BIGNUM,
+        exps: *mut *mut openssl_sys::BIGNUM,
+        coeffs: *mut *mut openssl_sys::BIGNUM,
+        pnum: c_int,
+    ) -> c_int;
+    fn RSA_get_multi_prime_extra_count(rsa: *const openssl_sys::RSA) -> c_int;
+    fn RSA_get0_multi_prime_factors(
+        rsa: *const openssl_sys::RSA,
+        primes: *mut *const openssl_sys::BIGNUM,
+    ) -> c_int;
+    fn RSA_get0_multi_prime_crt_params(
+        rsa: *const openssl_sys::RSA,
+        exps: *mut *const openssl_sys::BIGNUM,
+        coeffs: *mut *const openssl_sys::BIGNUM,
+    ) -> c_int;
     fn EVP_PKEY_private_check(ctx: *mut openssl_sys::EVP_PKEY_CTX) -> c_int;
     fn OBJ_txt2nid(name: *const c_char) -> c_int;
     fn EVP_PKEY_eq(a: *const openssl_sys::EVP_PKEY, b: *const openssl_sys::EVP_PKEY) -> c_int;
@@ -215,7 +259,13 @@ fn private_reader(data: &[u8], pass: Option<&[u8]>, pem: bool) -> Result<PKey<Pr
     unsafe { openssl_sys::BIO_free_all(bio) };
     if key.is_null() {
         let errors = ErrorStack::get();
-        if !pem && state.requested && pass.is_none() {
+        if pass.is_none() && !pem && encrypted_pkcs8(data) {
+            // Encrypted DER PKCS#8 is identifiable before invoking OpenSSL.
+            // Node reports a missing-passphrase error for this encoding on
+            // OpenSSL 3 as well, while encrypted PEM retains OpenSSL's native
+            // decoder error when no passphrase was supplied.
+            Err(KeyError::MissingPassphrase)
+        } else if state.requested && pass.is_none() && openssl::version::number() < 0x3000_0000 {
             Err(KeyError::MissingPassphrase)
         } else {
             Err(KeyError::OpenSsl(errors))
@@ -340,7 +390,11 @@ impl OwnedKey {
                 Format::Der => match encoding
                     .ok_or(KeyError::Unsupported("DER encoding is required"))?
                 {
-                    Encoding::Pkcs1 => PKey::from_rsa(Rsa::private_key_from_der(data)?)?,
+                    Encoding::Pkcs1 => {
+                        let rsa = Rsa::private_key_from_der(data)
+                            .map_err(|_| KeyError::UnsupportedPrivatePkcs1)?;
+                        PKey::from_rsa(rsa)?
+                    }
                     Encoding::Pkcs8 => private_pkcs8(data, passphrase)?,
                     Encoding::Sec1 => PKey::from_ec_key(EcKey::private_key_from_der(data)?)?,
                     Encoding::Spki => {
@@ -379,6 +433,72 @@ impl OwnedKey {
         algorithm: &str,
         named_curve: Option<&str>,
     ) -> Result<Self, KeyError> {
+        if let Some(descriptor) = super::crypto_provider_facts::key_algorithm(algorithm)
+            .filter(|algorithm| algorithm.is_pqc())
+        {
+            if format == RawFormat::Public {
+                let expected_len = match descriptor.name() {
+                    "ML-DSA-44" => Some(1312),
+                    "ML-DSA-65" => Some(1952),
+                    "ML-DSA-87" => Some(2592),
+                    "ML-KEM-512" => Some(800),
+                    "ML-KEM-768" => Some(1184),
+                    "ML-KEM-1024" => Some(1568),
+                    name if name.contains("128") => Some(32),
+                    name if name.contains("192") => Some(48),
+                    name if name.contains("256") => Some(64),
+                    _ => None,
+                };
+                if expected_len.is_some_and(|expected| data.len() != expected) {
+                    return Err(KeyError::InvalidRawKey);
+                }
+            }
+            if format == RawFormat::Private
+                && descriptor.family == super::crypto_provider_facts::KeyFamily::SLHDSA
+            {
+                // The raw SLH-DSA private representation contains four n-byte
+                // values. Reject a mismatched parameter set before asking the
+                // provider to import it, which can otherwise accept the
+                // differently-sized octet string under another algorithm.
+                let expected_len = match descriptor.name() {
+                    name if name.contains("128") => Some(64),
+                    name if name.contains("192") => Some(96),
+                    name if name.contains("256") => Some(128),
+                    _ => None,
+                };
+                if expected_len.is_some_and(|expected| data.len() != expected) {
+                    return Err(KeyError::InvalidRawKey);
+                }
+            }
+            if format == RawFormat::Private
+                && matches!(
+                    descriptor.family,
+                    super::crypto_provider_facts::KeyFamily::MLDSA
+                        | super::crypto_provider_facts::KeyFamily::MLKEM
+                )
+            {
+                return Err(KeyError::Unsupported(
+                    "raw private format is not supported for this key family",
+                ));
+            }
+            if format == RawFormat::Seed
+                && matches!(
+                    descriptor.family,
+                    super::crypto_provider_facts::KeyFamily::SLHDSA
+                )
+            {
+                return Err(KeyError::Unsupported(
+                    "raw seed is not supported for this key family",
+                ));
+            }
+            let param = match format {
+                RawFormat::Public => Some((c"pub", KeyKind::Public)),
+                RawFormat::Private => Some((c"priv", KeyKind::Private)),
+                RawFormat::Seed => Some((c"seed", KeyKind::Private)),
+            };
+            let (param, kind) = param.expect("all PQC formats are provider octets");
+            return import_akp_params(algorithm, None, Some((param, data)), kind);
+        }
         if format == RawFormat::Seed {
             return Err(KeyError::Unsupported(
                 "raw seed is not supported for this key family",
@@ -395,19 +515,31 @@ impl OwnedKey {
                 let name = CString::new(name.split('\0').next().unwrap()).unwrap();
                 Nid::from_raw(unsafe { OBJ_txt2nid(name.as_ptr()) })
             });
-            let group = EcGroup::from_curve_name(nid)?;
+            if nid == Nid::UNDEF {
+                return Err(KeyError::InvalidCurve(name.to_owned()));
+            }
+            let group = EcGroup::from_curve_name(nid)
+                .map_err(|_| KeyError::InvalidCurve(name.to_owned()))?;
             let mut ctx = BigNumContext::new()?;
             if format == RawFormat::Public {
-                let point = EcPoint::from_bytes(&group, data, &mut ctx)?;
+                let width = (group.degree() as usize).div_ceil(8);
+                if data.len() != width + 1 && data.len() != width * 2 + 1 {
+                    return Err(KeyError::InvalidRawKey);
+                }
+                let point = EcPoint::from_bytes(&group, data, &mut ctx)
+                    .map_err(|_| KeyError::InvalidRawKey)?;
                 let key = EcKey::from_public_key(&group, &point)?;
                 Self::Public(PKey::from_ec_key(key)?)
             } else {
                 let mut order = BigNum::new()?;
                 group.order(&mut order, &mut ctx)?;
                 if data.len() != order.num_bytes() as usize {
-                    return Err(KeyError::Unsupported("invalid EC private key length"));
+                    return Err(KeyError::InvalidRawKey);
                 }
                 let d = secure_bn(data)?;
+                if d.num_bits() == 0 || d.ucmp(&order) != std::cmp::Ordering::Less {
+                    return Err(KeyError::InvalidRawKey);
+                }
                 let mut point = EcPoint::new(&group)?;
                 point.mul_generator2(&group, &d, &mut ctx)?;
                 let key = EcKey::from_private_components(&group, &d, &point)?;
@@ -464,8 +596,15 @@ impl OwnedKey {
                 })
             }
             Self::Private(k) => Ok(match (encoding, format, cipher) {
-                (Encoding::Pkcs8, Format::Pem, None) => k.private_key_to_pem_pkcs8()?,
-                (Encoding::Pkcs8, Format::Der, None) => k.private_key_to_pkcs8()?,
+                (Encoding::Pkcs8, format, None) => {
+                    if let Some(encoded) = pqc_seed_pkcs8(k, format)? {
+                        return Ok(encoded);
+                    }
+                    match format {
+                        Format::Pem => k.private_key_to_pem_pkcs8()?,
+                        Format::Der => k.private_key_to_pkcs8()?,
+                    }
+                }
                 (Encoding::Pkcs8, Format::Pem, Some(c)) => {
                     k.private_key_to_pem_pkcs8_passphrase(c, passphrase.unwrap())?
                 }
@@ -495,13 +634,26 @@ impl OwnedKey {
                 d.modulus_length = Some(rsa.n().num_bits() as u32);
                 d.public_exponent = Some(rsa.e().to_vec());
                 if self.key_type() == Some("rsa-pss") {
-                    d.hash_algorithm = self.text_param(c"digest");
-                    d.mgf1_hash_algorithm = self.text_param(c"mgf1-digest");
                     let mut n = 0;
                     if unsafe { EVP_PKEY_get_int_param(self.raw(), c"saltlen".as_ptr(), &mut n) }
                         == 1
                     {
-                        d.salt_length = Some(n)
+                        // OpenSSL uses a negative salt length for an unrestricted
+                        // RSA-PSS key. Node omits all PSS restrictions in that case.
+                        if n >= 0 {
+                            // OpenSSL can leave RFC 3447's empty/default
+                            // RSASSA-PSS-params sequence implicit. Node reports
+                            // those defaults on constrained PSS keys.
+                            d.hash_algorithm = Some(
+                                self.text_param(c"digest")
+                                    .unwrap_or_else(|| "sha1".to_owned()),
+                            );
+                            d.mgf1_hash_algorithm = Some(
+                                self.text_param(c"mgf1-digest")
+                                    .unwrap_or_else(|| "sha1".to_owned()),
+                            );
+                            d.salt_length = Some(n)
+                        }
                     }
                 }
             }
@@ -554,9 +706,10 @@ impl OwnedKey {
         };
         let bn = |n| secure_bn(field(n)?).map_err(KeyError::OpenSsl);
         let key = match jwk.kty.as_str() {
+            "AKP" => import_akp_jwk(kind, jwk)?,
             "RSA" => {
                 if jwk.fields.contains_key("d") {
-                    Self::Private(PKey::from_rsa(Rsa::from_private_components(
+                    let rsa = Rsa::from_private_components(
                         bn("n")?,
                         bn("e")?,
                         bn("d")?,
@@ -565,7 +718,58 @@ impl OwnedKey {
                         bn("dp")?,
                         bn("dq")?,
                         bn("qi")?,
-                    )?)?)
+                    )
+                    .map_err(|_| KeyError::InvalidJwk)?;
+                    if !jwk.oth.is_empty() {
+                        let mut primes = jwk
+                            .oth
+                            .iter()
+                            .map(|[r, _, _]| secure_bn(r).map_err(|_| KeyError::InvalidJwk))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let mut exps = jwk
+                            .oth
+                            .iter()
+                            .map(|[_, d, _]| secure_bn(d).map_err(|_| KeyError::InvalidJwk))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let mut coeffs = jwk
+                            .oth
+                            .iter()
+                            .map(|[_, _, t]| secure_bn(t).map_err(|_| KeyError::InvalidJwk))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let mut prime_ptrs = primes
+                            .iter()
+                            .map(|value| value.as_ptr())
+                            .collect::<Vec<_>>();
+                        let mut exp_ptrs =
+                            exps.iter().map(|value| value.as_ptr()).collect::<Vec<_>>();
+                        let mut coeff_ptrs = coeffs
+                            .iter()
+                            .map(|value| value.as_ptr())
+                            .collect::<Vec<_>>();
+                        let count =
+                            c_int::try_from(prime_ptrs.len()).map_err(|_| KeyError::InvalidJwk)?;
+                        if unsafe {
+                            RSA_set0_multi_prime_params(
+                                rsa.as_ptr(),
+                                prime_ptrs.as_mut_ptr(),
+                                exp_ptrs.as_mut_ptr(),
+                                coeff_ptrs.as_mut_ptr(),
+                                count,
+                            )
+                        } != 1
+                        {
+                            return Err(KeyError::InvalidJwk);
+                        }
+                        for value in primes
+                            .drain(..)
+                            .chain(exps.drain(..))
+                            .chain(coeffs.drain(..))
+                        {
+                            std::mem::forget(value);
+                        }
+                    }
+                    rsa.check_key().map_err(|_| KeyError::InvalidJwk)?;
+                    Self::Private(PKey::from_rsa(rsa)?)
                 } else {
                     Self::Public(PKey::from_rsa(Rsa::from_public_components(
                         bn("n")?,
@@ -574,28 +778,32 @@ impl OwnedKey {
                 }
             }
             "EC" => {
-                let nid = curve(jwk.crv.as_deref().ok_or(KeyError::InvalidJwk)?)
-                    .ok_or(KeyError::Unsupported("JWK curve"))?;
+                let name = jwk.crv.as_deref().ok_or(KeyError::InvalidJwk)?;
+                let nid = curve(name).ok_or_else(|| KeyError::InvalidCurve(name.to_owned()))?;
                 let group = EcGroup::from_curve_name(nid)?;
+                let coordinate_size = (group.degree() as usize).div_ceil(8);
                 let mut point = vec![4];
-                point.extend(field("x")?);
-                point.extend(field("y")?);
+                point.extend(ec_jwk_coordinate(jwk, "x", coordinate_size)?);
+                point.extend(ec_jwk_coordinate(jwk, "y", coordinate_size)?);
                 let mut ctx = BigNumContext::new()?;
-                let point = EcPoint::from_bytes(&group, &point, &mut ctx)?;
+                let point = EcPoint::from_bytes(&group, &point, &mut ctx)
+                    .map_err(|_| KeyError::InvalidJwk)?;
                 if jwk.fields.contains_key("d") {
                     let d = bn("d")?;
-                    let key = EcKey::from_private_components(&group, &d, &point)?;
-                    key.check_key()?;
+                    let key = EcKey::from_private_components(&group, &d, &point)
+                        .map_err(|_| KeyError::InvalidJwk)?;
+                    key.check_key().map_err(|_| KeyError::InvalidJwk)?;
                     Self::Private(PKey::from_ec_key(key)?)
                 } else {
-                    let key = EcKey::from_public_key(&group, &point)?;
-                    key.check_key()?;
+                    let key =
+                        EcKey::from_public_key(&group, &point).map_err(|_| KeyError::InvalidJwk)?;
+                    key.check_key().map_err(|_| KeyError::InvalidJwk)?;
                     Self::Public(PKey::from_ec_key(key)?)
                 }
             }
             "OKP" => {
                 let id = okp(jwk.crv.as_deref().ok_or(KeyError::InvalidJwk)?)
-                    .ok_or(KeyError::Unsupported("JWK curve"))?;
+                    .ok_or(KeyError::InvalidJwk)?;
                 if let Some(d) = jwk.fields.get("d") {
                     {
                         let key = PKey::private_key_from_raw_bytes(d, id)?;
@@ -620,9 +828,38 @@ impl OwnedKey {
         let mut jwk = Jwk {
             kty: String::new(),
             crv: None,
+            alg: None,
             fields: BTreeMap::new(),
+            oth: Vec::new(),
         };
         let fields = &mut jwk.fields;
+        if let Some(algorithm) = self
+            .key_type_name()
+            .and_then(|name| super::crypto_provider_facts::key_algorithm(&name))
+            .filter(|algorithm| algorithm.is_pqc())
+        {
+            fields.insert("pub".into(), octet_param(self.raw(), c"pub")?);
+            if self.kind() == KeyKind::Private {
+                // ML-DSA and ML-KEM use their provider seed in AKP JWKs.
+                // SLH-DSA has no seed parameter and exposes the full private
+                // component instead.
+                let private_param = if matches!(
+                    algorithm.family,
+                    super::crypto_provider_facts::KeyFamily::SLHDSA
+                ) {
+                    c"priv"
+                } else {
+                    c"seed"
+                };
+                fields.insert(
+                    "priv".into(),
+                    octet_param(self.raw(), private_param).map_err(|_| KeyError::MissingKeySeed)?,
+                );
+            }
+            jwk.kty = "AKP".into();
+            jwk.alg = Some(algorithm.name().into());
+            return Ok(jwk);
+        }
         let (kty, crv) = match self.key_type() {
             Some("rsa" | "rsa-pss") if self.key_type() == Some("rsa") || allow_rsa_pss => {
                 let k = self.public_ref().rsa()?;
@@ -640,18 +877,51 @@ impl OwnedKey {
                     ] {
                         fields.insert(n.into(), v.ok_or(KeyError::InvalidJwk)?.to_vec());
                     }
+                    let count = unsafe { RSA_get_multi_prime_extra_count(k.as_ptr()) };
+                    if count < 0 || count > 8 {
+                        return Err(KeyError::InvalidJwk);
+                    }
+                    if count > 0 {
+                        let count = count as usize;
+                        let mut primes = vec![std::ptr::null(); count];
+                        let mut exps = vec![std::ptr::null(); count];
+                        let mut coeffs = vec![std::ptr::null(); count];
+                        if unsafe { RSA_get0_multi_prime_factors(k.as_ptr(), primes.as_mut_ptr()) }
+                            != 1
+                            || unsafe {
+                                RSA_get0_multi_prime_crt_params(
+                                    k.as_ptr(),
+                                    exps.as_mut_ptr(),
+                                    coeffs.as_mut_ptr(),
+                                )
+                            } != 1
+                        {
+                            return Err(KeyError::InvalidJwk);
+                        }
+                        let octets = |value: *const openssl_sys::BIGNUM| {
+                            if value.is_null() {
+                                return Err(KeyError::InvalidJwk);
+                            }
+                            Ok(unsafe { BigNumRef::from_ptr(value.cast_mut()) }.to_vec())
+                        };
+                        for ((r, d), t) in primes.into_iter().zip(exps).zip(coeffs) {
+                            jwk.oth.push([octets(r)?, octets(d)?, octets(t)?]);
+                        }
+                    }
                 }
                 ("RSA", None)
             }
             Some("ec") => {
                 let k = self.public_ref().ec_key()?;
                 let group = k.group();
-                let crv = jwk_curve(
-                    group
-                        .curve_name()
-                        .ok_or(KeyError::Unsupported("unnamed EC curve"))?,
-                )
-                .ok_or(KeyError::Unsupported("JWK curve"))?;
+                let curve = group
+                    .curve_name()
+                    .ok_or(KeyError::Unsupported("unnamed EC curve"))?;
+                let crv = jwk_curve(curve).ok_or_else(|| {
+                    KeyError::UnsupportedJwkCurve(
+                        curve.short_name().unwrap_or("unknown").to_owned(),
+                    )
+                })?;
                 let width = group.degree().div_ceil(8) as i32;
                 let mut x = BigNum::new()?;
                 let mut y = BigNum::new()?;
@@ -678,13 +948,16 @@ impl OwnedKey {
                 };
                 ("OKP", Some(crv.into()))
             }
-            _ => return Err(KeyError::Unsupported("JWK key type")),
+            _ => return Err(KeyError::UnsupportedJwkKeyType),
         };
         jwk.kty = kty.into();
         jwk.crv = crv;
         Ok(jwk)
     }
     pub fn raw_public(&self, compressed: bool) -> Result<Vec<u8>, KeyError> {
+        if self.is_pqc() {
+            return octet_param(self.raw(), c"pub");
+        }
         if self.key_type() == Some("ec") {
             let key = self.public_ref().ec_key()?;
             let mut ctx = BigNumContext::new()?;
@@ -705,6 +978,22 @@ impl OwnedKey {
         let key = self
             .private_ref()
             .ok_or(KeyError::Unsupported("private key required"))?;
+        if self.is_pqc() {
+            let algorithm = self.key_type_name().unwrap_or_default();
+            let family = super::crypto_provider_facts::key_algorithm(&algorithm)
+                .map(|algorithm| algorithm.family);
+            return octet_param(
+                self.raw(),
+                if matches!(
+                    family,
+                    Some(super::crypto_provider_facts::KeyFamily::SLHDSA)
+                ) {
+                    c"priv"
+                } else {
+                    c"seed"
+                },
+            );
+        }
         if self.key_type() == Some("ec") {
             let ec = key.ec_key()?;
             Ok(ec
@@ -714,4 +1003,253 @@ impl OwnedKey {
             Ok(key.raw_private_key()?)
         }
     }
+    fn is_pqc(&self) -> bool {
+        self.key_type_name()
+            .and_then(|name| super::crypto_provider_facts::key_algorithm(&name))
+            .is_some_and(|algorithm| algorithm.is_pqc())
+    }
+}
+
+fn octet_param(key: *const openssl_sys::EVP_PKEY, name: &CStr) -> Result<Vec<u8>, KeyError> {
+    let mut size = 0usize;
+    let ok = unsafe {
+        openssl_sys::EVP_PKEY_get_octet_string_param(
+            key,
+            name.as_ptr(),
+            std::ptr::null_mut(),
+            0,
+            &mut size,
+        )
+    };
+    if ok != 1 {
+        return Err(KeyError::OpenSsl(ErrorStack::get()));
+    }
+    let mut value = vec![0; size];
+    let ok = unsafe {
+        openssl_sys::EVP_PKEY_get_octet_string_param(
+            key,
+            name.as_ptr(),
+            value.as_mut_ptr(),
+            value.len(),
+            &mut size,
+        )
+    };
+    if ok != 1 {
+        return Err(KeyError::OpenSsl(ErrorStack::get()));
+    }
+    value.truncate(size);
+    Ok(value)
+}
+
+/// Node's OpenSSL key encoder serializes seeded PQC private keys using the
+/// compact PKCS#8 form whose inner private-key OCTET STRING contains only the
+/// seed. OpenSSL 3.5's provider encoder emits seed, public key, and expanded
+/// private key instead, so preserve Node's stable PEM/DER representation here.
+fn pqc_seed_pkcs8(key: &PKeyRef<Private>, format: Format) -> Result<Option<Vec<u8>>, KeyError> {
+    let raw = key.as_ptr();
+    let Some(algorithm) =
+        super::crypto_provider_facts::key_algorithm_for(raw).filter(|algorithm| algorithm.is_pqc())
+    else {
+        return Ok(None);
+    };
+    let Ok(seed) = octet_param(raw, c"seed") else {
+        // A private-only key has no seed and uses the provider's canonical
+        // private-key representation (Node preserves that form as well).
+        return Ok(None);
+    };
+    let oid = Asn1Object::from_str(algorithm.name()).map_err(KeyError::OpenSsl)?;
+    let algorithm_identifier = der_tlv(0x30, &der_tlv(0x06, oid.as_slice()));
+    // The ML-DSA PKCS#8 profile marks seed-only material with primitive
+    // context-specific tag [0] (0x80), followed by the seed bytes.
+    let seed = der_tlv(0x80, &seed);
+    let private_key = der_tlv(0x04, &seed);
+    let mut contents = vec![0x02, 0x01, 0x00];
+    contents.extend_from_slice(&algorithm_identifier);
+    contents.extend_from_slice(&private_key);
+    let der = der_tlv(0x30, &contents);
+    if format == Format::Der {
+        return Ok(Some(der));
+    }
+
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(der);
+    let mut pem = String::from("-----BEGIN PRIVATE KEY-----\n");
+    for line in encoded.as_bytes().chunks(64) {
+        pem.push_str(std::str::from_utf8(line).expect("base64 is ASCII"));
+        pem.push('\n');
+    }
+    pem.push_str("-----END PRIVATE KEY-----\n");
+    Ok(Some(pem.into_bytes()))
+}
+
+fn der_tlv(tag: u8, value: &[u8]) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(value.len() + 6);
+    encoded.push(tag);
+    if value.len() < 128 {
+        encoded.push(value.len() as u8);
+    } else {
+        let bytes = value.len().to_be_bytes();
+        let first = bytes
+            .iter()
+            .position(|byte| *byte != 0)
+            .unwrap_or(bytes.len() - 1);
+        encoded.push(0x80 | (bytes.len() - first) as u8);
+        encoded.extend_from_slice(&bytes[first..]);
+    }
+    encoded.extend_from_slice(value);
+    encoded
+}
+
+fn import_akp_jwk(kind: KeyKind, jwk: &Jwk) -> Result<OwnedKey, KeyError> {
+    let algorithm = jwk
+        .alg
+        .as_deref()
+        .ok_or(KeyError::UnsupportedJwkAlgorithm)?;
+    let descriptor = super::crypto_provider_facts::key_algorithm(algorithm)
+        .filter(|algorithm| algorithm.is_pqc())
+        .ok_or(KeyError::UnsupportedJwkAlgorithm)?;
+    // AKP `alg` is the canonical OpenSSL algorithm identifier. Lower-case
+    // aliases are accepted by key-type lookup, but Node rejects them in JWKs.
+    if algorithm != descriptor.name() {
+        return Err(KeyError::UnsupportedJwkAlgorithm);
+    }
+    let public = jwk
+        .fields
+        .get("pub")
+        .map(Vec::as_slice)
+        .ok_or(KeyError::InvalidJwk)?;
+    let expected_public_len = match descriptor.name() {
+        "ML-DSA-44" => Some(1312),
+        "ML-DSA-65" => Some(1952),
+        "ML-DSA-87" => Some(2592),
+        "ML-KEM-512" => Some(800),
+        "ML-KEM-768" => Some(1184),
+        "ML-KEM-1024" => Some(1568),
+        name if name.contains("128") => Some(32),
+        name if name.contains("192") => Some(48),
+        name if name.contains("256") => Some(64),
+        _ => None,
+    };
+    if expected_public_len.is_some_and(|len| public.len() != len) {
+        return Err(KeyError::InvalidJwk);
+    }
+    let private_name = if matches!(
+        descriptor.family,
+        super::crypto_provider_facts::KeyFamily::SLHDSA
+    ) {
+        c"priv"
+    } else {
+        c"seed"
+    };
+    let private = jwk
+        .fields
+        .get("priv")
+        .map(|value| {
+            let expected_len = match descriptor.family {
+                super::crypto_provider_facts::KeyFamily::MLDSA => Some(32),
+                super::crypto_provider_facts::KeyFamily::MLKEM => Some(64),
+                _ => None,
+            };
+            if expected_len.is_some_and(|len| value.len() != len) {
+                return Err(KeyError::InvalidJwk);
+            }
+            Ok((private_name, value.as_slice()))
+        })
+        .transpose()?;
+    let imported =
+        import_akp_params(algorithm, Some(public), private, kind).map_err(|error| match error {
+            KeyError::OpenSsl(_) => KeyError::InvalidJwk,
+            error => error,
+        })?;
+    if private.is_some() && octet_param(imported.raw(), c"pub")? != public {
+        return Err(KeyError::InvalidJwk);
+    }
+    Ok(imported)
+}
+
+fn import_akp_params(
+    algorithm: &str,
+    public: Option<&[u8]>,
+    private: Option<(&CStr, &[u8])>,
+    kind: KeyKind,
+) -> Result<OwnedKey, KeyError> {
+    use foreign_types::ForeignType;
+    let descriptor = super::crypto_provider_facts::key_algorithm(algorithm)
+        .filter(|algorithm| algorithm.is_pqc())
+        .ok_or(KeyError::InvalidJwk)?;
+    let name = CString::new(descriptor.name()).map_err(|_| KeyError::InvalidJwk)?;
+    if kind == KeyKind::Private && private.is_none() {
+        return Err(KeyError::InvalidJwk);
+    }
+    let bld = unsafe { openssl_sys::OSSL_PARAM_BLD_new() };
+    if bld.is_null() {
+        return Err(KeyError::OpenSsl(ErrorStack::get()));
+    }
+    let mut params = std::ptr::null_mut();
+    let mut ctx = std::ptr::null_mut();
+    let mut pkey = std::ptr::null_mut();
+    let result = unsafe {
+        let mut ok = 1;
+        if let Some(public) = public {
+            ok = openssl_sys::OSSL_PARAM_BLD_push_octet_string(
+                bld,
+                c"pub".as_ptr(),
+                public.as_ptr().cast(),
+                public.len(),
+            );
+        }
+        if ok == 1 {
+            if let Some((name, private)) = private {
+                ok = openssl_sys::OSSL_PARAM_BLD_push_octet_string(
+                    bld,
+                    name.as_ptr(),
+                    private.as_ptr().cast(),
+                    private.len(),
+                );
+            }
+        }
+        if ok == 1 {
+            params = openssl_sys::OSSL_PARAM_BLD_to_param(bld);
+            ok = (!params.is_null()) as i32;
+        }
+        if ok == 1 {
+            ctx = openssl_sys::EVP_PKEY_CTX_new_from_name(
+                std::ptr::null_mut(),
+                name.as_ptr(),
+                std::ptr::null(),
+            );
+            ok = (!ctx.is_null()) as i32;
+        }
+        if ok == 1 {
+            ok = openssl_sys::EVP_PKEY_fromdata_init(ctx);
+        }
+        if ok == 1 {
+            ok = openssl_sys::EVP_PKEY_fromdata(
+                ctx,
+                &mut pkey,
+                if kind == KeyKind::Private {
+                    openssl_sys::EVP_PKEY_KEYPAIR
+                } else {
+                    openssl_sys::EVP_PKEY_PUBLIC_KEY
+                },
+                params,
+            );
+        }
+        if !ctx.is_null() {
+            openssl_sys::EVP_PKEY_CTX_free(ctx);
+        }
+        if !params.is_null() {
+            openssl_sys::OSSL_PARAM_free(params);
+        }
+        openssl_sys::OSSL_PARAM_BLD_free(bld);
+        ok
+    };
+    if result != 1 || pkey.is_null() {
+        return Err(KeyError::OpenSsl(ErrorStack::get()));
+    }
+    Ok(if kind == KeyKind::Private {
+        OwnedKey::Private(unsafe { PKey::from_ptr(pkey) })
+    } else {
+        OwnedKey::Public(unsafe { PKey::from_ptr(pkey) })
+    })
 }

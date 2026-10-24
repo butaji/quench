@@ -1,5 +1,5 @@
 //! Measurement-only orchestration of the pinned upstream HTTP framework suite.
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     env,

@@ -21,7 +21,10 @@ impl<H: Host> Vm<H> {
         // Init observers run before the async frame exists. Keep its incoming
         // closure environment, receiver and arguments alive across that callback.
         let promise = self.with_call_roots(
-            [env, this].into_iter().chain(args.iter().copied()).chain(context.callee()),
+            [env, this]
+                .into_iter()
+                .chain(args.iter().copied())
+                .chain(context.callee()),
             |vm| vm.promise_object(),
         )?;
         self.with_call_roots([promise], |vm| {
@@ -83,12 +86,24 @@ impl<H: Host> Vm<H> {
             && !self.realm.promise.records.contains_key(&source)
             && !self.is_object_like(source)
         {
-            self.with_call_roots([Some(source), Some(promise), generator].into_iter().flatten(), |vm| {
-                let parent = vm.realm.promise.records.get(&promise).and_then(|record| record.host_context);
-                let awaited = vm.promise_object_with_parent(parent)?;
-                vm.with_call_roots([awaited], |vm| vm.promise_resolve_value(p, awaited, source))?;
-                Ok(awaited)
-            })?
+            self.with_call_roots(
+                [Some(source), Some(promise), generator]
+                    .into_iter()
+                    .flatten(),
+                |vm| {
+                    let parent = vm
+                        .realm
+                        .promise
+                        .records
+                        .get(&promise)
+                        .and_then(|record| record.host_context);
+                    let awaited = vm.promise_object_with_parent(parent)?;
+                    vm.with_call_roots([awaited], |vm| {
+                        vm.promise_resolve_value(p, awaited, source)
+                    })?;
+                    Ok(awaited)
+                },
+            )?
         } else {
             source
         };
@@ -121,7 +136,11 @@ impl<H: Host> Vm<H> {
         let next = if H::OBSERVE_PROMISE_LIFECYCLE {
             self.with_call_roots([fulfilled, rejected, source, promise], |vm| {
                 vm.promise_object_with_parent(
-                    vm.realm.promise.records.get(&source).and_then(|record| record.host_context),
+                    vm.realm
+                        .promise
+                        .records
+                        .get(&source)
+                        .and_then(|record| record.host_context),
                 )
             })?
         } else {
@@ -141,7 +160,13 @@ impl<H: Host> Vm<H> {
             on_fulfilled: fulfilled,
             on_rejected: rejected,
             next,
-            execution_context: self.host.capture_job_context(self.realm.promise.records.get(&next).and_then(|record| record.host_context)),
+            execution_context: self.host.capture_job_context(
+                self.realm
+                    .promise
+                    .records
+                    .get(&next)
+                    .and_then(|record| record.host_context),
+            ),
         };
         if state == PromiseState::Pending {
             self.realm

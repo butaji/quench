@@ -56,7 +56,15 @@ impl Registry {
         }
     }
     fn visible_counts(&self) -> [u32; HookKind::ALL.len()] {
-        self.snapshot.map_or(self.counts, |(_, counts)| counts)
+        // A hook set is stable for the current emission, but mutations made
+        // by a callback take effect for recursively emitted async resources.
+        // Node's async_hooks implementation switches to its updated hook
+        // array for those nested emissions.
+        if self.depth > 0 {
+            self.counts
+        } else {
+            self.snapshot.map_or(self.counts, |(_, counts)| counts)
+        }
     }
 }
 
@@ -72,6 +80,21 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
         return Ok(api);
     }
     let api = context.null_object_rooted()?;
+    let fatal_error = context.evaluate_script_rooted(
+        quench_js_check::checked_js!(
+            r#"(function asyncHookFatalError(error) {
+            if (typeof error?.stack === 'string') {
+              process._rawDebug(error.stack);
+            } else {
+              process._rawDebug(`Error: ${String(error)}`);
+            }
+            process.exit(1);
+          })"#
+        ),
+        "node:async_hooks/fatal-error.js",
+    )?;
+    let fatal_error_key = context.string_rooted("fatalError");
+    context.define_data_property_rooted(api, fatal_error_key, fatal_error, true, false, true)?;
     let operations = context
         .host_mut()
         .shared_state()
@@ -235,26 +258,54 @@ fn transition(
     Ok(hook)
 }
 
-pub(super) fn runtime_has_hooks(runtime: &mut quench_runtime::Runtime<NodeHost>, kind: HookKind) -> bool {
-    runtime.host_mut().shared_state().borrow().async_hooks.registry.visible_counts()[kind.index()] != 0
+pub(super) fn runtime_has_hooks(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    kind: HookKind,
+) -> bool {
+    runtime
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .async_hooks
+        .registry
+        .visible_counts()[kind.index()]
+        != 0
 }
 
 pub(super) fn emit_runtime(
-    runtime: &mut quench_runtime::Runtime<NodeHost>, kind: HookKind, id: u64,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    kind: HookKind,
+    id: u64,
 ) -> Result<(), RootedError> {
-    if !runtime_has_hooks(runtime, kind) { return Ok(()); }
+    if !runtime_has_hooks(runtime, kind) {
+        return Ok(());
+    }
     let function = runtime.host_function(crate::host::shared_vm::operation("asyncHookDispatch"))?;
     let kind = runtime.root(quench_runtime::Value::number(kind.index() as f64));
     let id = runtime.root(quench_runtime::Value::number(id as f64));
     let result = runtime.call_rooted(function, function, &[kind, id]);
-    for root in [function, kind, id] { runtime.release_root(root); }
-    result.map(|root| { runtime.release_root(root); })
+    for root in [function, kind, id] {
+        runtime.release_root(root);
+    }
+    result.map(|root| {
+        runtime.release_root(root);
+    })
 }
 
-pub(crate) fn dispatch(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let index = args.first().and_then(|root| context.rooted_value(*root)).and_then(|v| v.as_number())
+pub(crate) fn dispatch(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let index = args
+        .first()
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(|v| v.as_number())
         .ok_or_else(|| RootedError::host("missing async hook kind"))? as usize;
-    let kind = HookKind::ALL.get(index).copied().ok_or_else(|| RootedError::host("invalid async hook kind"))?;
+    let kind = HookKind::ALL
+        .get(index)
+        .copied()
+        .ok_or_else(|| RootedError::host("invalid async hook kind"))?;
     emit(context, kind, &args[1..])?;
     Ok(context.undefined())
 }
@@ -307,13 +358,23 @@ pub(super) fn emit(
         return Ok(());
     }
     let state = context.host_mut().shared_state();
-    let (api, snapshot) = {
+    let (api, snapshot, nested) = {
         let state = state.borrow();
         let registry = &state.async_hooks.registry;
-        (registry.api, registry.snapshot)
+        (registry.api, registry.snapshot, registry.depth > 0)
     };
     let api = api.ok_or_else(|| RootedError::host("async hook registry missing"))?;
-    let snapshot = if let Some((snapshot, _)) = snapshot {
+    let snapshot = if nested {
+        // Keep the outer callback list immutable while allowing a hook enabled
+        // by that callback to observe a resource created recursively inside
+        // it. Each nested emission therefore gets its own short-lived list.
+        let hooks = get(context, api, "hooks")?;
+        let Some(BuiltinData::Set(hooks)) = context.builtin_data_rooted(hooks)? else {
+            return Err(RootedError::host("async hook subscriptions are not a Set"));
+        };
+        let snapshot = context.array_rooted(&hooks)?;
+        context.retain(snapshot)?
+    } else if let Some((snapshot, _)) = snapshot {
         snapshot
     } else {
         let hooks = get(context, api, "hooks")?;
@@ -334,7 +395,20 @@ pub(super) fn emit(
             let callback = context.get_property_rooted(hook, callback_key)?;
             if context.is_callable_rooted(callback)? {
                 let callback = context.get_property_rooted(hook, callback_key)?;
-                context.call_rooted(callback, hook, args)?;
+                if let Err(error) = context.call_rooted(callback, hook, args) {
+                    if let Some(exception) = error.exception {
+                        let Some(value) = context.scope_root(exception) else {
+                            return Err(error);
+                        };
+                        let fatal_error = get(context, api, "fatalError")?;
+                        let undefined = context.undefined();
+                        let result = context.call_rooted(fatal_error, undefined, &[value]);
+                        context.release_root(exception);
+                        result?;
+                        return Ok(());
+                    }
+                    return Err(error);
+                }
             }
         }
         Ok(())
@@ -343,7 +417,9 @@ pub(super) fn emit(
         let mut state = state.borrow_mut();
         let registry = &mut state.async_hooks.registry;
         registry.depth -= 1;
-        if registry.depth == 0 {
+        if nested {
+            Some(snapshot)
+        } else if registry.depth == 0 {
             registry.snapshot.take().map(|(root, _)| root)
         } else {
             None

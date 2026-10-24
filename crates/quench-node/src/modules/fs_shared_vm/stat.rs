@@ -123,7 +123,11 @@ pub(crate) fn install(
 ) -> Result<(), RootedError> {
     types::install(context, module)?;
     let utimes = context.host_function(crate::host::shared_vm::operation("fsUtimesSync"))?;
-    set(context, module, "utimesSync", utimes)
+    set(context, module, "utimesSync", utimes)?;
+    let lutimes = context.host_function(crate::host::shared_vm::operation("fsLutimesSync"))?;
+    set(context, module, "lutimesSync", lutimes)?;
+    let futimes = context.host_function(crate::host::shared_vm::operation("fsFutimesSync"))?;
+    set(context, module, "futimesSync", futimes)
 }
 
 pub(crate) fn utimes_sync(
@@ -131,13 +135,68 @@ pub(crate) fn utimes_sync(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let path = args
-        .first()
-        .copied()
-        .map(|path| context.to_string(path))
-        .transpose()?
-        .unwrap_or_else(|| "undefined".to_owned());
-    let path = super::resolve_shared_path(context, path);
+    set_times(context, args, false)
+}
+
+pub(crate) fn lutimes_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    set_times(context, args, true)
+}
+
+pub(crate) fn futimes_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
+    let seconds = |index: usize| {
+        args.get(index)
+            .copied()
+            .and_then(|value| context.rooted_value(value))
+            .and_then(|value| value.as_number())
+            .unwrap_or(0.0)
+    };
+    #[cfg(unix)]
+    let result = {
+        let times = [to_timespec(seconds(1)), to_timespec(seconds(2))];
+        use std::os::fd::AsRawFd;
+        let shared = context.host_mut().shared_state();
+        let host = shared.borrow();
+        let descriptors = host.fs.descriptors();
+        let result = match descriptors.get(&fd) {
+            Some(descriptor) => {
+                // SAFETY: the descriptor remains borrowed for the duration of
+                // the syscall, and `times` contains two valid timespec values.
+                if unsafe { libc::futimens(descriptor.file.as_raw_fd(), times.as_ptr()) } == 0 {
+                    Ok(())
+                } else {
+                    Err(io::Error::last_os_error())
+                }
+            }
+            None => Err(io::Error::from_raw_os_error(libc::EBADF)),
+        };
+        result
+    };
+    #[cfg(not(unix))]
+    let result = Err(io::Error::from_raw_os_error(libc::EBADF));
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(context, error, "", "futime")?),
+    }
+}
+
+fn set_times(
+    context: &mut NativeContext<'_, NodeHost>,
+    args: &[RootId],
+    nofollow: bool,
+) -> Result<RootId, RootedError> {
+    let path = args.first().copied().unwrap_or_else(|| context.undefined());
+    let path = super::super::fs_path::validate(context, path, "path")?;
+    let path = super::super::fs_path::resolve(context, path)?;
+    let path_text = path.to_string_lossy().into_owned();
     let seconds = |index: usize| {
         args.get(index)
             .copied()
@@ -149,11 +208,17 @@ pub(crate) fn utimes_sync(
     let mtime = seconds(2);
     #[cfg(unix)]
     let result = {
-        let path = CString::new(path.as_bytes())
+        let path = CString::new(path_text.as_bytes())
             .map_err(|_| RootedError::host("utimes path contains an interior null byte"))?;
         let times = [to_timespec(atime), to_timespec(mtime)];
         // SAFETY: path and times point to valid C values for the duration of the call.
-        let result = unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0) };
+        let flags = if nofollow {
+            libc::AT_SYMLINK_NOFOLLOW
+        } else {
+            0
+        };
+        let result =
+            unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), flags) };
         if result == 0 {
             Ok(())
         } else {
@@ -164,7 +229,7 @@ pub(crate) fn utimes_sync(
     let result = std::fs::metadata(&path).map(|_| ());
     match result {
         Ok(()) => Ok(context.undefined()),
-        Err(error) => Err(path_error(context, error, &path, "utime")?),
+        Err(error) => Err(path_error(context, error, &path_text, "utime")?),
     }
 }
 
@@ -309,13 +374,10 @@ pub(crate) fn access_sync(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let path = args
-        .first()
-        .copied()
-        .map(|path| context.to_string(path))
-        .transpose()?
-        .unwrap_or_else(|| "undefined".to_owned());
-    let path = super::resolve_shared_path(context, path);
+    let path = args.first().copied().unwrap_or_else(|| context.undefined());
+    let path = super::super::fs_path::validate(context, path, "path")?;
+    let path = super::super::fs_path::resolve(context, path)?;
+    let path_text = path.to_string_lossy().into_owned();
     let mode = args
         .get(1)
         .copied()
@@ -338,7 +400,7 @@ pub(crate) fn access_sync(
     let result = std::fs::metadata(&path).map(|_| ());
     match result {
         Ok(()) => Ok(context.undefined()),
-        Err(error) => Err(path_error(context, error, &path, "access")?),
+        Err(error) => Err(path_error(context, error, &path_text, "access")?),
     }
 }
 
@@ -431,13 +493,10 @@ fn change_owner(
     args: &[RootId],
     no_follow: bool,
 ) -> Result<RootId, RootedError> {
-    let path = args
-        .first()
-        .copied()
-        .map(|path| context.to_string(path))
-        .transpose()?
-        .unwrap_or_else(|| "undefined".to_owned());
-    let path = super::resolve_shared_path(context, path);
+    let path = args.first().copied().unwrap_or_else(|| context.undefined());
+    let path = super::super::fs_path::validate(context, path, "path")?;
+    let path = super::super::fs_path::resolve(context, path)?;
+    let path_text = path.to_string_lossy().into_owned();
     let uid = owner_id(context, args.get(1).copied());
     let gid = owner_id(context, args.get(2).copied());
     #[cfg(unix)]
@@ -465,7 +524,7 @@ fn change_owner(
         Err(error) => Err(path_error(
             context,
             error,
-            &path,
+            &path_text,
             if no_follow { "lchown" } else { "chown" },
         )?),
     }
@@ -595,6 +654,12 @@ pub(crate) fn realpath_sync(
         .map(|path| context.to_string(path))
         .transpose()?
         .unwrap_or_else(|| "undefined".to_owned());
+    let native = args
+        .get(1)
+        .copied()
+        .and_then(|value| context.rooted_value(value))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
     let path = super::resolve_shared_path(context, path);
     match std::fs::canonicalize(&path) {
         Ok(canonical) => Ok(context.string_rooted(&canonical.to_string_lossy())),
@@ -606,7 +671,15 @@ pub(crate) fn realpath_sync(
             } else {
                 error
             };
-            Err(stat_error(context, error, &path)?)
+            // The regular realpath implementation reports its failed path
+            // lookup as lstat; the `.native` entry point exposes libuv's
+            // realpath syscall name.
+            Err(path_error(
+                context,
+                error,
+                &path,
+                if native { "realpath" } else { "lstat" },
+            )?)
         }
     }
 }
@@ -701,15 +774,15 @@ pub(crate) fn fstat_sync(
     let descriptor_metadata = {
         let shared = context.host_mut().shared_state();
         let state = shared.borrow();
-        let descriptor = state
+        let metadata = state
             .fs
             .descriptors()
             .get(&fd)
-            .map(|descriptor| (descriptor.file.metadata(), descriptor.path.clone()));
-        descriptor
+            .map(|descriptor| descriptor.file.metadata());
+        metadata
     };
-    let (metadata, path) = match descriptor_metadata {
-        Some((metadata, path)) => (metadata, path),
+    let metadata = match descriptor_metadata {
+        Some(metadata) => metadata,
         None => {
             #[cfg(unix)]
             let metadata = {
@@ -722,12 +795,14 @@ pub(crate) fn fstat_sync(
             };
             #[cfg(not(unix))]
             let metadata = Err(io::Error::from_raw_os_error(libc::EBADF));
-            (metadata, String::new())
+            metadata
         }
     };
     match metadata {
         Ok(metadata) => metadata_stats(context, Some(&metadata), bigint),
-        Err(error) => Err(super::stream_io_error(context, error, "fstat", &path)?),
+        // fstat has no path argument, so Node omits the quoted path suffix and
+        // the `path` property from system errors for this syscall.
+        Err(error) => super::sync::throw_io_error(context, "fstat", None, &error),
     }
 }
 
@@ -745,38 +820,34 @@ pub(crate) fn read_link_sync(
     let path = super::resolve_shared_path(context, path);
     match std::fs::read_link(&path) {
         Ok(target) => Ok(context.string_rooted(&target.to_string_lossy())),
-        Err(error) => Err(stat_error(context, error, &path)?),
+        Err(error) => Err(path_error(context, error, &path, "readlink")?),
     }
 }
 
-fn bigint_option(context: &mut NativeContext<'_, NodeHost>, options: Option<RootId>) -> Result<bool, RootedError> {
-    let Some(options) = options else { return Ok(false); };
-    if context.rooted_value(options).is_some_and(|value| value.is_undefined()) { return Ok(false); }
+fn bigint_option(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: Option<RootId>,
+) -> Result<bool, RootedError> {
+    let Some(options) = options else {
+        return Ok(false);
+    };
+    if context
+        .rooted_value(options)
+        .is_some_and(|value| value.is_undefined())
+    {
+        return Ok(false);
+    }
     let key = context.string_rooted("bigint");
     let value = context.get_property_rooted(options, key)?;
-    Ok(context.rooted_value(value).and_then(|value| value.as_bool()) == Some(true))
+    Ok(context
+        .rooted_value(value)
+        .and_then(|value| value.as_bool())
+        == Some(true))
 }
 
 fn stat_time_ms(time: i128) -> f64 {
     time.div_euclid(NANOSECONDS_PER_SECOND) as f64 * MILLISECONDS_PER_SECOND
         + time.rem_euclid(NANOSECONDS_PER_SECOND) as f64 / NANOSECONDS_PER_MILLISECOND as f64
-}
-
-fn stat_error(
-    context: &mut NativeContext<'_, NodeHost>,
-    error: io::Error,
-    path: &str,
-) -> Result<RootedError, RootedError> {
-    let (code, _) = crate::modules::fs_error_codes::code_for(&error);
-    let description = crate::modules::fs_error_codes::strerror(code);
-    let exception = context.error_rooted(&format!("{code}: {description}, stat '{path}'"))?;
-    set_string(context, exception, "code", code)?;
-    set_string(context, exception, "syscall", "stat")?;
-    set_string(context, exception, "path", path)?;
-    if let Some(errno) = error.raw_os_error() {
-        set_number(context, exception, "errno", -f64::from(errno))?;
-    }
-    Ok(context.throw(exception))
 }
 
 fn path_error(
@@ -787,13 +858,20 @@ fn path_error(
 ) -> Result<RootedError, RootedError> {
     let (code, _) = crate::modules::fs_error_codes::code_for(&error);
     let description = crate::modules::fs_error_codes::strerror(code);
-    let exception = context.error_rooted(&format!("{code}: {description}, {syscall} '{path}'"))?;
+    let message = if path.is_empty() {
+        format!("{code}: {description}, {syscall}")
+    } else {
+        format!("{code}: {description}, {syscall} '{path}'")
+    };
+    let exception = context.error_rooted(&message)?;
     if let Some(errno) = error.raw_os_error() {
         set_number(context, exception, "errno", -f64::from(errno))?;
     }
     set_string(context, exception, "code", code)?;
     set_string(context, exception, "syscall", syscall)?;
-    set_string(context, exception, "path", path)?;
+    if !path.is_empty() {
+        set_string(context, exception, "path", path)?;
+    }
     Ok(context.throw(exception))
 }
 

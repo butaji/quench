@@ -1270,17 +1270,39 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     fn interrupt_safepoint(&mut self) {
-        let pointer=self.builder.ins().load(types::I64,MemFlagsData::trusted(),self.context,CONTEXT_INTERRUPT);
-        let requested=self.builder.ins().atomic_load(types::I8,MemFlagsData::trusted(),pointer);
-        let stop=self.builder.ins().icmp_imm_u(IntCC::NotEqual,requested,0);
-        let termination=match self.termination_block { Some(block)=>block,None=>{let block=self.builder.create_block();self.termination_block=Some(block);block} };
-        let next=self.builder.create_block();self.builder.ins().brif(stop,termination,&[],next,&[]);
-        self.builder.switch_to_block(next);self.builder.seal_block(next);
+        let pointer = self.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            self.context,
+            CONTEXT_INTERRUPT,
+        );
+        let requested = self
+            .builder
+            .ins()
+            .atomic_load(types::I8, MemFlagsData::trusted(), pointer);
+        let stop = self.builder.ins().icmp_imm_u(IntCC::NotEqual, requested, 0);
+        let termination = match self.termination_block {
+            Some(block) => block,
+            None => {
+                let block = self.builder.create_block();
+                self.termination_block = Some(block);
+                block
+            }
+        };
+        let next = self.builder.create_block();
+        self.builder.ins().brif(stop, termination, &[], next, &[]);
+        self.builder.switch_to_block(next);
+        self.builder.seal_block(next);
     }
     fn finish_traps(&mut self) {
-        if let Some(block)=self.termination_block {
-            self.builder.switch_to_block(block);let status=self.builder.ins().iconst(types::I64,TERMINATED_STATUS);
-            let mut values=vec![status];if let Some(ty)=self.plan.result {let kind=Kind::of(ty).expect("planned");values.push(self.builder.ins().iconst(kind.ir(),0));}
+        if let Some(block) = self.termination_block {
+            self.builder.switch_to_block(block);
+            let status = self.builder.ins().iconst(types::I64, TERMINATED_STATUS);
+            let mut values = vec![status];
+            if let Some(ty) = self.plan.result {
+                let kind = Kind::of(ty).expect("planned");
+                values.push(self.builder.ins().iconst(kind.ir(), 0));
+            }
             self.builder.ins().return_(&values);
         }
         for (index, block) in self.trap_blocks.into_iter().enumerate() {
@@ -1863,7 +1885,9 @@ impl<H: Host> Emitter<'_, '_, H> {
         instruction: WideInstruction,
     ) -> bool {
         let op = instruction.op();
-        if op == Op::WasmBranchTable { self.interrupt_safepoint(); }
+        if op == Op::WasmBranchTable {
+            self.interrupt_safepoint();
+        }
         let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
         if let Some(operator) = I32BinaryOperator::from_register_op(op) {
             let left = self.read(b, Kind::I32);
@@ -3034,7 +3058,9 @@ impl<H: Host> Vm<H> {
             // grows memory.
             None => unsafe { (function.entry)(&mut context, base, length, raw.as_ptr(), &mut out) },
         };
-        if i64::from(status) == TERMINATED_STATUS { return Some(Err(JsError::execution_terminated())); }
+        if i64::from(status) == TERMINATED_STATUS {
+            return Some(Err(JsError::execution_terminated()));
+        }
         if i64::from(status) == RAISED_STATUS {
             return match context.raised.take()? {
                 Raised::Error(error) => Some(Err(error)),

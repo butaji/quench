@@ -134,7 +134,10 @@ impl Suite {
 
     fn fixtures(self) -> Vec<PathBuf> {
         match self {
-            Self::V8V7 => FIXTURES.iter().map(|name| Path::new(SUITE_DIR).join(name)).collect(),
+            Self::V8V7 => FIXTURES
+                .iter()
+                .map(|name| Path::new(SUITE_DIR).join(name))
+                .collect(),
             Self::JetStream3 => jetstream::fixtures(),
         }
     }
@@ -153,10 +156,15 @@ impl Suite {
                 .chain(FIXTURES.iter().map(|name| Path::new(SUITE_DIR).join(name)))
                 .map(|path| artifact(&path))
                 .collect(),
-            Self::JetStream3 => ["cli.js", "JetStreamDriver.js", "utils/params.js", "utils/shell-config.js"]
-                .iter()
-                .map(|name| artifact(&Path::new(jetstream::SUITE_DIR).join(name)))
-                .collect(),
+            Self::JetStream3 => [
+                "cli.js",
+                "JetStreamDriver.js",
+                "utils/params.js",
+                "utils/shell-config.js",
+            ]
+            .iter()
+            .map(|name| artifact(&Path::new(jetstream::SUITE_DIR).join(name)))
+            .collect(),
         }
     }
 
@@ -822,7 +830,9 @@ fn parse_options() -> Options {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--suite" => {
-                let name = args.next().unwrap_or_else(|| usage("missing value for --suite"));
+                let name = args
+                    .next()
+                    .unwrap_or_else(|| usage("missing value for --suite"));
                 options.suite = Suite::parse(&name);
             }
             "--node" => options.node = required_path(&mut args, "--node"),
@@ -2142,8 +2152,7 @@ fn corpus_record(suite: Suite, selected: &[PathBuf]) -> CorpusRecord {
         .lines()
         .next()
         .map(str::to_string);
-    let checkout_clean =
-        command_output("git", &["-C", corpus, "status", "--porcelain"]).is_empty();
+    let checkout_clean = command_output("git", &["-C", corpus, "status", "--porcelain"]).is_empty();
     let expected = suite.fixtures().into_iter().collect::<BTreeSet<_>>();
     let actual = selected.iter().cloned().collect::<BTreeSet<_>>();
     CorpusRecord {

@@ -94,7 +94,10 @@ if (!caught) throw new Error("deep call did not throw the stack RangeError");
 if (new Box().walk(2, 0) !== 2) throw new Error("runtime did not recover after deep call");
 "#;
     // Exercise the actual shared resource boundary, not a depth below its limit.
-    let source = source.replace("__GUEST_DEPTH__", &(quench_stack::MAX_GUEST_CALL_DEPTH + 1).to_string());
+    let source = source.replace(
+        "__GUEST_DEPTH__",
+        &(quench_stack::MAX_GUEST_CALL_DEPTH + 1).to_string(),
+    );
     let observation = observe_source(&source);
     assert_eq!(
         observation.outcome(),

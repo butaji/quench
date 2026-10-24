@@ -77,7 +77,20 @@ fn enc(
         Some(NativeFormat::Der) => Format::Der,
         Some(NativeFormat::Pem) => Format::Pem,
         Some(NativeFormat::Jwk) => return Ok(Some(OutputEncoding::Jwk)),
-        Some(NativeFormat::RawPublic) => return Ok(Some(OutputEncoding::RawPublic)),
+        Some(NativeFormat::RawPublic) => {
+            let compressed = match number(c, kind)? {
+                2 => true,  // POINT_CONVERSION_COMPRESSED
+                4 => false, // POINT_CONVERSION_UNCOMPRESSED
+                _ => {
+                    return Err(fail(
+                        c,
+                        "ERR_INVALID_ARG_VALUE",
+                        "Unsupported raw public point conversion",
+                    ));
+                }
+            };
+            return Ok(Some(OutputEncoding::RawPublic { compressed }));
+        }
         Some(NativeFormat::RawPrivate) => return Ok(Some(OutputEncoding::RawPrivate)),
         Some(NativeFormat::RawSeed) => return Ok(Some(OutputEncoding::RawSeed)),
         _ => {
@@ -131,7 +144,12 @@ pub(crate) fn configure(
             Parameters::Rsa {
                 bits,
                 exponent,
-                pss,
+                // Web Crypto's RSA-PSS hash belongs to the CryptoKey
+                // algorithm metadata. The generated RSA key itself must stay
+                // unrestricted so exported key material can be imported with
+                // a different hash, as Node permits. Native crypto key-pair
+                // generation still honors the rsa-pss restrictions.
+                pss: if mode == 2 { None } else { pss },
             }
         }
         Family::Ec => {

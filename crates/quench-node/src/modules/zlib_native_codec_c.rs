@@ -46,6 +46,7 @@ extern "C" {
     ) -> c_int;
     fn inflateInit2_(s: *mut Stream, window: c_int, version: *const c_char, size: c_int) -> c_int;
     fn deflate(s: *mut Stream, flush: c_int) -> c_int;
+    fn deflateParams(s: *mut Stream, level: c_int, strategy: c_int) -> c_int;
     fn inflate(s: *mut Stream, flush: c_int) -> c_int;
     fn deflateEnd(s: *mut Stream) -> c_int;
     fn inflateEnd(s: *mut Stream) -> c_int;
@@ -56,9 +57,11 @@ extern "C" {
 use super::{Failure, Step};
 pub(crate) struct Codec {
     stream: Box<Stream>,
+    mode: Mode,
     encoding: bool,
     dictionary: Option<Vec<u8>>,
     gzip_members: bool,
+    reject_trailing: bool,
     auto_header: Option<Vec<u8>>,
 }
 // The boxed C stream and codec allocations have one owner. Writes finish and
@@ -94,6 +97,32 @@ fn code(n: i32) -> &'static str {
     }
 }
 impl Codec {
+    pub(crate) fn params(&mut self, level: i32, strategy: i32) -> Result<(), Failure> {
+        if !self.encoding {
+            return Err(Failure {
+                errno: Z_STREAM_ERROR,
+                code: code(Z_STREAM_ERROR).into(),
+                message: "stream error".into(),
+            });
+        }
+        let status = unsafe { deflateParams(&mut *self.stream, level, strategy) };
+        if status == Z_OK {
+            Ok(())
+        } else {
+            Err(Failure {
+                errno: status,
+                code: code(status).into(),
+                message: if self.stream.msg.is_null() {
+                    "stream error".into()
+                } else {
+                    unsafe { CStr::from_ptr(self.stream.msg) }
+                        .to_string_lossy()
+                        .into_owned()
+                },
+            })
+        }
+    }
+
     pub(in crate::modules) fn new(
         mode: Mode,
         bits: i32,
@@ -101,6 +130,7 @@ impl Codec {
         memory: i32,
         strategy: i32,
         dictionary: Option<Vec<u8>>,
+        reject_trailing: bool,
     ) -> Result<Self, Failure> {
         let encoding = matches!(mode, Mode::Deflate | Mode::DeflateRaw | Mode::Gzip);
         let window = match mode {
@@ -114,9 +144,11 @@ impl Codec {
         let stream = Box::new(unsafe { std::mem::zeroed::<Stream>() });
         let mut result = Self {
             stream,
+            mode,
             encoding,
             dictionary,
-            gzip_members: matches!(mode, Mode::Gunzip),
+            gzip_members: matches!(mode, Mode::Gunzip) && !reject_trailing,
+            reject_trailing,
             auto_header: matches!(mode, Mode::Unzip).then(Vec::new),
         };
         let status = unsafe {
@@ -190,7 +222,7 @@ impl Codec {
                 header.push(*value);
             }
             if header.len() == 2 {
-                self.gzip_members = header == &[0x1f, 0x8b];
+                self.gzip_members = header == &[0x1f, 0x8b] && !self.reject_trailing;
                 self.auto_header = None;
             }
         }
@@ -233,6 +265,17 @@ impl Codec {
                 }
                 status = unsafe { inflate(&mut *self.stream, flush) };
             }
+            if status == Z_STREAM_END
+                && self.reject_trailing
+                && matches!(self.mode, Mode::Gunzip | Mode::Unzip)
+                && self.stream.avail_in > 0
+            {
+                return Err(Failure {
+                    errno: -1,
+                    code: "ERR_TRAILING_JUNK_AFTER_STREAM_END".into(),
+                    message: "Trailing junk after stream end".into(),
+                });
+            }
             match status {
                 Z_STREAM_END => {}
                 Z_OK | Z_BUF_ERROR => {
@@ -248,7 +291,7 @@ impl Codec {
                         } else {
                             "Missing dictionary"
                         },
-                    ))
+                    ));
                 }
                 _ => return Err(self.failure(status, "Zlib error")),
             }

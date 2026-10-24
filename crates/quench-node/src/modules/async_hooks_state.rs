@@ -16,15 +16,31 @@ const FIRST_LOCAL_STORAGE_ID: u64 = 1;
 /// ALS ownership is tagged: public resources and private reaction snapshots
 /// remain disjoint even when their integer payloads are equal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum StoreContext { Resource(u64), Job(u64) }
+pub(super) enum StoreContext {
+    Resource(u64),
+    Job(u64),
+}
 impl From<u64> for StoreContext {
-    fn from(id: u64) -> Self { Self::Resource(id) }
+    fn from(id: u64) -> Self {
+        Self::Resource(id)
+    }
 }
 #[derive(Clone, Copy)]
 pub(super) struct JobContext {
     pub resource: Option<u64>,
     pub execution: u64,
     pub trigger: i64,
+}
+
+/// State needed to restore a synchronous AsyncResource scope after the guest
+/// callback returns. The receiver remains rooted by the active JS call frame.
+pub(super) struct AsyncResourceScope {
+    pub async_id: u64,
+    pub resource_root: RootId,
+    pub previous_async_id: u64,
+    pub previous_trigger_id: i64,
+    pub previous_store: StoreContext,
+    pub previous_resource: Option<(u64, RootId)>,
 }
 
 /// Identity counters shared by the legacy callback adapter and shared VM.
@@ -67,7 +83,9 @@ impl AsyncIdentity {
         self.0.current_async_id.replace(id)
     }
 
-    pub(super) fn store_context(&self) -> StoreContext { self.0.current_store.get() }
+    pub(super) fn store_context(&self) -> StoreContext {
+        self.0.current_store.get()
+    }
     pub(super) fn replace_store_context(&self, key: StoreContext) -> StoreContext {
         self.0.current_store.replace(key)
     }
@@ -99,7 +117,14 @@ pub(crate) struct SharedAsyncHooksState {
     pub(super) next_job_id: u64,
     pub(super) job_stack: Vec<(u64, i64, StoreContext)>,
     pub(super) promise_resources: HashMap<u64, quench_runtime::HostWeakRoot>,
+    /// Promise parent identity is kept separately so V8 promise hooks can
+    /// report the actual parent Promise without rooting either object.
+    pub(super) promise_parents: HashMap<u64, Option<u64>>,
+    /// The V8 `promiseHooks` registry is guest-owned, but retained here so
+    /// Promise lifecycle callbacks can reach it without loading `v8` eagerly.
+    pub(super) promise_hook_registry: Option<RootId>,
     pub(super) scoped_resource: Option<(u64, RootId)>,
+    pub(super) resource_scopes: Vec<AsyncResourceScope>,
     pub(super) local_stores: HashMap<(StoreContext, u64), RootId>,
     pub(super) store_references: HashMap<RootId, usize>,
     pub(super) destroyed_resources: HashSet<u64>,
@@ -117,7 +142,10 @@ impl SharedAsyncHooksState {
             next_job_id: 0,
             job_stack: Vec::new(),
             promise_resources: HashMap::new(),
+            promise_parents: HashMap::new(),
+            promise_hook_registry: None,
             scoped_resource: None,
+            resource_scopes: Vec::new(),
             local_stores: HashMap::new(),
             store_references: HashMap::new(),
             destroyed_resources: HashSet::new(),
@@ -127,7 +155,8 @@ impl SharedAsyncHooksState {
     /// Node internal/async_hooks getDefaultTriggerAsyncId: a negative slot
     /// means inherit executionAsyncId; scope never changes execution or ALS.
     pub(super) fn default_trigger_async_id(&self) -> f64 {
-        self.default_trigger_async_id.filter(|id| !(*id < 0.0))
+        self.default_trigger_async_id
+            .filter(|id| !(*id < 0.0))
             .unwrap_or(self.identity.current_async_id() as f64)
     }
 

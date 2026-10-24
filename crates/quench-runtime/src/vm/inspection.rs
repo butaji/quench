@@ -45,9 +45,7 @@ impl<H: Host> Vm<H> {
                     {
                         if matches!(self.heap.get(constructor), Some(Cell::Function { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
                         {
-                            if let Some(name) = self
-                                .original_debug_name(constructor)
-                            {
+                            if let Some(name) = self.original_debug_name(constructor) {
                                 if constructor_name_is_specific(&name) {
                                     return Some(name);
                                 }

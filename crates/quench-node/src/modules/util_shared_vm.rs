@@ -1,7 +1,7 @@
 //! Shared-VM utilities and native builtin-brand predicates.
 
-use crate::modules::event_constructor_shared_vm::get;
 use crate::host::NodeHost;
+use crate::modules::event_constructor_shared_vm::get;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 
 const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
@@ -66,7 +66,11 @@ pub(crate) fn internal_formatters(
     context: &mut NativeContext<'_, NodeHost>,
 ) -> Result<RootId, RootedError> {
     module(context)?;
-    context.host_mut().shared_state().borrow().util_intrinsics
+    context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .util_intrinsics
         .map(|api| api.formatters)
         .ok_or_else(|| RootedError::host("util formatters missing"))
 }
@@ -90,7 +94,10 @@ pub(crate) fn initialize_call_site_policy(
     context: &mut NativeContext<'_, NodeHost>,
 ) -> Result<(), RootedError> {
     crate::host::shared_vm::commonjs::node_library_export(
-        context, "util.js", "util.js", "getCallSites",
+        context,
+        "util.js",
+        "util.js",
+        "getCallSites",
     )?;
     Ok(())
 }
@@ -100,17 +107,24 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     if let Some(api) = cached {
         return Ok(api.module);
     }
-    let module = crate::host::shared_vm::commonjs::node_library_module(context, "util.js", "util.js")?;
+    let module =
+        crate::host::shared_vm::commonjs::node_library_module(context, "util.js", "util.js")?;
     // Transfer and signal tracing still need native backends. The original
     // aborted export now uses the native weak listener retention substrate.
     let global = context.global_root()?;
     let reflect = get(context, global, "Reflect")?;
     let delete = get(context, reflect, "deleteProperty")?;
-    for name in ["transferableAbortSignal", "transferableAbortController", "setTraceSigInt"] {
+    for name in [
+        "transferableAbortSignal",
+        "transferableAbortController",
+        "setTraceSigInt",
+    ] {
         let key = context.string_rooted(name);
         let removed = context.call_rooted(delete, reflect, &[module, key])?;
         if !context.truthy_rooted(removed)? {
-            return Err(RootedError::host("unimplemented utility policy is not configurable"));
+            return Err(RootedError::host(
+                "unimplemented utility policy is not configurable",
+            ));
         }
     }
     let inspect = get(context, module, "inspect")?;
@@ -141,7 +155,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .host_mut()
         .shared_state()
         .borrow_mut()
-        .util_intrinsics = Some(UtilIntrinsics { module, inspect, formatters });
+        .util_intrinsics = Some(UtilIntrinsics {
+        module,
+        inspect,
+        formatters,
+    });
     Ok(module)
 }
 
@@ -269,7 +287,12 @@ pub(crate) fn argument_type_error(
     name: &str,
     expected: &str,
 ) -> Result<RootedError, RootedError> {
-    argument_type_error_units(context, root, &name.encode_utf16().collect::<Vec<_>>(), expected)
+    argument_type_error_units(
+        context,
+        root,
+        &name.encode_utf16().collect::<Vec<_>>(),
+        expected,
+    )
 }
 
 pub(crate) fn argument_type_error_units(
@@ -296,7 +319,12 @@ pub(crate) fn argument_type_error_with_expected(
     name: &str,
     expected: &str,
 ) -> Result<RootedError, RootedError> {
-    argument_type_error_with_expected_units(context, root, &name.encode_utf16().collect::<Vec<_>>(), expected)
+    argument_type_error_with_expected_units(
+        context,
+        root,
+        &name.encode_utf16().collect::<Vec<_>>(),
+        expected,
+    )
 }
 
 pub(crate) fn argument_type_error_with_expected_units(
@@ -312,7 +340,14 @@ pub(crate) fn argument_type_error_with_expected_units(
     } else {
         units.push(u16::from(b'"'));
         units.extend_from_slice(name);
-        units.extend(if name.contains(&u16::from(b'.')) { "\" property" } else { "\" argument" }.encode_utf16());
+        units.extend(
+            if name.contains(&u16::from(b'.')) {
+                "\" property"
+            } else {
+                "\" argument"
+            }
+            .encode_utf16(),
+        );
     }
     units.extend(format!(" must be {expected}. Received {received}").encode_utf16());
     let error = context.type_error_rooted("")?;
@@ -329,7 +364,12 @@ pub(crate) fn argument_value_error(
     name: &str,
     reason: &str,
 ) -> Result<RootedError, RootedError> {
-    argument_value_error_units(context, value, &name.encode_utf16().collect::<Vec<_>>(), reason)
+    argument_value_error_units(
+        context,
+        value,
+        &name.encode_utf16().collect::<Vec<_>>(),
+        reason,
+    )
 }
 
 pub(crate) fn argument_value_error_units(
@@ -432,12 +472,21 @@ pub(crate) fn range_error_received(
     context: &mut NativeContext<'_, NodeHost>,
     value: RootId,
 ) -> Result<String, RootedError> {
-    if let Some(number) = context.rooted_value(value).and_then(|value| value.as_number()) {
+    if let Some(number) = context
+        .rooted_value(value)
+        .and_then(|value| value.as_number())
+    {
         let text = context.to_string(value)?;
-        if number == 0.0 && number.is_sign_negative() { return Ok("-0".to_owned()); }
-        return Ok(if number.fract() == 0.0 && number.abs() > f64::from(u32::MAX) + 1.0 {
-            integer_separators(&text)
-        } else { text });
+        if number == 0.0 && number.is_sign_negative() {
+            return Ok("-0".to_owned());
+        }
+        return Ok(
+            if number.fract() == 0.0 && number.abs() > f64::from(u32::MAX) + 1.0 {
+                integer_separators(&text)
+            } else {
+                text
+            },
+        );
     }
     let inspect = internal_inspect(context)?;
     let undefined = context.undefined();
@@ -447,7 +496,9 @@ pub(crate) fn range_error_received(
         if let Some(integer) = text.strip_suffix('n') {
             let magnitude = integer.strip_prefix('-').unwrap_or(integer);
             let boundary = (u32::MAX as u64 + 1).to_string();
-            if magnitude.len() > boundary.len() || (magnitude.len() == boundary.len() && magnitude > boundary.as_str()) {
+            if magnitude.len() > boundary.len()
+                || (magnitude.len() == boundary.len() && magnitude > boundary.as_str())
+            {
                 return Ok(format!("{}n", integer_separators(integer)));
             }
         }
@@ -459,25 +510,43 @@ fn integer_separators(text: &str) -> String {
     let start = usize::from(text.starts_with('-'));
     let mut result = String::with_capacity(text.len() + text.len() / 3);
     for (index, character) in text.char_indices() {
-        if index > start && (text.len() - index) % 3 == 0 { result.push('_'); }
+        if index > start && (text.len() - index) % 3 == 0 {
+            result.push('_');
+        }
         result.push(character);
     }
     result
 }
 
 /// Node integer validators reject coercion of the value, then compare original bounds.
-pub(crate) fn validate_integer(context: &mut NativeContext<'_, NodeHost>, value: RootId, name: &str, minimum: f64, maximum: RootId) -> Result<f64, RootedError> {
+pub(crate) fn validate_integer(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    name: &str,
+    minimum: f64,
+    maximum: RootId,
+) -> Result<f64, RootedError> {
     let Some(number) = context.rooted_value(value).and_then(|v| v.as_number()) else {
         return Err(argument_type_error(context, value, name, "number")?);
     };
-    let requirement = if !number.is_finite() || number.fract() != 0.0 { Some("an integer".to_owned()) }
-        else if number < minimum || context.greater_than_rooted(value, maximum)? {
-            Some(format!(">= {minimum} && <= {}", context.to_string(maximum)?))
-        } else { None };
+    let requirement = if !number.is_finite() || number.fract() != 0.0 {
+        Some("an integer".to_owned())
+    } else if number < minimum || context.greater_than_rooted(value, maximum)? {
+        Some(format!(
+            ">= {minimum} && <= {}",
+            context.to_string(maximum)?
+        ))
+    } else {
+        None
+    };
     if let Some(requirement) = requirement {
         let received = range_error_received(context, value)?;
-        let error = context.range_error_rooted(&format!("The value of \"{name}\" is out of range. It must be {requirement}. Received {received}"))?;
-        let key = context.string_rooted("code");let code=context.string_rooted("ERR_OUT_OF_RANGE");context.set_property_rooted(error,key,code,error)?;
+        let error = context.range_error_rooted(&format!(
+            "The value of \"{name}\" is out of range. It must be {requirement}. Received {received}"
+        ))?;
+        let key = context.string_rooted("code");
+        let code = context.string_rooted("ERR_OUT_OF_RANGE");
+        context.set_property_rooted(error, key, code, error)?;
         return Err(context.throw(error));
     }
     Ok(number)
@@ -527,12 +596,17 @@ const SKIP_SYMBOLS: u32 = 16;
 /// V8's internal utility returns string keys, excluding array indices, with
 /// the requested enumerable filter. The Core internal methods own key semantics.
 pub(crate) fn own_non_index_properties(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let missing = context.undefined();
     let object = args.first().copied().unwrap_or(missing);
-    let flags = args.get(1).and_then(|root| context.rooted_value(*root))
-        .and_then(|value| value.as_number()).unwrap_or_default() as u32;
+    let flags = args
+        .get(1)
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(|value| value.as_number())
+        .unwrap_or_default() as u32;
     // V8's own-only key accumulator treats proxy results as trap snapshots:
     // ALL_PROPERTIES preserves integer keys as numbers, while filtered queries
     // skip indices and only the enumerable filter consults descriptors.
@@ -540,18 +614,31 @@ pub(crate) fn own_non_index_properties(
         let mut keys = Vec::new();
         for key in context.own_keys_rooted(object)? {
             if let Some(text) = context.string_text(key)? {
-                if flags & SKIP_STRINGS != 0 { continue; }
-                let index = text.parse::<u32>().ok().filter(|index| *index != u32::MAX && index.to_string() == text);
-                if let Some(index) = index {
-                    if flags == 0 { keys.push(context.number(f64::from(index))); }
+                if flags & SKIP_STRINGS != 0 {
                     continue;
                 }
-            } else if flags & SKIP_SYMBOLS != 0 { continue; }
+                let index = text
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|index| *index != u32::MAX && index.to_string() == text);
+                if let Some(index) = index {
+                    if flags == 0 {
+                        keys.push(context.number(f64::from(index)));
+                    }
+                    continue;
+                }
+            } else if flags & SKIP_SYMBOLS != 0 {
+                continue;
+            }
             if flags & ONLY_ENUMERABLE != 0 {
                 let descriptor = context.own_property_descriptor_rooted(object, key)?;
-                if !context.is_object_rooted(descriptor)? { continue; }
+                if !context.is_object_rooted(descriptor)? {
+                    continue;
+                }
                 let enumerable = get(context, descriptor, "enumerable")?;
-                if !context.truthy_rooted(enumerable)? { continue; }
+                if !context.truthy_rooted(enumerable)? {
+                    continue;
+                }
             }
             keys.push(key);
         }
@@ -560,10 +647,14 @@ pub(crate) fn own_non_index_properties(
     let mut keys = Vec::new();
     for key in context.own_non_index_keys_rooted(object, flags & ONLY_ENUMERABLE != 0)? {
         let string = context.string_text(key)?.is_some();
-        if (string && flags & SKIP_STRINGS != 0) || (!string && flags & SKIP_SYMBOLS != 0) { continue; }
+        if (string && flags & SKIP_STRINGS != 0) || (!string && flags & SKIP_SYMBOLS != 0) {
+            continue;
+        }
         if flags & (ONLY_WRITABLE | ONLY_CONFIGURABLE) != 0 {
             let descriptor = context.own_property_descriptor_rooted(object, key)?;
-            if !context.is_object_rooted(descriptor)? { continue; }
+            if !context.is_object_rooted(descriptor)? {
+                continue;
+            }
             if flags & ONLY_WRITABLE != 0 {
                 let name = context.string_rooted("writable");
                 let writable = context.own_property_descriptor_rooted(descriptor, name)?;
@@ -571,12 +662,16 @@ pub(crate) fn own_non_index_properties(
                 // explicit writable=false is the only rejection here.
                 if context.is_object_rooted(writable)? {
                     let value = get(context, writable, "value")?;
-                    if !context.truthy_rooted(value)? { continue; }
+                    if !context.truthy_rooted(value)? {
+                        continue;
+                    }
                 }
             }
             if flags & ONLY_CONFIGURABLE != 0 {
                 let value = get(context, descriptor, "configurable")?;
-                if !context.truthy_rooted(value)? { continue; }
+                if !context.truthy_rooted(value)? {
+                    continue;
+                }
             }
         }
         keys.push(key);
@@ -586,16 +681,20 @@ pub(crate) fn own_non_index_properties(
 
 /// Inspect Core's promise slots without invoking guest properties or reactions.
 pub(crate) fn promise_details(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
 ) -> Result<RootId, RootedError> {
     use quench_runtime::PromiseSnapshot;
     let promise = args.first().copied().unwrap_or_else(|| context.undefined());
-    let Some(snapshot) = context.promise_snapshot_rooted(promise)? else { return Ok(context.undefined()); };
+    let Some(snapshot) = context.promise_snapshot_rooted(promise)? else {
+        return Ok(context.undefined());
+    };
     let (state, result) = match snapshot {
         PromiseSnapshot::Pending => {
             let state = context.number(0.0);
             return context.array_rooted(&[state]);
-        },
+        }
         PromiseSnapshot::Fulfilled(value) => (1, value),
         PromiseSnapshot::Rejected(value) => (2, value),
     };
@@ -604,7 +703,9 @@ pub(crate) fn promise_details(
 }
 
 pub(crate) fn mark_promise_handled(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let promise = args.first().copied().unwrap_or_else(|| context.undefined());
     context.mark_promise_handled_rooted(promise)?;
@@ -612,35 +713,80 @@ pub(crate) fn mark_promise_handled(
 }
 
 /// Cache the genuine internal key binding in Core-owned private formatter data.
-pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:util", build_key_binding)
+pub(crate) fn key_binding(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::cached_native_binding(
+        context,
+        "\0binding:util",
+        build_key_binding,
+    )
 }
 // Node src/env_properties.h: PER_ISOLATE_PRIVATE_SYMBOL_PROPERTIES.
 // Every entry is a distinct host-private primitive. The cached util binding
 // owns the table's roots for this environment; repeat consumers share identity.
 const PRIVATE_SYMBOL_PROPERTIES: &[(&str, &str)] = &[
     ("arrow_message_private_symbol", "node:arrowMessage"),
-    ("contextify_context_private_symbol", "node:contextify:context"),
+    (
+        "contextify_context_private_symbol",
+        "node:contextify:context",
+    ),
     ("decorated_private_symbol", "node:decorated"),
-    ("empty_context_frame_sentinel_symbol", "node:empty_context_frame_sentinel"),
-    ("ffi_pointer_address_private_symbol", "node:ffi:pointer_address"),
+    (
+        "empty_context_frame_sentinel_symbol",
+        "node:empty_context_frame_sentinel",
+    ),
+    (
+        "ffi_pointer_address_private_symbol",
+        "node:ffi:pointer_address",
+    ),
     ("transfer_mode_private_symbol", "node:transfer_mode"),
-    ("host_defined_option_symbol", "node:host_defined_option_symbol"),
-    ("js_transferable_wrapper_private_symbol", "node:js_transferable_wrapper"),
-    ("entry_point_module_private_symbol", "node:entry_point_module"),
-    ("entry_point_promise_private_symbol", "node:entry_point_promise"),
+    (
+        "host_defined_option_symbol",
+        "node:host_defined_option_symbol",
+    ),
+    (
+        "js_transferable_wrapper_private_symbol",
+        "node:js_transferable_wrapper",
+    ),
+    (
+        "entry_point_module_private_symbol",
+        "node:entry_point_module",
+    ),
+    (
+        "entry_point_promise_private_symbol",
+        "node:entry_point_promise",
+    ),
     ("module_source_private_symbol", "node:module_source"),
-    ("module_export_names_private_symbol", "node:module_export_names"),
-    ("module_circular_visited_private_symbol", "node:module_circular_visited"),
+    (
+        "module_export_names_private_symbol",
+        "node:module_export_names",
+    ),
+    (
+        "module_circular_visited_private_symbol",
+        "node:module_circular_visited",
+    ),
     ("module_export_private_symbol", "node:module_export"),
-    ("module_first_parent_private_symbol", "node:module_first_parent"),
-    ("module_last_parent_private_symbol", "node:module_last_parent"),
+    (
+        "module_first_parent_private_symbol",
+        "node:module_first_parent",
+    ),
+    (
+        "module_last_parent_private_symbol",
+        "node:module_last_parent",
+    ),
     ("napi_type_tag", "node:napi:type_tag"),
     ("napi_wrapper", "node:napi:wrapper"),
-    ("untransferable_object_private_symbol", "node:untransferableObject"),
+    (
+        "untransferable_object_private_symbol",
+        "node:untransferableObject",
+    ),
     ("exit_info_private_symbol", "node:exit_info_private_symbol"),
     ("promise_trace_id", "node:promise_trace_id"),
-    ("source_map_data_private_symbol", "node:source_map_data_private_symbol"),
+    (
+        "source_map_data_private_symbol",
+        "node:source_map_data_private_symbol",
+    ),
 ];
 
 fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
@@ -673,12 +819,21 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     context.define_data_property_rooted(binding, key, symbols, true, true, true)?;
     let constants = context.object_rooted()?;
     for (name, number) in [
-        ("kPending",0),("kFulfilled",1),("kRejected",2),
-        ("kExiting",0),("kExitCode",1),("kHasExitCode",2),
-        ("ALL_PROPERTIES",0),("ONLY_WRITABLE",ONLY_WRITABLE),
-        ("ONLY_ENUMERABLE",ONLY_ENUMERABLE),("ONLY_CONFIGURABLE",ONLY_CONFIGURABLE),
-        ("SKIP_STRINGS",SKIP_STRINGS),("SKIP_SYMBOLS",SKIP_SYMBOLS),
-        ("kDisallowCloneAndTransfer",0),("kTransferable",1),("kCloneable",2),
+        ("kPending", 0),
+        ("kFulfilled", 1),
+        ("kRejected", 2),
+        ("kExiting", 0),
+        ("kExitCode", 1),
+        ("kHasExitCode", 2),
+        ("ALL_PROPERTIES", 0),
+        ("ONLY_WRITABLE", ONLY_WRITABLE),
+        ("ONLY_ENUMERABLE", ONLY_ENUMERABLE),
+        ("ONLY_CONFIGURABLE", ONLY_CONFIGURABLE),
+        ("SKIP_STRINGS", SKIP_STRINGS),
+        ("SKIP_SYMBOLS", SKIP_SYMBOLS),
+        ("kDisallowCloneAndTransfer", 0),
+        ("kTransferable", 1),
+        ("kCloneable", 2),
     ] {
         let key = context.string_rooted(name);
         let value = context.number(f64::from(number));
@@ -690,8 +845,14 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 }
 
 /// Messaging hooks use realm-owned unique symbols, never registry aliases.
-pub(crate) fn symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:symbols", build_symbols_binding)
+pub(crate) fn symbols_binding(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::cached_native_binding(
+        context,
+        "\0binding:symbols",
+        build_symbols_binding,
+    )
 }
 fn build_symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
@@ -701,7 +862,12 @@ fn build_symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
     let key = context.string_rooted("async_id_symbol");
     let async_id = context.symbol_rooted(Some("async_id_symbol"));
     context.define_data_property_rooted(binding, key, async_id, true, true, true)?;
-    for name in ["messaging_deserialize_symbol", "messaging_transfer_symbol", "messaging_clone_symbol", "messaging_transfer_list_symbol"] {
+    for name in [
+        "messaging_deserialize_symbol",
+        "messaging_transfer_symbol",
+        "messaging_clone_symbol",
+        "messaging_transfer_list_symbol",
+    ] {
         let key = context.string_rooted(name);
         let symbol = context.symbol_rooted(Some(name));
         context.define_data_property_rooted(binding, key, symbol, true, true, true)?;
@@ -709,8 +875,14 @@ fn build_symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
     Ok(binding)
 }
 
-pub(crate) fn types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:types", build_types_binding)
+pub(crate) fn types_binding(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::cached_native_binding(
+        context,
+        "\0binding:types",
+        build_types_binding,
+    )
 }
 fn build_types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     // node_types.cc's raw native slot predicates, in its export order. The
@@ -765,24 +937,42 @@ fn build_types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<Root
 
 /// Node's optional full-details argument tests literal true, not truthiness.
 pub(crate) fn proxy_details(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let absent = context.undefined();
     let value = args.first().copied().unwrap_or(absent);
-    let Some((target, handler)) = context.proxy_details_rooted(value)? else { return Ok(absent); };
-    let full = args.len() == 1 || args.get(1).and_then(|value| context.rooted_value(*value)).is_some_and(|value| value.as_bool() == Some(true));
-    if full { context.array_rooted(&[target, handler]) } else { Ok(target) }
+    let Some((target, handler)) = context.proxy_details_rooted(value)? else {
+        return Ok(absent);
+    };
+    let full = args.len() == 1
+        || args
+            .get(1)
+            .and_then(|value| context.rooted_value(*value))
+            .is_some_and(|value| value.as_bool() == Some(true));
+    if full {
+        context.array_rooted(&[target, handler])
+    } else {
+        Ok(target)
+    }
 }
 
 /// One argument returns entries alone; any second argument requests both fields.
 pub(crate) fn preview_entries(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let absent = context.undefined();
     let value = args.first().copied().unwrap_or(absent);
-    let Some(preview) = context.collection_preview_rooted(value)? else { return Ok(absent); };
+    let Some(preview) = context.collection_preview_rooted(value)? else {
+        return Ok(absent);
+    };
     let entries = context.array_rooted(&preview.entries)?;
-    if args.len() == 1 { Ok(entries) } else {
+    if args.len() == 1 {
+        Ok(entries)
+    } else {
         let paired = context.boolean(preview.is_key_value);
         context.array_rooted(&[entries, paired])
     }
@@ -795,26 +985,41 @@ pub(crate) fn constructor_name(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
-    Ok(context.constructor_name_rooted(value)?
+    Ok(context
+        .constructor_name_rooted(value)?
         .unwrap_or_else(|| context.string_rooted("Object")))
 }
 
 /// External wrappers expose the stored address, without touching native memory.
-pub(crate) fn external_value(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn external_value(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     match context.external_address_rooted(value) {
         Some(address) => Ok(context.bigint_rooted(address as i128)),
-        None => { let error = context.type_error_rooted("Value is not an external")?; Err(context.throw(error)) }
+        None => {
+            let error = context.type_error_rooted("Value is not an external")?;
+            Err(context.throw(error))
+        }
     }
 }
 
 /// The configured util.js validates the public API and owns source-map policy.
 pub(crate) fn get_call_sites(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let count = args.first().and_then(|root| context.rooted_value(*root)).and_then(quench_runtime::Value::as_number);
+    let count = args
+        .first()
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(quench_runtime::Value::as_number);
     // Match the native binding's validated frame-count domain without guest coercion.
-    let Some(count) = count.filter(|n| n.is_finite() && n.fract() == 0.0 && (1.0..=NODE_CALL_SITE_FRAME_LIMIT as f64).contains(n)) else {
+    let Some(count) = count.filter(|n| {
+        n.is_finite() && n.fract() == 0.0 && (1.0..=NODE_CALL_SITE_FRAME_LIMIT as f64).contains(n)
+    }) else {
         let error = context.range_error_rooted("Invalid stack frame count")?;
         return Err(context.throw(error));
     };
@@ -828,7 +1033,14 @@ pub(crate) fn get_call_sites(
         let script = context.string_rooted(&frame.script_name);
         let line = context.number(f64::from(frame.line_number));
         let column = context.number(f64::from(frame.column_number));
-        for (name, value) in [("functionName", function), ("scriptId", id), ("scriptName", script), ("lineNumber", line), ("columnNumber", column), ("column", column)] {
+        for (name, value) in [
+            ("functionName", function),
+            ("scriptId", id),
+            ("scriptName", script),
+            ("lineNumber", line),
+            ("columnNumber", column),
+            ("column", column),
+        ] {
             let key = context.string_rooted(name);
             context.define_data_property_rooted(site, key, value, true, true, true)?;
         }
@@ -839,16 +1051,21 @@ pub(crate) fn get_call_sites(
 
 /// Node's native caller capture skips the immediate JavaScript activation.
 pub(crate) fn get_caller_location(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
 ) -> Result<RootId, RootedError> {
     const CALLER_LOCATION_FRAME_COUNT: usize = 2;
     let mut frames = context.source_stack_frames(CALLER_LOCATION_FRAME_COUNT);
-    let Some(frame) = (frames.len() == CALLER_LOCATION_FRAME_COUNT).then(|| frames.pop().unwrap()) else {
+    let Some(frame) = (frames.len() == CALLER_LOCATION_FRAME_COUNT).then(|| frames.pop().unwrap())
+    else {
         return Ok(context.undefined());
     };
     // An unnamed eval has no ScriptNameOrSourceURL. Do not fabricate an
     // internal bootstrap caller or a script name when no such frame exists.
-    if frame.is_eval { return Ok(context.undefined()); }
+    if frame.is_eval {
+        return Ok(context.undefined());
+    }
     let line = context.number(f64::from(frame.line_number));
     let column = context.number(f64::from(frame.column_number));
     let name = context.string_rooted(&frame.script_name);
@@ -857,21 +1074,29 @@ pub(crate) fn get_caller_location(
 
 /// Node's native SetLazyDataProperty protocol, using Core's genuine lazy data slots.
 pub(crate) fn define_lazy_properties(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let [target, id, keys, ..] = args else {
-        return Err(RootedError::host("defineLazyProperties requires target, id and keys"));
+        return Err(RootedError::host(
+            "defineLazyProperties requires target, id and keys",
+        ));
     };
     let length = get(context, *keys, "length")?;
     let length = context.to_number(length)? as usize;
-    let enumerable = match args.get(3) { Some(value) => context.truthy_rooted(*value)?, None => true };
+    let enumerable = match args.get(3) {
+        Some(value) => context.truthy_rooted(*value)?,
+        None => true,
+    };
     for index in 0..length {
         let key = get(context, *keys, &index.to_string())?;
         let name = context.to_string(key)?;
         let flag = context.boolean(enumerable);
         let data = context.array_rooted(&[*target, *id, key, flag])?;
         let initializer = context.host_function_with_data(
-            crate::host::shared_vm::operation("utilLazyPropertyInitialize"), data,
+            crate::host::shared_vm::operation("utilLazyPropertyInitialize"),
+            data,
         )?;
         context.define_lazy_data_properties_rooted(*target, &[&name], enumerable, initializer)?;
     }
@@ -879,7 +1104,9 @@ pub(crate) fn define_lazy_properties(
 }
 
 pub(crate) fn initialize_lazy_property(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let data = context.host_function_data()?;
     let target = get(context, data, "0")?;
@@ -888,15 +1115,25 @@ pub(crate) fn initialize_lazy_property(
     let flag = get(context, data, "3")?;
     let enumerable = context.truthy_rooted(flag)?;
     let id = context.to_string(id)?;
-    let id = if id.ends_with(".js") { id } else { format!("{id}.js") };
-    let module = crate::host::shared_vm::commonjs::node_library_module(context, "internal/util.js", &id)?;
+    let id = if id.ends_with(".js") {
+        id
+    } else {
+        format!("{id}.js")
+    };
+    let module =
+        crate::host::shared_vm::commonjs::node_library_module(context, "internal/util.js", &id)?;
     let value = context.get_property_rooted(module, key)?;
     context.define_data_property_rooted(target, key, value, true, enumerable, true)?;
     Ok(context.undefined())
 }
 
-pub(crate) fn guess_handle_type(context: &mut NativeContext<'_, NodeHost>, _:RootId, args:&[RootId])->Result<RootId,RootedError>{
-    let missing=context.undefined();let value=context.to_number(args.first().copied().unwrap_or(missing))?;
-    let fd=super::native_number::uint32(value) as i32;
+pub(crate) fn guess_handle_type(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = context.undefined();
+    let value = context.to_number(args.first().copied().unwrap_or(missing))?;
+    let fd = super::native_number::uint32(value) as i32;
     Ok(context.number(super::fd_handle_type::guess(fd) as u8 as f64))
 }

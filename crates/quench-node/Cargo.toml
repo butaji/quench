@@ -40,6 +40,7 @@ encoding_rs = "0.8"
 crc32fast = "1"
 flate2 = { version = "1", features = ["zlib-rs"] }
 idna = "1"
+unicode-normalization = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 libc = "0.2"
 socket2 = { version = "0.6", features = ["all"] }

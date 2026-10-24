@@ -30,7 +30,11 @@ impl<H: Host> Vm<H> {
         Ok(result)
     }
 
-    pub(super) fn aggregate_error(&mut self, p: &ResidualProgram, errors: Vec<Value>) -> Result<Value, JsError> {
+    pub(super) fn aggregate_error(
+        &mut self,
+        p: &ResidualProgram,
+        errors: Vec<Value>,
+    ) -> Result<Value, JsError> {
         let array_prototype = self.array_prototype_for_realm(self.realm.globals);
         let errors = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
@@ -40,7 +44,9 @@ impl<H: Host> Vm<H> {
         });
         let errors = self.heap.root(errors);
         let result = (|| {
-            let message = self.heap.alloc(Cell::String("All promises were rejected".into()));
+            let message = self
+                .heap
+                .alloc(Cell::String("All promises were rejected".into()));
             let error = self.construct_error_native(p, Native::AggregateError, &[message])?;
             self.with_call_roots([error], |vm| {
                 let errors = vm.heap.root_value(errors).unwrap_or(Value::UNDEFINED);

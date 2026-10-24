@@ -250,11 +250,14 @@ impl Heap {
             other_cell_payload_bytes,
             profile_instrumentation_bytes: {
                 #[cfg(feature = "profile-memory")]
-                { self.memory_profile.memory_bytes() }
+                {
+                    self.memory_profile.memory_bytes()
+                }
                 #[cfg(not(feature = "profile-memory"))]
-                { 0 }
+                {
+                    0
+                }
             },
         }
     }
-
 }

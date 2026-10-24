@@ -171,7 +171,11 @@ fn from_array_buffer(
         0.0
     } else {
         let n = c.to_number(offset)?;
-        if n.is_nan() { 0.0 } else { n }
+        if n.is_nan() {
+            0.0
+        } else {
+            n
+        }
     };
     let offset = c.number(offset);
     let byte_length = get(c, value, "byteLength")?;

@@ -43,8 +43,8 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Starts a plain `Call` of a same-realm, same-program user function as an activation of
-    /// the running dispatch loop, or returns `None` to leave the instruction to `step`. Such a
+    /// Starts a plain or array-spread call of an eligible same-realm user function as an
+    /// activation of the running dispatch loop, or returns `None` to leave it to `step`. Such a
     /// call involves no direct eval (its callee is not the eval intrinsic) and neither eval mode
     /// is set before it, so the frame push leaves both untouched.
     #[inline(always)]
@@ -60,7 +60,7 @@ impl<H: Host> Vm<H> {
         // Hosts permitting proper tail calls leave strict terminal calls to `step`. Wasm programs run in
         // the loop (as in-loop Wasm frames), and their calls keep Wasm's own activation and
         // exhaustion accounting, so they are never inlined as user calls.
-        if i.op() != Op::Call
+        if !matches!(i.op(), Op::Call | Op::CallArray)
             || self.direct_eval
             || self.parameter_eval
             || p.kind == crate::bytecode::ProgramKind::Wasm
@@ -73,26 +73,66 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let callee = self.read(f, i.register_b());
-        let (id, env) = self.in_loop_call_target(p, callee)?;
+        let caller_program = self.active_program;
+        let (program_id, id, env, target_program) =
+            if let Some((id, env)) = self.in_loop_call_target(p, callee) {
+                (caller_program, id, env, None)
+            } else {
+                let (program_id, id, env) = self.same_realm_user_target(callee)?;
+                if program_id == caller_program || id == super::ROOT_FUNCTION_ID {
+                    return None;
+                }
+                let target_program = self.programs.get(program_id)?;
+                if !target_program
+                    .functions
+                    .get(id as usize)
+                    .is_some_and(|function| function.call_plan(&target_program.atoms).in_loop)
+                {
+                    return None;
+                }
+                (program_id, id, env, Some(target_program))
+            };
         self.profile.call_source(0);
         let window = i.call_window();
         let this = self.read(f, i.register_c());
         self.frames[f].pc = pc;
         self.frames[f].pc_is_resume = true;
-        self.profile.call_target(1, usize::from(window.count));
         // Collection happens only at back edges, tail calls and explicit host safepoints, none
         // of which can run while a frame is pushed; afterwards the new frame itself roots the
         // callee, receiver and arguments.
-        let arguments: *const [Value] = self.register_window(f, window);
-        // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
+        let spread_arguments;
+        let arguments: &[Value] = if i.op() == Op::CallArray {
+            let array = self.read(f, window.base);
+            spread_arguments = match self.array_values(array) {
+                Ok(arguments) => arguments,
+                Err(error) => return Some(Err(error)),
+            };
+            spread_arguments.as_slice()
+        } else {
+            let arguments: *const [Value] = self.register_window(f, window);
+            // SAFETY: see `push_general_user_frame`; the caller's register window outlives
+            // callee setup and frame-stack growth moves only its boxed frame pointer.
+            unsafe { &*arguments }
+        };
+        self.profile.call_target(1, arguments.len());
+        let previous_program = if program_id != caller_program {
+            Some(self.replace_active_program(program_id))
+        } else {
+            None
+        };
         let call_guard = self.push_general_user_frame(
-            p,
+            target_program.as_deref().unwrap_or(p),
             id,
             env,
             this,
-            unsafe { &*arguments },
+            arguments,
             CallContext::user_function(id, callee),
         );
+        if call_guard.is_err()
+            && let Some(previous_program) = previous_program
+        {
+            self.set_active_program(previous_program);
+        }
         Some(call_guard.map(|call_guard| StepResult::PushFrame {
             destination: i.result_register(),
             call_guard,
@@ -166,7 +206,9 @@ impl<H: Host> Vm<H> {
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || f + 1 != self.frames.len()
             || self.frames[f].function == super::ROOT_FUNCTION_ID
-            || (i.returns_from_frame() && p.functions[self.frames[f].function as usize].strict)
+            || (self.host.proper_tail_calls()
+                && i.returns_from_frame()
+                && p.functions[self.frames[f].function as usize].strict)
         {
             return None;
         }
@@ -201,12 +243,19 @@ impl<H: Host> Vm<H> {
             _ => return None,
         };
         let (program_id, id, env) = self.same_realm_user_target(target)?;
-        if id == super::ROOT_FUNCTION_ID
-            || program_id != self.active_program
-            || !p
-                .functions
-                .get(id as usize)
-                .is_some_and(|function| function.call_plan(&p.atoms).in_loop)
+        if id == super::ROOT_FUNCTION_ID {
+            return None;
+        }
+        let target_program = if program_id == self.active_program {
+            None
+        } else {
+            Some(self.programs.get(program_id)?)
+        };
+        let target_residual = target_program.as_deref().unwrap_or(p);
+        if !target_residual
+            .functions
+            .get(id as usize)
+            .is_some_and(|function| function.call_plan(&target_residual.atoms).in_loop)
         {
             return None;
         }
@@ -214,15 +263,124 @@ impl<H: Host> Vm<H> {
         self.frames[f].pc = pc;
         self.frames[f].pc_is_resume = true;
         self.profile.call_target(1, arguments.len());
+        let previous_program = if program_id != self.active_program {
+            Some(self.replace_active_program(program_id))
+        } else {
+            None
+        };
         let call_guard = self.push_general_user_frame(
-            p,
+            target_residual,
             id,
             env,
             this,
             arguments,
             CallContext::user_function(id, target),
         );
+        if call_guard.is_err()
+            && let Some(previous_program) = previous_program
+        {
+            self.set_active_program(previous_program);
+        }
         Some(call_guard.map(|call_guard| StepResult::PushFrame {
+            destination: i.result_register(),
+            call_guard,
+            construct_this: None,
+        }))
+    }
+
+    /// Pushes `Reflect.apply` of a same-realm user function as a general-loop frame when the
+    /// argument list is a plain dense array. Exotic array-likes use the regular algorithm since
+    /// reading their length/indexes can invoke guest code.
+    #[inline(never)]
+    pub(super) fn try_inline_reflect_apply(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        i: WideInstruction,
+        pc: usize,
+    ) -> Option<Result<StepResult, JsError>> {
+        if i.op() != Op::Call
+            || self.direct_eval
+            || self.parameter_eval
+            || p.kind == crate::bytecode::ProgramKind::Wasm
+            || f + 1 != self.frames.len()
+            || self.frames[f].function == super::ROOT_FUNCTION_ID
+            || (self.host.proper_tail_calls()
+                && i.returns_from_frame()
+                && p.functions[self.frames[f].function as usize].strict)
+        {
+            return None;
+        }
+        let window: *const [Value] = self.register_window(f, i.call_window());
+        // SAFETY: the caller stays active while the callee frame is initialized.
+        let window = unsafe { &*window };
+        let native = self.read(f, i.register_b());
+        if !matches!(
+            self.heap.get(native),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::ReflectApply),
+                ..
+            })
+        ) {
+            return None;
+        }
+        let target = window.first().copied().unwrap_or(Value::UNDEFINED);
+        let this = window.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let list = window.get(2).copied().unwrap_or(Value::UNDEFINED);
+        if !self.is_function(target)
+            || (!list.is_null() && !list.is_undefined() && !self.is_object_like(list))
+        {
+            return None;
+        }
+        let arguments = self.dense_apply_arguments(list)?;
+        let (program_id, id, env) = self.same_realm_user_target(target)?;
+        self.profile.call_source(0);
+        self.try_push_reflect_apply_target(f, i, pc, target, this, program_id, id, env, arguments)
+    }
+
+    /// Shared target validation/frame push for `Reflect.apply`, also used when a cached
+    /// `Reflect.apply(...)` method call is represented by `CallMethod` rather than `Call`.
+    #[inline(never)]
+    pub(super) fn try_push_reflect_apply_target(
+        &mut self,
+        f: usize,
+        i: WideInstruction,
+        pc: usize,
+        target: Value,
+        this: Value,
+        program_id: super::ProgramId,
+        id: u32,
+        env: Value,
+        arguments: Vec<Value>,
+    ) -> Option<Result<StepResult, JsError>> {
+        if id == super::ROOT_FUNCTION_ID {
+            return None;
+        }
+        let target_program = self.programs.get(program_id)?;
+        if !target_program
+            .functions
+            .get(id as usize)
+            .is_some_and(|function| function.call_plan(&target_program.atoms).in_loop)
+        {
+            return None;
+        }
+
+        self.profile.call_target(1, arguments.len());
+        self.frames[f].pc = pc;
+        self.frames[f].pc_is_resume = true;
+        let previous_program = self.replace_active_program(program_id);
+        let pushed = self.push_general_user_frame(
+            &target_program,
+            id,
+            env,
+            this,
+            &arguments,
+            CallContext::user_function(id, target),
+        );
+        if pushed.is_err() {
+            self.set_active_program(previous_program);
+        }
+        Some(pushed.map(|call_guard| StepResult::PushFrame {
             destination: i.result_register(),
             call_guard,
             construct_this: None,
@@ -261,7 +419,7 @@ impl<H: Host> Vm<H> {
     /// plain array without holes, or an arguments object whose data `length` covers a
     /// hole-free prefix, neither carrying indexed descriptors or sparse elements. `None`
     /// leaves the list to the generic algorithm, whose reads may run guest code.
-    fn dense_apply_arguments(&self, list: Value) -> Option<Vec<Value>> {
+    pub(super) fn dense_apply_arguments(&self, list: Value) -> Option<Vec<Value>> {
         if list.is_null() || list.is_undefined() {
             return Some(Vec::new());
         }
@@ -524,6 +682,21 @@ impl<H: Host> Vm<H> {
                         let url = self.heap.alloc(Cell::String(url.into()));
                         let url_atom = self.intern_atom("url");
                         self.set_property(value, url_atom, url)?;
+                        if let Some(filename) = self.host.import_meta_filename(&source_name) {
+                            let filename_value =
+                                self.heap.alloc(Cell::String(filename.clone().into()));
+                            let filename_atom = self.intern_atom("filename");
+                            self.set_property(value, filename_atom, filename_value)?;
+                            let dirname = std::path::Path::new(&filename)
+                                .parent()
+                                .and_then(|path| path.to_str());
+                            if let Some(dirname) = dirname {
+                                let dirname_value =
+                                    self.heap.alloc(Cell::String(dirname.to_owned().into()));
+                                let dirname_atom = self.intern_atom("dirname");
+                                self.set_property(value, dirname_atom, dirname_value)?;
+                            }
+                        }
                     }
                     self.programs.set_import_meta(program, value);
                     value
@@ -668,10 +841,16 @@ impl<H: Host> Vm<H> {
                         unreachable!("field sink is only attached to nested field lookup")
                     };
                     let sink = p.field_sites[site].sink.expect("fused field sink");
-                    self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| vm.set_field_cached(
-                        p, vm.frames[f].this, sink.0, v, sink.1,
-                        p.functions[vm.frames[f].function as usize].strict,
-                    ))?;
+                    self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| {
+                        vm.set_field_cached(
+                            p,
+                            vm.frames[f].this,
+                            sink.0,
+                            v,
+                            sink.1,
+                            p.functions[vm.frames[f].function as usize].strict,
+                        )
+                    })?;
                 }
                 if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));
@@ -989,7 +1168,13 @@ impl<H: Host> Vm<H> {
                 self.define_property_or_throw(p, target, key, descriptor)?;
             }
             Op::DefinePrivateField => {
-                self.initialize_private_field(p, self.read(f, i.register_b()), self.read(f, i.register_c()), i.atom_index(), self.read(f, i.register_a()))?;
+                self.initialize_private_field(
+                    p,
+                    self.read(f, i.register_b()),
+                    self.read(f, i.register_c()),
+                    i.atom_index(),
+                    self.read(f, i.register_a()),
+                )?;
             }
             Op::DefineField => {
                 let object = self.read(f, i.register_b());
@@ -1450,7 +1635,10 @@ impl<H: Host> Vm<H> {
                         let arguments: *const [Value] = self.register_window(f, window);
                         self.frames[f].pc = *pc;
                         self.frames[f].pc_is_resume = true;
-                        self.construct_target = Some(ConstructionTarget { callee, new_target: callee });
+                        self.construct_target = Some(ConstructionTarget {
+                            callee,
+                            new_target: callee,
+                        });
                         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
                         let pushed = self.push_general_user_frame(
                             p,
@@ -1472,9 +1660,7 @@ impl<H: Host> Vm<H> {
                     crate::bytecode::ConstructArguments::Array(register) => {
                         let array = self.read(f, register);
                         if !self.heap.array(array).is_some() {
-                            return Err(JsError(
-                                "constructor arguments are not an array".into(),
-                            ));
+                            return Err(JsError("constructor arguments are not an array".into()));
                         }
                         self.call_argument_list(p, array, false)?
                     }
@@ -1541,8 +1727,13 @@ impl<H: Host> Vm<H> {
         }
     }
     #[inline(always)]
-    fn with_field_source<T>(&mut self, frame: usize, site: usize, part: crate::bytecode::FieldPart,
-        run: impl FnOnce(&mut Self) -> Result<T, JsError>) -> Result<T, JsError> {
+    fn with_field_source<T>(
+        &mut self,
+        frame: usize,
+        site: usize,
+        part: crate::bytecode::FieldPart,
+        run: impl FnOnce(&mut Self) -> Result<T, JsError>,
+    ) -> Result<T, JsError> {
         let previous = self.frames[frame].source_field.replace((site, part));
         let result = run(self);
         self.frames[frame].source_field = previous;
@@ -1558,11 +1749,16 @@ impl<H: Host> Vm<H> {
         let site_id = site;
         let site = p.field_sites[site_id];
         let base = self.resolve_field_base(p, frame, site.base)?;
-        let value = self.with_field_source(frame, site_id, crate::bytecode::FieldPart::First,
-            |vm| vm.get_field_cached(p, base, site.first.0, site.first.1))?;
+        let value =
+            self.with_field_source(frame, site_id, crate::bytecode::FieldPart::First, |vm| {
+                vm.get_field_cached(p, base, site.first.0, site.first.1)
+            })?;
         match site.second {
-            Some((atom, cache)) => self.with_field_source(frame, site_id, crate::bytecode::FieldPart::Second,
-                |vm| vm.get_field_cached(p, value, atom, cache)),
+            Some((atom, cache)) => {
+                self.with_field_source(frame, site_id, crate::bytecode::FieldPart::Second, |vm| {
+                    vm.get_field_cached(p, value, atom, cache)
+                })
+            }
             None => Ok(value),
         }
     }

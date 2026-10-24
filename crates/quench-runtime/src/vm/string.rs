@@ -279,7 +279,9 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_proto)));
-        self.object_data_mut(prototype).expect("primitive prototype").set_boxed_primitive(empty);
+        self.object_data_mut(prototype)
+            .expect("primitive prototype")
+            .set_boxed_primitive(empty);
         self.set_named_constant(program, prototype, "length", Value::number(0.0))?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;

@@ -1,6 +1,6 @@
 //! Project the configured public crypto factory declarations and export
 //! expressions from their original AST. Their implementation is never copied.
-use crate::host::{NodeHost, shared_vm::commonjs};
+use crate::host::{shared_vm::commonjs, NodeHost};
 use quench_runtime::{NativeContext, RootId, RootedError};
 fn get(
     c: &mut NativeContext<'_, NodeHost>,
@@ -44,20 +44,82 @@ pub(crate) fn install(
             c.define_data_property_rooted(public, key, value, true, true, true)?;
         }
         let random = commonjs::node_library_module(c, "crypto.js", "internal/crypto/random.js")?;
-        for name in ["randomBytes", "randomFill", "randomFillSync", "randomInt", "randomUUID", "randomUUIDv7"] {
+        for name in [
+            "randomBytes",
+            "randomFill",
+            "randomFillSync",
+            "randomInt",
+            "randomUUID",
+            "randomUUIDv7",
+        ] {
             let value = get(c, random, name)?;
             let key = c.string_rooted(name);
             c.define_data_property_rooted(public, key, value, true, true, true)?;
         }
-        let factory = super::crypto_hash_source::random_alias_factory(&source).map_err(RootedError::host)?;
+        // Node's internal random module constructs its own FastBuffer class,
+        // whose prototype is not the one exported by Quench's `buffer`
+        // module. Adapt only randomBytes at the public boundary: allocate a
+        // public Buffer and fill it with the source-owned fill operations.
+        // Calling random.js's randomBytes here can recurse during builtin
+        // initialization because the internal export may already refer to
+        // the projected public function.
+        let buffer_module = commonjs::buffer_module(c)?;
+        let buffer = get(c, buffer_module, "Buffer")?;
+        let random_fill = get(c, random, "randomFill")?;
+        let random_fill_sync = get(c, random, "randomFillSync")?;
+        let random_bytes_factory = c.evaluate_script_rooted(
+            r#"(randomFill, randomFillSync, Buffer) => function randomBytes(size, callback) {
+  const maxSize = 0x7fffffff;
+  if (typeof size === 'number' &&
+      (Number.isNaN(size) || size < 0 || size > maxSize)) {
+    const error = new RangeError(
+      `The value of "size" is out of range. It must be >= 0 && <= ${maxSize}. Received ${size}`,
+    );
+    error.code = 'ERR_OUT_OF_RANGE';
+    throw error;
+  }
+  // Node validates the numeric range and then truncates fractional sizes to
+  // an integer before allocating or passing the length to randomFill.
+  const byteLength = typeof size === 'number' ? Math.trunc(size) : size;
+  const bytes = Buffer.allocUnsafe(byteLength);
+  if (callback === undefined) {
+    randomFillSync(bytes, 0, byteLength);
+    return bytes;
+  }
+  if (typeof callback !== 'function') return randomFill(bytes, 0, byteLength, callback);
+  return randomFill(bytes, 0, byteLength, function(error) {
+    if (error) return callback.call(this, error);
+    callback.call(this, null, bytes);
+  });
+}"#,
+            "node:crypto/random-buffer-brand.js",
+        )?;
+        let random_bytes = c.call_rooted(
+            random_bytes_factory,
+            undefined,
+            &[random_fill, random_fill_sync, buffer],
+        )?;
+        let key = c.string_rooted("randomBytes");
+        if !c.set_property_rooted(public, key, random_bytes, public)? {
+            return Err(RootedError::host(
+                "cannot install canonical crypto.randomBytes wrapper",
+            ));
+        }
+        let factory =
+            super::crypto_hash_source::random_alias_factory(&source).map_err(RootedError::host)?;
         let factory = c.evaluate_script_rooted(&factory, &filename.to_string_lossy())?;
-        let random_bytes = get(c, random, "randomBytes")?;
-        let options = commonjs::node_library_export(c, "crypto.js", "internal/options.js", "getOptionValue")?;
+        let random_bytes = get(c, public, "randomBytes")?;
+        let options =
+            commonjs::node_library_export(c, "crypto.js", "internal/options.js", "getOptionValue")?;
         let global = c.global_root()?;
         let object = get(c, global, "Object")?;
         let define = get(c, object, "defineProperty")?;
         let define_properties = get(c, object, "defineProperties")?;
-        let aliases = c.call_rooted(factory, undefined, &[random_bytes, deprecate, options, define])?;
+        let aliases = c.call_rooted(
+            factory,
+            undefined,
+            &[random_bytes, deprecate, options, define],
+        )?;
         c.call_rooted(define_properties, object, &[public, aliases])?;
         let hashes =
             commonjs::node_library_export(c, "crypto.js", "internal/crypto/util.js", "getHashes")?;

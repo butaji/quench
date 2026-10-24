@@ -8,8 +8,10 @@ pub use embedding::RootedError;
 mod native;
 pub(crate) use native::CompiledScriptState;
 pub use native::{
-    BufferStorage, BuiltinBrand, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, PreparedScript, NativeArithmetic,
-    CompiledScript, NativeContext, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
+    BufferStorage, BuiltinBrand, BuiltinData, CollectionPreview, CompiledScript,
+    ErrorSourcePosition, HostFunction, HostFunctionId, HostWeakRoot, NativeArithmetic,
+    NativeContext, PreparedScript, PromiseSnapshot, RootedIterator, SourceStackFrame,
+    SynchronousModule, ValueType,
 };
 
 /// The syntax context used when compiling source. Script and Module use
@@ -87,9 +89,15 @@ impl<H: Host> Runtime<H> {
     }
 
     /// Construct the Vm on this thread with an owned cancellation authority.
-    pub fn new_with_execution_interrupt(host:H,interrupt:crate::ExecutionInterrupt)->Self { Self { vm:Vm::new_with_execution_interrupt(host,interrupt) } }
+    pub fn new_with_execution_interrupt(host: H, interrupt: crate::ExecutionInterrupt) -> Self {
+        Self {
+            vm: Vm::new_with_execution_interrupt(host, interrupt),
+        }
+    }
 
-    pub fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.vm.execution_interrupt_handle() }
+    pub fn execution_interrupt_handle(&self) -> crate::ExecutionInterrupt {
+        self.vm.execution_interrupt_handle()
+    }
 
     pub fn execution_mode(&self) -> crate::ExecutionMode {
         self.vm.execution_mode()
@@ -1497,7 +1505,16 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(new Bytes([1,2,3]).join(','));
             print(new List('a','b').join(','));
             "#,
-            &["0,false,false,true","0,false,false,true","0,false,false,true","0,false,false,true","1,2,3","true","1,2,3","a,b"],
+            &[
+                "0,false,false,true",
+                "0,false,false,true",
+                "0,false,false,true",
+                "0,false,false,true",
+                "1,2,3",
+                "true",
+                "1,2,3",
+                "a,b",
+            ],
         );
     }
 
@@ -1528,8 +1545,14 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(JSON.stringify(Object.getOwnPropertyDescriptor(ArityDerived, 'length')));
             "#,
             &[
-                "true", "true", "42", "true", "true", "42",
-                "[0,2,0,0,0]", "[1,2]",
+                "true",
+                "true",
+                "42",
+                "true",
+                "true",
+                "42",
+                "[0,2,0,0,0]",
+                "[1,2]",
                 r#"{"value":0,"writable":false,"enumerable":false,"configurable":true}"#,
             ],
         );
@@ -4850,33 +4873,90 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
         "#;
         const MODULES: &[(&str, &str)] = &[
             ("entry.mjs", SOURCE),
-            ("a.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/a.mjs")),
-            ("b.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/b.mjs")),
-            ("alias.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/alias.mjs")),
-            ("barrel.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/barrel.mjs")),
-            ("config.json", include_str!("../../../tests/npm-top300/regressions/esm-graph/config.json")),
-            ("missing-export.mjs", "import { missing } from './effect.mjs';"),
+            (
+                "a.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/a.mjs"),
+            ),
+            (
+                "b.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/b.mjs"),
+            ),
+            (
+                "alias.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/alias.mjs"),
+            ),
+            (
+                "barrel.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/barrel.mjs"),
+            ),
+            (
+                "config.json",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/config.json"),
+            ),
+            (
+                "missing-export.mjs",
+                "import { missing } from './effect.mjs';",
+            ),
             ("syntax-failure.mjs", "export const = 1;"),
-            ("evaluation-failure.mjs", "globalThis.evaluationEffects = (globalThis.evaluationEffects || 0) + 1; throw new Error('evaluation');"),
-            ("effect.mjs", "globalThis.failureEffects = (globalThis.failureEffects || 0) + 1; export const value = 43;"),
+            (
+                "evaluation-failure.mjs",
+                "globalThis.evaluationEffects = (globalThis.evaluationEffects || 0) + 1; throw new Error('evaluation');",
+            ),
+            (
+                "effect.mjs",
+                "globalThis.failureEffects = (globalThis.failureEffects || 0) + 1; export const value = 43;",
+            ),
         ];
         struct ModuleCapture(Capture);
         impl Host for ModuleCapture {
-            fn write_line(&mut self, text: &str) { self.0.write_line(text); }
-            fn clock_millis(&mut self) -> f64 { 0.0 }
-            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, String> {
+            fn write_line(&mut self, text: &str) {
+                self.0.write_line(text);
+            }
+            fn clock_millis(&mut self) -> f64 {
+                0.0
+            }
+            fn resolve_dynamic_import(
+                &mut self,
+                _: &str,
+                specifier: &str,
+            ) -> Result<Option<crate::ModuleSource>, String> {
                 let name = specifier.rsplit('/').next().unwrap();
-                Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource {
-                    name: format!("cyclic-module-graph/{name}"), source: (*source).into(), bytes: source.as_bytes().to_vec(),
-                }))
+                Ok(MODULES
+                    .iter()
+                    .find(|(candidate, _)| *candidate == name)
+                    .map(|(_, source)| crate::ModuleSource {
+                        name: format!("cyclic-module-graph/{name}"),
+                        source: (*source).into(),
+                        bytes: source.as_bytes().to_vec(),
+                    }))
             }
         }
-        for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
+        for compile in [
+            Engine::specialize_module as fn(&str, &str) -> _,
+            Engine::specialize_module_unspecialized,
+        ] {
             let view = Capture::default();
             let mut runtime = Runtime::new(ModuleCapture(view.clone()));
             let program = compile(SOURCE, "cyclic-module-graph/entry.mjs").unwrap();
             runtime.execute(&program).unwrap();
-            assert_eq!(view.0.borrow().as_slice(), &["true", "[\"b\",\"a\"]", "1", "true", "true", "true", "2:2:2", "2", "true", "true", "true", "true", "true"]);
+            assert_eq!(
+                view.0.borrow().as_slice(),
+                &[
+                    "true",
+                    "[\"b\",\"a\"]",
+                    "1",
+                    "true",
+                    "true",
+                    "true",
+                    "2:2:2",
+                    "2",
+                    "true",
+                    "true",
+                    "true",
+                    "true",
+                    "true"
+                ]
+            );
         }
     }
 
@@ -4897,38 +4977,92 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
         "#;
         const MODULES: &[(&str, &str)] = &[
             ("setup.mjs", "globalThis.log = [];"),
-            ("deferred.mjs", "import './async.mjs'; log.push('deferred'); export const value = 1;"),
-            ("async.mjs", "log.push('async start'); await 0; log.push('async end');"),
-            ("deferred-self.mjs", "import defer * as self from './deferred-self.mjs'; try { self.value; } catch (error) { globalThis.selfAccess = error instanceof TypeError; } export const value = 2;"),
-            ("source-1.mjs", "import source source from '<source>'; export { source };"),
-            ("source-2.mjs", "import source source from '<source>'; export { source };"),
-            ("source-reexport.mjs", "export * from './source-1.mjs'; export * from './source-2.mjs';"),
-            ("harness-reader.mjs", "export const harness = typeof harnessGlobal;"),
+            (
+                "deferred.mjs",
+                "import './async.mjs'; log.push('deferred'); export const value = 1;",
+            ),
+            (
+                "async.mjs",
+                "log.push('async start'); await 0; log.push('async end');",
+            ),
+            (
+                "deferred-self.mjs",
+                "import defer * as self from './deferred-self.mjs'; try { self.value; } catch (error) { globalThis.selfAccess = error instanceof TypeError; } export const value = 2;",
+            ),
+            (
+                "source-1.mjs",
+                "import source source from '<source>'; export { source };",
+            ),
+            (
+                "source-2.mjs",
+                "import source source from '<source>'; export { source };",
+            ),
+            (
+                "source-reexport.mjs",
+                "export * from './source-1.mjs'; export * from './source-2.mjs';",
+            ),
+            (
+                "harness-reader.mjs",
+                "export const harness = typeof harnessGlobal;",
+            ),
         ];
         struct ModuleCapture(Capture);
         impl Host for ModuleCapture {
-            fn write_line(&mut self, text: &str) { self.0.write_line(text); }
-            fn globals(&self) -> &'static [crate::HostGlobal] { self.0.globals() }
-            fn clock_millis(&mut self) -> f64 { 0.0 }
-            fn has_module_source(&self, module: &crate::ModuleSource) -> bool { module.name == "<source>" }
-            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, String> {
+            fn write_line(&mut self, text: &str) {
+                self.0.write_line(text);
+            }
+            fn globals(&self) -> &'static [crate::HostGlobal] {
+                self.0.globals()
+            }
+            fn clock_millis(&mut self) -> f64 {
+                0.0
+            }
+            fn has_module_source(&self, module: &crate::ModuleSource) -> bool {
+                module.name == "<source>"
+            }
+            fn resolve_dynamic_import(
+                &mut self,
+                _: &str,
+                specifier: &str,
+            ) -> Result<Option<crate::ModuleSource>, String> {
                 if specifier == "<source>" {
-                    return Ok(Some(crate::ModuleSource { name: specifier.into(), source: String::new(), bytes: Vec::new() }));
+                    return Ok(Some(crate::ModuleSource {
+                        name: specifier.into(),
+                        source: String::new(),
+                        bytes: Vec::new(),
+                    }));
                 }
                 let name = specifier.rsplit('/').next().unwrap();
-                Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource {
-                    name: format!("deferred-module-graph/{name}"), source: (*source).into(), bytes: source.as_bytes().to_vec(),
-                }))
+                Ok(MODULES
+                    .iter()
+                    .find(|(candidate, _)| *candidate == name)
+                    .map(|(_, source)| crate::ModuleSource {
+                        name: format!("deferred-module-graph/{name}"),
+                        source: (*source).into(),
+                        bytes: source.as_bytes().to_vec(),
+                    }))
             }
         }
-        for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
+        for compile in [
+            Engine::specialize_module as fn(&str, &str) -> _,
+            Engine::specialize_module_unspecialized,
+        ] {
             let view = Capture::default();
             let mut runtime = Runtime::new(ModuleCapture(view.clone()));
             let program = compile(SOURCE, "deferred-module-graph/entry.mjs").unwrap();
             runtime
                 .execute_after_scripts(&[("function harnessGlobal() {}", "harness.js")], &program)
                 .unwrap();
-            assert_eq!(view.0.borrow().as_slice(), &["3", "async start,async end,entry,deferred", "true", "true", "function"]);
+            assert_eq!(
+                view.0.borrow().as_slice(),
+                &[
+                    "3",
+                    "async start,async end,entry,deferred",
+                    "true",
+                    "true",
+                    "function"
+                ]
+            );
         }
     }
 

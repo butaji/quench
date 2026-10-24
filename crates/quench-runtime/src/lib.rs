@@ -20,16 +20,15 @@ mod vm;
 mod wasm;
 pub use wasm::{
     WasmCallableType, WasmConstantExpression, WasmData, WasmDataMode, WasmElement, WasmElementMode,
-    WasmExport,
-    WasmFunction, WasmFunctionBody, WasmFunctionImport, WasmGlobal, WasmGlobalInitializer,
-    WasmI32Function, WasmImportName, WasmInstance, WasmMemory, WasmModule,
+    WasmExport, WasmFunction, WasmFunctionBody, WasmFunctionImport, WasmGlobal,
+    WasmGlobalInitializer, WasmI32Function, WasmImportName, WasmInstance, WasmMemory, WasmModule,
     WasmReferenceInitializer, WasmReferenceKind, WasmSignature, WasmTable, WasmTableInitializer,
     WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue,
 };
 
 pub use bytecode::ResidualProgram;
 pub use compile::{Diagnostic, Engine};
-pub use heap::{RootId, HeapMemoryComposition};
+pub use heap::{HeapMemoryComposition, RootId};
 pub use host::{
     CapabilityId, Host, HostContext, HostExecutionContext, HostGlobal, ModuleSource, SystemHost,
     WasmHostFunctionId, WasmHostValue,
@@ -42,9 +41,11 @@ pub use vm::{ExecutionMode, JsError};
 
 mod api;
 pub use api::{
-    BufferStorage, BuiltinBrand, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostFunction, HostFunctionId, HostWeakRoot,
-    PreparedScript, NativeArithmetic, NativeContext, PromiseRejectionEvent, RootedError, RootedIterator, Runtime,
-    CompiledScript, RuntimeError, SourceKind, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
+    BufferStorage, BuiltinBrand, BuiltinData, CollectionPreview, CompiledScript,
+    ErrorSourcePosition, ExecutionRequest, HostFunction, HostFunctionId, HostWeakRoot,
+    NativeArithmetic, NativeContext, PreparedScript, PromiseRejectionEvent, PromiseSnapshot,
+    RootedError, RootedIterator, Runtime, RuntimeError, SourceKind, SourceStackFrame,
+    SynchronousModule, ValueType,
 };
 
 #[cfg(test)]

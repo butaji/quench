@@ -1,5 +1,5 @@
 use quench_runtime::RootId;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 pub(crate) struct State {
     next_server: u64,
@@ -15,6 +15,10 @@ pub(crate) struct State {
     pub(crate) requests: HashMap<u64, OutgoingRequest>,
     pub(crate) clients: HashMap<u64, Client>,
     pub(crate) agents: HashMap<u64, HashSet<u64>>,
+    pub(crate) agent_endpoints: HashMap<(u64, u64), (String, u16)>,
+    pub(crate) agent_max_sockets: HashMap<u64, usize>,
+    pub(crate) agent_keep_alive: HashMap<u64, bool>,
+    pub(crate) agent_pending: HashMap<u64, VecDeque<PendingClient>>,
 }
 
 pub(crate) struct Server {
@@ -29,6 +33,14 @@ pub(crate) struct ServerConnection {
     pub(crate) server: u64,
     pub(crate) received: Vec<u8>,
     pub(crate) request_dispatched: bool,
+    pub(crate) request_bytes: usize,
+    pub(crate) peer_ended: bool,
+    pub(crate) headers_started: Option<std::time::Instant>,
+    pub(crate) headers_timeout_sent: bool,
+    pub(crate) request_started: Option<std::time::Instant>,
+    pub(crate) request_timeout_sent: bool,
+    pub(crate) upgraded: bool,
+    pub(crate) socket_root: Option<RootId>,
 }
 
 pub(crate) struct Response {
@@ -38,6 +50,8 @@ pub(crate) struct Response {
     pub(crate) body: Body,
     pub(crate) send_date: bool,
     pub(crate) http10: bool,
+    pub(crate) close_after_response: bool,
+    pub(crate) removed_headers: HashSet<String>,
     pub(crate) use_chunked_encoding_by_default: bool,
     pub(crate) lifecycle: ResponseLifecycle,
 }
@@ -84,11 +98,15 @@ impl ResponseLifecycle {
 }
 
 pub(crate) struct OutgoingRequest {
+    pub(crate) async_id: u64,
     pub(crate) host: String,
     pub(crate) port: u16,
     pub(crate) method: String,
     pub(crate) path: String,
     pub(crate) headers: Vec<(String, String)>,
+    pub(crate) trailers: Vec<(String, String)>,
+    pub(crate) set_default_headers: bool,
+    pub(crate) omit_host: bool,
     pub(crate) body: Body,
     pub(crate) agent: Option<u64>,
 }
@@ -134,10 +152,22 @@ impl Body {
 
 pub(crate) struct Client {
     pub(crate) request_id: u64,
+    pub(crate) async_id: u64,
     pub(crate) request_root: RootId,
     pub(crate) request: Vec<u8>,
+    pub(crate) agent: Option<u64>,
     pub(crate) response_parser: super::protocol::ResponseParser,
     pub(crate) response_root: Option<RootId>,
+}
+
+pub(crate) struct PendingClient {
+    pub(crate) request_id: u64,
+    pub(crate) async_id: u64,
+    pub(crate) request_root: RootId,
+    pub(crate) request: Vec<u8>,
+    pub(crate) method: String,
+    pub(crate) host: String,
+    pub(crate) port: u16,
 }
 
 impl State {
@@ -156,6 +186,10 @@ impl State {
             requests: HashMap::new(),
             clients: HashMap::new(),
             agents: HashMap::new(),
+            agent_endpoints: HashMap::new(),
+            agent_max_sockets: HashMap::new(),
+            agent_keep_alive: HashMap::new(),
+            agent_pending: HashMap::new(),
         }
     }
 
@@ -173,6 +207,7 @@ impl State {
             .checked_add(1)
             .ok_or_else(|| "HTTP agent identifier space exhausted".to_owned())?;
         self.agents.insert(id, HashSet::new());
+        self.agent_max_sockets.insert(id, 15);
         Ok(id)
     }
 

@@ -373,7 +373,9 @@ fn nested_class_in_computed_key_keeps_outer_private_names() {
 #[test]
 fn generator_return_inside_loop_head_pattern_closes_pattern_iterator() {
     assert_eq!(
-        output("var log = []; function source(name) { return { [Symbol.iterator]() { return { next() { log.push(name + ':next'); return { done: false }; }, return() { log.push(name + ':return'); return {}; } }; } }; } function* plain() { for ([ {} = yield ] of [source('a')]) {} } var g = plain(); g.next(); print(JSON.stringify(g.return(7)) + ' ' + log.join()); log = []; function* guarded() { try { for (var [ x = yield ] of [source('b')]) {} } finally { log.push('finally'); } } g = guarded(); g.next(); print(JSON.stringify(g.return(8)) + ' ' + log.join()); "),
+        output(
+            "var log = []; function source(name) { return { [Symbol.iterator]() { return { next() { log.push(name + ':next'); return { done: false }; }, return() { log.push(name + ':return'); return {}; } }; } }; } function* plain() { for ([ {} = yield ] of [source('a')]) {} } var g = plain(); g.next(); print(JSON.stringify(g.return(7)) + ' ' + log.join()); log = []; function* guarded() { try { for (var [ x = yield ] of [source('b')]) {} } finally { log.push('finally'); } } g = guarded(); g.next(); print(JSON.stringify(g.return(8)) + ' ' + log.join()); "
+        ),
         [
             "{\"value\":7,\"done\":true} a:next,a:return",
             "{\"value\":8,\"done\":true} b:next,b:return,finally"
@@ -384,7 +386,9 @@ fn generator_return_inside_loop_head_pattern_closes_pattern_iterator() {
 #[test]
 fn nested_direct_eval_vars_belong_to_the_calling_function() {
     assert_eq!(
-        output("function u(code) { return eval(code); } u(\"eval('var z = 2;')\"); function v() { eval(\"eval('var y = 3;')\"); return typeof y; } function w() { 'use strict'; eval(\"eval('var x = 1;')\"); return typeof x; } print([typeof z, 'z' in globalThis, v(), typeof y, w()].join()); "),
+        output(
+            "function u(code) { return eval(code); } u(\"eval('var z = 2;')\"); function v() { eval(\"eval('var y = 3;')\"); return typeof y; } function w() { 'use strict'; eval(\"eval('var x = 1;')\"); return typeof x; } print([typeof z, 'z' in globalThis, v(), typeof y, w()].join()); "
+        ),
         ["undefined,false,number,undefined,undefined"]
     );
 }
@@ -392,7 +396,9 @@ fn nested_direct_eval_vars_belong_to_the_calling_function() {
 #[test]
 fn private_members_resolve_on_branded_proxy_receivers() {
     assert_eq!(
-        output("class Base { constructor() { return new Proxy(this, {}); } } class F extends Base { #x = 1; t() { return this.#x; } } class M extends Base { #m() { return 2; } t() { return this.#m(); } } class G extends Base { get #g() { return 3; } t() { return this.#g; } } print([F, M, G].map(C => new C().t()).join(' '));"),
+        output(
+            "class Base { constructor() { return new Proxy(this, {}); } } class F extends Base { #x = 1; t() { return this.#x; } } class M extends Base { #m() { return 2; } t() { return this.#m(); } } class G extends Base { get #g() { return 3; } t() { return this.#g; } } print([F, M, G].map(C => new C().t()).join(' '));"
+        ),
         ["1 2 3"]
     );
 }

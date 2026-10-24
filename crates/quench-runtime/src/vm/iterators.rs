@@ -304,11 +304,7 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(self.object_proto);
             self.install_builtin_to_string_tag(prototype, tag)?;
         }
-        self.install_async_iterator_prototype(
-            self.async_iterator_proto,
-            self.object_proto,
-            None,
-        )?;
+        self.install_async_iterator_prototype(self.async_iterator_proto, self.object_proto, None)?;
         let async_generator_function_prototype = self
             .own_property(
                 self.native_value(Native::AsyncGeneratorFunction),
@@ -3045,36 +3041,36 @@ impl<H: Host> Vm<H> {
                             selected
                         }
                     }
-                    (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => entries
-                        .next_live(index)
-                        .map(|(slot, (key, _))| {
+                    (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => {
+                        entries.next_live(index).map(|(slot, (key, _))| {
                             next_position = slot + 1;
                             (key, None)
-                        }),
-                    (IteratorKind::MapValues, Some(Cell::Map { entries, .. })) => entries
-                        .next_live(index)
-                        .map(|(slot, (_, value))| {
+                        })
+                    }
+                    (IteratorKind::MapValues, Some(Cell::Map { entries, .. })) => {
+                        entries.next_live(index).map(|(slot, (_, value))| {
                             next_position = slot + 1;
                             (value, None)
-                        }),
-                    (IteratorKind::MapEntries, Some(Cell::Map { entries, .. })) => entries
-                        .next_live(index)
-                        .map(|(slot, (key, value))| {
+                        })
+                    }
+                    (IteratorKind::MapEntries, Some(Cell::Map { entries, .. })) => {
+                        entries.next_live(index).map(|(slot, (key, value))| {
                             next_position = slot + 1;
                             (key, Some(value))
-                        }),
-                    (IteratorKind::SetValues, Some(Cell::Set { entries, .. })) => entries
-                        .next_live(index)
-                        .map(|(slot, value)| {
+                        })
+                    }
+                    (IteratorKind::SetValues, Some(Cell::Set { entries, .. })) => {
+                        entries.next_live(index).map(|(slot, value)| {
                             next_position = slot + 1;
                             (value, None)
-                        }),
-                    (IteratorKind::SetEntries, Some(Cell::Set { entries, .. })) => entries
-                        .next_live(index)
-                        .map(|(slot, value)| {
+                        })
+                    }
+                    (IteratorKind::SetEntries, Some(Cell::Set { entries, .. })) => {
+                        entries.next_live(index).map(|(slot, value)| {
                             next_position = slot + 1;
                             (value, Some(value))
-                        }),
+                        })
+                    }
                     _ => None,
                 },
             };
@@ -3164,7 +3160,11 @@ impl<H: Host> Vm<H> {
             return self.property_attributes(object, key).map(|_| None);
         };
         let attributes = self.shape_attribute(data.shape(), slot)?;
-        Some((!attributes.accessor).then(|| self.heap.property_get(data, slot)).flatten())
+        Some(
+            (!attributes.accessor)
+                .then(|| self.heap.property_get(data, slot))
+                .flatten(),
+        )
     }
 
     /// The elements spreading `source` yields, when that is a copy of them: `source` is a
@@ -3200,7 +3200,11 @@ impl<H: Host> Vm<H> {
         let next = self.own_data_slot_value(self.array_iterator_proto, next_key)??;
         (self.is_current_realm_native(method, Native::ArrayValues)
             && self.is_current_realm_native(next, Native::ArrayIteratorNext))
-        .then(|| self.heap.array(source).map(|array| array.elements().to_vec()))
+        .then(|| {
+            self.heap
+                .array(source)
+                .map(|array| array.elements().to_vec())
+        })
         .flatten()
     }
 
@@ -3245,9 +3249,9 @@ impl<H: Host> Vm<H> {
     pub(super) fn steps_as_array_iterator(&self, iterator: Value, method: Value) -> bool {
         self.is_current_realm_native(method, Native::ArrayIteratorNext)
             && matches!(
-            self.heap.get(iterator),
-            Some(Cell::Iterator { kind, .. }) if kind.is_array_iterator()
-        )
+                self.heap.get(iterator),
+                Some(Cell::Iterator { kind, .. }) if kind.is_array_iterator()
+            )
     }
 
     fn array_iterator_item(

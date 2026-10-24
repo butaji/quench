@@ -3,6 +3,7 @@ use super::fs_policy_shared_vm as policy;
 use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
+const STDERR_FD: i32 = 2;
 fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
     let key = c.string_rooted(name);
     c.get_property_rooted(object, key)
@@ -38,6 +39,17 @@ fn write(
     bytes: &[u8],
     position: Option<u64>,
 ) -> Result<RootId, RootedError> {
+    // Node's worker stderr stream can be backed by SyncWriteStream, which
+    // writes directly through fs.writeSync(2) instead of process.stderr.write.
+    // Keep those native fd-2 writes on the worker event channel as well.
+    if fd == STDERR_FD && position.is_none() && super::worker_threads_shared_vm::is_child(c) {
+        let output = c.host_mut().shared_state().borrow().output.clone();
+        if let Some(output) = output {
+            let text = String::from_utf8_lossy(bytes);
+            output(text.as_ref());
+            return Ok(c.number(bytes.len() as f64));
+        }
+    }
     let fs = c.host_mut().shared_state().borrow().fs.clone();
     match fs.write_descriptor(fd, bytes, position) {
         Ok(count) => Ok(c.number(count as f64)),
@@ -116,7 +128,9 @@ pub(crate) fn write_sync(
         }
         let capacity = get(c, buffer, "byteLength")?;
         policy::call(c, "validateOffsetLengthWrite", &[offset, length, capacity])?;
-        if let Some(result) = policy::vfs_read(c, "writeSync", &[descriptor, buffer, offset, length, at])? {
+        if let Some(result) =
+            policy::vfs_read(c, "writeSync", &[descriptor, buffer, offset, length, at])?
+        {
             return Ok(result);
         }
         let descriptor = fd(c, descriptor)?;
@@ -134,13 +148,20 @@ pub(crate) fn write_sync(
         let name = c.string_rooted("buffer");
         policy::call(c, "validateStringAfterArrayBufferView", &[buffer, name])?;
         policy::call(c, "validateEncoding", &[buffer, length])?;
-        if undefined(c, offset) { offset = c.null(); }
+        if undefined(c, offset) {
+            offset = c.null();
+        }
         if let Some(handlers) = policy::vfs_handlers(c)? {
             let constructor = policy::export(c, "Buffer")?;
             let from = get(c, constructor, "from")?;
             let bytes = c.call_rooted(from, constructor, &[buffer, length])?;
             let byte_length = get(c, bytes, "length")?;
-            if let Some(result) = policy::vfs_call(c, handlers, "writeSync", &[descriptor, bytes, zero, byte_length, offset])? {
+            if let Some(result) = policy::vfs_call(
+                c,
+                handlers,
+                "writeSync",
+                &[descriptor, bytes, zero, byte_length, offset],
+            )? {
                 return Ok(result);
             }
         }

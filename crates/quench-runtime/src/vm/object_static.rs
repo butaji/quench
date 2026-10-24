@@ -109,7 +109,11 @@ impl<H: Host> Vm<H> {
             let text = self.to_string(p, this)?;
             return Ok(self.heap.alloc(Cell::String(text.into())));
         }
-        if let Some((crate::BuiltinBrand::NumberObject | crate::BuiltinBrand::BigIntObject, value)) = self.boxed_primitive_data(this) {
+        if let Some((
+            crate::BuiltinBrand::NumberObject | crate::BuiltinBrand::BigIntObject,
+            value,
+        )) = self.boxed_primitive_data(this)
+        {
             let text = self.to_string(p, value)?;
             return Ok(self.heap.alloc(Cell::String(text.into())));
         }
@@ -130,7 +134,12 @@ impl<H: Host> Vm<H> {
             matches!(self.heap.get(value), Some(Cell::Proxy { .. })) && self.is_array(p, value)?;
         let boxed_brand = self.boxed_primitive_data(value).and_then(|(brand, _)| {
             use crate::BuiltinBrand as B;
-            match brand { B::StringObject => Some("String"), B::BooleanObject => Some("Boolean"), B::NumberObject => Some("Number"), _ => None }
+            match brand {
+                B::StringObject => Some("String"),
+                B::BooleanObject => Some("Boolean"),
+                B::NumberObject => Some("Number"),
+                _ => None,
+            }
         });
         let brand = if value.is_undefined() || value.is_deleted() {
             "Undefined"
@@ -830,12 +839,17 @@ impl<H: Host> Vm<H> {
         let current_record = (!is_new).then(|| {
             PropertyDescriptorRecord::from_attributes(existing.unwrap_or(Value::UNDEFINED), current)
         });
-        let host_private = key.symbol_value().is_some_and(|symbol| self.is_host_private_symbol(symbol));
-        let extensible = host_private || self.object_data(target).is_some_and(Object::is_extensible);
+        let host_private = key
+            .symbol_value()
+            .is_some_and(|symbol| self.is_host_private_symbol(symbol));
+        let extensible =
+            host_private || self.object_data(target).is_some_and(Object::is_extensible);
         if !descriptor.compatible_with(current_record, extensible, |a, b| self.same_value(a, b)) {
             return Ok(false);
         }
-        if current.configurable && (descriptor_value.is_some() || descriptor_accessor || attributes != current) {
+        if current.configurable
+            && (descriptor_value.is_some() || descriptor_accessor || attributes != current)
+        {
             self.reconfigure_function_name(target, key);
         }
         if descriptor_accessor {

@@ -101,7 +101,10 @@ impl<H: Host> Vm<H> {
             .shape_keys(shape)
             .iter()
             .filter_map(|key| key.symbol_value())
-            .filter(|symbol| !self.is_host_private_symbol(*symbol) && self.symbol_property(object, *symbol).is_some())
+            .filter(|symbol| {
+                !self.is_host_private_symbol(*symbol)
+                    && self.symbol_property(object, *symbol).is_some()
+            })
             .collect::<Vec<_>>();
         values.extend(
             strings
@@ -192,9 +195,13 @@ impl<H: Host> Vm<H> {
                         self.heap.root_value(key).unwrap(),
                     )
                 }) {
-                    return Err(
-                        self.type_error(p, "proxy ownKeys trap omitted a required key".into())
-                    );
+                    let key_text = self
+                        .coerce_js_string(p, self.heap.root_value(key).unwrap())?
+                        .to_string();
+                    return Err(self.type_error(
+                        p,
+                        format!("'ownKeys' on proxy: trap result did not include '{key_text}'"),
+                    ));
                 }
             }
             if !extensible && keys.len() != target_keys.len() {
@@ -357,7 +364,9 @@ impl<H: Host> Vm<H> {
         receiver: Value,
     ) -> Result<bool, JsError> {
         if self.is_host_private_symbol(key) {
-            if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) { return Ok(false); }
+            if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
+                return Ok(false);
+            }
             let own = self.ordinary_own_property(p, target, key)?;
             if let Some((_, attributes)) = own {
                 if attributes.accessor {
@@ -367,13 +376,20 @@ impl<H: Host> Vm<H> {
                     }
                     return Ok(false);
                 }
-                if !attributes.writable { return Ok(false); }
+                if !attributes.writable {
+                    return Ok(false);
+                }
             }
-            if !self.is_object_like(receiver) || matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) { return Ok(false); }
+            if !self.is_object_like(receiver)
+                || matches!(self.heap.get(receiver), Some(Cell::Proxy { .. }))
+            {
+                return Ok(false);
+            }
             let descriptor = if self.symbol_property(receiver, key).is_some() {
                 super::object_descriptors::PropertyDescriptorRecord::value(value)
             } else {
-                let mut descriptor = super::object_descriptors::PropertyDescriptorRecord::data(value);
+                let mut descriptor =
+                    super::object_descriptors::PropertyDescriptorRecord::data(value);
                 descriptor.enumerable = Some(false);
                 descriptor
             };

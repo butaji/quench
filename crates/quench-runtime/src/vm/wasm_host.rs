@@ -271,7 +271,10 @@ impl<H: Host> Vm<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Engine, RootId, WasmFunctionBody, WasmHostFunctionId, WasmFunctionImport, WasmImportName, WasmType};
+    use crate::{
+        Engine, RootId, WasmFunctionBody, WasmFunctionImport, WasmHostFunctionId, WasmImportName,
+        WasmType,
+    };
     use wasmparser::Operator;
 
     #[derive(Default)]

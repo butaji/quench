@@ -355,9 +355,19 @@ pub(crate) fn result(
         .rooted_value(port)
         .and_then(|value| value.as_number())
         .ok_or_else(|| RootedError::host("lookup port missing"))? as u16;
+    let options = get(context, owner, "options")?;
+    let (local_address, local_port) =
+        super::net_options_shared_vm::connect_source(context, options)?;
     let state = context.host_mut().shared_state();
-    net_shared_vm::connect_resolved(&mut state.borrow_mut().tcp, id, addresses, port)
-        .map_err(RootedError::host)?;
+    net_shared_vm::connect_resolved(
+        &mut state.borrow_mut().tcp,
+        id,
+        addresses,
+        port,
+        local_address,
+        local_port,
+    )
+    .map_err(RootedError::host)?;
     Ok(undefined)
 }
 

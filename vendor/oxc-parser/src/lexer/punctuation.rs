@@ -83,7 +83,8 @@ impl<C: Config> Lexer<'_, C> {
     fn defer_html_comment_error(&mut self, len: u32) {
         if self.source_type.is_unambiguous() {
             let span = Span::sized(self.token.start(), len);
-            self.deferred_module_errors.push(diagnostics::html_comment_in_module(span));
+            self.deferred_module_errors
+                .push(diagnostics::html_comment_in_module(span));
         }
     }
 
@@ -96,7 +97,11 @@ impl<C: Config> Lexer<'_, C> {
     fn read_right_angle(&mut self) -> Kind {
         if self.next_ascii_byte_eq(b'>') {
             if self.next_ascii_byte_eq(b'>') {
-                if self.next_ascii_byte_eq(b'=') { Kind::ShiftRight3Eq } else { Kind::ShiftRight3 }
+                if self.next_ascii_byte_eq(b'=') {
+                    Kind::ShiftRight3Eq
+                } else {
+                    Kind::ShiftRight3
+                }
             } else if self.next_ascii_byte_eq(b'=') {
                 Kind::ShiftRightEq
             } else {

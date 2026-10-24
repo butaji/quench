@@ -217,8 +217,8 @@ fn bytecode_interpreter_matches_model_in_both_modes() {
     // acc = 0; k = n; do { acc += k * k; k -= 1 } while k != 0; acc
     const PROGRAM: [i32; 29] = [
         PUSH, 0, STORE, 0, PUSH, 0, STORE, 1, // n replaces the second push
-        LOAD, 0, LOAD, 1, DUP, MUL, ADD, STORE, 0, LOAD, 1, SUBI, 1, DUP, STORE, 1, JNZ,
-        LOOP_HEAD, LOAD, 0, HALT,
+        LOAD, 0, LOAD, 1, DUP, MUL, ADD, STORE, 0, LOAD, 1, SUBI, 1, DUP, STORE, 1, JNZ, LOOP_HEAD,
+        LOAD, 0, HALT,
     ];
     fn model(n: i32) -> i32 {
         let mut program = PROGRAM;
@@ -409,11 +409,23 @@ fn wrapping_addresses_match_wasm_semantics_in_both_modes() {
                 .map_err(|error| error.wasm_trap())
         };
         assert_eq!(call(0, &[I32(-4), I32(8)]), Ok(Some(I32(4))), "{mode:?}");
-        assert_eq!(call(0, &[I32(-1), I32(-1)]), Err(Some(WasmTrap::OutOfBoundsMemory)), "{mode:?}");
+        assert_eq!(
+            call(0, &[I32(-1), I32(-1)]),
+            Err(Some(WasmTrap::OutOfBoundsMemory)),
+            "{mode:?}"
+        );
         assert_eq!(call(1, &[I32(-4)]), Ok(Some(I32(4))), "{mode:?}");
-        assert_eq!(call(1, &[I32(-9)]), Err(Some(WasmTrap::OutOfBoundsMemory)), "{mode:?}");
+        assert_eq!(
+            call(1, &[I32(-9)]),
+            Err(Some(WasmTrap::OutOfBoundsMemory)),
+            "{mode:?}"
+        );
         assert_eq!(call(2, &[I32(3)]), Ok(Some(I32(7))), "{mode:?}");
-        assert_eq!(call(2, &[I32(-2)]), Err(Some(WasmTrap::OutOfBoundsMemory)), "{mode:?}");
+        assert_eq!(
+            call(2, &[I32(-2)]),
+            Err(Some(WasmTrap::OutOfBoundsMemory)),
+            "{mode:?}"
+        );
         assert_eq!(call(3, &[I32(-4)]), Ok(Some(I32(42))), "{mode:?}");
     }
 }

@@ -166,7 +166,9 @@ impl<'a, C: Config> Lexer<'a, C> {
         // has a cost each time it's deref-ed. Creating `Finder` unconditionally in `Lexer::new`
         // would be efficient for files containing multi-line comments, but would impose pointless
         // cost on files which don't. So this is the fastest solution.
-        let finder = self.multi_line_comment_end_finder.get_or_insert_with(|| Finder::new("*/"));
+        let finder = self
+            .multi_line_comment_end_finder
+            .get_or_insert_with(|| Finder::new("*/"));
 
         let remaining = self.source.str_from_pos_to_end(pos).as_bytes();
         if let Some(index) = finder.find(remaining) {
@@ -181,7 +183,9 @@ impl<'a, C: Config> Lexer<'a, C> {
             Kind::Skip
         } else {
             self.source.advance_to_end();
-            self.error(diagnostics::unterminated_multi_line_comment(self.unterminated_range()));
+            self.error(diagnostics::unterminated_multi_line_comment(
+                self.unterminated_range(),
+            ));
             Kind::Eof
         }
     }

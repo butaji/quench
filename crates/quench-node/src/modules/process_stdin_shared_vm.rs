@@ -241,7 +241,8 @@ mod platform {
         );
         let receiver = runtime.root(Value::UNDEFINED);
         state.borrow_mut().scheduler.queue_shared_next_tick(
-            crate::modules::shared_event_loop::SharedCallback { execution: None,
+            crate::modules::shared_event_loop::SharedCallback {
+                execution: None,
                 callback,
                 receiver,
                 args: Vec::new(),

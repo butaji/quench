@@ -123,7 +123,9 @@ impl<H: Host> Vm<H> {
         let outcome = (|| {
             let object = self.heap.root_value(target).unwrap();
             if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
-                if self.is_host_private_symbol(self.heap.root_value(key).unwrap()) { return Ok(false); }
+                if self.is_host_private_symbol(self.heap.root_value(key).unwrap()) {
+                    return Ok(false);
+                }
                 return self.define_proxy_property_record(p, target, key, &descriptor);
             }
             let property = self.heap.root_value(key).unwrap();

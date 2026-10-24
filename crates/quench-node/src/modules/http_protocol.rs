@@ -205,6 +205,8 @@ pub(crate) fn compose(
     body: &[u8],
     _trailers: &[(String, String)],
     keep_alive: bool,
+    omit_connection: bool,
+    omit_auto_content_length: bool,
     http10: bool,
     send_date: bool,
     now: std::time::SystemTime,
@@ -215,13 +217,14 @@ pub(crate) fn compose(
     let chunked = headers.iter().any(|(key, value)| {
         key.eq_ignore_ascii_case("transfer-encoding") && value.eq_ignore_ascii_case("chunked")
     });
-    if !http10
-        && !chunked
-        && !headers
-            .iter()
-            .any(|(key, _)| key.eq_ignore_ascii_case("content-length"))
+    // Node serializes caller headers first, then adds Date and framing headers.
+    // Keeping this order matters to rawHeaders consumers, especially for
+    // writeHead() arrays where duplicate header pairs must remain adjacent.
+    for (key, value) in headers
+        .iter()
+        .filter(|(key, _)| !key.eq_ignore_ascii_case("transfer-encoding"))
     {
-        out.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
+        out.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
     }
     if send_date
         && !headers
@@ -229,26 +232,36 @@ pub(crate) fn compose(
             .any(|(key, _)| key.eq_ignore_ascii_case("date"))
     {
         let now: chrono::DateTime<chrono::Utc> = now.into();
-        out.extend_from_slice(format!("Date: {}\r\n", now.format("%a, %d %b %Y %H:%M:%S GMT")).as_bytes());
+        out.extend_from_slice(
+            format!("Date: {}\r\n", now.format("%a, %d %b %Y %H:%M:%S GMT")).as_bytes(),
+        );
     }
     let connection = headers
         .iter()
         .find(|(key, _)| key.eq_ignore_ascii_case("connection"))
         .map(|(_, value)| value.as_str())
         .unwrap_or(if keep_alive { "keep-alive" } else { "close" });
-    let transfer_encoding = headers
+    if !omit_connection
+        && !headers
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case("connection"))
+    {
+        out.extend_from_slice(format!("Connection: {connection}\r\n").as_bytes());
+    }
+    for (key, value) in headers
         .iter()
         .filter(|(key, _)| key.eq_ignore_ascii_case("transfer-encoding"))
-        .collect::<Vec<_>>();
-    for (key, value) in headers {
-        if key.eq_ignore_ascii_case("transfer-encoding") || key.eq_ignore_ascii_case("connection") {
-            continue;
-        }
+    {
         out.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
     }
-    out.extend_from_slice(format!("Connection: {connection}\r\n").as_bytes());
-    for (key, value) in transfer_encoding {
-        out.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
+    if !omit_auto_content_length
+        && !http10
+        && !chunked
+        && !headers
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case("content-length"))
+    {
+        out.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
     }
     out.extend_from_slice(b"\r\n");
     if chunked {
@@ -290,14 +303,18 @@ pub(crate) fn request_head_with_chunking(
     headers: &[(String, String)],
     body_len: usize,
     omit_host: bool,
+    set_default_headers: bool,
     force_chunked: bool,
 ) -> String {
     let mut head = format!("{method} {path} HTTP/1.1\r\n");
-    if !omit_host {
-        head.push_str(&format!("Host: {host}\r\n"));
-    }
     for (key, value) in headers {
         head.push_str(&format!("{key}: {value}\r\n"));
+    }
+    // Node writes the caller's headers first, followed by its implicit Host
+    // header and then the generated framing/connection headers. Keep this
+    // order observable through the peer's rawHeaders array.
+    if !omit_host {
+        head.push_str(&format!("Host: {host}\r\n"));
     }
     // Node's implicit zero-length framing is method-dependent: bodyless
     // methods omit `content-length`, while methods that conventionally carry
@@ -308,23 +325,25 @@ pub(crate) fn request_head_with_chunking(
     let expect_continue = headers.iter().any(|(key, value)| {
         key.eq_ignore_ascii_case("expect") && value.eq_ignore_ascii_case("100-continue")
     });
-    if !has_content_length && expect_continue {
+    if set_default_headers {
+        if !has_content_length && expect_continue {
+            if !headers
+                .iter()
+                .any(|(key, _)| key.eq_ignore_ascii_case("transfer-encoding"))
+            {
+                head.push_str("Transfer-Encoding: chunked\r\n");
+            }
+        } else if force_chunked && !has_content_length {
+            head.push_str("Transfer-Encoding: chunked\r\n");
+        } else if !has_content_length && default_request_chunking(method) {
+            head.push_str(&format!("Content-Length: {body_len}\r\n"));
+        }
         if !headers
             .iter()
-            .any(|(key, _)| key.eq_ignore_ascii_case("transfer-encoding"))
+            .any(|(key, _)| key.eq_ignore_ascii_case("connection"))
         {
-            head.push_str("Transfer-Encoding: chunked\r\n");
+            head.push_str("Connection: keep-alive\r\n");
         }
-    } else if force_chunked && !has_content_length {
-        head.push_str("Transfer-Encoding: chunked\r\n");
-    } else if !has_content_length && default_request_chunking(method) {
-        head.push_str(&format!("Content-Length: {body_len}\r\n"));
-    }
-    if !headers
-        .iter()
-        .any(|(key, _)| key.eq_ignore_ascii_case("connection"))
-    {
-        head.push_str("Connection: keep-alive\r\n");
     }
     head.push_str("\r\n");
     head

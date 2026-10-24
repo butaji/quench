@@ -11,10 +11,14 @@ impl Mode {
     }
     fn native_window(self, bits: i32) -> i32 {
         const GZIP_WINDOW: i32 = 16;
-        const AUTO_WINDOW: i32 = 32;
         match self {
             Self::Gzip | Self::Gunzip => bits + GZIP_WINDOW,
-            Self::Unzip => bits + AUTO_WINDOW,
+            // zlib-rs' Inflate accepts a zlib-vs-raw flag and a window size,
+            // but has no gzip/zlib auto-detection mode equivalent to
+            // inflateInit2(windowBits + 32). Use the zlib window for this
+            // fallback backend; the native zlib backend retains full auto
+            // detection semantics.
+            Self::Unzip => bits,
             Self::DeflateRaw | Self::InflateRaw => -bits,
             _ => bits,
         }
@@ -33,6 +37,10 @@ pub(crate) struct Codec {
     ended: bool,
 }
 impl Codec {
+    pub(crate) fn params(&mut self, _level: i32, _strategy: i32) -> Result<(), Failure> {
+        Err(stream_error())
+    }
+
     pub(in crate::modules) fn new(
         mode: Mode,
         bits: i32,
@@ -40,7 +48,19 @@ impl Codec {
         memory: i32,
         strategy: i32,
         dictionary: Option<Vec<u8>>,
+        _reject_trailing: bool,
     ) -> Result<Self, Failure> {
+        // Node permits windowBits: 0 for decompressors that can read the
+        // window size from the stream header. zlib-rs requires an explicit
+        // 8..=15 value, so select the largest supported window for the
+        // fallback engine. Compression must continue to reject zero.
+        let bits = if bits == 0
+            && matches!(mode, Mode::Inflate | Mode::Gunzip | Mode::Unzip)
+        {
+            15
+        } else {
+            bits
+        };
         let window = mode.native_window(bits);
         let strategy = match strategy {
             0 => Strategy::Default,
@@ -160,7 +180,7 @@ impl Codec {
                                 errno: zlib_rs::ReturnCode::from(e) as i32,
                                 code: "Z_DATA_ERROR".into(),
                                 message: decoder.error_message().unwrap_or(e.as_str()).into(),
-                            })
+                            });
                         }
                     }
                 }

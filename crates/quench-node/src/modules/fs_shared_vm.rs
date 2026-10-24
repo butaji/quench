@@ -5,39 +5,655 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 // Node's internal fs readFile limit, independent of Buffer's larger capacity.
 pub(super) const MAX_READ_FILE_BYTES: u64 = i32::MAX as u64;
 
+const PERMISSION_GUARD: &str = quench_js_check::checked_js!(
+    r#"(fs) => {
+  const readScope = 'fs.read';
+  const writeScope = 'fs.write';
+  const permissionName = (scope) => scope === readScope ? 'FileSystemRead' : 'FileSystemWrite';
+  function check(scope, path) {
+    let resource;
+    if (typeof path === 'string') resource = path;
+    else if (typeof path === 'number') return;
+    else if (path instanceof URL && path.protocol === 'file:') {
+      // The WHATWG URL path validator used by fs rejects encoded separators
+      // before any asynchronous work is queued. Preserve the original URL
+      // spelling here because URL.pathname may normalize some escapes.
+      const hrefPath = typeof path.href === 'string'
+        ? path.href.replace(/^file:\/\/[^/]*(\/[^?#]*)?.*$/i, '$1')
+        : '';
+      if (/%2f/i.test(path.pathname) || /%2f/i.test(hrefPath) ||
+          (process.platform === 'win32' && (/%5c/i.test(path.pathname) || /%5c/i.test(hrefPath)))) {
+        throw Object.assign(new TypeError('The URL must not contain encoded / or \\ characters.'), {
+          code: 'ERR_INVALID_FILE_URL_PATH', input: path,
+        });
+      }
+      resource = process.getBuiltinModule('url').fileURLToPath(path);
+    } else if (ArrayBuffer.isView(path)) {
+      resource = new TextDecoder().decode(path);
+    } else {
+      // Let the underlying fs entry point report its canonical argument error.
+      return;
+    }
+    if (typeof resource === 'string' && resource.includes('\0')) {
+      throw Object.assign(new TypeError("The argument 'path' must be a string, Uint8Array, or URL without null bytes"), {
+        code: 'ERR_INVALID_ARG_VALUE', input: resource,
+      });
+    }
+    const permission = globalThis.process?.permission;
+    const allowed = !permission || permission.has(scope, resource);
+    const audit = (globalThis.process?.execArgv || []).includes('--permission-audit');
+    if (allowed || audit) return;
+    const error = Object.assign(new Error(`Access to this API has been restricted. Use --allow-${scope.replace('.', '-')} to manage permissions.`), {
+      code: 'ERR_ACCESS_DENIED', permission: permissionName(scope), resource,
+    });
+    // Node's uncaught-exception formatter includes these fields for native
+    // ERR_ACCESS_DENIED errors. Quench's generic Error formatter only prints
+    // the message and stack, so retain the resource detail in the stack too.
+    if (typeof error.stack === 'string') {
+      const quotedResource = `'${resource.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r/g, '\\r').replace(/\n/g, '\\n')}'`;
+      error.stack += `\n    permission: '${permissionName(scope)}',\n    resource: ${quotedResource}`;
+    }
+    throw error;
+  }
+  function checkMode(path, flags) {
+    const writes = typeof flags === 'number'
+      ? (flags & ((fs.constants?.O_WRONLY || 1) | (fs.constants?.O_RDWR || 2) |
+          (fs.constants?.O_CREAT || 64) | (fs.constants?.O_TRUNC || 512) |
+          (fs.constants?.O_APPEND || 1024))) !== 0
+      : /[wa+]/.test(typeof flags === 'string' ? flags : 'r');
+    check(writes ? writeScope : readScope, path);
+  }
+  function validateOpenAsBlobArgs(path, options) {
+    if (typeof path !== 'string' && !(path instanceof Uint8Array) && !(path instanceof URL)) {
+      throw Object.assign(new TypeError('The "path" argument must be of type string or an instance of Buffer or URL.'), {
+        code: 'ERR_INVALID_ARG_TYPE',
+      });
+    }
+    if (options !== undefined && (options === null || typeof options !== 'object')) {
+      throw Object.assign(new TypeError('The "options" argument must be of type object.'), {
+        code: 'ERR_INVALID_ARG_TYPE',
+      });
+    }
+    if (options?.type !== undefined && typeof options.type !== 'string') {
+      throw Object.assign(new TypeError('The "options.type" property must be of type string.'), {
+        code: 'ERR_INVALID_ARG_TYPE',
+      });
+    }
+  }
+  function checkSymlinkPermission() {
+    const permission = globalThis.process?.permission;
+    const audit = (globalThis.process?.execArgv || []).includes('--permission-audit');
+    if (!permission) return;
+    const canRead = permission.has(readScope);
+    const canWrite = permission.has(writeScope);
+    if (canRead && canWrite) return;
+    if (audit) {
+      try {
+        globalThis.process.getBuiltinModule('diagnostics_channel')
+          .channel('node:permission-model:fs').publish({ permission: 'FileSystem' });
+      } catch {}
+      return;
+    }
+    throw Object.assign(new Error('fs.symlink API requires full fs.read and fs.write permissions.'), {
+      code: 'ERR_ACCESS_DENIED',
+    });
+  }
+  function wrapSync(name, scope, indexes = [0]) {
+    const original = fs[name];
+    if (typeof original !== 'function') return;
+    const nativeOriginal = name === 'realpathSync'
+      ? fs.__quenchInternalRealpathSyncNative
+      : original.native;
+    const wrap = (target) => function(...args) {
+      for (const index of indexes) {
+        if (args[index] === undefined) continue;
+        try {
+          check(scope, args[index]);
+        } catch (error) {
+          // fs.existsSync() is deliberately forgiving: Node returns false for
+          // malformed paths such as strings containing NUL bytes.
+          if (name === 'existsSync' && error?.code === 'ERR_INVALID_ARG_VALUE') return false;
+          throw error;
+        }
+      }
+      return Reflect.apply(target, this, args);
+    };
+    const wrapped = wrap(original);
+    if (typeof nativeOriginal === 'function') wrapped.native = wrap(nativeOriginal);
+    fs[name] = wrapped;
+  }
+  function wrapCallback(name, scope, indexes = [0]) {
+    const original = fs[name];
+    if (typeof original !== 'function') return;
+    const nativeOriginal = name === 'realpath'
+      ? fs.__quenchInternalRealpathNative
+      : original.native;
+    const wrap = (target) => function(...args) {
+      const callback = args[args.length - 1];
+      if (typeof callback !== 'function') return Reflect.apply(target, this, args);
+      try { for (const index of indexes) if (args[index] !== undefined) check(scope, args[index]); }
+      catch (error) {
+        // Node rejects malformed paths synchronously even when a callback is
+        // supplied. Permission denials remain callback errors.
+        if (error && (error.code === 'ERR_INVALID_ARG_VALUE' ||
+            error.code === 'ERR_INVALID_FILE_URL_PATH' ||
+            error.code === 'ERR_INVALID_FILE_URL_HOST')) throw error;
+        if (['mkdir', 'chmod', 'utimes', 'lutimes', 'futimes'].includes(name)) throw error;
+        process.nextTick(callback, error);
+        return;
+      }
+      return Reflect.apply(target, this, args);
+    };
+    const wrapped = wrap(original);
+    if (typeof nativeOriginal === 'function') wrapped.native = wrap(nativeOriginal);
+    fs[name] = wrapped;
+  }
+  for (const name of ['readFileSync', 'statSync', 'lstatSync', 'readdirSync', 'readlinkSync', 'realpathSync', 'accessSync', 'existsSync', 'opendirSync', 'statfsSync', 'openAsBlob', 'watch', 'watchFile']) wrapSync(name, readScope);
+  if (typeof fs.openAsBlob !== 'function') fs.openAsBlob = function(path, options = {}) {
+    validateOpenAsBlobArgs(path, options);
+    check(readScope, path);
+    fs.statSync(path);
+    return Promise.resolve(new Blob([fs.readFileSync(path)], { type: options.type || '' }));
+  };
+  const __quenchOpenAsBlob = fs.openAsBlob;
+  fs.openAsBlob = function(...args) {
+    const path = args[0];
+    validateOpenAsBlobArgs(path, args[1]);
+    const stat = fs.statSync(path);
+    return Promise.resolve(Reflect.apply(__quenchOpenAsBlob, this, args)).then((blob) => {
+      Object.defineProperty(blob, '\0quench:file-backed:clone-unsupported', {
+        value: true,
+      });
+      const ensureReadable = () => {
+        let current;
+        try { current = fs.statSync(path); } catch {}
+        if (!current || Number(current.size) !== Number(stat.size) ||
+            Math.trunc(Number(current.mtimeMs)) !== Math.trunc(Number(stat.mtimeMs))) {
+          throw new DOMException('The file has been modified', 'NotReadableError');
+        }
+      };
+      for (const method of ['text', 'arrayBuffer', 'bytes']) {
+        const native = blob[method];
+        if (typeof native !== 'function') continue;
+        Object.defineProperty(blob, method, {
+          configurable: true,
+          value(...methodArgs) {
+            try { ensureReadable(); } catch (error) { return Promise.reject(error); }
+            return Reflect.apply(native, this, methodArgs);
+          },
+        });
+      }
+      if (typeof path === 'string') {
+        Object.defineProperties(blob, {
+          '\0quench:file-backed:path': { value: path },
+          '\0quench:file-backed:size': { value: Number(stat.size) },
+          '\0quench:file-backed:mtime': { value: Math.trunc(Number(stat.mtimeMs)) },
+        });
+        // Keep the file check on the returned Blob instance itself. Some
+        // embedded Blob implementations have a distinct prototype from the
+        // global Blob wrapped during bootstrap, which otherwise lets stream()
+        // read the original snapshot after its backing file has changed.
+        const nativeStream = blob.stream;
+        if (typeof nativeStream === 'function') {
+          Object.defineProperty(blob, 'stream', {
+            configurable: true,
+            value(...streamArgs) {
+              const source = Reflect.apply(nativeStream, this, streamArgs);
+              // The fallback stream may expose async iteration without the
+              // WHATWG getReader surface. Guard that path too, since Node's
+              // file-backed Blob contract is checked when the consumer reads.
+              const iteratorKey = Symbol.asyncIterator;
+              const iteratorFactory = source?.[iteratorKey];
+              if (typeof iteratorFactory === 'function') {
+                try {
+                  Object.defineProperty(source, iteratorKey, {
+                    configurable: true,
+                    value() {
+                      const iterator = Reflect.apply(iteratorFactory, this, []);
+                      return {
+                        next(...nextArgs) {
+                          try { ensureReadable(); } catch (error) { return Promise.reject(error); }
+                          return Reflect.apply(iterator.next, iterator, nextArgs);
+                        },
+                        return(...returnArgs) {
+                          return typeof iterator.return === 'function'
+                            ? Reflect.apply(iterator.return, iterator, returnArgs)
+                            : Promise.resolve({ done: true, value: undefined });
+                        },
+                        [iteratorKey]() { return this; },
+                      };
+                    },
+                  });
+                } catch {}
+              }
+              const Stream = globalThis.ReadableStream || source?.constructor;
+              if (typeof source?.getReader !== 'function' || typeof Stream !== 'function') return source;
+              const reader = source.getReader();
+              return new Stream({
+                async pull(controller) {
+                  try {
+                    ensureReadable();
+                    const item = await reader.read();
+                    if (item.done) controller.close();
+                    else controller.enqueue(item.value);
+                  } catch (error) { controller.error(error); }
+                },
+                cancel(reason) { return reader.cancel(reason); },
+              }, { highWaterMark: 0 });
+            },
+          });
+        }
+      }
+      return blob;
+    });
+  };
+  const __quenchOpenAsBlobSync = fs.openAsBlobSync;
+  fs.openAsBlobSync = function(path, options) {
+    if (options === undefined) options = {};
+    validateOpenAsBlobArgs(path, options);
+    check(readScope, path);
+    const stat = fs.statSync(path);
+    const blob = typeof __quenchOpenAsBlobSync === 'function'
+      ? Reflect.apply(__quenchOpenAsBlobSync, this, [path, options])
+      : new Blob([fs.readFileSync(path)], { type: options.type || '' });
+    const ensureReadable = () => {
+      let current;
+      try { current = fs.statSync(path); } catch {}
+      if (!current || Number(current.size) !== Number(stat.size) ||
+          Math.trunc(Number(current.mtimeMs)) !== Math.trunc(Number(stat.mtimeMs))) {
+        throw new DOMException('The file has been modified', 'NotReadableError');
+      }
+    };
+    for (const method of ['text', 'arrayBuffer', 'bytes']) {
+      const native = blob[method];
+      if (typeof native !== 'function') continue;
+      Object.defineProperty(blob, method, {
+        configurable: true,
+        value(...args) {
+          try { ensureReadable(); } catch (error) { return Promise.reject(error); }
+          return Reflect.apply(native, this, args);
+        },
+      });
+    }
+    return blob;
+  };
+  for (const name of ['writeFileSync', 'appendFileSync', 'mkdirSync', 'mkdtempDisposableSync', 'rmdirSync', 'rmSync', 'unlinkSync', 'truncateSync', 'chmodSync', 'lchmodSync', 'chownSync', 'lchownSync', 'utimesSync', 'lutimesSync']) wrapSync(name, writeScope);
+  if (typeof fs.mkdtempSync === 'function') {
+    const original = fs.mkdtempSync;
+    fs.mkdtempSync = function(prefix, ...args) {
+      check(writeScope, `${prefix}XXXXXX`);
+      return Reflect.apply(original, this, [prefix, ...args]);
+    };
+  }
+  function permissionDisabledFdApiError(syscall) {
+    const execArgs = globalThis.process?.execArgv || [];
+    if (!execArgs.includes('--permission') || execArgs.includes('--permission-audit')) return null;
+    return Object.assign(new Error(`${syscall} API is disabled when Permission Model is enabled.`), {
+      code: 'ERR_ACCESS_DENIED',
+    });
+  }
+  for (const [name, syscall] of [
+    ['fsyncSync', 'fsync'], ['fdatasyncSync', 'fdatasync'],
+    ['fchmodSync', 'fchmod'], ['fchownSync', 'fchown'], ['futimesSync', 'futimes'],
+  ]) {
+    const original = fs[name];
+    if (typeof original === 'function') fs[name] = function(...args) {
+      const error = permissionDisabledFdApiError(syscall);
+      if (error) throw error;
+      return Reflect.apply(original, this, args);
+    };
+  }
+  for (const [name, syscall] of [
+    ['fchmod', 'fchmod'], ['fchown', 'fchown'], ['futimes', 'futimes'],
+  ]) {
+    const original = fs[name];
+    if (typeof original === 'function') fs[name] = function(...args) {
+      const callback = args[args.length - 1];
+      if (typeof callback !== 'function') return Reflect.apply(original, this, args);
+      const error = permissionDisabledFdApiError(syscall);
+      if (error) { process.nextTick(callback, error); return; }
+      return Reflect.apply(original, this, args);
+    };
+  }
+  if (typeof fs.linkSync === 'function') {
+    const original = fs.linkSync;
+    fs.linkSync = function(from, to, ...rest) {
+      // The source is read and the destination is created, so enforce the
+      // corresponding permissions in Node's source-then-destination order.
+      check(readScope, from);
+      check(writeScope, to);
+      return Reflect.apply(original, this, [from, to, ...rest]);
+    };
+  }
+  if (typeof fs.symlinkSync === 'function') {
+    const original = fs.symlinkSync;
+    const validateSymlinkPath = (value, name) => {
+      let path = value;
+      if (Buffer.isBuffer(value)) path = value.toString();
+      else if (value instanceof URL) {
+        try { path = decodeURIComponent(value.pathname); }
+        catch { path = value.pathname; }
+      }
+      if (typeof path === 'string' && path.includes('\0')) {
+        const error = new TypeError(`The "${name}" argument must be a string, Uint8Array, or URL without null bytes`);
+        error.code = 'ERR_INVALID_ARG_VALUE';
+        throw error;
+      }
+    };
+    fs.symlinkSync = function(target, path, ...rest) {
+      validateSymlinkPath(target, 'target');
+      validateSymlinkPath(path, 'path');
+      checkSymlinkPermission();
+      return Reflect.apply(original, this, [target, path, ...rest]);
+    };
+  }
+  if (typeof fs.symlink === 'function') {
+    const original = fs.symlink;
+    fs.symlink = function(...args) {
+      const callback = args[args.length - 1];
+      try { checkSymlinkPermission(); }
+      catch (error) {
+        if (typeof callback === 'function') { process.nextTick(callback, error); return; }
+        throw error;
+      }
+      return Reflect.apply(original, this, args);
+    };
+  }
+  if (fs.promises && typeof fs.promises.symlink === 'function') {
+    const original = fs.promises.symlink;
+    fs.promises.symlink = function(...args) {
+      try { checkSymlinkPermission(); }
+      catch (error) { return Promise.reject(error); }
+      return Reflect.apply(original, this, args);
+    };
+  }
+  if (typeof fs.renameSync === 'function') {
+    const original = fs.renameSync;
+    fs.renameSync = function(from, to, ...rest) { check(readScope, from); check(writeScope, from); check(writeScope, to); return Reflect.apply(original, this, [from, to, ...rest]); };
+  }
+  for (const name of ['copyFileSync', 'cpSync']) {
+    const original = fs[name];
+    if (typeof original === 'function') fs[name] = function(from, to, ...rest) {
+      check(readScope, from); check(writeScope, to);
+      return Reflect.apply(original, this, [from, to, ...rest]);
+    };
+  }
+  for (const name of ['readFile', 'stat', 'lstat', 'readdir', 'readlink', 'realpath', 'access', 'opendir', 'statfs']) wrapCallback(name, readScope);
+  if (typeof fs.realpath === 'function' && typeof fs.realpath.native !== 'function') fs.realpath.native = fs.realpath;
+  if (typeof fs.realpathSync === 'function' && typeof fs.realpathSync.native !== 'function') fs.realpathSync.native = fs.realpathSync;
+  delete fs.__quenchInternalRealpathSyncNative;
+  delete fs.__quenchInternalRealpathNative;
+  if (typeof fs.exists === 'function') {
+    const exists = fs.exists;
+    const wrappedExists = function(path, callback) {
+      if (typeof callback !== 'function') return Reflect.apply(exists, this, [path, callback]);
+      if (globalThis.process?.permission?.has(readScope, path) === false) { process.nextTick(callback, false); return; }
+      return Reflect.apply(exists, this, [path, callback]);
+    };
+    // Keep util.promisify's special value-first contract while ensuring the
+    // permission check still runs through the wrapped callback API.
+    wrappedExists[Symbol.for('nodejs.util.promisify.custom')] = (path) =>
+      new Promise((resolve) => wrappedExists(path, resolve));
+    fs.exists = wrappedExists;
+  }
+  for (const name of ['writeFile', 'appendFile', 'mkdir', 'rmdir', 'rm', 'unlink', 'truncate', 'chmod', 'lchmod', 'chown', 'lchown', 'utimes', 'lutimes']) wrapCallback(name, writeScope);
+  if (typeof fs.mkdtemp === 'function') {
+    const original = fs.mkdtemp;
+    fs.mkdtemp = function(prefix, ...args) {
+      try { check(writeScope, `${prefix}XXXXXX`); }
+      catch (error) {
+        const callback = args[args.length - 1];
+        if (typeof callback === 'function') { process.nextTick(callback, error); return; }
+        throw error;
+      }
+      return Reflect.apply(original, this, [prefix, ...args]);
+    };
+  }
+  if (typeof fs.link === 'function') {
+    const original = fs.link;
+    fs.link = function(from, to, ...rest) {
+      const callback = rest[rest.length - 1];
+      if (typeof callback !== 'function') return Reflect.apply(original, this, [from, to, ...rest]);
+      try { check(readScope, from); check(writeScope, to); }
+      catch (error) {
+        // Invalid paths are rejected synchronously by Node before an async
+        // callback can be scheduled. Permission failures keep callback style.
+        if (error?.code === 'ERR_INVALID_ARG_VALUE') throw error;
+        process.nextTick(callback, error);
+        return;
+      }
+      return Reflect.apply(original, this, [from, to, ...rest]);
+    };
+  }
+  if (typeof fs.rename === 'function') {
+    const original = fs.rename;
+    fs.rename = function(from, to, callback) {
+      if (typeof callback !== 'function') return Reflect.apply(original, this, [from, to, callback]);
+      try { check(readScope, from); check(writeScope, from); check(writeScope, to); }
+      catch (error) {
+        if (error?.code === 'ERR_INVALID_ARG_VALUE' ||
+            error?.code === 'ERR_INVALID_FILE_URL_PATH' ||
+            error?.code === 'ERR_INVALID_FILE_URL_HOST') throw error;
+        process.nextTick(callback, error);
+        return;
+      }
+      return Reflect.apply(original, this, [from, to, callback]);
+    };
+  }
+  for (const name of ['copyFile', 'cp']) {
+    const original = fs[name];
+    if (typeof original === 'function') fs[name] = function(from, to, ...rest) {
+      const callback = rest[rest.length - 1];
+      if (typeof callback !== 'function') return Reflect.apply(original, this, [from, to, ...rest]);
+      try { check(readScope, from); check(writeScope, to); }
+      catch (error) {
+        if (error?.code === 'ERR_INVALID_ARG_VALUE' ||
+            error?.code === 'ERR_INVALID_FILE_URL_PATH' ||
+            error?.code === 'ERR_INVALID_FILE_URL_HOST') throw error;
+        process.nextTick(callback, error);
+        return;
+      }
+      return Reflect.apply(original, this, [from, to, ...rest]);
+    };
+  }
+  const openSync = fs.openSync;
+  if (typeof openSync === 'function') fs.openSync = function(path, flags, ...rest) { checkMode(path, flags); return Reflect.apply(openSync, this, [path, flags, ...rest]); };
+  const open = fs.open;
+  if (typeof open === 'function') fs.open = function(path, flags, ...rest) {
+    const callback = rest[rest.length - 1];
+    if (typeof callback !== 'function') return Reflect.apply(open, this, [path, flags, ...rest]);
+    try { checkMode(path, flags); }
+    catch (error) {
+      if (error && (error.code === 'ERR_INVALID_ARG_VALUE' ||
+          error.code === 'ERR_INVALID_FILE_URL_PATH' ||
+          error.code === 'ERR_INVALID_FILE_URL_HOST')) throw error;
+      process.nextTick(callback, error);
+      return;
+    }
+    return Reflect.apply(open, this, [path, flags, ...rest]);
+  };
+  for (const [name, scope] of [['createReadStream', readScope], ['createWriteStream', writeScope]]) {
+    const original = fs[name];
+    if (typeof original === 'function') fs[name] = function(path, ...rest) {
+      const options = rest.find((value) => value && typeof value === 'object' && !ArrayBuffer.isView(value));
+      try { if (!(path === null && options?.fd !== undefined)) check(scope, path); }
+      catch (error) {
+        const streams = process.getBuiltinModule('stream');
+        const stream = name === 'createReadStream'
+          ? new streams.Readable({ read() {} })
+          : new streams.Writable({ write(_chunk, _encoding, callback) { callback(); } });
+        stream.path = path;
+        process.nextTick(() => stream.destroy(error));
+        return stream;
+      }
+      return Reflect.apply(original, this, [path, ...rest]);
+    };
+  }
+  const promises = fs.promises;
+  if (promises) {
+    for (const name of ['readFile', 'stat', 'lstat', 'readdir', 'readlink', 'realpath', 'access', 'opendir', 'statfs']) {
+      const original = promises[name];
+      if (typeof original === 'function') promises[name] = async function(path, ...rest) { check(readScope, path); return Reflect.apply(original, this, [path, ...rest]); };
+    }
+    for (const name of ['writeFile', 'appendFile', 'mkdir', 'rmdir', 'rm', 'unlink', 'truncate', 'chmod', 'lchmod', 'chown', 'lchown', 'utimes', 'lutimes', 'mkdtemp']) {
+      const original = promises[name];
+      if (typeof original === 'function') promises[name] = async function(path, ...rest) { check(writeScope, path); return Reflect.apply(original, this, [path, ...rest]); };
+    }
+    if (typeof promises.mkdtempDisposable === 'function') {
+      const original = promises.mkdtempDisposable;
+      promises.mkdtempDisposable = function(prefix, ...rest) {
+        try { check(writeScope, `${prefix}XXXXXX`); }
+        catch (error) { return Promise.reject(error); }
+        return Reflect.apply(original, this, [prefix, ...rest]);
+      };
+    }
+    for (const name of ['link']) {
+      const original = promises[name];
+      if (typeof original === 'function') promises[name] = async function(from, to, ...rest) { check(readScope, from); check(writeScope, to); return Reflect.apply(original, this, [from, to, ...rest]); };
+    }
+    if (typeof promises.rename === 'function') {
+      const original = promises.rename;
+      promises.rename = async function(from, to, ...rest) { check(readScope, from); check(writeScope, from); check(writeScope, to); return Reflect.apply(original, this, [from, to, ...rest]); };
+    }
+    for (const name of ['copyFile', 'cp']) {
+      const original = promises[name];
+      if (typeof original === 'function') promises[name] = async function(from, to, ...rest) { check(readScope, from); check(writeScope, to); return Reflect.apply(original, this, [from, to, ...rest]); };
+    }
+    const promiseOpen = promises.open;
+    if (typeof promiseOpen === 'function') promises.open = async function(path, flags, ...rest) {
+      checkMode(path, flags);
+      const handle = await Reflect.apply(promiseOpen, this, [path, flags, ...rest]);
+      for (const [name, scope] of [
+        ['read', readScope], ['readv', readScope], ['readFile', readScope],
+        ['createReadStream', readScope], ['stat', readScope],
+        ['readLines', readScope],
+        ['write', writeScope], ['writev', writeScope], ['writeFile', writeScope],
+        ['appendFile', writeScope], ['chmod', writeScope], ['utimes', writeScope],
+        ['truncate', writeScope],
+      ]) {
+        const original = handle[name];
+        if (typeof original === 'function') handle[name] = function(...args) {
+          // FileHandle methods expose promise APIs. Permission failures must
+          // reject that promise, rather than throw before the method returns,
+          // so callers can handle them with `assert.rejects()` / `.catch()`.
+          try { check(scope, path); }
+          catch (error) { return Promise.reject(error); }
+          return Reflect.apply(original, this, args);
+        };
+      }
+      return handle;
+    };
+  }
+  return fs;
+}"#
+);
+
 use fs_ops::ReadFileFailure;
 
+#[path = "fs_shared_vm/file_handle_read.rs"]
+pub(crate) mod file_handle_read;
 #[path = "fs_shared_vm/stat.rs"]
 pub(crate) mod stat;
 #[path = "fs_shared_vm/sync.rs"]
 pub(crate) mod sync;
-#[path = "fs_shared_vm/file_handle_read.rs"]
-pub(crate) mod file_handle_read;
 #[path = "fs_shared_vm/write_stream.rs"]
 pub(crate) mod write_stream;
 
 #[path = "fs_shared_vm/write_public.rs"]
 pub(crate) mod write_public;
 
-#[path = "fs_shared_vm/metadata_public.rs"]
-pub(crate) mod metadata_public;
 pub(crate) mod callback_public;
 #[path = "fs_shared_vm/file_handle_write.rs"]
 pub(crate) mod file_handle_write;
+#[path = "fs_shared_vm/metadata_public.rs"]
+pub(crate) mod metadata_public;
 pub(crate) mod promise_public;
 
 const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync, createReadStream, normalizeRead, apply, registerHandle, closeHandle) => ({
-  readFile: (...args) => Promise.resolve().then(() => {
+    r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync, createReadStream, normalizeRead, apply, registerHandle, closeHandle) => {
+  const abortError = () => {
+    const error = new Error('The operation was aborted');
+    error.name = 'AbortError';
+    error.code = 'ABORT_ERR';
+    return error;
+  };
+  const throwIfAborted = (options) => {
+    if (options?.signal?.aborted) throw abortError();
+  };
+  const collectWriteData = async (data, options) => {
+    if (typeof data === 'string' || ArrayBuffer.isView(data)) return data;
+    if (data == null ||
+        (typeof data[Symbol.asyncIterator] !== 'function' &&
+         typeof data[Symbol.iterator] !== 'function')) {
+      const error = new TypeError('The "data" argument must be of type string or an instance of Buffer, TypedArray, DataView, or Iterable.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    const encoding = typeof options === 'string' ? options : (options?.encoding || 'utf8');
+    const chunks = [];
+    for await (const chunk of data) {
+      throwIfAborted(options);
+      if (typeof chunk === 'string') chunks.push(Buffer.from(chunk, encoding));
+      else if (ArrayBuffer.isView(chunk)) {
+        chunks.push(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+      } else {
+        const error = new TypeError('The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView.');
+        error.code = 'ERR_INVALID_ARG_TYPE';
+        throw error;
+      }
+    }
+    return Buffer.concat(chunks);
+  };
+  const snapshotWriteView = (data) => {
+    if (!ArrayBuffer.isView(data)) return data;
+    return Buffer.from(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+  };
+  return ({
+  readFile: async (...args) => {
     const handle = args[0];
     if (handle && typeof handle.readFile === 'function') return handle.readFile(args[1]);
+    await new Promise((resolve) => setImmediate(resolve));
+    throwIfAborted(args[1]);
     return readFile(...args);
-  }),
-  writeFile: (...args) => Promise.resolve().then(() => writeFileSync(...args)),
-  appendFile: (...args) => Promise.resolve().then(() => appendFileSync(...args)),
+  },
+  writeFile: async (...args) => {
+    // Preserve the caller's bytes before the first async boundary. The
+    // callback facade does the same for ArrayBufferViews.
+    args[1] = snapshotWriteView(args[1]);
+    await new Promise((resolve) => setImmediate(resolve));
+    throwIfAborted(args[2]);
+    args[1] = await collectWriteData(args[1], args[2]);
+    throwIfAborted(args[2]);
+    return writeFileSync(...args);
+  },
+  appendFile: async (...args) => {
+    args[1] = snapshotWriteView(args[1]);
+    await new Promise((resolve) => setImmediate(resolve));
+    throwIfAborted(args[2]);
+    args[1] = await collectWriteData(args[1], args[2]);
+    throwIfAborted(args[2]);
+    return appendFileSync(...args);
+  },
   stat: (...args) => Promise.resolve().then(() => stat(...args)),
   lstat: (...args) => Promise.resolve().then(() => lstat(...args)),
-  readdir: (...args) => Promise.resolve().then(() => readdir(...args)),
+  readdir: (...args) => {
+    // Snapshot Node's relevant option fields before the promise boundary;
+    // callers may mutate the original options object immediately afterward.
+    const options = args[1];
+    if (options !== null && typeof options === 'object') {
+      args[1] = {
+        encoding: options.encoding,
+        withFileTypes: options.withFileTypes,
+        recursive: options.recursive,
+      };
+    }
+    return new Promise((resolve, reject) => {
+      readdir(...args, (error, entries) => {
+        if (error) reject(error);
+        else resolve(entries);
+      });
+    });
+  },
   readlink: (...args) => Promise.resolve().then(() => readlink(...args)),
   realpath: (...args) => Promise.resolve().then(() => realpath(...args)),
   open: (...args) => Promise.resolve().then(() => {
@@ -61,6 +677,9 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
     const fd = fs.openSync(...args);
     let closePromise;
     let closed = false;
+    let readableWebStreamController;
+    let readableWebStreamActive = false;
+    let writerActive = false;
     const ensureOpen = (syscall) => {
       if (closed) {
         throw Object.assign(new Error(`EBADF: bad file descriptor, ${syscall}`), {
@@ -103,9 +722,60 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
           closed = true;
           closeHandle(handle);
           handle.fd = -1;
+          try { readableWebStreamController?.close(); } catch {}
           handle.emit("close");
         });
         return closePromise;
+      },
+      readableWebStream(options) {
+        if (closed || closePromise || readableWebStreamActive) {
+          const error = new Error('The FileHandle is already in use');
+          error.code = 'ERR_INVALID_STATE';
+          throw error;
+        }
+        if (options !== undefined && (options === null || typeof options !== 'object')) {
+          const error = new TypeError('The "options" argument must be of type object.');
+          error.code = 'ERR_INVALID_ARG_TYPE';
+          throw error;
+        }
+        readableWebStreamActive = true;
+        const autoClose = options?.autoClose === true;
+        if (options?.type !== undefined && options.type !== 'bytes') {
+          process.emitWarning(
+            'A non-"bytes" options.type has no effect. A byte-oriented steam is always created.',
+            { type: 'ExperimentalWarning' },
+          );
+        }
+        return new ReadableStream({
+          type: 'bytes',
+          // Capture the controller during stream setup, before the first pull.
+          // FileHandle.close() can race ahead of reader acquisition (or before
+          // a pull is requested), and must still close reader.closed.
+          start(controller) {
+            readableWebStreamController = controller;
+          },
+          pull(controller) {
+            readableWebStreamController = controller;
+            if (closed) {
+              controller.close();
+              return;
+            }
+            const request = controller.byobRequest;
+            const view = request?.view || new Uint8Array(64 * 1024);
+            const bytesRead = fs.readSync(fd, view, 0, view.byteLength, null);
+            if (bytesRead === 0) {
+              controller.close();
+              if (request) request.respond(0);
+              if (autoClose) handle.close();
+              return;
+            }
+            if (request) request.respond(bytesRead);
+            else controller.enqueue(view.subarray(0, bytesRead));
+          },
+          cancel() {
+            if (autoClose) return handle.close();
+          },
+        });
       },
       read: (...readArgs) => Promise.resolve().then(() => {
         ensureOpen("read");
@@ -152,12 +822,351 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
         const result = Buffer.concat(chunks, total);
         return settings.encoding ? result.toString(settings.encoding) : result;
       },
+      pull: (...args) => {
+        if (closed || closePromise || writerActive || readableWebStreamActive) {
+          throw Object.assign(new Error('The FileHandle is already closed or locked'), { code: 'ERR_INVALID_STATE' });
+        }
+        ensureOpen("read");
+        const last = args[args.length - 1];
+        const lastIsTransform = typeof last === "function" ||
+          (last !== null && typeof last === "object" && typeof last.transform === "function");
+        const options = args.length > 0 && !lastIsTransform ? (args.pop() ?? {}) : {};
+        if (options === null || typeof options !== "object") {
+          const error = new TypeError('The "options" argument must be of type object.');
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        const autoClose = options.autoClose ?? false;
+        if (typeof autoClose !== "boolean") {
+          const error = new TypeError('The "options.autoClose" property must be of type boolean.');
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        const readSize = options.chunkSize ?? 131072;
+        if (typeof readSize !== "number") {
+          const error = new TypeError('The "options.chunkSize" property must be of type number.');
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        if (!Number.isSafeInteger(readSize) || readSize < 1) {
+          const error = new RangeError('The value of "options.chunkSize" is out of range.');
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+        let position = options.start ?? null;
+        let remaining = options.limit ?? -1;
+        if (position !== null && typeof position !== "number") {
+          const error = new TypeError('The "options.start" property must be of type number.');
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        if (remaining !== -1 && typeof remaining !== "number") {
+          const error = new TypeError('The "options.limit" property must be of type number.');
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        if (position !== null && (!Number.isSafeInteger(position) || position < 0)) {
+          const error = new RangeError('The value of "options.start" is out of range.');
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+        if (remaining !== -1 && (!Number.isSafeInteger(remaining) || remaining < 1)) {
+          const error = new RangeError('The value of "options.limit" is out of range.');
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+        const signal = options.signal;
+        if (signal !== undefined && !(signal instanceof AbortSignal)) {
+          const error = new TypeError('The "options.signal" property must be an instance of AbortSignal.');
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        const source = {
+          async *[Symbol.asyncIterator]() {
+            ensureOpen("read");
+            if (writerActive || readableWebStreamActive) {
+              throw Object.assign(new Error('The FileHandle is already locked'), { code: 'ERR_INVALID_STATE' });
+            }
+            writerActive = true;
+            try {
+              while (remaining !== 0) {
+                if (signal?.aborted) throw signal.reason;
+                const toRead = remaining > 0 ? Math.min(readSize, remaining) : readSize;
+                const buffer = Buffer.allocUnsafe(toRead);
+                const result = await handle.read(buffer, 0, toRead, position);
+                if (result.bytesRead === 0) break;
+                if (position !== null) position += result.bytesRead;
+                if (remaining > 0) remaining -= result.bytesRead;
+                yield [result.bytesRead < toRead ? buffer.subarray(0, result.bytesRead) : buffer];
+              }
+            } finally {
+              writerActive = false;
+              if (autoClose) await handle.close();
+            }
+          },
+        };
+        if (args.length > 0) {
+          const iter = process.getBuiltinModule("stream/iter");
+          return iter.pull(source, ...args);
+        }
+        return source;
+      },
+      pullSync: (...args) => {
+        if (closed || closePromise || writerActive || readableWebStreamActive) {
+          throw Object.assign(new Error('The FileHandle is already closed or locked'), { code: 'ERR_INVALID_STATE' });
+        }
+        ensureOpen("read");
+        const last = args[args.length - 1];
+        const lastIsTransform = typeof last === "function" ||
+          (last !== null && typeof last === "object" && typeof last.transform === "function");
+        const options = args.length > 0 && !lastIsTransform ? (args.pop() ?? {}) : {};
+        if (options === null || typeof options !== "object") {
+          const error = new TypeError('The "options" argument must be of type object.');
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        const autoClose = options.autoClose ?? false;
+        const readSize = options.chunkSize ?? 131072;
+        let position = options.start ?? null;
+        let remaining = options.limit ?? -1;
+        for (const [name, value] of [["options.chunkSize", readSize], ["options.start", position], ["options.limit", remaining]]) {
+          if (value !== null && typeof value !== "number") {
+            const error = new TypeError(`The "${name}" property must be of type number.`);
+            error.code = "ERR_INVALID_ARG_TYPE";
+            throw error;
+          }
+        }
+        if (typeof autoClose !== "boolean") {
+          const error = new TypeError('The "options.autoClose" property must be of type boolean.');
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        const signal = options.signal;
+        if (signal !== undefined && !(signal instanceof AbortSignal)) {
+          const error = new TypeError('The "options.signal" property must be an instance of AbortSignal.');
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        if (!Number.isSafeInteger(readSize) || readSize < 1) {
+          const error = new RangeError('The value of "options.chunkSize" is out of range.');
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+        if (position !== null && (!Number.isSafeInteger(position) || position < 0)) {
+          const error = new RangeError('The value of "options.start" is out of range.');
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+        if (remaining !== -1 && (!Number.isSafeInteger(remaining) || remaining < 1)) {
+          const error = new RangeError('The value of "options.limit" is out of range.');
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+        const source = {
+          *[Symbol.iterator]() {
+            ensureOpen("read");
+            if (writerActive || readableWebStreamActive) {
+              throw Object.assign(new Error('The FileHandle is already locked'), { code: 'ERR_INVALID_STATE' });
+            }
+            writerActive = true;
+            let started = false;
+            try {
+              while (remaining !== 0) {
+                const toRead = remaining > 0 ? Math.min(readSize, remaining) : readSize;
+                const buffer = Buffer.allocUnsafe(toRead);
+                const bytesRead = fs.readSync(fd, buffer, 0, toRead, position);
+                started = true;
+                if (bytesRead === 0) break;
+                if (position !== null) position += bytesRead;
+                if (remaining > 0) remaining -= bytesRead;
+                yield [bytesRead < toRead ? buffer.subarray(0, bytesRead) : buffer];
+              }
+            } finally {
+              writerActive = false;
+              if (started && autoClose) {
+                fs.closeSync(fd);
+                closed = true;
+                closePromise = Promise.resolve();
+                handle.fd = -1;
+                closeHandle(handle);
+                handle.emit("close");
+              }
+            }
+          },
+        };
+        if (args.length > 0) {
+          const iter = process.getBuiltinModule("stream/iter");
+          return iter.pullSync(source, ...args);
+        }
+        return source;
+      },
       createReadStream: (options) => {
         ensureOpen("read");
         const settings = typeof options === "string" ? { encoding: options } : { ...(options || {}) };
         settings.fd = fd;
         settings.autoClose = false;
-        return fs.createReadStream(null, settings);
+        const stream = fs.createReadStream(null, settings);
+        handle.once("close", () => {
+          if (!stream.destroyed) stream.destroy();
+        });
+        return stream;
+      },
+      createWriteStream: (options) => {
+        ensureOpen("write");
+        const settings = typeof options === "string" ? { encoding: options } : { ...(options || {}) };
+        settings.fd = fd;
+        settings.autoClose = false;
+        return fs.createWriteStream(null, settings);
+      },
+      writer: (options = {}) => {
+        ensureOpen("write");
+        if (writerActive || readableWebStreamActive) {
+          throw Object.assign(new Error('The FileHandle is already locked'), { code: 'ERR_INVALID_STATE' });
+        }
+        if (options === null || typeof options !== 'object') {
+          const error = new TypeError('The "options" argument must be of type object.');
+          error.code = 'ERR_INVALID_ARG_TYPE';
+          throw error;
+        }
+        const chunkSize = options.chunkSize ?? 16 * 1024;
+        if (typeof chunkSize !== 'number') {
+          const error = new TypeError('The "options.chunkSize" property must be of type number.');
+          error.code = 'ERR_INVALID_ARG_TYPE';
+          throw error;
+        }
+        if (!Number.isSafeInteger(chunkSize) || chunkSize < 1) {
+          const error = new RangeError('The value of "options.chunkSize" is out of range.');
+          error.code = 'ERR_OUT_OF_RANGE';
+          throw error;
+        }
+        const start = options.start;
+        if (start !== undefined && (typeof start !== 'number' || !Number.isSafeInteger(start) || start < 0)) {
+          const error = new RangeError('The value of "start" is out of range. It must be a non-negative integer.');
+          error.code = 'ERR_OUT_OF_RANGE';
+          throw error;
+        }
+        writerActive = true;
+        let position = start === undefined ? null : start;
+        let bytesWritten = 0;
+        let writerClosed = false;
+        let queuedWrites = Promise.resolve();
+        let queuedWriteCount = 0;
+        const checkWriter = (writeOptions) => {
+          if (writerClosed) throw new TypeError('The writer is closed');
+          ensureOpen('write');
+          const signal = writeOptions?.signal;
+          if (signal?.aborted) {
+            if (signal.reason !== undefined) throw signal.reason;
+            const error = new Error('The operation was aborted');
+            error.name = 'AbortError';
+            error.code = 'ABORT_ERR';
+            throw error;
+          }
+        };
+        const writeChunk = async (chunk, writeOptions) => {
+          checkWriter(writeOptions);
+          const buffer = typeof chunk === 'string'
+            ? Buffer.from(chunk, writeOptions?.encoding || options.encoding || 'utf8')
+            : ArrayBuffer.isView(chunk)
+              ? Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)
+              : chunk instanceof ArrayBuffer
+                ? Buffer.from(chunk)
+                : null;
+          if (buffer === null) {
+            const error = new TypeError('The "chunk" argument must be of type string or an instance of Buffer, TypedArray, or DataView.');
+            error.code = 'ERR_INVALID_ARG_TYPE';
+            throw error;
+          }
+          let offset = 0;
+          while (offset < buffer.byteLength) {
+            checkWriter(writeOptions);
+            const result = await handle.write(buffer, offset, buffer.byteLength - offset, position);
+            if (result.bytesWritten === 0) break;
+            offset += result.bytesWritten;
+            bytesWritten += result.bytesWritten;
+            if (position !== null) position += result.bytesWritten;
+          }
+          return bytesWritten;
+        };
+        const queueWrite = (chunk, writeOptions) => {
+          queuedWriteCount++;
+          const task = queuedWrites.then(() => writeChunk(chunk, writeOptions));
+          queuedWrites = task.finally(() => { queuedWriteCount--; });
+          return task;
+        };
+        const writeSync = (chunk, writeOptions) => {
+          checkWriter(writeOptions);
+          const buffer = typeof chunk === 'string'
+            ? Buffer.from(chunk, writeOptions?.encoding || options.encoding || 'utf8')
+            : ArrayBuffer.isView(chunk)
+              ? Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)
+              : chunk instanceof ArrayBuffer
+                ? Buffer.from(chunk)
+                : null;
+          if (buffer === null) {
+            const error = new TypeError('The "chunk" argument must be of type string or an instance of Buffer, TypedArray, or DataView.');
+            error.code = 'ERR_INVALID_ARG_TYPE';
+            throw error;
+          }
+          if (buffer.byteLength > chunkSize || queuedWriteCount !== 0) {
+            queueWrite(buffer, writeOptions);
+            return false;
+          }
+          let offset = 0;
+          while (offset < buffer.byteLength) {
+            const written = fs.writeSync(fd, buffer, offset, buffer.byteLength - offset, position);
+            if (written === 0) break;
+            offset += written;
+            bytesWritten += written;
+            if (position !== null) position += written;
+          }
+          return offset === buffer.byteLength;
+        };
+        const finish = async (writeOptions) => {
+          checkWriter(writeOptions);
+          await queuedWrites;
+          writerClosed = true;
+          writerActive = false;
+          if (options.autoClose) await handle.close();
+          return bytesWritten;
+        };
+        const fail = async (error) => {
+          if (writerClosed) return;
+          writerClosed = true;
+          writerActive = false;
+          if (options.autoClose) await handle.close();
+          return error;
+        };
+        return {
+          write: queueWrite,
+          writeSync,
+          async writev(chunks, writeOptions) {
+            if (!Array.isArray(chunks)) {
+              const error = new TypeError('The "chunks" argument must be an array.');
+              error.code = 'ERR_INVALID_ARG_TYPE';
+              throw error;
+            }
+            for (const chunk of chunks) await writeChunk(chunk, writeOptions);
+            return bytesWritten;
+          },
+          end: finish,
+          fail,
+          [Symbol.asyncDispose]: () => writerClosed ? undefined : finish(),
+          [Symbol.dispose]: () => {
+            if (writerClosed) return;
+            writerClosed = true;
+            writerActive = false;
+            if (options.autoClose) void handle.close();
+          },
+        };
+      },
+      readLines: (options) => {
+        ensureOpen("read");
+        const settings = typeof options === "string" ? { encoding: options } : { ...(options || {}) };
+        settings.fd = fd;
+        settings.autoClose = false;
+        const input = fs.createReadStream(null, settings);
+        return process.getBuiltinModule('readline').createInterface({ input, crlfDelay: Infinity });
       },
       write: (...writeArgs) => Promise.resolve().then(() => {
         ensureOpen("write");
@@ -237,6 +1246,8 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
       })),
       stat: (...statArgs) => Promise.resolve().then(() => (ensureOpen("fstat"), fs.fstatSync(fd, ...statArgs))),
       chmod: (...chmodArgs) => Promise.resolve().then(() => (ensureOpen("fchmod"), fs.fchmodSync(fd, ...chmodArgs))),
+      utimes: (...timeArgs) => Promise.resolve().then(() => (ensureOpen("futimes"), fs.futimesSync(fd, ...timeArgs))),
+      truncate: (length = 0) => Promise.resolve().then(() => (ensureOpen("ftruncate"), fs.ftruncateSync(fd, length))),
       sync: () => Promise.resolve().then(() => (ensureOpen("fsync"), fs.fsyncSync(fd))),
       datasync: () => Promise.resolve().then(() => (ensureOpen("fdatasync"), fs.fdatasyncSync(fd))),
     };
@@ -245,7 +1256,8 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
     handle[Symbol.dispose] = handle.close;
     return handle;
   }),
-})"#
+});
+}"#
 );
 
 const ASYNC_SYNC_API: &str = r#"(fsyncSync, fdatasyncSync) => {
@@ -320,7 +1332,7 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    if (typeof position === "bigint" && position > BigInt(Number.MAX_SAFE_INTEGER)) {
+    if (typeof position === "bigint" && (position < -1n || position > 9223372036854775807n - BigInt(length))) {
       const error = new RangeError(`The value of "position" is out of range. Received ${String(position)}`);
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -347,14 +1359,31 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(
         error.code = "ERR_INVALID_ARG_VALUE";
         throw error;
       }
-      return parsed;
+      mode = parsed;
     }
     if (mode != null && typeof mode !== "number") {
       const error = new TypeError('The "mode" argument must be of type number.');
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
+    if (mode != null && (!Number.isInteger(mode) || mode < 0 || mode > 0xFFFFFFFF)) {
+      const requirement = Number.isInteger(mode) ? '>= 0 && <= 4294967295' : 'an integer';
+      const error = new RangeError(`The value of "mode" is out of range. It must be ${requirement}. Received ${String(mode)}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
     return mode;
+  };
+  const validateFlags = (flags) => {
+    if (typeof flags !== "number") return;
+    if (!Number.isInteger(flags) || flags < -0x80000000 || flags > 0x7FFFFFFF) {
+      const requirement = Number.isInteger(flags)
+        ? '>= -2147483648 && <= 2147483647'
+        : 'an integer';
+      const error = new RangeError(`The value of "flags" is out of range. It must be ${requirement}. Received ${String(flags)}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
   };
   const validateFd = (fd) => {
     if (typeof fd === "number") return;
@@ -368,6 +1397,7 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(
   };
   const readInto = (fd, buffer, offset, length, position) => {
     assertBuffer(buffer);
+    if (position === -1) position = null;
     length ??= buffer.byteLength - (offset ?? 0);
     if (buffer.byteLength === 0 && length > 0) {
       const name = buffer.constructor?.name || "TypedArray";
@@ -394,17 +1424,46 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
+    validateFlags(flags);
     validatePath(path);
     mode = normalizeMode(mode);
     const activeRequests = globalThis.process.__quenchActiveRequests ||
       (globalThis.process.__quenchActiveRequests = []);
     const request = {};
+    const AsyncResource = globalThis.process.getBuiltinModule?.('async_hooks')?.AsyncResource;
+    const asyncResource = typeof AsyncResource === 'function'
+      ? new AsyncResource('FSREQCALLBACK')
+      : undefined;
+    const invokeCallback = (...callbackArgs) => {
+      try { return Reflect.apply(callback, undefined, callbackArgs); }
+      catch (callbackError) {
+        // Native FSREQCALLBACK dispatch invokes the process fatal-exception
+        // route before leaving the async resource scope. Preserve that order
+        // for this host-backed operation so domains can observe the active
+        // process.domain while handling a callback throw.
+        if (globalThis.process.domain &&
+            typeof globalThis.process._fatalException === 'function' &&
+            globalThis.process._fatalException(callbackError, false) === true) {
+          return undefined;
+        }
+        throw callbackError;
+      }
+    };
     activeRequests.push(request);
     queueMicrotask(() => {
       const requestIndex = activeRequests.indexOf(request);
       if (requestIndex !== -1) activeRequests.splice(requestIndex, 1);
-      try { Reflect.apply(callback, undefined, [null, openSync(path, flags, mode)]); }
-      catch (error) { Reflect.apply(callback, undefined, [error]); }
+      let error;
+      let fd;
+      try { fd = openSync(path, flags, mode); }
+      catch (caught) { error = caught; }
+      try {
+        const callbackArgs = error ? [error] : [null, fd];
+        if (asyncResource) asyncResource.runInAsyncScope(invokeCallback, undefined, ...callbackArgs);
+        else invokeCallback(...callbackArgs);
+      } finally {
+        asyncResource?.emitDestroy();
+      }
     });
   },
   close(fd, callback) {
@@ -506,6 +1565,7 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
     }
+    if (readPosition === -1) readPosition = null;
     [offset, readLength] = validateReadRange(buffer, offset, readLength, readPosition);
     queueMicrotask(() => {
       try {
@@ -559,6 +1619,84 @@ const WRITEV_API: &str = quench_js_check::checked_js!(
     });
   }
   return { writev, writevSync };
+}"#
+);
+
+const WRITE_API: &str = quench_js_check::checked_js!(
+    r#"(writeSync) => {
+  const typeError = (name, message = `The \"${name}\" argument must be of type number`) => {
+    const error = new TypeError(message); error.code = 'ERR_INVALID_ARG_TYPE'; return error;
+  };
+  const rangeError = (name, value) => {
+    const error = new RangeError(`The \"${name}\" argument is out of range`);
+    error.code = 'ERR_OUT_OF_RANGE'; error.actual = value; return error;
+  };
+  function write(fd, data, ...args) {
+    if (!Number.isInteger(fd) || fd < 0) throw typeError('fd', 'The \"fd\" argument must be of type number');
+    if (typeof data !== 'string' && !ArrayBuffer.isView(data)) {
+      throw typeError('buffer', 'The \"buffer\" argument must be an instance of Buffer or Uint8Array');
+    }
+    const callback = args.pop();
+    if (typeof callback !== 'function') throw typeError('callback', 'The \"callback\" argument must be of type function');
+    let buffer, offset = 0, length, position = null;
+    if (typeof data === 'string') {
+      position = args[0] == null ? null : args[0];
+      const encoding = typeof args[1] === 'string' ? args[1] : 'utf8';
+      buffer = Buffer.from(data, encoding);
+      length = buffer.length;
+    } else {
+      buffer = data instanceof Uint8Array ? data : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+      const options = args[0];
+      if (options === null || (options !== undefined && typeof options === 'object' && !Array.isArray(options))) {
+        if (options !== null) {
+          offset = options.offset == null ? 0 : options.offset;
+          length = options.length == null ? buffer.byteLength - offset : options.length;
+          position = options.position == null ? null : options.position;
+        } else {
+          length = buffer.byteLength;
+        }
+      } else {
+        if (options !== undefined && typeof options !== 'number') throw typeError('options');
+        offset = args[0] === undefined ? 0 : args[0];
+        length = args[1] === undefined ? buffer.byteLength - offset : args[1];
+        position = args[2] == null ? null : args[2];
+      }
+      if (typeof offset !== 'number') throw typeError('offset');
+      if (!Number.isInteger(offset)) {
+        const error = rangeError('offset', offset);
+        error.message = `The value of "offset" is out of range. It must be an integer. Received ${String(offset)}`;
+        throw error;
+      }
+      if (typeof length !== 'number') throw typeError('length');
+      if (!Number.isInteger(length)) throw rangeError('length', length);
+      if (position !== null && (typeof position !== 'number' || !Number.isInteger(position))) throw typeError('position');
+      if (offset < 0 || offset > buffer.byteLength) throw rangeError('offset', offset);
+      if (length < 0 || length > 0x7fffffff) {
+        const error = new RangeError(`The value of "length" is out of range. It must be >= 0 && <= 2147483647. Received ${String(length)}`);
+        error.code = 'ERR_OUT_OF_RANGE';
+        error.actual = length;
+        throw error;
+      }
+      if (offset + length > buffer.byteLength) {
+        const maxLength = buffer.byteLength - offset;
+        const error = new RangeError(`The value of "length" is out of range. It must be <= ${maxLength}. Received ${String(length)}`);
+        error.code = 'ERR_OUT_OF_RANGE';
+        error.actual = length;
+        throw error;
+      }
+      if (position !== null && position < -1) throw rangeError('position', position);
+    }
+    process.nextTick(() => {
+      try {
+        const bytesWritten = writeSync(fd, buffer, offset, length, position);
+        callback(null, bytesWritten, data);
+      } catch (error) { callback(error); }
+    });
+  }
+  write[Symbol.for('nodejs.util.promisify.custom')] = (fd, data, ...args) =>
+    new Promise((resolve, reject) => write(fd, data, ...args, (error, bytesWritten, buffer) =>
+      error ? reject(error) : resolve({ bytesWritten, buffer })));
+  return write;
 }"#
 );
 
@@ -619,17 +1757,31 @@ const ASYNC_READDIR_FACTORY: &str = quench_js_check::checked_js!(
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
+  // Node normalizes the options before starting the asynchronous operation.
+  // Callers may mutate the original object as soon as readdir() returns.
+  if (options !== null && typeof options === "object") {
+    options = {
+      encoding: options.encoding,
+      withFileTypes: options.withFileTypes,
+      recursive: options.recursive,
+    };
+  }
   if (Buffer.isBuffer(path)) path = path.toString();
   else if (path instanceof URL) path = path.pathname;
+  let entries;
+  let failure;
+  try {
+    // Start the directory operation before returning, as Node does. Besides
+    // preserving asynchronous callback delivery, this keeps subsequent
+    // internalBinding('fs').readdir replacements from changing an operation
+    // that was already initiated by an earlier call.
+    entries = readdirSync(path, options);
+  } catch (error) {
+    failure = error;
+  }
   queueMicrotask(() => {
-    let entries;
-    try {
-      entries = readdirSync(path, options);
-    } catch (error) {
-      Reflect.apply(callback, undefined, [error]);
-      return;
-    }
-    Reflect.apply(callback, undefined, [null, entries]);
+    if (failure) Reflect.apply(callback, undefined, [failure]);
+    else Reflect.apply(callback, undefined, [null, entries]);
   });
 }"#
 );
@@ -651,6 +1803,11 @@ const OPENDIR_API: &str = quench_js_check::checked_js!(
   };
   class Dir {
     constructor(path, entries) {
+      if (arguments.length < 2) {
+        const error = new TypeError('The "handle" argument must be specified');
+        error.code = 'ERR_MISSING_ARGS';
+        throw error;
+      }
       states.set(this, { path, entries, index: 0, closed: false, busy: false, pending: 0 });
     }
     get path() {
@@ -672,6 +1829,18 @@ const OPENDIR_API: &str = quench_js_check::checked_js!(
       if (state.busy) throw dirError('ERR_DIR_CONCURRENT_OPERATION', 'Directory is already processing a request');
       if (state.closed) throw dirError('ERR_DIR_CLOSED', 'Directory handle was closed');
       state.closed = true;
+    }
+    [Symbol.dispose]() {
+      const state = states.get(this);
+      if (!state) return invalidThis();
+      if (state.closed) return;
+      this.closeSync();
+    }
+    async [Symbol.asyncDispose]() {
+      const state = states.get(this);
+      if (!state) return invalidThis();
+      if (state.closed) return;
+      await this.close();
     }
     read(callback) {
       if (callback === undefined) return new Promise((resolve, reject) => this.read((error, entry) => error ? reject(error) : resolve(entry)));
@@ -741,7 +1910,7 @@ const OPENDIR_API: &str = quench_js_check::checked_js!(
 );
 
 const ASYNC_READ_FILE_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(readFileSync, validateSignal, completeRead) => function readFile(path, options, callback) {
+    r#"(readFileSync, validateSignal, completeRead, toPathIfFileURL) => function readFile(path, options, callback) {
   if (typeof options === "function") {
     callback = options;
     options = undefined;
@@ -749,6 +1918,18 @@ const ASYNC_READ_FILE_FACTORY: &str = quench_js_check::checked_js!(
   if (typeof callback !== "function") {
     const error = new TypeError('The "cb" argument must be of type function');
     error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (typeof path !== 'number' && typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+    const received = path === null || path === undefined
+      ? ` Received ${path}`
+      : typeof path === 'object'
+        ? ` Received an instance of ${Array.isArray(path) ? 'Array' : 'Object'}`
+        : typeof path === 'function'
+          ? ` Received function ${path.name}`
+          : ` Received type ${typeof path} (${typeof path === 'string' ? `'${path}'` : String(path)})`;
+    const error = new TypeError(`The "path" argument must be of type string or an instance of Buffer or URL.${received}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
     throw error;
   }
   const encoding = typeof options === "string" ? options : options?.encoding;
@@ -757,8 +1938,29 @@ const ASYNC_READ_FILE_FACTORY: &str = quench_js_check::checked_js!(
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
   }
+  if (path !== null && typeof path === 'object' &&
+      typeof path.pathname === 'string' && typeof path.protocol === 'string') {
+    const filePath = path.pathname;
+    const hrefPath = typeof path.href === 'string'
+      ? path.href.replace(/^file:\/\/[^/]*(\/[^?#]*)?.*$/i, '$1')
+      : '';
+    if (/%2f/i.test(filePath) || /%2f/i.test(hrefPath) ||
+        (process.platform === "win32" && (/%5c/i.test(filePath) || /%5c/i.test(hrefPath)))) {
+      const error = new TypeError(process.platform === "win32"
+        ? "File URL path must not include encoded \\ or / characters"
+        : "File URL path must not include encoded / characters");
+      error.code = "ERR_INVALID_FILE_URL_PATH";
+      error.input = path;
+      throw error;
+    }
+  }
+  if (typeof path !== 'number') path = toPathIfFileURL(path);
   if (Buffer.isBuffer(path)) path = path.toString();
-  else if (path instanceof URL) path = path.pathname;
+  if (typeof path === 'string' && path.includes('\0')) {
+    const error = new TypeError('The "path" argument must be a string, Uint8Array, or URL without null bytes');
+    error.code = 'ERR_INVALID_ARG_VALUE';
+    throw error;
+  }
   const signal = options?.signal;
   validateSignal(signal);
   queueMicrotask(() => completeRead(readFileSync, callback, path, options, signal));
@@ -766,7 +1968,7 @@ const ASYNC_READ_FILE_FACTORY: &str = quench_js_check::checked_js!(
 );
 
 const ASYNC_WRITE_FILE_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(writeFileSync) => function writeFile(path, data, options, callback) {
+    r#"(writeFileSync, fsModule) => function writeFile(path, data, options, callback) {
   if (typeof options === "function") {
     callback = options;
     options = undefined;
@@ -775,6 +1977,12 @@ const ASYNC_WRITE_FILE_FACTORY: &str = quench_js_check::checked_js!(
     const error = new TypeError('The "cb" argument must be of type function');
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
+  }
+  // libuv copies typed-array and Buffer data before returning from Node's
+  // asynchronous writeFile API. Snapshot views here before deferring work so
+  // detaching or resizing their backing store cannot change the pending write.
+  if (ArrayBuffer.isView(data)) {
+    data = Buffer.from(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
   }
   if (Buffer.isBuffer(path)) path = path.toString();
   else if (path instanceof URL) path = path.pathname;
@@ -786,6 +1994,28 @@ const ASYNC_WRITE_FILE_FACTORY: &str = quench_js_check::checked_js!(
       Reflect.apply(callback, undefined, [error]);
       return;
     }
+    if (options?.flush === true) {
+      const settings = typeof options === "string" ? { encoding: options } : options;
+      const flags = settings?.flag || "w";
+      const mode = settings?.mode;
+      fsModule.open(path, flags, mode, (openError, fd) => {
+        if (openError) {
+          Reflect.apply(callback, undefined, [openError]);
+          return;
+        }
+        try {
+          writeFileSync(fd, data, { ...settings, flush: false });
+        } catch (error) {
+          fsModule.close(fd, () => Reflect.apply(callback, undefined, [error]));
+          return;
+        }
+        fsModule.fsync(fd, (syncError) => {
+          fsModule.close(fd, (closeError) =>
+            Reflect.apply(callback, undefined, [syncError || closeError || null]));
+        });
+      });
+      return;
+    }
     try {
       writeFileSync(path, data, options);
       Reflect.apply(callback, undefined, [null]);
@@ -795,7 +2025,7 @@ const ASYNC_WRITE_FILE_FACTORY: &str = quench_js_check::checked_js!(
 );
 
 const ASYNC_APPEND_FILE_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(appendFileSync) => function appendFile(path, data, options, callback) {
+    r#"(appendFileSync, fsModule) => function appendFile(path, data, options, callback) {
   if (typeof options === "function") {
     callback = options;
     options = undefined;
@@ -805,6 +2035,9 @@ const ASYNC_APPEND_FILE_FACTORY: &str = quench_js_check::checked_js!(
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
+  if (ArrayBuffer.isView(data)) {
+    data = Buffer.from(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+  }
   if (typeof data !== "string" && !ArrayBuffer.isView(data)) {
     const error = new TypeError('The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView');
     error.code = "ERR_INVALID_ARG_TYPE";
@@ -812,7 +2045,35 @@ const ASYNC_APPEND_FILE_FACTORY: &str = quench_js_check::checked_js!(
   }
   if (Buffer.isBuffer(path)) path = path.toString();
   else if (path instanceof URL) path = path.pathname;
+  if (typeof path === "string" && path.includes("\0")) {
+    const received = path.replace(/\0/g, "\\x00");
+    const error = new TypeError(`The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '${received}'`);
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  }
   queueMicrotask(() => {
+    if (options?.flush === true) {
+      const settings = typeof options === "string" ? { encoding: options } : options;
+      const flags = settings?.flag || "a";
+      const mode = settings?.mode;
+      fsModule.open(path, flags, mode, (openError, fd) => {
+        if (openError) {
+          Reflect.apply(callback, undefined, [openError]);
+          return;
+        }
+        try {
+          appendFileSync(fd, data, { ...settings, flush: false });
+        } catch (error) {
+          fsModule.close(fd, () => Reflect.apply(callback, undefined, [error]));
+          return;
+        }
+        fsModule.fsync(fd, (syncError) => {
+          fsModule.close(fd, (closeError) =>
+            Reflect.apply(callback, undefined, [syncError || closeError || null]));
+        });
+      });
+      return;
+    }
     try {
       appendFileSync(path, data, options);
       Reflect.apply(callback, undefined, [null]);
@@ -821,40 +2082,50 @@ const ASYNC_APPEND_FILE_FACTORY: &str = quench_js_check::checked_js!(
 }"#
 );
 
-const REALPATH_SYNC_API: &str = r#"(hostRealpathSync) => function realpathSync(path, options) {
-  if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
-    const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${typeof path === 'string' ? `'${path}'` : String(path)})`}`);
-    error.code = 'ERR_INVALID_ARG_TYPE';
-    throw error;
+const REALPATH_SYNC_API: &str = r#"(hostRealpathSync) => {
+  function createRealpathSync(native) {
+    return function realpathSync(path, options) {
+      if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+        const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${typeof path === 'string' ? `'${path}'` : String(path)})`}`);
+        error.code = 'ERR_INVALID_ARG_TYPE';
+        throw error;
+      }
+      if (Buffer.isBuffer(path)) path = path.toString();
+      else if (path instanceof URL) path = decodeURIComponent(path.pathname);
+      const resolved = hostRealpathSync(path, native);
+      const encoding = typeof options === 'string' ? options : options?.encoding;
+      if (encoding === 'buffer') return Buffer.from(resolved);
+      return encoding === undefined ? resolved : Buffer.from(resolved).toString(encoding);
+    };
   }
-  if (Buffer.isBuffer(path)) path = path.toString();
-  else if (path instanceof URL) path = decodeURIComponent(path.pathname);
-  const resolved = hostRealpathSync(path);
-  const encoding = typeof options === 'string' ? options : options?.encoding;
-  if (encoding === 'buffer') return Buffer.from(resolved);
-  return encoding === undefined ? resolved : Buffer.from(resolved).toString(encoding);
+  const realpathSync = createRealpathSync(false);
+  realpathSync.native = createRealpathSync(true);
+  return realpathSync;
 }"#;
 
 const REALPATH_FACTORY: &str = quench_js_check::checked_js!(
     r#"(realpathSync) => {
-  function realpath(path, options, callback) {
-    if (typeof options === "function") callback = options;
-    if (typeof callback !== "function") {
-      const error = new TypeError('The "cb" argument must be of type function');
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    queueMicrotask(() => {
-      try { Reflect.apply(callback, undefined, [null, realpathSync(path, options)]); }
-      catch (error) { Reflect.apply(callback, undefined, [error]); }
-    });
+  function createRealpath(native) {
+    return function realpath(path, options, callback) {
+      if (typeof options === "function") callback = options;
+      if (typeof callback !== "function") {
+        const error = new TypeError('The "cb" argument must be of type function');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      queueMicrotask(() => {
+        try { Reflect.apply(callback, undefined, [null, native ? realpathSync.native(path, options) : realpathSync(path, options)]); }
+        catch (error) { Reflect.apply(callback, undefined, [error]); }
+      });
+    };
   }
-  realpath.native = realpath;
+  const realpath = createRealpath(false);
+  realpath.native = createRealpath(true);
   return realpath;
 }"#
 );
 
-const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readable) => {
+const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readable, defaultFs) => {
   function ReadStream(path, options) {
     if (!(this instanceof ReadStream)) return new ReadStream(path, options);
 
@@ -864,11 +2135,48 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
       throw error;
     }
     const settings = typeof options === "string" ? { encoding: options } : options || {};
+    if (settings.signal !== undefined && !(settings.signal instanceof AbortSignal)) {
+      const error = new TypeError('The "options.signal" property must be an instance of AbortSignal.');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (settings.windowsHandle !== undefined) {
+      if (settings.fd !== undefined && settings.fd !== null) {
+        const error = new Error('The "fd" and "windowsHandle" options cannot be used together.');
+        error.code = "ERR_INCOMPATIBLE_OPTION_PAIR";
+        throw error;
+      }
+      if (process.platform !== "win32") {
+        const error = new Error('The "windowsHandle" option is only supported on Windows.');
+        error.code = "ERR_FEATURE_UNAVAILABLE_ON_PLATFORM";
+        throw error;
+      }
+    }
+    if (settings.fs !== undefined) {
+      for (const name of ["open", "close", "read"]) {
+        if (typeof settings.fs?.[name] !== "function") {
+          const value = settings.fs?.[name];
+          const received = value === null ? "null" : typeof value === "string"
+            ? `type string ('${value}')`
+            : typeof value === "object" ? `an instance of ${Array.isArray(value) ? "Array" : "Object"}`
+              : `type ${typeof value} (${String(value)})`;
+          const error = new TypeError(`The "options.fs.${name}" property must be of type function. Received ${received}`);
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+      }
+    }
     const fileHandleFd = settings.fd && typeof settings.fd === "object" &&
       typeof settings.fd.fd === "number" ? settings.fd.fd : null;
+    const fileHandle = fileHandleFd === null ? null : settings.fd;
     const suppliedFd = typeof settings.fd === "number" || fileHandleFd !== null;
     const descriptor = typeof settings.fd === "number" ? settings.fd : fileHandleFd;
-    if (typeof path !== "string" && typeof path !== "number" &&
+    if (fileHandle !== null && settings.fs !== undefined) {
+      const error = new Error('The FileHandle with fs method is not implemented');
+      error.code = 'ERR_METHOD_NOT_IMPLEMENTED';
+      throw error;
+    }
+    if (typeof path !== "string" &&
         !Buffer.isBuffer(path) && !(path instanceof URL)) {
       if (!(path == null && suppliedFd)) {
       const error = new TypeError('The "path" argument must be of type string, Buffer, or URL.');
@@ -891,16 +2199,27 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
       }
     }
     if (settings.start !== undefined && settings.end !== undefined && settings.start > settings.end) {
-      const error = new RangeError('The value of "start" is out of range.');
+      const error = new RangeError(`The value of "start" is out of range. It must be <= "end" (here: ${settings.end}). Received ${settings.start}`);
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
-    const autoClose = settings.autoClose !== false && fileHandleFd === null;
+    const autoClose = settings.autoClose !== false;
+    const fileSystem = settings.fs || defaultFs;
+    const start = settings.start;
+    const end = settings.end;
+    let position = start;
+    let bytesRead = 0;
     let explicitClose = false;
     let phase = suppliedFd ? "open" : "idle";
     let fd = suppliedFd ? descriptor : null;
-    let bytesRead = 0;
+    let pendingReadSize;
     const stream = this;
+    stream.start = start;
+    stream.end = end;
+    stream.autoClose = autoClose;
+    // Node leaves `.path` undefined when a caller supplies only an open file
+    // descriptor. Preserve `null` as an omitted path in that case.
+    stream.path = path === null && suppliedFd ? undefined : path;
 
     const closeFileOnce = () => {
       if (!autoClose && !explicitClose) return false;
@@ -908,40 +2227,118 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
       const current = fd;
       fd = null;
       stream.fd = null;
-      closeFile(current);
+      if (fileHandle !== null) {
+        // A stream created with a FileHandle owns it by default, just like a
+        // stream created with a numeric descriptor owns that descriptor.
+        // Going through the handle also preserves its close event and state.
+        return fileHandle.close();
+      } else {
+        return new Promise((resolve, reject) => {
+          fileSystem.close(current, (error) => error ? reject(error) : resolve());
+        });
+      }
       return true;
     };
 
     const fail = (error) => {
       phase = "failed";
-      closeFileOnce();
+      stream.pending = false;
+      // With a caller-owned descriptor and autoClose:false, Node reports an
+      // asynchronous read error while leaving the stream and descriptor open.
+      if (suppliedFd && !autoClose) {
+        stream.emit("error", error);
+        return;
+      }
       stream.destroy(error);
     };
 
     const scheduleRead = (size) => {
       if (phase !== "open") return;
+      const currentPosition = position === undefined ? bytesRead : position;
+      const remaining = end !== undefined
+        ? end - currentPosition + 1
+        : undefined;
+      if (remaining !== undefined && remaining <= 0) {
+        phase = "ended";
+        stream.push(null);
+        return;
+      }
+      const requestedSize = Number.isSafeInteger(size) && size > 0
+        ? Math.min(size, 64 * 1024)
+        : 64 * 1024;
+      const readSize = remaining === undefined ? requestedSize : Math.min(requestedSize, remaining);
       phase = "reading";
-      setImmediate(() => {
+      setImmediate(async () => {
         if (stream.destroyed) {
           phase = "destroyed";
-          closeFileOnce();
           return;
         }
         try {
-          const chunk = readFileChunk(fd, size);
+          let chunk;
+          if (fileHandle !== null) {
+            const buffer = Buffer.alloc(readSize);
+            const result = await fileHandle.read(
+              buffer,
+              0,
+              readSize,
+              position === undefined ? null : position,
+            );
+            chunk = result.bytesRead === 0 ? null : buffer.subarray(0, result.bytesRead);
+          } else {
+            const buffer = Buffer.alloc(readSize);
+            const result = await new Promise((resolve, reject) => {
+              fileSystem.read(fd, buffer, 0, readSize, position, (error, bytesRead, resultBuffer) => {
+                if (error) reject(error);
+                else resolve({ bytesRead, buffer: resultBuffer || buffer });
+              });
+            });
+            chunk = result.bytesRead === 0 ? null : result.buffer.subarray(0, result.bytesRead);
+          }
           if (chunk === null) {
             phase = "ended";
             stream.push(null);
-            if (autoClose) closeFileOnce();
             return;
           }
           bytesRead += chunk.byteLength;
           stream.bytesRead = bytesRead;
+          if (position !== undefined) position += chunk.byteLength;
           phase = "open";
           stream.push(chunk);
         } catch (error) {
           fail(error);
         }
+      });
+    };
+
+    // Opening is part of ReadStream construction, even when nobody has asked
+    // the stream for data yet. Node streams can report an open failure through
+    // their error event before the consumer starts reading.
+    const beginOpen = (size) => {
+      if (phase !== "idle") return;
+      phase = "opening";
+      setImmediate(() => {
+        if (stream.destroyed) {
+          phase = "destroyed";
+          return;
+        }
+        if (typeof stream.open === "function") {
+          // Preserve Node's legacy open() override hook. A patched open method
+          // owns the continuation, just as ReadStream._construct does in Node.
+          stream.open();
+          return;
+        }
+        fileSystem.open(path, settings.flags === undefined ? "r" : settings.flags,
+          settings.mode === undefined ? 0o666 : settings.mode, (error, openedFd) => {
+            if (error) { fail(error); return; }
+            fd = openedFd;
+            stream.fd = fd;
+            stream.pending = false;
+            phase = "open";
+            stream.emit("open", fd);
+            stream.emit("ready");
+            const requestedSize = pendingReadSize === undefined ? size : pendingReadSize;
+            if (requestedSize !== undefined) scheduleRead(requestedSize);
+          });
       });
     };
 
@@ -952,40 +2349,30 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
         if (phase === "open") {
           scheduleRead(size);
         } else if (phase === "idle") {
-          phase = "opening";
-          setImmediate(() => {
-            if (stream.destroyed) {
-              phase = "destroyed";
-              return;
-            }
-            try {
-              fd = openFile(path);
-              stream.fd = fd;
-              phase = "open";
-              stream.emit("open", fd);
-              stream.emit("ready");
-              scheduleRead(size);
-            } catch (error) {
-              fail(error);
-            }
-          });
+          beginOpen(size);
+        } else if (phase === "opening") {
+          pendingReadSize = size;
         }
       },
       destroy(error, callback) {
         if (phase !== "ended" && phase !== "failed") phase = "destroyed";
         try {
-          closeFileOnce();
-          callback(error);
+          const closing = closeFileOnce();
+          if (closing && typeof closing.then === "function") {
+            closing.then(() => callback(error), (closeError) => callback(error || closeError));
+          } else {
+            callback(error);
+          }
         } catch (closeError) {
           callback(error || closeError);
         }
       },
     });
     stream.fd = fd;
+    stream.pending = fd === null;
     stream.bytesRead = 0;
     stream.close = function close(callback) {
       explicitClose = true;
-      closeFileOnce();
       if (callback) {
         if (stream.closed) setImmediate(callback);
         else stream.once("close", callback);
@@ -993,6 +2380,27 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
       stream.destroy();
       return stream;
     };
+    if (fileHandle !== null && typeof fileHandle.once === "function") {
+      fileHandle.once("close", () => {
+        fd = null;
+        stream.fd = null;
+        if (!stream.destroyed) stream.destroy();
+      });
+    }
+    if (settings.signal !== undefined) {
+      const signal = settings.signal;
+      const onAbort = () => {
+        const error = new Error("The operation was aborted");
+        error.name = "AbortError";
+        error.code = "ABORT_ERR";
+        if (signal.reason !== undefined) error.cause = signal.reason;
+        stream.destroy(error);
+      };
+      if (signal.aborted) setImmediate(onAbort);
+      else signal.addEventListener("abort", onAbort, { once: true });
+      stream.once("close", () => signal.removeEventListener("abort", onAbort));
+    }
+    if (!suppliedFd) beginOpen(settings.highWaterMark);
     if (suppliedFd) setImmediate(() => {
       if (!stream.destroyed) stream.emit("ready");
     });
@@ -1023,6 +2431,16 @@ const EXISTS_API: &str = r#"(statSync, accessHost, chmodHost, fchmodHost) => {
     const error = new TypeError(`The "path" argument must be of type string or an instance of Buffer or URL.${received}`);
     error.code = 'ERR_INVALID_ARG_TYPE';
     throw error;
+  };
+  const validatePathNullBytes = (path) => {
+    let value = path;
+    if (path instanceof URL) value = process.getBuiltinModule('url').fileURLToPath(path);
+    else if (Buffer.isBuffer(path)) value = path.toString();
+    if (typeof value === 'string' && value.includes('\0')) {
+      const error = new TypeError('The "path" argument must be a string, Uint8Array, or URL without null bytes');
+      error.code = 'ERR_INVALID_ARG_VALUE';
+      throw error;
+    }
   };
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : path instanceof URL ? decodeURIComponent(path.pathname) : path;
@@ -1077,6 +2495,7 @@ const EXISTS_API: &str = r#"(statSync, accessHost, chmodHost, fchmodHost) => {
   };
   function chmodSync(path, mode) {
     validatePath(path);
+    validatePathNullBytes(path);
     return chmodHost(normalizePath(path), normalizeMode(mode));
   }
   function chmod(path, mode, callback) {
@@ -1086,6 +2505,7 @@ const EXISTS_API: &str = r#"(statSync, accessHost, chmodHost, fchmodHost) => {
       throw error;
     }
     validatePath(path);
+    validatePathNullBytes(path);
     const normalizedMode = normalizeMode(mode);
     queueMicrotask(() => {
       try {
@@ -1119,6 +2539,7 @@ const EXISTS_API: &str = r#"(statSync, accessHost, chmodHost, fchmodHost) => {
   }
   function accessSync(path, mode = 0) {
     validatePath(path);
+    validatePathNullBytes(path);
     if (typeof mode !== 'number') {
       const error = new TypeError('The "mode" argument must be of type number.');
       error.code = 'ERR_INVALID_ARG_TYPE';
@@ -1147,6 +2568,8 @@ const EXISTS_API: &str = r#"(statSync, accessHost, chmodHost, fchmodHost) => {
     }
     queueMicrotask(() => callback(existsSync(path)));
   }
+  exists[Symbol.for('nodejs.util.promisify.custom')] = (path) =>
+    new Promise((resolve) => exists(path, resolve));
   function access(path, mode, callback) {
     if (typeof mode === 'function') {
       callback = mode;
@@ -1158,6 +2581,7 @@ const EXISTS_API: &str = r#"(statSync, accessHost, chmodHost, fchmodHost) => {
       throw error;
     }
     validatePath(path);
+    validatePathNullBytes(path);
     queueMicrotask(() => {
       try {
         accessSync(path, mode);
@@ -1301,6 +2725,41 @@ const ASYNC_COPYFILE_API: &str = r#"(copyFileSync) => {
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
+    const validatePath = (path, name) => {
+      if (typeof path === 'string' || Buffer.isBuffer(path) || path instanceof URL) return;
+      const received = path === null || path === undefined
+        ? ` Received ${path}`
+        : typeof path === 'object'
+          ? ` Received an instance of ${Array.isArray(path) ? 'Array' : 'Object'}`
+          : ` Received type ${typeof path} (${String(path)})`;
+      const error = new TypeError(`The "${name}" argument must be of type string, Buffer, or URL.${received}`);
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    };
+    validatePath(source, 'src');
+    validatePath(destination, 'dest');
+    const validateNoNulPath = (path) => {
+      if (Buffer.isBuffer(path)) path = path.toString();
+      else if (path instanceof URL) path = decodeURIComponent(path.pathname);
+      if (typeof path !== 'string' || !path.includes('\0')) return;
+      const received = path.replace(/\0/g, '\\x00');
+      const error = new TypeError(`The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '${received}'`);
+      error.code = 'ERR_INVALID_ARG_VALUE';
+      throw error;
+    };
+    validateNoNulPath(source);
+    validateNoNulPath(destination);
+    if (mode === undefined || mode === null) mode = 0;
+    if (typeof mode !== 'number') {
+      const error = new TypeError('The "mode" argument must be of type number.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (!Number.isInteger(mode) || mode < 0 || mode > 7) {
+      const error = new RangeError('The value of "mode" is out of range. It must be >= 0 and <= 7.');
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
     queueMicrotask(() => {
       try {
         copyFileSync(source, destination, mode);
@@ -1312,7 +2771,7 @@ const ASYNC_COPYFILE_API: &str = r#"(copyFileSync) => {
   };
 }"#;
 
-const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync, unlinkSync, copyFileSync, symlinkSync, readlinkSync, realpathSync, utimesSync) => {
+const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync, rmdirSync, chmodSync, unlinkSync, copyFileSync, symlinkSync, readlinkSync, realpathSync, utimesSync) => {
   const exists = (path) => {
     try { statSync(path); return true; } catch { return false; }
   };
@@ -1323,6 +2782,30 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
     throw error;
   };
   const normalizePath = (path) => path instanceof URL ? decodeURIComponent(path.pathname) : Buffer.isBuffer(path) ? path.toString() : path;
+  const resolveSymlinkTarget = (source, target) => {
+    if (/^(?:[A-Za-z]:[\\/]|[\\/]{1,2})/.test(target)) return target;
+    const sourcePath = String(source);
+    const separator = Math.max(sourcePath.lastIndexOf('/'), sourcePath.lastIndexOf('\\'));
+    let base = separator < 0 ? '.' : sourcePath.slice(0, separator);
+    if (base === '') base = '/';
+    if (!/^(?:[A-Za-z]:[\\/]|[\\/]{1,2})/.test(base)) {
+      base = `${process.cwd()}/${base}`;
+    }
+    const windows = /^[A-Za-z]:[\\/]/.test(base);
+    const separatorChar = windows ? '\\' : '/';
+    const prefix = windows ? base.slice(0, 3) : '/';
+    const rest = windows ? base.slice(3) : base.slice(1);
+    const parts = rest.split(/[\\/]+/).filter(Boolean);
+    for (const part of target.split(/[\\/]+/)) {
+      if (!part || part === '.') continue;
+      if (part === '..') {
+        if (parts.length > 0) parts.pop();
+      } else {
+        parts.push(part);
+      }
+    }
+    return `${prefix}${parts.join(separatorChar)}`;
+  };
   const validatePathLength = (path) => {
     const value = String(path);
     const tooLong = Buffer.byteLength(value) > 4096 || value.split(/[\\/]/).some(part => Buffer.byteLength(part) > 255);
@@ -1409,6 +2892,10 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
     const invalidTarget = invalidCopyTarget(source, destination, options.dereference === true);
     if (invalidTarget) fail(invalidTarget, `Cannot copy '${source}' to a subdirectory of self '${destination}'`, destination);
     const sourceLstat = lstatSync(source);
+    // Check socket file types before statSync. Some host backends surface a
+    // socket's stat as ENXIO, while Node's fs.cp contract reports its own
+    // stable ERR_FS_CP_SOCKET error.
+    if (sourceLstat.isSocket()) fail('ERR_FS_CP_SOCKET', `Cannot copy socket '${source}'`);
     if (sourceLstat.isSymbolicLink() && options.dereference !== true) {
       let dest = destination;
       if (exists(destination) && !lstatSync(destination).isSymbolicLink() && statSync(destination).isDirectory()) {
@@ -1425,13 +2912,27 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
       }
       let target = readlinkSync(source);
       if (options.verbatimSymlinks !== true && !/^(?:[A-Za-z]:[\\/]|[\\/]{1,2})/.test(target)) {
-        target = realpathSync(source);
+        target = resolveSymlinkTarget(source, target);
       }
       ensureParent(dest);
       symlinkSync(target, dest);
       return undefined;
     }
     const sourceStats = statSync(source);
+    const sourceIsDereferencedSymlink =
+      options.dereference === true && sourceLstat.isSymbolicLink();
+    // When both source and destination resolve to directories, follow the
+    // destination link and merge into its target. Only replace an existing
+    // destination symlink when the source resolves to a non-directory.
+    if (options.dereference === true && !sourceStats.isDirectory() &&
+        lstatExists(destination) && lstatSync(destination).isSymbolicLink()) {
+      if (options.force === false) {
+        if (options.errorOnExist === true) fail('ERR_FS_CP_EEXIST', `Target already exists: ${destination}`, destination);
+        return undefined;
+      }
+      unlinkSync(destination);
+    }
+    if (sourceStats.isSocket()) fail('ERR_FS_CP_SOCKET', `Cannot copy socket '${source}'`);
     if (sourceStats.isDirectory()) {
       if (exists(destination) && !statSync(destination).isDirectory()) {
         fail('ERR_FS_CP_DIR_TO_NON_DIR', `Cannot overwrite non-directory ${destination} with directory ${source}`);
@@ -1442,15 +2943,21 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
       if (options.recursive !== true) {
         fail('ERR_FS_EISDIR', `Recursive option not enabled, cannot copy a directory: ${source}`);
       }
+      const destinationExisted = exists(destination);
       mkdirSync(destination, { recursive: true });
       for (const name of readdirSync(source)) {
         const src = `${source.replace(/[\\/]$/, '')}/${name}`;
         const dest = `${destination.replace(/[\\/]$/, '')}/${name}`;
+        const childStats = lstatSync(src);
+        // Node's sync walker ignores special files inside a directory tree;
+        // only a socket passed as the top-level source throws.
+        if (childStats.isSocket() || childStats.isFIFO()) continue;
         cpSync(src, dest, options);
       }
       if (options.preserveTimestamps) {
         utimesSync(destination, sourceStats.atime.getTime() / 1000, sourceStats.mtime.getTime() / 1000);
       }
+      if (!destinationExisted) chmodSync(destination, sourceStats.mode & 0o777);
       return undefined;
     }
     let dest = destination;
@@ -1458,7 +2965,21 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
       unlinkSync(destination);
     }
     if (exists(destination) && statSync(destination).isDirectory()) {
-      fail('ERR_FS_CP_NON_DIR_TO_DIR', `Cannot overwrite directory with non-directory: ${destination}`);
+      if (sourceIsDereferencedSymlink) {
+        if (options.force === false) {
+          if (options.errorOnExist === true) {
+            fail('ERR_FS_CP_EEXIST', `Target already exists: ${destination}`, destination);
+          }
+          return undefined;
+        }
+        if (readdirSync(destination).length === 0) {
+          rmdirSync(destination);
+        } else {
+          fail('ERR_FS_CP_NON_DIR_TO_DIR', `Cannot overwrite directory ${destination} with non-directory ${source}`);
+        }
+      } else {
+        fail('ERR_FS_CP_NON_DIR_TO_DIR', `Cannot overwrite directory with non-directory: ${destination}`);
+      }
     }
     if (exists(dest)) {
       if (options.errorOnExist && options.force === false) {
@@ -1476,7 +2997,18 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
       throw error;
     }
     ensureParent(dest);
-    copyFileSync(source, dest, options.mode || 0);
+    try {
+      copyFileSync(source, dest, options.mode || 0);
+    } catch (error) {
+      // Preserve the Node copyFile error shape even when the host operation
+      // only provides a code and message for reflink or platform failures.
+      if (error && typeof error === 'object') {
+        if (error.syscall === undefined) error.syscall = 'copyfile';
+        if (error.path === undefined) error.path = source;
+        if (error.dest === undefined) error.dest = dest;
+      }
+      throw error;
+    }
     if (options.preserveTimestamps) {
       utimesSync(dest, sourceStats.atime.getTime() / 1000, sourceStats.mtime.getTime() / 1000);
     }
@@ -1507,6 +3039,11 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
       error.code = 'ERR_INCOMPATIBLE_OPTION_PAIR';
       throw error;
     }
+    const destinationExistedAtStart = lstatExists(destination) || exists(destination);
+    const AsyncResource = process.getBuiltinModule?.('async_hooks')?.AsyncResource;
+    const request = typeof AsyncResource === 'function'
+      ? new AsyncResource('FSREQCALLBACK')
+      : undefined;
     const copy = async (src, dest, opts) => {
       validateOptions(opts);
       if (typeof opts.filter === 'function' && await opts.filter(src, dest) === false) return;
@@ -1514,7 +3051,10 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
       validatePathLength(dest);
       const invalidTarget = invalidCopyTarget(src, dest, opts.dereference === true);
       if (invalidTarget) fail(invalidTarget, `Cannot copy '${src}' to a subdirectory of self '${dest}'`, dest);
-      const stats = opts.dereference === true ? statSync(src) : lstatSync(src);
+      const sourceLstat = lstatSync(src);
+      if (sourceLstat.isSocket()) fail('ERR_FS_CP_SOCKET', `Cannot copy socket '${src}'`);
+      if (sourceLstat.isFIFO()) fail('ERR_FS_CP_FIFO_PIPE', `Cannot copy FIFO pipe '${src}'`);
+      const stats = opts.dereference === true ? statSync(src) : sourceLstat;
       if (stats.isSymbolicLink() && opts.dereference !== true) {
         cpSync(src, dest, { ...opts, filter: undefined });
         return;
@@ -1523,6 +3063,15 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
         if (exists(dest) && !statSync(dest).isDirectory()) fail('ERR_FS_CP_DIR_TO_NON_DIR', `Cannot overwrite non-directory ${dest} with directory ${src}`);
         if (exists(dest) && opts.errorOnExist === true && opts.force === false) fail('ERR_FS_CP_EEXIST', `Target already exists: ${dest}`, dest);
         if (opts.recursive !== true) fail('ERR_FS_EISDIR', `Recursive option not enabled, cannot copy a directory: ${src}`);
+        if (src === source && !destinationExistedAtStart && lstatExists(dest)) {
+          const error = new Error(`EEXIST: file already exists, mkdir '${dest}'`);
+          error.code = 'EEXIST';
+          error.errno = -17;
+          error.syscall = 'mkdir';
+          error.path = dest;
+          throw error;
+        }
+        const destinationExisted = exists(dest);
         mkdirSync(dest, { recursive: true });
         for (const name of readdirSync(src)) {
           await copy(`${String(src).replace(/[\\/]$/, '')}/${name}`, `${String(dest).replace(/[\\/]$/, '')}/${name}`, opts);
@@ -1530,6 +3079,7 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
         if (opts.preserveTimestamps) {
           utimesSync(dest, stats.atime.getTime() / 1000, stats.mtime.getTime() / 1000);
         }
+        if (!destinationExisted) chmodSync(dest, stats.mode & 0o777);
         return;
       }
       cpSync(src, dest, { ...opts, filter: undefined });
@@ -1538,7 +3088,12 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
       let error;
       try { await copy(source, destination, options || {}); }
       catch (caught) { error = caught; }
-      Reflect.apply(callback, undefined, [error || null]);
+      try {
+        if (request) request.runInAsyncScope(callback, undefined, error || null);
+        else Reflect.apply(callback, undefined, [error || null]);
+      } finally {
+        request?.emitDestroy();
+      }
     });
   }
   const cpPromise = (source, destination, options) => new Promise((resolve, reject) => {
@@ -1566,6 +3121,22 @@ const ASYNC_SYMLINK_API: &str = r#"(symlinkSync) => {
     error.code = 'ERR_INVALID_ARG_TYPE';
     throw error;
   };
+  const validateNoNulPath = (value, name) => {
+    let path = value;
+    if (Buffer.isBuffer(value)) path = value.toString();
+    else if (value instanceof URL) {
+      // Decode the URL path before the OS path conversion; fileURLToPath()
+      // may surface an EIO for an encoded NUL, while Node rejects it as an
+      // invalid argument synchronously.
+      try { path = decodeURIComponent(value.pathname); }
+      catch { path = value.pathname; }
+    }
+    if (typeof path === 'string' && path.includes('\0')) {
+      const error = new TypeError(`The "${name}" argument must be a string, Uint8Array, or URL without null bytes`);
+      error.code = 'ERR_INVALID_ARG_VALUE';
+      throw error;
+    }
+  };
   return function symlink(target, path, type, callback) {
     if (typeof type === 'function') {
       callback = type;
@@ -1578,6 +3149,8 @@ const ASYNC_SYMLINK_API: &str = r#"(symlinkSync) => {
     }
     validatePath(target, 'target');
     validatePath(path, 'path');
+    validateNoNulPath(target, 'target');
+    validateNoNulPath(path, 'path');
     if (type !== undefined && type !== 'file' && type !== 'dir' && type !== 'junction') {
       const error = new TypeError('The "type" argument must be one of: "dir", "file", "junction".');
       error.code = 'ERR_INVALID_ARG_VALUE';
@@ -1602,6 +3175,16 @@ const ASYNC_LINK_API: &str = r#"(linkSync) => {
     error.code = 'ERR_INVALID_ARG_TYPE';
     throw error;
   };
+  const validateNoNulPath = (path) => {
+    let value = path;
+    if (path instanceof URL) value = process.getBuiltinModule('url').fileURLToPath(path);
+    else if (Buffer.isBuffer(path)) value = path.toString();
+    if (typeof value === 'string' && value.includes('\0')) {
+      const error = new TypeError('The "path" argument must be a string, Uint8Array, or URL without null bytes');
+      error.code = 'ERR_INVALID_ARG_VALUE';
+      throw error;
+    }
+  };
   return function link(existingPath, newPath, callback) {
     if (typeof callback !== 'function') {
       const error = new TypeError('The "cb" argument must be of type function');
@@ -1610,6 +3193,8 @@ const ASYNC_LINK_API: &str = r#"(linkSync) => {
     }
     validatePath(existingPath, 'existingPath');
     validatePath(newPath, 'newPath');
+    validateNoNulPath(existingPath);
+    validateNoNulPath(newPath);
     queueMicrotask(() => {
       try { linkSync(existingPath, newPath); Reflect.apply(callback, undefined, [null]); }
       catch (error) { Reflect.apply(callback, undefined, [error]); }
@@ -1770,7 +3355,7 @@ const ASYNC_STAT_API: &str = r#"(statSync, toPathIfFileURL) => {
       throw error;
     }
     if (Buffer.isBuffer(path)) path = path.toString();
-    queueMicrotask(() => {
+    process.nextTick(() => {
       let stats;
       try { stats = statSync(path, options); }
       catch (error) { Reflect.apply(callback, undefined, [error]); return; }
@@ -2031,15 +3616,24 @@ const FS_CONSTANT_VALUES: &[(&str, i32)] = &[
     ("COPYFILE_FICLONE_FORCE", UV_FS_COPYFILE_FICLONE_FORCE),
 ];
 
-pub(crate) fn fs_constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn fs_constants(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<RootId, RootedError> {
     const CACHE_KEY: &str = "\0builtin:fs/constants";
     const DIRENT_TYPES: &[(&str, i32)] = &[
-        ("UV_DIRENT_UNKNOWN", 0), ("UV_DIRENT_FILE", 1), ("UV_DIRENT_DIR", 2),
-        ("UV_DIRENT_LINK", 3), ("UV_DIRENT_FIFO", 4), ("UV_DIRENT_SOCKET", 5),
-        ("UV_DIRENT_CHAR", 6), ("UV_DIRENT_BLOCK", 7),
+        ("UV_DIRENT_UNKNOWN", 0),
+        ("UV_DIRENT_FILE", 1),
+        ("UV_DIRENT_DIR", 2),
+        ("UV_DIRENT_LINK", 3),
+        ("UV_DIRENT_FIFO", 4),
+        ("UV_DIRENT_SOCKET", 5),
+        ("UV_DIRENT_CHAR", 6),
+        ("UV_DIRENT_BLOCK", 7),
     ];
     let shared = context.host_mut().shared_state();
-    if let Some(constants) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() { return Ok(constants); }
+    if let Some(constants) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
+        return Ok(constants);
+    }
     let constants = context.null_object_rooted()?;
     for &(name, value) in FS_CONSTANT_VALUES.iter().chain(DIRENT_TYPES.iter()) {
         let key = context.string_rooted(name);
@@ -2047,7 +3641,10 @@ pub(crate) fn fs_constants(context: &mut NativeContext<'_, NodeHost>) -> Result<
         context.define_data_property_rooted(constants, key, value, false, true, false)?;
     }
     let retained = context.retain(constants)?;
-    shared.borrow_mut().builtin_cache.insert(CACHE_KEY.to_owned(), retained);
+    shared
+        .borrow_mut()
+        .builtin_cache
+        .insert(CACHE_KEY.to_owned(), retained);
     Ok(constants)
 }
 
@@ -2058,7 +3655,9 @@ fn make_readdir_sync(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 /// Existing filesystem adapters retain this indirection during module bootstrap.
 /// Once initialized, every captured reader uses the same configured SDK policy.
 pub(crate) fn readdir_policy(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let policy = directory_policy(context)?;
     let function = get(context, policy, "readdirSync")?;
@@ -2088,15 +3687,15 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.host_function(crate::host::shared_vm::operation("fsValidateAbortSignal"))?;
     let complete =
         context.host_function(crate::host::shared_vm::operation("fsReadFileComplete"))?;
+    let to_path_if_file_url =
+        context.host_function(crate::host::shared_vm::operation("toPathIfFileURL"))?;
     let undefined = context.undefined();
     let read_file_async = context.call_rooted(
         read_file_factory,
         undefined,
-        &[read_file, validate, complete],
+        &[read_file, validate, complete, to_path_if_file_url],
     )?;
     set(context, module, "readFile", read_file_async)?;
-    let to_path_if_file_url =
-        context.host_function(crate::host::shared_vm::operation("toPathIfFileURL"))?;
     let stat_host = context.host_function(crate::host::shared_vm::operation("fsStatSync"))?;
     let stat_factory =
         context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-stat-sync.js")?;
@@ -2132,7 +3731,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let exists = get(context, exists_api, "exists")?;
     let exists_sync = get(context, exists_api, "existsSync")?;
     let exists_sync = context.host_function_with_data(
-        crate::host::shared_vm::operation("fsVfsExistsSync"), exists_sync,
+        crate::host::shared_vm::operation("fsVfsExistsSync"),
+        exists_sync,
     )?;
     let name_key = context.string_rooted("name");
     let name_value = context.string_rooted("existsSync");
@@ -2198,17 +3798,20 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.evaluate_script_rooted(REALPATH_SYNC_API, "node:fs/shared-realpath-sync.js")?;
     let undefined = context.undefined();
     let realpath_sync = context.call_rooted(realpath_sync_factory, undefined, &[realpath_host])?;
-    let realpath_sync = super::fs_policy_shared_vm::wrap_vfs_pair(context, realpath_sync, "realpathSync")?;
+    let realpath_sync =
+        super::fs_policy_shared_vm::wrap_vfs_pair(context, realpath_sync, "realpathSync")?;
+    let realpath_sync_native = get(context, realpath_sync, "native")?;
     set(context, module, "realpathSync", realpath_sync)?;
-    let native = context.string_rooted("native");
-    if !context.set_property_rooted(realpath_sync, native, realpath_sync, realpath_sync)? {
-        return Err(RootedError::host("cannot install fs.realpathSync.native"));
-    }
+    let key = context.string_rooted("__quenchInternalRealpathSyncNative");
+    context.define_data_property_rooted(module, key, realpath_sync_native, false, false, true)?;
     let realpath_factory =
         context.evaluate_script_rooted(REALPATH_FACTORY, "node:fs/shared-realpath.js")?;
     let undefined = context.undefined();
     let realpath = context.call_rooted(realpath_factory, undefined, &[realpath_sync])?;
+    let realpath_native = get(context, realpath, "native")?;
     set(context, module, "realpath", realpath)?;
+    let key = context.string_rooted("__quenchInternalRealpathNative");
+    context.define_data_property_rooted(module, key, realpath_native, false, false, true)?;
     let constants = fs_constants(context)?;
     let key = context.string_rooted("constants");
     context.define_data_property_rooted(module, key, constants, false, true, false)?;
@@ -2220,15 +3823,38 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let rm = context.call_rooted(factory, undefined, &[rm])?;
     set(context, module, "rm", rm)?;
     sync::install(context, module)?;
-    for name in ["fstatSync", "closeSync", "renameSync", "linkSync", "copyFileSync", "rmSync", "rmdirSync", "unlinkSync", "symlinkSync", "truncateSync", "mkdtempSync", "chownSync", "lchownSync", "utimesSync", "fchownSync", "ftruncateSync", "fsyncSync", "fdatasyncSync"] {
+    for name in [
+        "fstatSync",
+        "closeSync",
+        "renameSync",
+        "linkSync",
+        "copyFileSync",
+        "rmSync",
+        "rmdirSync",
+        "unlinkSync",
+        "symlinkSync",
+        "truncateSync",
+        "mkdtempSync",
+        "chownSync",
+        "lchownSync",
+        "utimesSync",
+        "fchownSync",
+        "ftruncateSync",
+        "fsyncSync",
+        "fdatasyncSync",
+    ] {
         let original = get(context, module, name)?;
         let function = metadata_public::wrap(context, original, name)?;
         set(context, module, name, function)?;
     }
     // SDK policy runs before data/path conversion. Replace the legacy public
     // byte shim before callbacks, promises and cp capture these functions.
-    for (name, operation) in [("writeFileSync", "fsWriteFilePublic"), ("appendFileSync", "fsAppendFilePublic")] {
-        let function = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+    for (name, operation) in [
+        ("writeFileSync", "fsWriteFilePublic"),
+        ("appendFileSync", "fsAppendFilePublic"),
+    ] {
+        let function =
+            context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
         set(context, module, name, function)?;
     }
     let mkdir_sync = get(context, module, "mkdirSync")?;
@@ -2245,6 +3871,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "fsync", fsync_async)?;
     set(context, module, "fdatasync", fdatasync_async)?;
     let write_sync = get(context, module, "writeSync")?;
+    let write_factory = context.evaluate_script_rooted(WRITE_API, "node:fs/shared-write.js")?;
+    let write = context.call_rooted(write_factory, undefined, &[write_sync])?;
+    set(context, module, "write", write)?;
     let writev_factory = context.evaluate_script_rooted(WRITEV_API, "node:fs/shared-writev.js")?;
     let writev_api = context.call_rooted(writev_factory, undefined, &[write_sync])?;
     let writev = get(context, writev_api, "writev")?;
@@ -2310,6 +3939,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             lstat_sync,
             readdir_sync,
             mkdir_sync,
+            rmdir_sync,
+            chmod_sync,
             unlink_sync,
             copy_file_sync,
             symlink_sync_for_cp,
@@ -2381,14 +4012,16 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         ASYNC_WRITE_FILE_FACTORY,
         "node:fs/shared-async-write-file.js",
     )?;
-    let write_file = context.call_rooted(write_file_factory, undefined, &[write_file_sync])?;
+    let write_file =
+        context.call_rooted(write_file_factory, undefined, &[write_file_sync, module])?;
     set(context, module, "writeFile", write_file)?;
     let append_file_sync = get(context, module, "appendFileSync")?;
     let append_file_factory = context.evaluate_script_rooted(
         ASYNC_APPEND_FILE_FACTORY,
         "node:fs/shared-async-append-file.js",
     )?;
-    let append_file = context.call_rooted(append_file_factory, undefined, &[append_file_sync])?;
+    let append_file =
+        context.call_rooted(append_file_factory, undefined, &[append_file_sync, module])?;
     set(context, module, "appendFile", append_file)?;
     let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
     let readable = get(context, streams, "Readable")?;
@@ -2408,6 +4041,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             read_stream_read,
             read_stream_close,
             readable,
+            module,
         ],
     )?;
     let create_read_stream = get(context, read_stream_api, "createReadStream")?;
@@ -2518,7 +4152,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         set(context, promises, name, owner_promise)?;
     }
     let access_promise_factory = context.evaluate_script_rooted(
-        "(accessSync) => (...args) => Promise.resolve().then(() => accessSync(...args))",
+        "(accessSync) => async function access(...args) { await Promise.resolve(); try { return accessSync(...args); } catch (error) { if (typeof error.stack === 'string') error.stack += '\\n    at async Object.access (node:fs/promises)'; throw error; } }",
         "node:fs/shared-access-promise.js",
     )?;
     let access_promise = context.call_rooted(access_promise_factory, undefined, &[access_sync])?;
@@ -2530,7 +4164,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let chmod_promise = context.call_rooted(chmod_promise_factory, undefined, &[chmod_sync])?;
     set(context, promises, "chmod", chmod_promise)?;
     let metadata_promise_factory = context.evaluate_script_rooted(
-        "(name) => (...args) => Promise.resolve().then(() => { const sync = globalThis.__nodeFs[`${name}Sync`] || (name === 'lchmod' ? globalThis.__nodeFs.chmodSync : undefined); return sync(...args); })",
+        "(name) => (...args) => Promise.resolve().then(() => { const promises = globalThis.__nodeFs.promises; if (name === 'lchmod' && typeof promises?.lchmod === 'function') return promises.lchmod(...args); const sync = globalThis.__nodeFs[`${name}Sync`] || (name === 'lchmod' ? globalThis.__nodeFs.chmodSync : undefined); return sync(...args); })",
         "node:fs/promises/shared-metadata-mutations.js",
     )?;
     for name in ["lchmod", "utimes", "lutimes"] {
@@ -2553,16 +4187,87 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let undefined = context.undefined();
     context.call_rooted(install_missing_fs_methods, undefined, &[module])?;
-    for name in ["lutimesSync", "futimesSync", "createReadStream", "createWriteStream"] {
+    let install_time_callbacks = context.evaluate_script_rooted(
+        "(fs, process) => { for (const name of ['utimes', 'lutimes', 'futimes']) { if (typeof fs[name] === 'function' && !String(fs[name]).includes('unavailable outside a mounted VFS')) continue; const syncName = `${name}Sync`; const sync = fs[syncName]; Object.defineProperty(fs, name, { configurable: true, writable: true, value(path, atime, mtime, callback) { let error; try { sync(path, atime, mtime); } catch (caught) { error = caught; } process.nextTick(callback, error || null); } }); } }",
+        "node:bootstrap/fs-time-callbacks.js",
+    )?;
+    let process_module = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_module
+        .ok_or_else(|| RootedError::host("Node process is not initialized"))?;
+    context.call_rooted(install_time_callbacks, undefined, &[module, process_module])?;
+    for name in [
+        "lutimesSync",
+        "futimesSync",
+        "createReadStream",
+        "createWriteStream",
+    ] {
         let original = get(context, module, name)?;
         let function = metadata_public::wrap(context, original, name)?;
         set(context, module, name, function)?;
     }
-    for name in ["access", "chmod", "fchmod", "statfs", "exists", "chown", "lchown", "fchown", "utimes", "lutimes", "futimes", "fsync", "fdatasync", "ftruncate", "lstat", "rm"] {
+    for name in [
+        "access",
+        "chmod",
+        "fchmod",
+        "statfs",
+        "exists",
+        "chown",
+        "lchown",
+        "fchown",
+        "utimes",
+        "lutimes",
+        "futimes",
+        "fsync",
+        "fdatasync",
+        "ftruncate",
+        "lstat",
+        "rm",
+    ] {
         let original = get(context, module, name)?;
         let function = callback_public::wrap(context, original, name)?;
         set(context, module, name, function)?;
     }
+    let validate_encodings = context.evaluate_script_rooted(
+        "(fs) => {\n\
+          const assertEncoding = (options, allowBuffer) => {\n\
+            const encoding = typeof options === 'string' ? options : options?.encoding;\n\
+            if (encoding && !(allowBuffer && encoding === 'buffer') && !Buffer.isEncoding(encoding)) {\n\
+              const error = new TypeError(`The argument '${encoding}' is an invalid encoding.`);\n\
+              error.code = 'ERR_INVALID_ARG_VALUE';\n\
+              throw error;\n\
+            }\n\
+          };\n\
+          const wrap = (name, index, allowBuffer = false) => {\n\
+            const original = fs[name];\n\
+            if (typeof original !== 'function') return;\n\
+            Object.defineProperty(fs, name, { configurable: true, writable: true, value: function(...args) {\n\
+              assertEncoding(args[index], allowBuffer);\n\
+              return Reflect.apply(original, this, args);\n\
+            } });\n\
+          };\n\
+          for (const name of ['readFileSync', 'readFile', 'createReadStream', 'createWriteStream']) wrap(name, 1);\n\
+          for (const name of ['readdirSync', 'readdir', 'opendirSync', 'opendir', 'readlinkSync', 'readlink', 'watch', 'realpathSync', 'realpath', 'mkdtempSync', 'mkdtemp']) wrap(name, 1, true);\n\
+          for (const name of ['writeFileSync', 'writeFile', 'appendFileSync', 'appendFile']) wrap(name, 2);\n\
+          for (const name of ['ReadStream', 'WriteStream']) {\n\
+            const Original = fs[name];\n\
+            if (typeof Original !== 'function') continue;\n\
+            const Wrapped = function(path, options) {\n\
+              assertEncoding(options);\n\
+              return Reflect.construct(Original, [path, options], new.target || Original);\n\
+            };\n\
+            Wrapped.prototype = Original.prototype;\n\
+            Object.setPrototypeOf(Wrapped, Original);\n\
+            Object.defineProperty(Wrapped, 'name', { value: name });\n\
+            fs[name] = Wrapped;\n\
+          }\n\
+        }",
+        "node:fs/shared-encoding-validation.js",
+    )?;
+    let undefined = context.undefined();
+    context.call_rooted(validate_encodings, undefined, &[module])?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_fs_fallbacks");
     let global = context.global_root()?;
@@ -2600,14 +4305,17 @@ pub(crate) fn promises_module(
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
     let stat = context.host_function(crate::host::shared_vm::operation("fsStatSync"))?;
     let lstat = context.host_function(crate::host::shared_vm::operation("fsLstatSync"))?;
-    let readdir = make_readdir_sync(context)?;
+    let readdir_sync = make_readdir_sync(context)?;
+    let readdir = make_readdir_async(context, readdir_sync)?;
     let readlink = context.host_function(crate::host::shared_vm::operation("fsReadlinkSync"))?;
     let realpath = context.host_function(crate::host::shared_vm::operation("fsRealpathSync"))?;
     let undefined = context.undefined();
-    let normalize_read=context.host_function(crate::host::shared_vm::operation("fsFileHandleReadParameters"))?;
-    let global=context.global_root()?;
-    let reflect=get(context,global,"Reflect")?;
-    let apply=get(context,reflect,"apply")?;
+    let normalize_read = context.host_function(crate::host::shared_vm::operation(
+        "fsFileHandleReadParameters",
+    ))?;
+    let global = context.global_root()?;
+    let reflect = get(context, global, "Reflect")?;
+    let apply = get(context, reflect, "apply")?;
     let (handle_bridge, register_handle, close_handle) = file_handle_write::bridge(context)?;
     let promises = context.call_rooted(
         factory,
@@ -2777,7 +4485,9 @@ pub(crate) fn read_file_sync(
     let input = args.first().copied().unwrap_or_else(|| context.undefined());
     let undefined = context.undefined();
     let provided_options = args.get(1).copied().unwrap_or(undefined);
-    if let Some(result) = super::fs_policy_shared_vm::vfs_read(context, "readFileSync", &[input, provided_options])? {
+    if let Some(result) =
+        super::fs_policy_shared_vm::vfs_read(context, "readFileSync", &[input, provided_options])?
+    {
         return Ok(result);
     }
     let defaults = context.object_rooted()?;
@@ -2912,6 +4622,13 @@ pub(crate) fn read_stream_read(
         .filter(|size| size.is_finite() && *size > 0.0)
         .unwrap_or(READ_STREAM_CHUNK_LIMIT as f64) as usize;
     let size = requested.min(READ_STREAM_CHUNK_LIMIT);
+    let position = args
+        .get(2)
+        .copied()
+        .and_then(|arg| context.rooted_value(arg))
+        .and_then(|value| value.as_number())
+        .filter(|position| position.is_finite() && *position >= 0.0 && position.fract() == 0.0)
+        .and_then(|position| u64::try_from(position as u128).ok());
     let (result, path) = {
         let shared_state = context.host_mut().shared_state();
         let state = shared_state.borrow();
@@ -2921,7 +4638,7 @@ pub(crate) fn read_stream_read(
             .get(&fd)
             .map(|descriptor| descriptor.path.clone())
             .unwrap_or_default();
-        let result = state.fs.read_stream_chunk(fd, size);
+        let result = state.fs.read_stream_chunk(fd, size, position);
         (result, path)
     };
     match result {
@@ -2974,14 +4691,20 @@ pub(super) fn stream_io_error(
 ) -> Result<RootedError, RootedError> {
     let (code, _) = super::fs_error_codes::code_for(&error);
     let description = super::fs_error_codes::strerror(code);
-    let message = format!("{code}: {description}, {syscall} '{path}'");
+    let message = if path.is_empty() {
+        format!("{code}: {description}, {syscall}")
+    } else {
+        format!("{code}: {description}, {syscall} '{path}'")
+    };
     let exception = context.error_rooted(&message)?;
     let code_value = context.string_rooted(code);
     set(context, exception, "code", code_value)?;
     let syscall_value = context.string_rooted(syscall);
     set(context, exception, "syscall", syscall_value)?;
-    let path_value = context.string_rooted(path);
-    set(context, exception, "path", path_value)?;
+    if !path.is_empty() {
+        let path_value = context.string_rooted(path);
+        set(context, exception, "path", path_value)?;
+    }
     if let Some(errno) = error.raw_os_error() {
         let errno_value = context.number(-f64::from(errno));
         set(context, exception, "errno", errno_value)?;
@@ -2992,8 +4715,35 @@ pub(super) fn stream_io_error(
 /// Install unchanged Node glob exports when the native fs module is first
 /// required. The original policy retains its own lazy traversal-module import.
 pub(crate) fn initialize_glob_policy(
-    context: &mut NativeContext<'_, NodeHost>, module: RootId,
+    context: &mut NativeContext<'_, NodeHost>,
+    module: RootId,
 ) -> Result<(), RootedError> {
+    // Node 26 exposes the bundled fast UTF-8 writer from `node:fs`. Load it
+    // only after the public fs module has been cached because the implementation
+    // itself requires fs and captures its ordinary write operations.
+    let utf8_stream = crate::host::shared_vm::commonjs::node_library_module(
+        context,
+        "fs.js",
+        "internal/streams/fast-utf8-stream.js",
+    )?;
+    set(context, module, "Utf8Stream", utf8_stream)?;
+    // Keep Node's legacy aliases aligned with the stream constructors already
+    // installed on the public fs object, and expose its timestamp coercion
+    // helper for callers that rely on the historical underscored API.
+    for (alias, constructor) in [
+        ("FileReadStream", "ReadStream"),
+        ("FileWriteStream", "WriteStream"),
+    ] {
+        let value = get(context, module, constructor)?;
+        set(context, module, alias, value)?;
+    }
+    let to_unix_timestamp = crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "fs.js",
+        "internal/fs/utils.js",
+        "toUnixTimestamp",
+    )?;
+    set(context, module, "_toUnixTimestamp", to_unix_timestamp)?;
     let policy = crate::host::shared_vm::commonjs::node_library_module(context, "fs.js", "fs.js")?;
     for name in ["glob", "globSync", "readdirSync"] {
         let function = get(context, policy, name)?;
@@ -3006,15 +4756,26 @@ pub(crate) fn initialize_glob_policy(
     // requested. In particular its readline dependencies must not eagerly
     // capture the OS binding while merely requiring fs.
     let promises = get(context, module, "promises")?;
-    let initializer = context.host_function(crate::host::shared_vm::operation("fsPromisesGlobInitialize"))?;
-    context.define_lazy_data_properties_rooted(promises, &["glob"], true, initializer)
+    let initializer = context.host_function(crate::host::shared_vm::operation(
+        "fsPromisesGlobInitialize",
+    ))?;
+    context.define_lazy_data_properties_rooted(promises, &["glob"], true, initializer)?;
+    let permission_guard =
+        context.evaluate_script_rooted(PERMISSION_GUARD, "node:fs/permission-guard.js")?;
+    let undefined = context.undefined();
+    context.call_rooted(permission_guard, undefined, &[module])?;
+    Ok(())
 }
 
 pub(crate) fn initialize_promises_glob_policy(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let policy = crate::host::shared_vm::commonjs::node_library_module(
-        context, "fs.js", "internal/fs/promises.js",
+        context,
+        "fs.js",
+        "internal/fs/promises.js",
     )?;
     let exports = get(context, policy, "exports")?;
     let glob = get(context, exports, "glob")?;
@@ -3029,15 +4790,21 @@ pub(crate) fn initialize_promises_glob_policy(
 /// cached, so both imports observe the same completed filesystem object.
 fn directory_policy(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(
-        context, "\0binding:fs-directory-policy", |context| context.null_object_rooted(),
+        context,
+        "\0binding:fs-directory-policy",
+        |context| context.null_object_rooted(),
     )
 }
 
 pub(crate) fn initialize_directory_policy(
-    context: &mut NativeContext<'_, NodeHost>, module: RootId,
+    context: &mut NativeContext<'_, NodeHost>,
+    module: RootId,
 ) -> Result<(), RootedError> {
     let dirent = crate::host::shared_vm::commonjs::node_library_export(
-        context, "fs.js", "internal/fs/utils.js", "Dirent",
+        context,
+        "fs.js",
+        "internal/fs/utils.js",
+        "Dirent",
     )?;
     let policy = directory_policy(context)?;
     set(context, policy, "Dirent", dirent)?;

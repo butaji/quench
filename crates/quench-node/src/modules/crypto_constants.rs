@@ -56,6 +56,24 @@ pub(crate) fn binding(c: &mut NativeContext<'_, NodeHost>) -> Result<RootId, Roo
         let value = c.number(value as f64);
         c.define_data_property_rooted(object, property, value, false, true, false)?;
     }
+    let cli_options = shared.borrow().cli_options.clone();
+    for (name, value) in [
+        (
+            "defaultCipherList",
+            cli_options
+                .string_value("--tls-cipher-list")
+                .filter(|value| !value.is_empty())
+                .unwrap_or(super::tls_shared_vm::DEFAULT_CIPHER_LIST),
+        ),
+        (
+            "defaultCoreCipherList",
+            super::tls_shared_vm::DEFAULT_CIPHER_LIST,
+        ),
+    ] {
+        let property = c.string_rooted(name);
+        let value = c.string_rooted(value);
+        c.define_data_property_rooted(object, property, value, false, true, false)?;
+    }
     let root = c.retain(object)?;
     shared.borrow_mut().builtin_cache.insert(CACHE.into(), root);
     Ok(object)

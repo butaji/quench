@@ -76,11 +76,18 @@ fn code_symbols(binary: &str) -> Result<Vec<Symbol>, String> {
         } else {
             name.to_owned()
         };
-        let (Ok(address), Ok(size)) = (u64::from_str_radix(address, 16), u64::from_str_radix(size, 16))
-        else {
+        let (Ok(address), Ok(size)) = (
+            u64::from_str_radix(address, 16),
+            u64::from_str_radix(size, 16),
+        ) else {
             continue;
         };
-        symbols.push(Symbol { address, size, name: name.to_owned(), bolt_name });
+        symbols.push(Symbol {
+            address,
+            size,
+            name: name.to_owned(),
+            bolt_name,
+        });
     }
     Ok(symbols)
 }
@@ -169,17 +176,25 @@ fn run(
     let mut samples: BTreeMap<(usize, u64), u64> = BTreeMap::new();
     for (&address, &count) in &counts {
         if let Some(index) = containing(address) {
-            *samples.entry((index, address - symbols[index].address)).or_default() += count;
+            *samples
+                .entry((index, address - symbols[index].address))
+                .or_default() += count;
         }
     }
     if !dense.is_empty() {
         let is_dense: Vec<bool> = symbols
             .iter()
-            .map(|symbol| dense.iter().any(|pattern| symbol.name.contains(pattern.as_str())))
+            .map(|symbol| {
+                dense
+                    .iter()
+                    .any(|pattern| symbol.name.contains(pattern.as_str()))
+            })
             .collect();
         instructions(binary, |address| {
             if let Some(index) = containing(address).filter(|&index| is_dense[index]) {
-                samples.entry((index, address - symbols[index].address)).or_insert(1);
+                samples
+                    .entry((index, address - symbols[index].address))
+                    .or_insert(1);
             }
         })?;
     }
@@ -196,12 +211,16 @@ fn run(
         .filter(|symbol| !symbol.name.starts_with(RUST_SYMBOL_PREFIX))
         .map(|symbol| symbol.bolt_name.as_str())
         .collect();
-    fs::write(format!("{out}/skip.funcs"), skip.join("\n") + "\n").map_err(|error| error.to_string())?;
+    fs::write(format!("{out}/skip.funcs"), skip.join("\n") + "\n")
+        .map_err(|error| error.to_string())?;
     if let Some(order) = order {
         let text = fs::read_to_string(order).map_err(|error| format!("{order}: {error}"))?;
         let mut names: HashMap<&str, Vec<&str>> = HashMap::new();
         for symbol in &symbols {
-            names.entry(symbol.name.as_str()).or_default().push(symbol.bolt_name.as_str());
+            names
+                .entry(symbol.name.as_str())
+                .or_default()
+                .push(symbol.bolt_name.as_str());
         }
         let ordered: Vec<&str> = text
             .lines()

@@ -40,12 +40,13 @@ impl<H: Host> Vm<H> {
 
     /// Whether `holder` stores an element at `index`, densely or sparsely.
     pub(super) fn own_element_present(&self, holder: Value, index: usize) -> bool {
-        self.heap.array_elements(holder).is_some_and(|elements| {
-            elements.get(index).is_some_and(|value| !value.is_deleted())
-        }) || self
-            .heap
-            .sparse_get(holder, index)
-            .is_some_and(|value| !value.is_deleted())
+        self.heap
+            .array_elements(holder)
+            .is_some_and(|elements| elements.get(index).is_some_and(|value| !value.is_deleted()))
+            || self
+                .heap
+                .sparse_get(holder, index)
+                .is_some_and(|value| !value.is_deleted())
     }
 
     pub(super) fn define_array_length(

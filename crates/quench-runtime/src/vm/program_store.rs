@@ -1,9 +1,9 @@
-use crate::Value;
 use super::wtf16::JsString;
+use crate::Value;
 use crate::bytecode::ResidualProgram;
-use std::rc::{Rc, Weak};
 use crate::heap::WeakHandle;
 use rustc_hash::FxHashMap;
+use std::rc::{Rc, Weak};
 
 struct ProgramEntry {
     residual: Rc<ResidualProgram>,
@@ -41,9 +41,15 @@ pub(super) const ANONYMOUS_EVAL_ORIGIN: &str = "eval at <anonymous>";
 pub(super) enum CompilationOrigin {
     Source,
     /// Execution state in another realm of one logical host Script.
-    SharedScript { source: ProgramId },
-    Eval { caller: Option<JsString> },
-    FunctionConstructor { caller: JsString },
+    SharedScript {
+        source: ProgramId,
+    },
+    Eval {
+        caller: Option<JsString>,
+    },
+    FunctionConstructor {
+        caller: JsString,
+    },
 }
 
 /// Where a stored program's root body evaluates, which decides whether its
@@ -135,7 +141,10 @@ impl ProgramStore {
     }
 
     /// Inserts dynamic code that `reclaim_unreferenced` may later drop.
-    pub(crate) fn insert_reclaimable_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
+    pub(crate) fn insert_reclaimable_shared(
+        &mut self,
+        program: Rc<ResidualProgram>,
+    ) -> Option<ProgramId> {
         let id = self.insert_shared(program)?;
         if let Some(entry) = self.entry_mut(id) {
             entry.reclaimable = true;
@@ -152,7 +161,10 @@ impl ProgramStore {
     /// Whether dynamic code may be reclaimable, including dropped host owners.
     pub(crate) fn has_unchecked_reclaimable(&self) -> bool {
         self.unchecked_reclaimable > 0
-            || self.owned_scripts.values().any(|script| script.owner.strong_count() == 0)
+            || self
+                .owned_scripts
+                .values()
+                .any(|script| script.owner.strong_count() == 0)
     }
 
     /// Drops every reclaimable program that `referenced` does not mark and that
@@ -164,13 +176,20 @@ impl ProgramStore {
         // escaped function retains its source record even after the owner drops.
         for (&source, script) in &self.owned_scripts {
             let owned = script.owner.strong_count() != 0;
-            let live_instance = script.instances.iter().any(|(_, id)| {
-                referenced.get(id.index()).copied().unwrap_or(false)
-            });
-            if (owned || live_instance) && let Some(mark) = referenced.get_mut(source.index()) { *mark = true; }
+            let live_instance = script
+                .instances
+                .iter()
+                .any(|(_, id)| referenced.get(id.index()).copied().unwrap_or(false));
+            if (owned || live_instance)
+                && let Some(mark) = referenced.get_mut(source.index())
+            {
+                *mark = true;
+            }
             if owned {
                 for (_, id) in &script.instances {
-                    if let Some(mark) = referenced.get_mut(id.index()) { *mark = true; }
+                    if let Some(mark) = referenced.get_mut(id.index()) {
+                        *mark = true;
+                    }
                 }
             }
         }
@@ -193,8 +212,10 @@ impl ProgramStore {
         self.unchecked_reclaimable = pending;
         if !reclaimed.is_empty() {
             let programs = &self.programs;
-            self.global_eval_programs.retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
-            self.owned_scripts.retain(|source, _| programs.get(source.index()).is_some_and(Option::is_some));
+            self.global_eval_programs
+                .retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
+            self.owned_scripts
+                .retain(|source, _| programs.get(source.index()).is_some_and(Option::is_some));
         }
         reclaimed
     }
@@ -230,24 +251,45 @@ impl ProgramStore {
     }
 
     pub(super) fn register_owned_script(&mut self, script: &Rc<crate::api::CompiledScriptState>) {
-        self.owned_scripts.insert(script.source, OwnedScript { owner: Rc::downgrade(script), instances: Vec::new() });
+        self.owned_scripts.insert(
+            script.source,
+            OwnedScript {
+                owner: Rc::downgrade(script),
+                instances: Vec::new(),
+            },
+        );
     }
 
     pub(super) fn owns_script(&self, script: &Rc<crate::api::CompiledScriptState>) -> bool {
-        self.owned_scripts.get(&script.source).is_some_and(|entry| {
-            std::ptr::eq(entry.owner.as_ptr(), Rc::as_ptr(script))
-        })
+        self.owned_scripts
+            .get(&script.source)
+            .is_some_and(|entry| std::ptr::eq(entry.owner.as_ptr(), Rc::as_ptr(script)))
     }
 
-    pub(super) fn owned_script_instance(&self, source: ProgramId, realm: WeakHandle) -> Option<ProgramId> {
-        self.owned_scripts.get(&source)?.instances.iter()
+    pub(super) fn owned_script_instance(
+        &self,
+        source: ProgramId,
+        realm: WeakHandle,
+    ) -> Option<ProgramId> {
+        self.owned_scripts
+            .get(&source)?
+            .instances
+            .iter()
             .find_map(|(owner, id)| (*owner == realm).then_some(*id))
     }
 
-    pub(super) fn bind_script_instance(&mut self, source: ProgramId, realm: WeakHandle, id: ProgramId) {
+    pub(super) fn bind_script_instance(
+        &mut self,
+        source: ProgramId,
+        realm: WeakHandle,
+        id: ProgramId,
+    ) {
         self.set_origin(id, CompilationOrigin::SharedScript { source });
-        self.owned_scripts.get_mut(&source).expect("registered Script source")
-            .instances.push((realm, id));
+        self.owned_scripts
+            .get_mut(&source)
+            .expect("registered Script source")
+            .instances
+            .push((realm, id));
     }
 
     pub(super) fn source_identity(&self, id: ProgramId) -> ProgramId {
@@ -268,14 +310,19 @@ impl ProgramStore {
     }
 
     pub(super) fn set_origin(&mut self, id: ProgramId, origin: CompilationOrigin) {
-        if let Some(entry) = self.entry_mut(id) { entry.origin = origin; }
+        if let Some(entry) = self.entry_mut(id) {
+            entry.origin = origin;
+        }
     }
 
     pub(super) fn eval_origin(&self, id: ProgramId) -> Option<JsString> {
         match &self.entry(id)?.origin {
             CompilationOrigin::Source | CompilationOrigin::SharedScript { .. } => None,
-            CompilationOrigin::Eval { caller } => Some(caller.clone()
-                .unwrap_or_else(|| JsString::from_str(ANONYMOUS_EVAL_ORIGIN))),
+            CompilationOrigin::Eval { caller } => Some(
+                caller
+                    .clone()
+                    .unwrap_or_else(|| JsString::from_str(ANONYMOUS_EVAL_ORIGIN)),
+            ),
             CompilationOrigin::FunctionConstructor { caller } => Some(caller.clone()),
         }
     }
@@ -283,7 +330,10 @@ impl ProgramStore {
     pub(super) fn is_function_constructor_body(&self, id: ProgramId, function: u32) -> bool {
         self.entry(id).is_some_and(|entry| {
             matches!(entry.origin, CompilationOrigin::FunctionConstructor { .. })
-                && entry.residual.functions.get(function as usize)
+                && entry
+                    .residual
+                    .functions
+                    .get(function as usize)
                     .is_some_and(|function| function.parent == Some(super::ROOT_FUNCTION_ID))
         })
     }
@@ -354,7 +404,11 @@ impl ProgramStore {
             .iter()
             .map(|_| std::cell::OnceCell::new())
             .collect();
-        let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
+        let origin = if program.kind == crate::bytecode::ProgramKind::Eval {
+            CompilationOrigin::Eval { caller: None }
+        } else {
+            CompilationOrigin::Source
+        };
         self.programs.push(Some(ProgramEntry {
             residual: program,
             wasm_signatures: None,

@@ -7,9 +7,9 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 mod access;
+mod buffer_bytes;
 mod cell;
 mod cell_access;
-mod buffer_bytes;
 mod collection_entries;
 mod external;
 mod memory_stats;
@@ -21,8 +21,8 @@ mod root;
 mod slots;
 mod thin_slice;
 mod weak;
+pub(crate) use buffer_bytes::{BufferBytes, BufferRead};
 pub(crate) use cell::*;
-pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
 pub(crate) use collection_entries::CollectionEntries;
 use records::{ArrayRecordSpace, ObjectRecordSpace, RecordSweep};
 pub use root::RootId;
@@ -777,11 +777,15 @@ impl Heap {
     }
 
     pub(crate) fn mark_prototype(&mut self, prototype: Value) {
-        if let Some(object) = self.object_mut(prototype) { object.mark_as_prototype(); }
+        if let Some(object) = self.object_mut(prototype) {
+            object.mark_as_prototype();
+        }
     }
 
     pub fn alloc(&mut self, cell: Cell) -> Value {
-        if let Some(object) = cell.object() { self.mark_prototype(object.proto()); }
+        if let Some(object) = cell.object() {
+            self.mark_prototype(object.proto());
+        }
         #[cfg(feature = "profile-aggregate")]
         {
             let kind = Self::cell_kind(&cell) as usize;
@@ -1618,7 +1622,11 @@ impl Heap {
             }
 
             let mut trace_object_root =
-                |kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
+                |kind: GcTraceKind,
+                 owner: Value,
+                 shape: u32,
+                 prototype: bool,
+                 roots: &mut Vec<Value>| {
                     if let Some(parallel_object_roots) = parallel_object_roots {
                         parallel_object_roots(kind, owner, shape, prototype, roots);
                     } else {
@@ -2211,7 +2219,13 @@ impl Heap {
                 work.push(proto);
             }
         }
-        object_roots(trace_kind, owner, object.shape(), object.was_used_as_prototype(), work);
+        object_roots(
+            trace_kind,
+            owner,
+            object.shape(),
+            object.was_used_as_prototype(),
+            work,
+        );
         object.visit_extras_roots(|value| work.push(value));
         if let Some(values) = object.inline_properties() {
             for &value in values {
@@ -2398,7 +2412,11 @@ impl Heap {
                 object(value);
                 work.extend([*env, value.realm]);
             }
-            Cell::WasmGlobal { header, value: global, .. } => {
+            Cell::WasmGlobal {
+                header,
+                value: global,
+                ..
+            } => {
                 object(&header.object);
                 work.push(*global);
             }
@@ -2425,7 +2443,11 @@ impl Heap {
                 work.extend(with_objects.iter().copied());
             }
             Cell::WasmElements(elements) => work.extend(elements.iter().copied()),
-            Cell::WasmTable { object: value, elements, .. } => {
+            Cell::WasmTable {
+                object: value,
+                elements,
+                ..
+            } => {
                 object(value);
                 work.extend(elements.iter().copied());
             }
@@ -2462,7 +2484,10 @@ impl Heap {
                 target: crate::heap::WasmHostTarget::Js(target),
                 ..
             } => work.push(*target),
-            Cell::WasmObject { object: value, slot } => {
+            Cell::WasmObject {
+                object: value,
+                slot,
+            } => {
                 object(value);
                 if let crate::heap::WasmObjectSlot::Instance { exports } = slot {
                     work.push(*exports);

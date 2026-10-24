@@ -11,6 +11,10 @@ const KEY_TYPE_PRIVATE: f64 = super::crypto_key_layout::Kind::Private as u32 as 
 const KEY_SLOT_COUNT: usize = 2;
 const CRYPTO_KEY_SLOT_COUNT: usize = 7;
 const CACHE: &str = "\0builtin:crypto/native-key-slots";
+// Do not use the VM's `\0quench:` internal-property prefix here: owned-clone
+// intentionally omits those keys from ordinary own-key enumeration.
+const CLONE_MARKER: &str = "__quench_crypto_keyobject_clone_v1__";
+const CRYPTO_CLONE_MARKER: &str = "__quench_cryptokey_clone_v1__";
 fn get(c: &mut Context<'_>, o: RootId, n: &str) -> Result<RootId, RootedError> {
     let k = c.string_rooted(n);
     c.get_property_rooted(o, k)
@@ -127,6 +131,435 @@ fn lookup(
     let map = get(c, state, map)?;
     c.weak_map_get_rooted(map, key)
 }
+
+/// Same-realm structured cloning creates a fresh KeyObject wrapper while
+/// retaining its immutable native KeyObjectHandle and source-owned brand.
+pub(crate) fn clone_key_object(
+    c: &mut Context<'_>,
+    value: RootId,
+) -> Result<Option<RootId>, RootedError> {
+    let state = state(c)?;
+    let slots = key_slots(c, state, value)?;
+    if !c.is_object_rooted(slots)? {
+        return Ok(None);
+    }
+    let kind = get(c, slots, "0")?;
+    let kind = c.to_number(kind)? as u32;
+    // createNativeKeyObjectClass's source callback returns the public base and
+    // then its secret, public, and private subclasses in this stable order.
+    let index = match kind {
+        value if value == super::crypto_key_layout::Kind::Secret as u32 => 1,
+        value if value == super::crypto_key_layout::Kind::Public as u32 => 2,
+        value if value == super::crypto_key_layout::Kind::Private as u32 => 3,
+        _ => return Ok(None),
+    };
+    let classes = get(c, state, "keyObjectClasses")?;
+    if !c.is_object_rooted(classes)? {
+        return Err(RootedError::host("KeyObject classes are not initialized"));
+    }
+    let index = c.number(index as f64);
+    let constructor = c.get_property_rooted(classes, index)?;
+    if !c.is_callable_rooted(constructor)? {
+        return Err(RootedError::host(
+            "KeyObject clone constructor is unavailable",
+        ));
+    }
+    let handle = get(c, slots, "1")?;
+    let clone = c.construct_rooted(constructor, constructor, &[handle])?;
+    Ok(Some(clone))
+}
+
+/// Replace KeyObjects in a worker/message payload with clone-safe records.
+/// The native handle is exported as DER/raw bytes, then re-imported in the
+/// receiving runtime so its private WeakMap brands are established there.
+#[cfg(quench_openssl_provider)]
+pub(crate) fn prepare_key_objects_for_transport(
+    c: &mut Context<'_>,
+    value: RootId,
+) -> Result<RootId, RootedError> {
+    fn walk(
+        c: &mut Context<'_>,
+        value: RootId,
+        seen: &mut Vec<(RootId, RootId, bool)>,
+    ) -> Result<(RootId, bool), RootedError> {
+        if !c.is_object_rooted(value)? {
+            return Ok((value, false));
+        }
+        if let Some(record) = key_object_transport_record(c, value)? {
+            return Ok((record, true));
+        }
+        if let Some(record) = crypto_key_transport_record(c, value)? {
+            return Ok((record, true));
+        }
+        if c.clone_metadata_rooted(value)?.is_some() || c.builtin_data_rooted(value)?.is_some() {
+            return Ok((value, false));
+        }
+        for (old, clone, contains_key) in seen.iter() {
+            if c.strict_equal_rooted(*old, value)? {
+                return Ok((*clone, *contains_key));
+            }
+        }
+        let clone = if c.is_array_rooted(value)? {
+            c.array_rooted(&[])?
+        } else {
+            c.object_rooted()?
+        };
+        let seen_index = seen.len();
+        seen.push((value, clone, false));
+        let mut contains_key = false;
+        for key in c.enumerable_own_keys_rooted(value, false, true)? {
+            let child = c.get_property_rooted(value, key)?;
+            let (child, found) = walk(c, child, seen)?;
+            contains_key |= found;
+            c.define_data_property_rooted(clone, key, child, true, true, true)?;
+        }
+        seen[seen_index].2 = contains_key;
+        Ok((clone, contains_key))
+    }
+    let mut seen = Vec::new();
+    let (clone, contains_key) = walk(c, value, &mut seen)?;
+    Ok(if contains_key { clone } else { value })
+}
+
+#[cfg(quench_openssl_provider)]
+fn key_object_transport_record(
+    c: &mut Context<'_>,
+    value: RootId,
+) -> Result<Option<RootId>, RootedError> {
+    let state = state(c)?;
+    let slots = key_slots(c, state, value)?;
+    if !c.is_object_rooted(slots)? {
+        return Ok(None);
+    }
+    let kind = get(c, slots, "0")?;
+    let kind = c.to_number(kind)? as u32;
+    let handle = get(c, slots, "1")?;
+    let (name, bytes) = if kind == super::crypto_key_layout::Kind::Secret as u32 {
+        let Some(bytes) = super::crypto_key_material_shared_vm::secret(c, handle)? else {
+            return Err(RootedError::host(
+                "Secret KeyObject material is unavailable",
+            ));
+        };
+        ("secret", bytes.to_vec())
+    } else {
+        let Some(key) = super::crypto_asymmetric_shared_vm::key(c, handle)? else {
+            return Err(RootedError::host(
+                "Asymmetric KeyObject material is unavailable",
+            ));
+        };
+        let (name, encoding) = if kind == super::crypto_key_layout::Kind::Public as u32 {
+            ("public", super::crypto_asymmetric::Encoding::Spki)
+        } else if kind == super::crypto_key_layout::Kind::Private as u32 {
+            ("private", super::crypto_asymmetric::Encoding::Pkcs8)
+        } else {
+            return Ok(None);
+        };
+        let bytes = key
+            .export(super::crypto_asymmetric::Format::Der, encoding, None, None)
+            .map_err(|error| RootedError::host(format!("{error:?}")))?;
+        (name, bytes)
+    };
+    let record = c.null_object_rooted()?;
+    let marker = c.boolean(true);
+    set(c, record, CLONE_MARKER, marker)?;
+    let kind = c.string_rooted(name);
+    set(c, record, "type", kind)?;
+    let bytes = c.uint8_array_rooted(&bytes)?;
+    set(c, record, "data", bytes)?;
+    Ok(Some(record))
+}
+
+#[cfg(quench_openssl_provider)]
+fn crypto_key_transport_record(
+    c: &mut Context<'_>,
+    value: RootId,
+) -> Result<Option<RootId>, RootedError> {
+    let state = state(c)?;
+    let slots = lookup(c, state, "cryptoKeys", value)?;
+    if !c.is_object_rooted(slots)? {
+        return Ok(None);
+    }
+    let kind = get(c, slots, "0")?;
+    let kind = c.to_number(kind)?;
+    let handle = get(c, slots, "4")?;
+    let (transport_type, bytes) = if kind == KEY_TYPE_SECRET {
+        let Some(bytes) = super::crypto_key_material_shared_vm::secret(c, handle)? else {
+            return Err(RootedError::host(
+                "CryptoKey secret material is unavailable",
+            ));
+        };
+        ("secret", bytes.to_vec())
+    } else if kind == KEY_TYPE_PUBLIC || kind == KEY_TYPE_PRIVATE {
+        let Some(key) = super::crypto_asymmetric_shared_vm::key(c, handle)? else {
+            return Err(RootedError::host(
+                "Asymmetric CryptoKey material is unavailable",
+            ));
+        };
+        let (transport_type, encoding) = if kind == KEY_TYPE_PUBLIC {
+            (
+                "asymmetric-public",
+                super::crypto_asymmetric::Encoding::Spki,
+            )
+        } else {
+            (
+                "asymmetric-private",
+                super::crypto_asymmetric::Encoding::Pkcs8,
+            )
+        };
+        let bytes = key
+            .export(super::crypto_asymmetric::Format::Der, encoding, None, None)
+            .map_err(|error| RootedError::host(format!("{error:?}")))?;
+        (transport_type, bytes)
+    } else {
+        return Ok(None);
+    };
+    let record = c.null_object_rooted()?;
+    let marker = c.boolean(true);
+    set(c, record, CRYPTO_CLONE_MARKER, marker)?;
+    let transport_type = c.string_rooted(transport_type);
+    set(c, record, "type", transport_type)?;
+    let algorithm = get(c, slots, "2")?;
+    let usages = get(c, slots, "3")?;
+    let extractable = get(c, slots, "1")?;
+    set(c, record, "algorithm", algorithm)?;
+    set(c, record, "usages", usages)?;
+    set(c, record, "extractable", extractable)?;
+    let bytes = c.uint8_array_rooted(&bytes)?;
+    set(c, record, "data", bytes)?;
+    Ok(Some(record))
+}
+
+/// Rehydrate transport records after a message graph enters this runtime.
+#[cfg(quench_openssl_provider)]
+pub(crate) fn revive_key_objects_after_transport(
+    c: &mut Context<'_>,
+    value: RootId,
+) -> Result<RootId, RootedError> {
+    fn walk(
+        c: &mut Context<'_>,
+        value: RootId,
+        seen: &mut Vec<RootId>,
+    ) -> Result<RootId, RootedError> {
+        if !c.is_object_rooted(value)? {
+            return Ok(value);
+        }
+        if let Some(key) = key_object_from_transport_record(c, value)? {
+            return Ok(key);
+        }
+        if let Some(key) = crypto_key_from_transport_record(c, value)? {
+            return Ok(key);
+        }
+        if c.clone_metadata_rooted(value)?.is_some() || c.builtin_data_rooted(value)?.is_some() {
+            return Ok(value);
+        }
+        for old in seen.iter() {
+            if c.strict_equal_rooted(*old, value)? {
+                return Ok(value);
+            }
+        }
+        seen.push(value);
+        for key in c.enumerable_own_keys_rooted(value, false, true)? {
+            let child = c.get_property_rooted(value, key)?;
+            let revived = walk(c, child, seen)?;
+            if !c.strict_equal_rooted(child, revived)? {
+                c.define_data_property_rooted(value, key, revived, true, true, true)?;
+            }
+        }
+        Ok(value)
+    }
+    walk(c, value, &mut Vec::new())
+}
+
+#[cfg(quench_openssl_provider)]
+fn key_object_from_transport_record(
+    c: &mut Context<'_>,
+    record: RootId,
+) -> Result<Option<RootId>, RootedError> {
+    let marker = c.string_rooted(CLONE_MARKER);
+    let descriptor = c.own_property_descriptor_rooted(record, marker)?;
+    if !c.is_object_rooted(descriptor)? {
+        return Ok(None);
+    }
+    let marked = get(c, descriptor, "value")?;
+    if !c.truthy_rooted(marked)? {
+        return Ok(None);
+    }
+    let kind_value = get(c, record, "type")?;
+    let kind = c.string_text(kind_value)?;
+    let data = get(c, record, "data")?;
+    let bytes = c
+        .bytes_prefix_rooted(data, usize::MAX)
+        .ok_or_else(|| fail(c, "Invalid KeyObject transport record"))?;
+    let (handle, index) = match kind.as_deref() {
+        Some("secret") => (generated_secret(c, Material::new(bytes), None)?, 1u32),
+        Some("public") | Some("private") => {
+            let private = kind.as_deref() == Some("private");
+            let owned = super::crypto_asymmetric::OwnedKey::import(
+                if private {
+                    super::crypto_asymmetric::KeyKind::Private
+                } else {
+                    super::crypto_asymmetric::KeyKind::Public
+                },
+                &bytes,
+                super::crypto_asymmetric::Format::Der,
+                Some(if private {
+                    super::crypto_asymmetric::Encoding::Pkcs8
+                } else {
+                    super::crypto_asymmetric::Encoding::Spki
+                }),
+                None,
+                None,
+            )
+            .map_err(|error| RootedError::host(format!("{error:?}")))?;
+            (
+                generated_asymmetric(c, Arc::new(owned), None)?,
+                if private { 3 } else { 2 },
+            )
+        }
+        _ => return Err(fail(c, "Invalid KeyObject transport type")),
+    };
+    let state = state(c)?;
+    let mut classes = get(c, state, "keyObjectClasses")?;
+    if !c.is_object_rooted(classes)? {
+        // Incoming workerData/messages can be decoded before user code has
+        // required node:crypto. Initialize the source class factory first so
+        // revived objects carry the real private KeyObject brands.
+        crate::host::shared_vm::commonjs::node_library_module(
+            c,
+            "crypto.js",
+            "internal/crypto/keys.js",
+        )?;
+        classes = get(c, state, "keyObjectClasses")?;
+    }
+    let index = c.number(index as f64);
+    let constructor = c.get_property_rooted(classes, index)?;
+    if !c.is_callable_rooted(constructor)? {
+        return Err(RootedError::host(
+            "KeyObject clone constructor is unavailable",
+        ));
+    }
+    Ok(Some(c.construct_rooted(
+        constructor,
+        constructor,
+        &[handle],
+    )?))
+}
+
+#[cfg(quench_openssl_provider)]
+fn crypto_key_from_transport_record(
+    c: &mut Context<'_>,
+    record: RootId,
+) -> Result<Option<RootId>, RootedError> {
+    let marker = c.string_rooted(CRYPTO_CLONE_MARKER);
+    let descriptor = c.own_property_descriptor_rooted(record, marker)?;
+    if !c.is_object_rooted(descriptor)? {
+        return Ok(None);
+    }
+    let marked = get(c, descriptor, "value")?;
+    if !c.truthy_rooted(marked)? {
+        return Ok(None);
+    }
+    let data = get(c, record, "data")?;
+    let bytes = c
+        .bytes_prefix_rooted(data, usize::MAX)
+        .ok_or_else(|| fail(c, "Invalid CryptoKey transport record"))?;
+    let algorithm = get(c, record, "algorithm")?;
+    let usages = get(c, record, "usages")?;
+    let extractable = get(c, record, "extractable")?;
+    let transport_type = get(c, record, "type")?;
+    let transport_type = c.string_text(transport_type)?;
+    let state = state(c)?;
+    let constructor = get(c, state, "internalCryptoKeyConstructor")?;
+    if !c.is_callable_rooted(constructor)? {
+        // A worker may receive workerData before user code loads crypto.
+        crate::host::shared_vm::commonjs::node_library_module(
+            c,
+            "crypto.js",
+            "internal/crypto/keys.js",
+        )?;
+    }
+    let key = match transport_type.as_deref() {
+        Some("asymmetric-public") | Some("asymmetric-private") => {
+            let private = transport_type.as_deref() == Some("asymmetric-private");
+            let owned = super::crypto_asymmetric::OwnedKey::import(
+                if private {
+                    super::crypto_asymmetric::KeyKind::Private
+                } else {
+                    super::crypto_asymmetric::KeyKind::Public
+                },
+                &bytes,
+                super::crypto_asymmetric::Format::Der,
+                Some(if private {
+                    super::crypto_asymmetric::Encoding::Pkcs8
+                } else {
+                    super::crypto_asymmetric::Encoding::Spki
+                }),
+                None,
+                None,
+            )
+            .map_err(|error| RootedError::host(format!("{error:?}")))?;
+            generated_asymmetric(c, Arc::new(owned), Some((algorithm, usages, extractable)))?
+        }
+        Some("secret") | None => generated_secret(
+            c,
+            Material::new(bytes),
+            Some((algorithm, usages, extractable)),
+        )?,
+        _ => return Err(fail(c, "Invalid CryptoKey transport type")),
+    };
+    Ok(Some(key))
+}
+
+/// Same-realm structured cloning creates a fresh CryptoKey wrapper while
+/// retaining its immutable native handle and WebCrypto slot values.
+pub(crate) fn clone_crypto_key(
+    c: &mut Context<'_>,
+    value: RootId,
+) -> Result<Option<RootId>, RootedError> {
+    let state = state(c)?;
+    let slots = lookup(c, state, "cryptoKeys", value)?;
+    if !c.is_object_rooted(slots)? {
+        return Ok(None);
+    }
+    let slot = |c: &mut Context<'_>, index: usize| get(c, slots, &index.to_string());
+    let handle = slot(c, 4)?;
+    let algorithm = slot(c, 2)?;
+    let usages_mask = slot(c, 3)?;
+    let extractable = slot(c, 1)?;
+    // Hybrid KEM keys keep their secondary KeyObjectHandle and seed in the
+    // private CryptoKey slot cache. The host-side brand record predates those
+    // slots for keys constructed by Node's internal KEM module, so read the
+    // canonical values through Node's slot accessors before making a fresh
+    // wrapper. This preserves hidden native material without aliasing the
+    // CryptoKey object itself.
+    let keys_module = crate::host::shared_vm::commonjs::node_library_module(
+        c,
+        "crypto.js",
+        "internal/crypto/keys.js",
+    )?;
+    let undefined = c.undefined();
+    let secondary_getter = get(c, keys_module, "getCryptoKeySecondaryHandle")?;
+    let secondary_handle = c.call_rooted(secondary_getter, undefined, &[value])?;
+    let seed_getter = get(c, keys_module, "getCryptoKeySeedData")?;
+    let seed_data = c.call_rooted(seed_getter, undefined, &[value])?;
+    let constructor = get(c, state, "internalCryptoKeyConstructor")?;
+    if !c.is_callable_rooted(constructor)? {
+        return Err(RootedError::host("SDK InternalCryptoKey not initialized"));
+    }
+    let clone = c.construct_rooted(
+        constructor,
+        constructor,
+        &[
+            handle,
+            algorithm,
+            usages_mask,
+            extractable,
+            secondary_handle,
+            seed_data,
+        ],
+    )?;
+    Ok(Some(clone))
+}
 /// Retain the canonical provider's existing private key maps, never public fields.
 pub(crate) fn capture_brands(
     c: &mut Context<'_>,
@@ -208,6 +641,69 @@ fn key_slots(c: &mut Context<'_>, state: RootId, key: RootId) -> Result<RootId, 
     }
     Ok(c.undefined())
 }
+
+/// Resolve the private native handle stored in a branded Node KeyObject.
+/// Public fields and lookalike objects are ignored; the slots are retrieved
+/// only from the private WeakMap installed by the crypto key classes.
+#[cfg(quench_openssl_provider)]
+pub(crate) fn key_object_handle(
+    c: &mut Context<'_>,
+    key: RootId,
+) -> Result<Option<RootId>, RootedError> {
+    let state = state(c)?;
+    let slots = key_slots(c, state, key)?;
+    if !c.is_object_rooted(slots)? {
+        return Ok(None);
+    }
+    let kind = get(c, slots, "0")?;
+    let kind = c.rooted_value(kind).and_then(|value| value.as_number());
+    if kind != Some(KEY_TYPE_PUBLIC) && kind != Some(KEY_TYPE_PRIVATE) {
+        return Ok(None);
+    }
+    Ok(Some(get(c, slots, "1")?))
+}
+
+/// Return the branded public KeyObject type without exposing its native
+/// handle. Diffie-Hellman uses this to report Node's key-object type errors
+/// before treating a SecretKeyObject as BufferSource input.
+#[cfg(quench_openssl_provider)]
+pub(crate) fn key_object_type(
+    c: &mut Context<'_>,
+    key: RootId,
+) -> Result<Option<&'static str>, RootedError> {
+    let state = state(c)?;
+    let slots = key_slots(c, state, key)?;
+    if !c.is_object_rooted(slots)? {
+        return Ok(None);
+    }
+    let kind = get(c, slots, "0")?;
+    let kind = c.rooted_value(kind).and_then(|value| value.as_number());
+    Ok(match kind {
+        Some(value) if value == KEY_TYPE_SECRET => Some("secret"),
+        Some(value) if value == KEY_TYPE_PUBLIC => Some("public"),
+        Some(value) if value == KEY_TYPE_PRIVATE => Some("private"),
+        _ => None,
+    })
+}
+
+/// Return the canonical native handle for a branded WebCrypto secret key.
+/// The legacy `node:crypto` cipher surface still accepts CryptoKey values and
+/// must resolve their material through the same backing as subtle operations.
+pub(crate) fn secret_handle(
+    c: &mut Context<'_>,
+    key: RootId,
+) -> Result<Option<RootId>, RootedError> {
+    let state = state(c)?;
+    let slots = lookup(c, state, "cryptoKeys", key)?;
+    if !c.is_object_rooted(slots)? {
+        return Ok(None);
+    }
+    let kind = get(c, slots, "0")?;
+    if c.to_number(kind)? != KEY_TYPE_SECRET {
+        return Ok(None);
+    }
+    Ok(Some(get(c, slots, "4")?))
+}
 /// Source algorithms and the existing key provider share private slot access.
 pub(crate) fn install_provider_accessors(
     c: &mut Context<'_>,
@@ -260,6 +756,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
                 "exportJwk",
                 "rawPublicKey",
                 "rawPrivateKey",
+                "rawSeed",
                 "exportECPublicRaw",
                 "exportECPrivateRaw",
                 "exportECPrivatePkcs8",
@@ -301,7 +798,9 @@ pub(crate) fn operation(
                 true,
             )?;
             let classes = c.call_rooted(arg, missing, &[base])?;
-            if op == "cryptoClass" {
+            if op == "keyClass" {
+                set(c, state, "keyObjectClasses", classes)?;
+            } else {
                 let internal = get(c, classes, "1")?;
                 set(c, state, "internalCryptoKeyConstructor", internal)?;
             }
@@ -342,8 +841,22 @@ pub(crate) fn operation(
                 return Ok(c.boolean(true));
             }
             let bytes = args.get(1).copied().unwrap_or(missing);
-            let Some(bytes) = c.bytes_prefix_rooted(bytes, usize::MAX) else {
-                return Err(fail(c, "Key material must be a byte view"));
+            let format = args.get(2).copied().unwrap_or(missing);
+            let bytes = if c.to_number(format)? == 2.0 {
+                // WebCrypto's AES/HMAC imports pass the already-validated JWK
+                // to KeyObjectHandle.init(). Decode its octet key here, just
+                // as Node's native KeyObjectHandle does, instead of treating
+                // the JWK object itself as a BufferSource.
+                let kty = get(c, bytes, "kty")?;
+                if c.to_string(kty)? != "oct" {
+                    return Err(fail(c, "Invalid JWK key type"));
+                }
+                let encoded = get(c, bytes, "k")?;
+                let encoded = c.to_string(encoded)?;
+                super::buffer_codec::base64_decode(encoded.as_bytes())
+            } else {
+                c.bytes_prefix_rooted(bytes, usize::MAX)
+                    .ok_or_else(|| fail(c, "Key material must be a byte view"))?
             };
             super::crypto_key_material_shared_vm::register_secret(
                 c,
@@ -452,7 +965,14 @@ pub(crate) fn operation(
                 }
                 c.array_rooted(&values)
             } else {
-                Err(invalid_this(c, if op == "keySlots" { "KeyObject" } else { "CryptoKey" }))
+                Err(invalid_this(
+                    c,
+                    if op == "keySlots" {
+                        "KeyObject"
+                    } else {
+                        "CryptoKey"
+                    },
+                ))
             }
         }
         #[cfg(quench_openssl_provider)]
@@ -491,10 +1011,10 @@ pub(crate) fn operation(
             super::crypto_asymmetric_shared_vm::raw(c, receiver, true, false)
         }
         #[cfg(quench_openssl_provider)]
+        "rawSeed" => super::crypto_asymmetric_shared_vm::raw_seed(c, receiver),
+        #[cfg(quench_openssl_provider)]
         "exportECPrivatePkcs8" => {
-            let format = c.number(0.0);
-            let encoding = c.number(1.0);
-            super::crypto_asymmetric_shared_vm::export(c, receiver, &[format, encoding])
+            super::crypto_asymmetric_shared_vm::export_ec_private_pkcs8(c, receiver)
         }
         #[cfg(quench_openssl_provider)]
         "checkEcKeyData" => {
@@ -696,6 +1216,11 @@ pub(crate) fn secret_material(
     let value = args.first().copied().unwrap_or_else(|| c.undefined());
     if let Some(material) = super::crypto_key_material_shared_vm::secret(c, value)? {
         return super::buffer_shared_vm::from_bytes(c, &material);
+    }
+    if let Some(handle) = secret_handle(c, value)? {
+        if let Some(material) = super::crypto_key_material_shared_vm::secret(c, handle)? {
+            return super::buffer_shared_vm::from_bytes(c, &material);
+        }
     }
     Ok(value)
 }

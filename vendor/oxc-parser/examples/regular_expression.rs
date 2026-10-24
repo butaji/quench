@@ -19,14 +19,21 @@ fn main() {
     let source_type = SourceType::from_path(path).unwrap();
 
     let allocator = Allocator::default();
-    let options = ParseOptions { parse_regular_expression: true, ..ParseOptions::default() };
+    let options = ParseOptions {
+        parse_regular_expression: true,
+        ..ParseOptions::default()
+    };
 
-    let parser_ret =
-        Parser::new(&allocator, source_text.as_ref(), source_type).with_options(options).parse();
+    let parser_ret = Parser::new(&allocator, source_text.as_ref(), source_type)
+        .with_options(options)
+        .parse();
     if !parser_ret.diagnostics.is_empty() {
         println!("Parsing failed:");
         for error in parser_ret.diagnostics {
-            println!("{}", error.render_with_source_code(Arc::clone(&source_text)));
+            println!(
+                "{}",
+                error.render_with_source_code(Arc::clone(&source_text))
+            );
         }
         return;
     }
@@ -34,8 +41,10 @@ fn main() {
     // Parse regular expressions
     // - RegExpLiteral
     // - new RegExp() with string or template literal if static
-    RegularExpressionVisitor { source_text: Arc::clone(&source_text) }
-        .visit_program(&parser_ret.program);
+    RegularExpressionVisitor {
+        source_text: Arc::clone(&source_text),
+    }
+    .visit_program(&parser_ret.program);
 }
 
 struct RegularExpressionVisitor {
@@ -51,7 +60,11 @@ impl<'a> VisitJs<'a> for RegularExpressionVisitor {
     }
 
     fn visit_new_expression(&mut self, new_expr: &NewExpression<'a>) {
-        if new_expr.callee.get_identifier_reference().is_some_and(|ident| ident.name == "RegExp") {
+        if new_expr
+            .callee
+            .get_identifier_reference()
+            .is_some_and(|ident| ident.name == "RegExp")
+        {
             println!("🍀 {}", new_expr.span.source_text(&self.source_text));
 
             let pattern_span = match new_expr.arguments.first() {
@@ -77,7 +90,10 @@ impl<'a> VisitJs<'a> for RegularExpressionVisitor {
             .parse();
 
             if let Err(error) = parsed {
-                println!("{}", error.render_with_source_code(Arc::clone(&self.source_text)));
+                println!(
+                    "{}",
+                    error.render_with_source_code(Arc::clone(&self.source_text))
+                );
                 return;
             }
             println!("{parsed:#?}");

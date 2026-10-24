@@ -6,20 +6,23 @@
 
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
+use std::sync::Arc;
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, setEngineNative, captureKeyBrands, handleSymbol, getWebCrypto, randomValuesSource, secretMaterial, nativeConstants) => {
+    r#"(hashDigest, hmacDigest, macDigestNative, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, diffieHellmanNative, setEngineNative, captureKeyBrands, handleSymbol, getWebCrypto, randomValuesSource, secretMaterial, nativeConstants, getMacsNative, argon2Native, argon2SyncNative, x509Metadata, x509CheckHost) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
   let repeatedHmacDigestWarningEmitted = false;
   const unsupportedDigest = (algorithm) => {
     const error = new Error(`Invalid digest: ${algorithm}`);
     error.code = "ERR_OSSL_EVP_UNSUPPORTED";
+    error.library = "digital envelope routines";
+    error.reason = "unsupported";
     return error;
   };
-  const finalized = () => {
-    const error = new Error("Digest already called");
-    error.code = "ERR_CRYPTO_HASH_FINALIZED";
+  const finalized = (state) => {
+    const error = new Error(state?.isMac ? "MAC already finalized" : "Digest already called");
+    error.code = state?.isMac ? "ERR_CRYPTO_MAC_FINALIZED" : "ERR_CRYPTO_HASH_FINALIZED";
     return error;
   };
   const inputBuffer = (data, encoding) => {
@@ -33,14 +36,24 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       return Buffer.from(data, name);
     }
     if (data !== null && typeof data === "object" &&
-        (ArrayBuffer.isView(data) || data instanceof ArrayBuffer ||
-         Array.isArray(data) || typeof data.length === "number")) {
+        ArrayBuffer.isView(data)) {
+      // Crypto update() consumes BufferSource bytes. Buffer.from(typedArray)
+      // instead copies its elements (and Buffer.from(DataView) is empty),
+      // which is observably different for DataView and wider typed arrays.
+      return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+    }
+    if (data !== null && typeof data === "object" &&
+        (data instanceof ArrayBuffer || Array.isArray(data) ||
+         typeof data.length === "number")) {
       return Buffer.from(data);
     }
     const error = new TypeError('The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView');
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   };
+  const keyBuffer = (key) => ArrayBuffer.isView(key)
+    ? Buffer.from(key.buffer, key.byteOffset, key.byteLength)
+    : Buffer.from(key);
 
   class Hash extends Transform {
     constructor(algorithm, options) {
@@ -223,8 +236,9 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
   }
   HashConstructor.prototype = Hash.prototype;
 
-  class Hmac {
-    constructor(algorithm, key) {
+  class Hmac extends Transform {
+    constructor(algorithm, key, streamOptions) {
+      super(streamOptions);
       if (typeof algorithm !== "string") {
         const error = new TypeError(`The "hmac" argument must be of type string. Received ${String(algorithm)}`);
         error.code = "ERR_INVALID_ARG_TYPE";
@@ -240,16 +254,34 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       }
       const keyBytes = secretKeys.has(key)
         ? Buffer.from(secretMaterial(secretKeys.get(key)))
-        : Buffer.from(key);
+        : keyBuffer(key);
       states.set(this, { name, key: Array.from(keyBytes), chunks: [], lifecycle: "open" });
     }
 
     update(data, encoding) {
       const state = states.get(this);
-      if (state.lifecycle !== "open") throw finalized();
+      if (state.lifecycle !== "open") throw finalized(state);
       const bytes = inputBuffer(data, encoding);
       state.chunks.push(Array.from(bytes));
       return this;
+    }
+
+    _transform(chunk, encoding, callback) {
+      try {
+        this.update(chunk, encoding);
+        callback();
+      } catch (error) {
+        callback(error);
+      }
+    }
+
+    _flush(callback) {
+      try {
+        this.push(this.digest());
+        callback();
+      } catch (error) {
+        callback(error);
+      }
     }
 
     digest(encoding) {
@@ -258,6 +290,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
         ? undefined
         : String(encoding);
       if (state.lifecycle !== "open") {
+        if (state.isMac) throw finalized(state);
         if (!repeatedHmacDigestWarningEmitted) {
           repeatedHmacDigestWarningEmitted = true;
           process.emitWarning("Calling Hmac.digest() more than once is deprecated.", {
@@ -271,25 +304,14 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       state.lifecycle = "finalized";
       const input = state.chunks.flat();
       state.chunks = [];
-      const bytes = Buffer.from(hmacDigest(state.name, state.key, input));
+      const bytes = Buffer.from(state.macAlgorithm === "hmac"
+        ? hmacDigest(state.name, state.key, input)
+        : macDigestNative(state.key, input, state.cipher || "", state.macAlgorithm));
       return outputEncoding === undefined
         ? bytes
         : bytes.toString(outputEncoding);
     }
 
-    end(data, encoding) {
-      if (data !== undefined) this.update(data, encoding);
-      const state = states.get(this);
-      state.streamResult = this.digest();
-      return this;
-    }
-
-    read() {
-      const state = states.get(this);
-      const result = state.streamResult;
-      state.streamResult = undefined;
-      return result;
-    }
   }
 
   let hmacConstructorWarningEmitted = false;
@@ -304,6 +326,58 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     return new Hmac(algorithm, key);
   }
   HmacConstructor.prototype = Hmac.prototype;
+  class Mac extends Hmac {
+    constructor(algorithm, key, options) {
+      if (algorithm === "cmac") {
+        super("sha256", key, options);
+        const state = states.get(this);
+        state.macAlgorithm = "cmac";
+        state.cipher = options.cipher;
+      } else if (algorithm === "poly1305") {
+        super("sha256", key, options);
+        states.get(this).macAlgorithm = "poly1305";
+      } else {
+        super(options.digest, key, options);
+        states.get(this).macAlgorithm = "hmac";
+      }
+      states.get(this).isMac = true;
+    }
+
+    update(data, encoding) {
+      if (typeof data !== "string" && !ArrayBuffer.isView(data)) {
+        const error = new TypeError('The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (encoding !== undefined && typeof encoding !== "string") {
+        const error = new TypeError('The "inputEncoding" argument must be of type string');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      // Node only interprets inputEncoding when data is a string. For byte
+      // views the second argument is ignored, even when it is not an encoding.
+      if (typeof data === "string" && encoding !== undefined && !Buffer.isEncoding(encoding)) {
+        const error = new TypeError(`The "encoding" argument is invalid for data of length ${typeof data === "string" ? data.length : data.byteLength}. Received '${encoding}'`);
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
+      return super.update(data, encoding);
+    }
+
+    final(encoding) {
+      if (encoding !== undefined && typeof encoding !== "string") {
+        const error = new TypeError('The "outputEncoding" argument must be of type string');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (encoding !== undefined && encoding !== "buffer" && !Buffer.isEncoding(encoding)) {
+        const error = new TypeError(`The "encoding" argument is invalid. Received '${encoding}'`);
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
+      return this.digest(encoding === "buffer" ? undefined : encoding);
+    }
+  }
 
   function setEngine(id, flags) { return setEngineNative(id, flags); }
 
@@ -451,7 +525,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     "sha3-224", "sha3-256", "sha3-384", "sha3-512",
   ].sort());
   const cipherNames = Object.freeze([
-    "aes-128-cbc", "aes-128-ecb", "aes-128-gcm", "aes-192-gcm", "aes-256-cbc", "aes-256-gcm", "aes256", "chacha20-poly1305", "des-ede3-cbc",
+    "aes-128-cbc", "aes-128-ecb", "aes-128-gcm", "aes-128-ocb", "aes-192-gcm", "aes-192-ocb", "aes-256-cbc", "aes-256-ecb", "aes-256-gcm", "aes-256-ocb", "aes256", "chacha20-poly1305", "des-ede3-cbc",
   ].sort());
   const curveNames = Object.freeze([
     "prime192v1", "secp224r1", "secp256k1", "secp256r1", "prime256v1",
@@ -464,13 +538,16 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     { name: "aes-128-cbc", nid: 419, blockSize: 16, ivLength: 16, keyLength: 16, mode: "cbc" },
     { name: "aes-128-ecb", nid: 418, blockSize: 16, ivLength: 0, keyLength: 16, mode: "ecb" },
     { name: "aes-256-cbc", nid: 427, blockSize: 16, ivLength: 16, keyLength: 32, mode: "cbc" },
+    { name: "aes-256-ecb", nid: 426, blockSize: 16, ivLength: 0, keyLength: 32, mode: "ecb" },
     { name: "aes-192-gcm", nid: 898, blockSize: 1, ivLength: 12, keyLength: 24, mode: "gcm" },
+    { name: "aes-192-ocb", nid: 959, blockSize: 16, ivLength: 12, keyLength: 24, mode: "ocb" },
     { name: "aes-256-gcm", nid: 901, blockSize: 1, ivLength: 12, keyLength: 32, mode: "gcm" },
+    { name: "aes-256-ocb", nid: 960, blockSize: 16, ivLength: 12, keyLength: 32, mode: "ocb" },
     { name: "chacha20-poly1305", nid: 1018, blockSize: 1, ivLength: 12, keyLength: 32, mode: "stream" },
     { name: "des-ede3-cbc", nid: 44, blockSize: 8, ivLength: 8, keyLength: 24, mode: "cbc" },
     { name: "aes-128-gcm", nid: 895, blockSize: 1, ivLength: 12, keyLength: 16, mode: "gcm" },
     { name: "aes-128-ccm", nid: 896, blockSize: 1, ivLength: 12, keyLength: 16, mode: "ccm" },
-    { name: "aes-128-ocb", nid: 958, blockSize: 1, ivLength: 12, keyLength: 16, mode: "ocb" },
+    { name: "aes-128-ocb", nid: 958, blockSize: 16, ivLength: 12, keyLength: 16, mode: "ocb" },
   ];
   function getCipherInfo(nameOrNid, options = {}) {
     if (options === null || typeof options !== "object" || Array.isArray(options)) {
@@ -508,9 +585,9 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       if (info.mode === "ccm" && (ivLength < 7 || ivLength > 13)) return undefined;
       if (info.mode === "ocb" && (ivLength < 1 || ivLength > 15)) return undefined;
       if (info.mode !== "ccm" && info.mode !== "ocb" && ivLength !== info.ivLength) return undefined;
-      return { ...info, ivLength };
+      return { ...info, ivLength: info.mode === "ecb" ? undefined : ivLength };
     }
-    return { ...info };
+    return { ...info, ivLength: info.mode === "ecb" ? undefined : info.ivLength };
   }
   class CipherBase extends Transform {
     constructor(name, key, iv, decrypt, options = {}) {
@@ -552,10 +629,10 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
           this._authTag ?? Buffer.alloc(0), this._authTagLength, this._autoPadding,
         );
         output = Buffer.from(processed.output);
-        if (finalBlock && (this._cipherMode === "gcm" || this._cipherName === "chacha20-poly1305") && !this._cipherDecrypt)
+        if (finalBlock && (this._cipherMode === "gcm" || this._cipherMode === "ocb" || this._cipherName === "chacha20-poly1305") && !this._cipherDecrypt)
           this._authTag = Buffer.from(processed.tag);
       } catch (cause) {
-        if ((this._cipherMode === "gcm" || this._cipherName === "chacha20-poly1305") && this._cipherDecrypt && finalBlock) {
+        if ((this._cipherMode === "gcm" || this._cipherMode === "ocb" || this._cipherName === "chacha20-poly1305") && this._cipherDecrypt && finalBlock) {
           const error = new Error("Unsupported state or unable to authenticate data");
           error.code = "ERR_CRYPTO_AUTH_TAG_MISMATCH";
           throw error;
@@ -636,7 +713,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
           throw error;
         }
         if (this._cipherOutputEncoding !== undefined && normalized !== this._cipherOutputEncoding &&
-            !((this._cipherMode === "gcm" || this._cipherName === "chacha20-poly1305") && this._cipherDecrypt)) {
+            !((this._cipherMode === "gcm" || this._cipherMode === "ocb" || this._cipherName === "chacha20-poly1305") && this._cipherDecrypt)) {
           const error = new TypeError(`The encoding cannot be changed from '${this._cipherOutputEncoding}'`);
           error.code = "ERR_INVALID_ARG_VALUE";
           throw error;
@@ -654,16 +731,18 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       return this;
     }
     setAAD(aad) {
-      if ((this._cipherMode !== "gcm" && this._cipherName !== "chacha20-poly1305") || this._cipherDataStarted || this._cipherFinalized)
+      if ((this._cipherMode !== "gcm" && this._cipherMode !== "ocb" && this._cipherName !== "chacha20-poly1305") || this._cipherDataStarted || this._cipherFinalized)
         throw new Error("Invalid state for operation setAAD");
       this._cipherAad = inputBuffer(aad);
       return this;
     }
     setAuthTag(tag) {
-      if ((this._cipherMode !== "gcm" && this._cipherName !== "chacha20-poly1305") || !this._cipherDecrypt || this._cipherFinalized || this._authTagSet)
+      if ((this._cipherMode !== "gcm" && this._cipherMode !== "ocb" && this._cipherName !== "chacha20-poly1305") || !this._cipherDecrypt || this._cipherFinalized || this._authTagSet)
         throw new Error("Invalid state for operation setAuthTag");
       const bytes = inputBuffer(tag);
-      const validLength = this._cipherName === "chacha20-poly1305"
+      const validLength = this._cipherMode === "ocb"
+        ? bytes.length >= 1 && bytes.length <= 16
+        : this._cipherName === "chacha20-poly1305"
         ? bytes.length >= 1 && bytes.length <= 16
         : [4, 8, 12, 13, 14, 15, 16].includes(bytes.length);
       if (!validLength || ((this._authTagLengthExplicit || this._authTagLengthStrictDefault) && bytes.length !== this._authTagLength)) {
@@ -679,33 +758,85 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       return this;
     }
     getAuthTag() {
-      if ((this._cipherMode !== "gcm" && this._cipherName !== "chacha20-poly1305") || this._cipherDecrypt || !this._cipherFinalized || !this._authTag)
+      if ((this._cipherMode !== "gcm" && this._cipherMode !== "ocb" && this._cipherName !== "chacha20-poly1305") || this._cipherDecrypt || !this._cipherFinalized || !this._authTag)
         throw new Error("Invalid state for operation getAuthTag");
       return this._authTag;
     }
   }
   function cipherOptions(options) {
-    if (options === undefined) return {};
-    if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    if (options === undefined || options === null) return {};
+    if (typeof options !== "object" || Array.isArray(options)) {
       const error = new TypeError('The "options" argument must be of type object');
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
     return options;
   }
-  function validateTagLength(options, chacha = false) {
+  function validateTagLength(options, chacha = false, ocb = false, cipherName = "") {
+    if (ocb && options.authTagLength === undefined) {
+      throw new Error(`authTagLength required for ${cipherName}`);
+    }
     const length = options.authTagLength ?? 16;
+    if (ocb && (typeof length !== "number" || !Number.isInteger(length) || length < 1 || length > 16)) {
+      const error = new TypeError("Invalid authentication tag length");
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
     if (chacha && (typeof length !== "number" || !Number.isInteger(length) || length < 1 || length > 16)) {
       const error = new Error("Invalid authentication tag length");
       error.code = "ERR_CRYPTO_INVALID_AUTH_TAG";
       throw error;
     }
-    if (!chacha && (typeof length !== "number" || !Number.isInteger(length) || ![4, 8, 12, 13, 14, 15, 16].includes(length))) {
+    if (!chacha && !ocb && (typeof length !== "number" || !Number.isInteger(length) || ![4, 8, 12, 13, 14, 15, 16].includes(length))) {
       const error = new TypeError("Invalid authentication tag length");
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
     }
     return { authTagLength: length };
+  }
+  function parseCipherOptions(options) {
+    let authTagLength;
+    let ctsMode;
+    let xtsStandard;
+    if (options !== undefined && options !== null) {
+      const value = options.authTagLength;
+      if (value != null) {
+        if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 0xffffffff) {
+          const error = new TypeError(`The value of "options.authTagLength" is out of range. It must be a non-negative integer. Received ${value}`);
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+        authTagLength = value + 0;
+      }
+      ctsMode = options.ctsMode;
+      if (ctsMode != null && typeof ctsMode !== "string") {
+        const error = new TypeError(`The "options.ctsMode" argument must be of type string. ${receivedArgument(ctsMode)}`);
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      xtsStandard = options.xtsStandard;
+      if (xtsStandard != null && typeof xtsStandard !== "string") {
+        const error = new TypeError(`The "options.xtsStandard" argument must be of type string. ${receivedArgument(xtsStandard)}`);
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (ctsMode !== undefined && ctsMode !== null && !["CS1", "CS2", "CS3"].includes(ctsMode)) {
+        const error = new TypeError(`The value of "options.ctsMode" is invalid. Received ${JSON.stringify(ctsMode)}`);
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
+      if (xtsStandard !== undefined && xtsStandard !== null && !["GB", "IEEE"].includes(xtsStandard)) {
+        const error = new TypeError(`The value of "options.xtsStandard" is invalid. Received ${JSON.stringify(xtsStandard)}`);
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
+    }
+    if (ctsMode != null || xtsStandard != null) {
+      const error = new Error("Cipher options are not supported by this cipher");
+      error.code = "ERR_CRYPTO_UNSUPPORTED_OPERATION";
+      throw error;
+    }
+    return { authTagLength };
   }
   function createCipheriv(name, key, iv, options) {
     if (typeof name !== "string") {
@@ -720,15 +851,24 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       error.code = "ERR_CRYPTO_UNKNOWN_CIPHER";
       throw error;
     }
+    // Node accepts WebCrypto secret CryptoKeys here for backwards
+    // compatibility (DEP0203). The WebCrypto key store owns the canonical
+    // bytes, so query it through the shared native key-material bridge rather
+    // than asking the guest CryptoKey for an export method.
     const bytesLike = (value) => typeof value === "string" || secretKeys.has(value) ||
       ArrayBuffer.isView(value) || value instanceof ArrayBuffer ||
       typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer;
-    if (!bytesLike(key)) {
+    const webCryptoKeyBytes = !bytesLike(key) ? secretMaterial(key) : undefined;
+    const isWebCryptoKey = webCryptoKeyBytes !== undefined && webCryptoKeyBytes !== key;
+    if (!bytesLike(key) && !isWebCryptoKey) {
       const error = new TypeError('The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView');
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    const keyBytes = Buffer.from(secretKeys.has(key) ? secretMaterial(secretKeys.get(key)) : key);
+    if (isWebCryptoKey) {
+      process.emitWarning('Passing a CryptoKey to node:crypto functions is deprecated.', 'DeprecationWarning', 'DEP0203');
+    }
+    const keyBytes = Buffer.from(secretKeys.has(key) ? secretMaterial(secretKeys.get(key)) : isWebCryptoKey ? webCryptoKeyBytes : key);
     if (keyBytes.length !== info.keyLength) throw new TypeError("Invalid key length");
     if (iv === undefined) {
       const error = new TypeError('The "iv" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView');
@@ -740,12 +880,14 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    if (iv === null && info.ivLength !== 0) throw new Error("Invalid initialization vector");
-    const ivBytes = iv === null && info.ivLength === 0 ? Buffer.alloc(0) : Buffer.from(iv);
-    if (info.mode === "gcm" ? ivBytes.length === 0 : ivBytes.length !== info.ivLength) {
+    const ivLength = info.ivLength === undefined && info.mode === "ecb" ? 0 : info.ivLength;
+    if (iv === null && ivLength !== 0) throw new Error("Invalid initialization vector");
+    const ivBytes = iv === null && ivLength === 0 ? Buffer.alloc(0) : Buffer.from(iv);
+    if (info.mode === "gcm" ? ivBytes.length === 0 : info.mode === "ocb" ? ivBytes.length < 1 || ivBytes.length > 15 : ivBytes.length !== ivLength) {
       throw new Error("Invalid initialization vector");
     }
-    return new CipherBase(info.name, keyBytes, ivBytes, false, (info.mode === "gcm" || info.name === "chacha20-poly1305") ? validateTagLength(options, info.name === "chacha20-poly1305") : options);
+    options = parseCipherOptions(options);
+    return new CipherBase(info.name, keyBytes, ivBytes, false, (info.mode === "gcm" || info.mode === "ocb" || info.name === "chacha20-poly1305") ? validateTagLength(options, info.name === "chacha20-poly1305", info.mode === "ocb", info.name) : options);
   }
   function createDecipheriv(name, key, iv, options) {
     if (typeof name !== "string") {
@@ -763,12 +905,17 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     const bytesLike = (value) => typeof value === "string" || secretKeys.has(value) ||
       ArrayBuffer.isView(value) || value instanceof ArrayBuffer ||
       typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer;
-    if (!bytesLike(key)) {
+    const webCryptoKeyBytes = !bytesLike(key) ? secretMaterial(key) : undefined;
+    const isWebCryptoKey = webCryptoKeyBytes !== undefined && webCryptoKeyBytes !== key;
+    if (!bytesLike(key) && !isWebCryptoKey) {
       const error = new TypeError('The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView');
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    const keyBytes = Buffer.from(secretKeys.has(key) ? secretMaterial(secretKeys.get(key)) : key);
+    if (isWebCryptoKey) {
+      process.emitWarning('Passing a CryptoKey to node:crypto functions is deprecated.', 'DeprecationWarning', 'DEP0203');
+    }
+    const keyBytes = Buffer.from(secretKeys.has(key) ? secretMaterial(secretKeys.get(key)) : isWebCryptoKey ? webCryptoKeyBytes : key);
     if (keyBytes.length !== info.keyLength) throw new TypeError("Invalid key length");
     if (iv === undefined) {
       const error = new TypeError('The "iv" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView');
@@ -780,12 +927,14 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    if (iv === null && info.ivLength !== 0) throw new Error("Invalid initialization vector");
-    const ivBytes = iv === null && info.ivLength === 0 ? Buffer.alloc(0) : Buffer.from(iv);
-    if (info.mode === "gcm" ? ivBytes.length === 0 : ivBytes.length !== info.ivLength) {
+    const ivLength = info.ivLength === undefined && info.mode === "ecb" ? 0 : info.ivLength;
+    if (iv === null && ivLength !== 0) throw new Error("Invalid initialization vector");
+    const ivBytes = iv === null && ivLength === 0 ? Buffer.alloc(0) : Buffer.from(iv);
+    if (info.mode === "gcm" ? ivBytes.length === 0 : info.mode === "ocb" ? ivBytes.length < 1 || ivBytes.length > 15 : ivBytes.length !== ivLength) {
       throw new Error("Invalid initialization vector");
     }
-    return new CipherBase(info.name, keyBytes, ivBytes, true, (info.mode === "gcm" || info.name === "chacha20-poly1305") ? validateTagLength(options, info.name === "chacha20-poly1305") : options);
+    options = parseCipherOptions(options);
+    return new CipherBase(info.name, keyBytes, ivBytes, true, (info.mode === "gcm" || info.mode === "ocb" || info.name === "chacha20-poly1305") ? validateTagLength(options, info.name === "chacha20-poly1305", info.mode === "ocb", info.name) : options);
   }
   function Cipheriv(name, key, iv) { return createCipheriv(name, key, iv); }
   function Decipheriv(name, key, iv) { return createDecipheriv(name, key, iv); }
@@ -1425,7 +1574,12 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     setImmediate(() => { try { callback(null, generatePrimeValue(size, options === undefined ? {} : options)); } catch (error) { callback(error); } });
   };
   const modp2 = BigInt("0xFFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE649286651ECE65381FFFFFFFFFFFFFFFF");
-  const dhBytesToInt = (value, encoding) => BigInt(`0x${(typeof value === "string" ? Buffer.from(value, encoding || "utf8") : cryptoBytes(value)).toString("hex") || "0"}`);
+  const dhBytesToInt = (value, encoding) => {
+    const bytes = typeof value === "string" ? Buffer.from(value, encoding || "utf8") : cryptoBytes(value);
+    let result = 0n;
+    for (const byte of bytes) result = (result << 8n) | BigInt(byte);
+    return result;
+  };
   const dhIntToBuffer = (value, length) => {
     let hex = value.toString(16); if (hex.length & 1) hex = `0${hex}`;
     const raw = Buffer.from(hex, "hex");
@@ -1518,7 +1672,11 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
         const error = new Error(value <= 1n ? "Supplied key is too small" : "Supplied key is too large"); error.code = "ERR_CRYPTO_INVALID_KEYLEN"; throw error;
       }
       const secret = dhModPow(value, this._private, this._p);
-      const bytes = dhIntToBuffer(secret);
+      // OpenSSL's DH_compute_key_padded returns the shared secret at the
+      // prime's byte width, including leading zero bytes.  Keeping that
+      // padding is observable for fixed-width DH protocols and matches
+      // Node's DiffieHellman.computeSecret().
+      const bytes = dhIntToBuffer(secret, Math.ceil(this._p.toString(2).length / 8));
       return dhEncoding(bytes, outputEncoding);
     }
     getPrime(encoding) { return dhEncoding(dhIntToBuffer(this._p), encoding); }
@@ -1543,11 +1701,18 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     new DiffieHellman(sizeOrKey, keyEncoding, generator, generatorEncoding);
   const getDiffieHellman = (name) => {
     if (typeof name !== "string") { const error = new TypeError('The "name" argument must be of type string'); error.code = "ERR_INVALID_ARG_TYPE"; throw error; }
-    if (!/^modp([1-5]|14)$/i.test(name)) { const error = new Error("Unknown DH group"); error.code = "ERR_CRYPTO_UNKNOWN_DH_GROUP"; throw error; }
+    if (!/^modp([125]|14)$/i.test(name)) { const error = new Error("Unknown DH group"); error.code = "ERR_CRYPTO_UNKNOWN_DH_GROUP"; throw error; }
     return new DiffieHellmanGroup(name);
   };
   function DiffieHellmanGroup(name) {
-    const group = new DiffieHellman(dhIntToBuffer(modp2), "buffer", 2);
+    const primes = {
+      modp1: "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A63A3620FFFFFFFFFFFFFFFF",
+      modp2: "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE649286651ECE65381FFFFFFFFFFFFFFFF",
+      modp5: "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3DC2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD961C62F356208552BB9ED529077096966D670C354E4ABC9804F1746C08CA237327FFFFFFFFFFFFFFFF".replace(/ /g, ""),
+      modp14: "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3DC2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD961C62F356208552BB9ED529077096966D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3BE39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9DE2BCBF6955817183995497CEA956AE515D2261898FA051015728E5A8AACAA68FFFFFFFFFFFFFFFF".replace(/ /g, ""),
+    };
+    const prime = primes[name.toLowerCase()];
+    const group = new DiffieHellman(Buffer.from(prime, "hex"), "buffer", 2);
     Object.setPrototypeOf(group, DiffieHellmanGroup.prototype);
     return group;
   }
@@ -1558,6 +1723,60 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     setPublicKey: { value: undefined, writable: true, configurable: true },
   });
   const createDiffieHellmanGroup = (name) => new DiffieHellmanGroup(name);
+  const diffieHellman = (options, callback) => {
+    if (options === null || typeof options !== "object" || Array.isArray(options)) {
+      const error = new TypeError(`The "options" argument must be of type object. ${receivedArgument(options)}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (callback !== undefined && typeof callback !== "function") {
+      const error = new TypeError(`The "callback" argument must be of type function. ${receivedArgument(callback)}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const privateInput = options.privateKey;
+    const publicInput = options.publicKey;
+    if (privateInput == null) {
+      const error = new TypeError('The "options.privateKey" property must be of type KeyObject');
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+    if (publicInput == null) {
+      const error = new TypeError('The "options.publicKey" property must be of type KeyObject');
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+    // Node's key preparation normalizes URLs and encodings into KeyObjects
+    // before handing them to the native DH job. Keep the same boundary here.
+    let privateKey;
+    try {
+      privateKey = privateInput instanceof api.KeyObject
+        ? privateInput : api.createPrivateKey(privateInput);
+    } catch (error) {
+      if (error?.code === "ERR_INVALID_ARG_VALUE" && typeof error.message === "string") {
+        error.message = error.message.replace(/'key\.(format|type)'/g, "'options.privateKey.$1'");
+      }
+      throw error;
+    }
+    let publicKey;
+    try {
+      publicKey = publicInput instanceof api.KeyObject
+        ? publicInput : api.createPublicKey(publicInput);
+    } catch (error) {
+      if (error?.code === "ERR_INVALID_ARG_VALUE" && typeof error.message === "string") {
+        error.message = error.message.replace(/'key\.(format|type)'/g, "'options.publicKey.$1'");
+      }
+      throw error;
+    }
+    const run = () => Buffer.from(diffieHellmanNative(privateKey, publicKey));
+    if (callback === undefined) return run();
+    setImmediate(() => {
+      let result;
+      try { result = run(); }
+      catch (error) { callback(error); return; }
+      callback(null, result);
+    });
+  };
   const ecdhStates = new WeakMap();
   const ecdhCurveSymbol = Symbol("ecdhCurve");
   const ecdhPublicOwners = Object.create(null);
@@ -1701,6 +1920,38 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     const pem = typeof material === "string" ? Buffer.from(material) : cryptoBytes(material);
     return new KeyObject("public", pem, pem, "rsa");
   };
+  const x509States = new WeakMap();
+  class X509Certificate {
+    constructor(value) {
+      if (typeof value === "string") value = Buffer.from(value);
+      if (!ArrayBuffer.isView(value)) {
+        const error = new TypeError('The "buffer" argument must be of type string or an instance of Buffer, TypedArray, or DataView');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      x509States.set(this, x509Metadata(value));
+    }
+    get subject() { return x509States.get(this).subject; }
+    get issuer() { return x509States.get(this).issuer; }
+    get subjectAltName() { return x509States.get(this).subjectAltName; }
+    get infoAccess() { return x509States.get(this).infoAccess; }
+    checkHost(name, options = {}) { const state = x509States.get(this); return x509CheckHost(state.raw, name, options); }
+    get validFrom() { return x509States.get(this).validFrom; }
+    get validTo() { return x509States.get(this).validTo; }
+    get validFromDate() { return new Date(this.validFrom); }
+    get validToDate() { return new Date(this.validTo); }
+    get serialNumber() { return x509States.get(this).serialNumber; }
+    get fingerprint() { return x509States.get(this).fingerprint; }
+    get fingerprint256() { return x509States.get(this).fingerprint256; }
+    get fingerprint512() { return x509States.get(this).fingerprint512; }
+    get pem() { return x509States.get(this).pem; }
+    get raw() { return x509States.get(this).raw; }
+    get publicKey() { return x509States.get(this).publicKey; }
+    checkCA() { return x509States.get(this).ca; }
+    toLegacyObject() { return x509States.get(this).legacy; }
+    toString() { return this.pem; }
+    toJSON() { return this.pem; }
+  }
   const keyOutput = (key, encoding, fallback) => {
     if (!encoding) return key;
     const data = key.export({ format: encoding.format || "pem", type: encoding.type || fallback, encoding: encoding.format === "der" ? undefined : encoding.encoding });
@@ -1719,6 +1970,13 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     if (type !== "rsa" && type !== "rsa-pss") {
       const error = new Error(`Key generation for ${type} keys is not supported`);
       error.code = "ERR_CRYPTO_OPERATION_FAILED"; throw error;
+    }
+    const encodings = [options.publicKeyEncoding, options.privateKeyEncoding];
+    if (encodings.some((encoding) => encoding &&
+        ["raw-public", "raw-private", "raw-seed"].includes(encoding.format))) {
+      const error = new Error("The selected key encoding is incompatible with the key type");
+      error.code = "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS";
+      throw error;
     }
     const bits = options.modulusLength === undefined ? 2048 : options.modulusLength;
     const exponent = options.publicExponent === undefined ? 65537 : options.publicExponent;
@@ -1754,6 +2012,15 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     if (typeof callback !== "function") {
       const error = new TypeError('The "callback" argument must be of type function');
       error.code = "ERR_INVALID_ARG_TYPE"; throw error;
+    }
+    // Node rejects an unknown private-key cipher synchronously, before it
+    // schedules key generation or invokes the callback. Keep this option
+    // validation outside the async-operation error path below.
+    const cipher = options?.privateKeyEncoding?.cipher;
+    if (cipher && getCipherInfo(cipher) === undefined) {
+      const error = new Error("Unknown cipher");
+      error.code = "ERR_CRYPTO_UNKNOWN_CIPHER";
+      throw error;
     }
     try {
       const result = generateKeyPairSync(type, options);
@@ -1797,6 +2064,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     createSign: (algorithm) => new Sign(algorithm),
     createSecretKey,
     KeyObject,
+    X509Certificate,
     createPrivateKey,
     createPublicKey,
     createCipheriv,
@@ -1806,6 +2074,149 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     getCipherInfo,
     getCiphers,
     getCurves,
+    getMacs: () => typeof getMacsNative === "function" ? getMacsNative() : ["hmac"],
+    createMac(algorithm, key, options) {
+      if (typeof algorithm !== "string") {
+        const error = new TypeError('The "algorithm" argument must be of type string');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (algorithm.length === 0 || algorithm.includes("\0")) {
+        const error = new TypeError(`The argument 'algorithm' must be non-empty and contain no NUL bytes. Received '${algorithm}'`);
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
+      const name = algorithm.toLowerCase();
+      if (options !== undefined && (options === null || typeof options !== "object" || Array.isArray(options))) {
+        const error = new TypeError('The "options" argument must be of type object');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      options ||= {};
+      for (const field of ["digest", "cipher"]) {
+        if (options[field] !== undefined && typeof options[field] !== "string") {
+          const error = new TypeError(`The "options.${field}" property must be of type string`);
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+      }
+      for (const field of ["iv", "customization", "salt"]) {
+        const value = options[field];
+        if (value !== undefined && !(ArrayBuffer.isView(value) || value instanceof ArrayBuffer)) {
+          const error = new TypeError(`The "options.${field}" property must be an ArrayBuffer or an ArrayBuffer view`);
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+      }
+      if (options.outputLength !== undefined && typeof options.outputLength !== "number") {
+        const error = new TypeError('The "options.outputLength" property must be of type number');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (options.outputLength !== undefined &&
+          (!Number.isInteger(options.outputLength) || options.outputLength < 0 || options.outputLength > 0xffffffff)) {
+        const detail = !Number.isInteger(options.outputLength)
+          ? ` It must be an integer. Received ${options.outputLength}`
+          : ` It must be >= 0 && <= 4294967295. Received ${options.outputLength}`;
+        const error = new RangeError(`The value of "options.outputLength" is out of range.${detail}`);
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+      // Validate the generic options before checking the provider inventory.
+      // EVP_MAC algorithms share these option types even when a particular
+      // algorithm is unavailable, and Node reports malformed options first.
+      const supportedMacs = typeof getMacsNative === "function" ? getMacsNative() : ["hmac"];
+      if (!supportedMacs.includes(name)) {
+        const error = new TypeError(`Invalid MAC: ${algorithm}`);
+        error.code = "ERR_CRYPTO_INVALID_MAC";
+        throw error;
+      }
+      if (!(ArrayBuffer.isView(key) ||
+            key instanceof ArrayBuffer || secretKeys.has(key))) {
+        const error = new TypeError('The "key" argument must be an instance of ArrayBuffer, TypedArray, DataView, Buffer, or KeyObject.');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (name === "hmac") {
+        if (options.digest === undefined) {
+          const error = new TypeError("The property 'options.digest' is required for HMAC");
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+        if (options.digest.length === 0 || options.digest.includes("\0")) {
+          const error = new TypeError("The argument 'options.digest' must be non-empty and contain no NUL bytes");
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+        if (["cipher", "iv", "customization", "salt", "outputLength"].some((key) => options[key] !== undefined)) {
+          const error = new TypeError("Invalid options for HMAC");
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+      } else if (name === "cmac") {
+        if (options.cipher === undefined) {
+          const error = new TypeError("The property 'options.cipher' is required for CMAC");
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+        if (options.cipher.length === 0 || options.cipher.includes("\0")) {
+          const error = new TypeError("The argument 'options.cipher' must be non-empty and contain no NUL bytes");
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+        if (["digest", "iv", "customization", "salt", "outputLength"].some((key) => options[key] !== undefined)) {
+          const error = new TypeError("Invalid options for CMAC");
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+      } else if (name === "gmac") {
+        if (options.cipher === undefined) {
+          const error = new TypeError("The property 'options.cipher' is required for GMAC");
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+        if (options.iv === undefined) {
+          const error = new TypeError("The property 'options.iv' is required for GMAC");
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+        if (options.cipher.length === 0 || options.cipher.includes("\0")) {
+          const error = new TypeError("The argument 'options.cipher' must be non-empty and contain no NUL bytes");
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+        if (["digest", "customization", "salt", "outputLength"].some((key) => options[key] !== undefined)) {
+          const error = new TypeError("Invalid options for GMAC");
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+      } else if (name === "poly1305") {
+        for (const field of ["digest", "cipher", "iv", "customization", "salt", "outputLength"]) {
+          if (options[field] !== undefined) {
+            const error = new TypeError(`The property 'options.${field}' is not supported by MAC poly1305`);
+            error.code = "ERR_INVALID_ARG_VALUE";
+            throw error;
+          }
+        }
+      } else if (name === "siphash") {
+        // OpenSSL's SipHash provider requires an exact 16-byte key. Its
+        // initialization failure is a generic crypto operation error rather
+        // than a JS argument TypeError, and does not expose the OpenSSL stack.
+        const keyBytes = secretKeys.has(key)
+          ? Buffer.from(secretMaterial(secretKeys.get(key)))
+          : keyBuffer(key);
+        if (keyBytes.length !== 16) {
+          const error = new Error("Failed to initialize MAC");
+          error.code = "ERR_CRYPTO_OPERATION_FAILED";
+          throw error;
+        }
+      } else {
+        const error = new TypeError(`MAC algorithm ${name} requires provider-specific options that are not supported here`);
+        error.code = "ERR_CRYPTO_INVALID_MAC";
+        throw error;
+      }
+      return new Mac(name, key, options);
+    },
     getFips: () => 0,
     getHashes,
     randomBytes: randomBuffer,
@@ -1820,12 +2231,15 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     privateEncrypt,
     publicDecrypt,
     getDiffieHellman,
+    diffieHellman,
     generateKeyPair,
     generateKeyPairSync,
     checkPrime,
     checkPrimeSync,
     generatePrime,
     generatePrimeSync,
+    argon2: argon2Native,
+    argon2Sync: argon2SyncNative,
     pbkdf2: derivePbkdf2,
     pbkdf2Sync: derivePbkdf2Sync,
     scrypt,
@@ -1919,6 +2333,7 @@ pub(crate) fn module(
     let factory = context.evaluate_script_rooted(CRYPTO_FACTORY, "node:crypto/shared.js")?;
     let hash = context.host_function(crate::host::shared_vm::operation("cryptoHash"))?;
     let hmac = context.host_function(crate::host::shared_vm::operation("cryptoHmac"))?;
+    let mac_digest = context.host_function(crate::host::shared_vm::operation("cryptoMacDigest"))?;
     let sign = context.host_function(crate::host::shared_vm::operation("cryptoSign"))?;
     let verify = context.host_function(crate::host::shared_vm::operation("cryptoVerify"))?;
     let random_bytes =
@@ -1935,11 +2350,48 @@ pub(crate) fn module(
     let secret_material =
         context.host_function(crate::host::shared_vm::operation("cryptoSecretMaterial"))?;
     let native_constants = super::crypto_constants::binding(context)?;
+    #[cfg(quench_openssl_provider)]
+    let provider_binding = super::tls_shared_vm::facade::binding(context)?;
+    #[cfg(quench_openssl_provider)]
+    let get_macs_native = get(context, provider_binding, "getMacs")?;
+    #[cfg(not(quench_openssl_provider))]
+    let get_macs_native = context.undefined();
+    #[cfg(quench_openssl_provider)]
+    let argon2_module = crate::host::shared_vm::commonjs::node_library_module(
+        context,
+        "crypto.js",
+        "internal/crypto/argon2.js",
+    )?;
+    #[cfg(quench_openssl_provider)]
+    let argon2 = get(context, argon2_module, "argon2")?;
+    #[cfg(quench_openssl_provider)]
+    let argon2_sync = get(context, argon2_module, "argon2Sync")?;
+    #[cfg(quench_openssl_provider)]
+    let kem_module = crate::host::shared_vm::commonjs::node_library_module(
+        context,
+        "crypto.js",
+        "internal/crypto/kem.js",
+    )?;
+    #[cfg(quench_openssl_provider)]
+    let kem_encapsulate = get(context, kem_module, "encapsulate")?;
+    #[cfg(quench_openssl_provider)]
+    let kem_decapsulate = get(context, kem_module, "decapsulate")?;
+    #[cfg(not(quench_openssl_provider))]
+    let (argon2, argon2_sync) = (context.undefined(), context.undefined());
     let capture_brands =
         context.host_function(crate::host::shared_vm::operation("cryptoCaptureKeyBrands"))?;
     let ecdh = context.host_function(crate::host::shared_vm::operation("cryptoEcdh"))?;
+    #[cfg(quench_openssl_provider)]
+    let diffie_hellman =
+        context.host_function(crate::host::shared_vm::operation("cryptoDiffieHellman"))?;
+    #[cfg(not(quench_openssl_provider))]
+    let diffie_hellman = context.undefined();
     let handle_symbol =
         context.host_function(crate::host::shared_vm::operation("cryptoHandleSymbol"))?;
+    let x509_metadata =
+        context.host_function(crate::host::shared_vm::operation("cryptoX509Metadata"))?;
+    let x509_check_host =
+        context.host_function(crate::host::shared_vm::operation("cryptoX509CheckHost"))?;
     let global = context.global_root()?;
     let buffer = get(context, global, "Buffer")?;
     let undefined = context.undefined();
@@ -1949,6 +2401,7 @@ pub(crate) fn module(
         &[
             hash,
             hmac,
+            mac_digest,
             sign,
             verify,
             buffer,
@@ -1960,6 +2413,7 @@ pub(crate) fn module(
             generate_rsa_key_pair,
             rsa_crypt,
             ecdh,
+            diffie_hellman,
             set_engine,
             capture_brands,
             handle_symbol,
@@ -1967,13 +2421,21 @@ pub(crate) fn module(
             random_values,
             secret_material,
             native_constants,
+            get_macs_native,
+            argon2,
+            argon2_sync,
+            x509_metadata,
+            x509_check_host,
         ],
     )?;
     #[cfg(quench_openssl_provider)]
     {
-        let binding = super::tls_shared_vm::facade::binding(context)?;
-        let get_fips = get(context, binding, "getFipsCrypto")?;
+        let get_fips = get(context, provider_binding, "getFipsCrypto")?;
         set(context, module, "getFips", get_fips)?;
+        let set_fips = get(context, provider_binding, "setFipsCrypto")?;
+        set(context, module, "setFips", set_fips)?;
+        set(context, module, "encapsulate", kem_encapsulate)?;
+        set(context, module, "decapsulate", kem_decapsulate)?;
         super::crypto_hash_source_shared_vm::install(context, module)?;
         let keygen = crate::host::shared_vm::commonjs::node_library_module(
             context,
@@ -1986,6 +2448,176 @@ pub(crate) fn module(
         }
     }
     Ok(module)
+}
+
+/// Parse the X509 fields used by Node's TLS helpers. The certificate remains
+/// in OpenSSL's representation until its immutable JavaScript projection is
+/// constructed, so Node's PEM and DER inputs share the same parser.
+pub(crate) fn x509_metadata(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let input = args.first().copied().unwrap_or_else(|| context.undefined());
+    let Some(bytes) = context.bytes_prefix_rooted(input, usize::MAX) else {
+        return Err(type_error(context, "X509 input must be a BufferSource")?);
+    };
+    let cert = openssl::x509::X509::from_pem(&bytes)
+        .or_else(|_| openssl::x509::X509::from_der(&bytes))
+        .map_err(|error| crate::modules::crypto_error_shared_vm::decorated(context, error))?;
+    let result = context.object_rooted()?;
+
+    fn assign(
+        context: &mut NativeContext<'_, NodeHost>,
+        object: RootId,
+        name: &str,
+        value: RootId,
+    ) -> Result<(), RootedError> {
+        let key = context.string_rooted(name);
+        if context.define_data_property_rooted(object, key, value, true, true, true)? {
+            Ok(())
+        } else {
+            Err(RootedError::host("Cannot define X509 metadata property"))
+        }
+    }
+
+    for (key, value) in [
+        (
+            "subject",
+            super::tls_shared_vm::certificate::multiline_name(cert.subject_name())
+                .map_err(|error| crate::modules::crypto_error_shared_vm::decorated(context, error))?,
+        ),
+        (
+            "issuer",
+            super::tls_shared_vm::certificate::multiline_name(cert.issuer_name())
+                .map_err(|error| crate::modules::crypto_error_shared_vm::decorated(context, error))?,
+        ),
+        ("validFrom", cert.not_before().to_string()),
+        ("validTo", cert.not_after().to_string()),
+    ] {
+        let value = context.string_rooted(&value);
+        assign(context, result, key, value)?;
+    }
+    let serial = cert
+        .serial_number()
+        .to_bn()
+        .and_then(|value| value.to_hex_str())
+        .map_err(|error| crate::modules::crypto_error_shared_vm::decorated(context, error))?;
+    let serial = context.string_rooted(&serial);
+    assign(context, result, "serialNumber", serial)?;
+    for (key, digest) in [
+        ("fingerprint", openssl::hash::MessageDigest::sha1()),
+        ("fingerprint256", openssl::hash::MessageDigest::sha256()),
+        ("fingerprint512", openssl::hash::MessageDigest::sha512()),
+    ] {
+        let bytes = cert
+            .digest(digest)
+            .map_err(|error| crate::modules::crypto_error_shared_vm::decorated(context, error))?;
+        let text = bytes
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<Vec<_>>()
+            .join(":");
+        let value = context.string_rooted(&text);
+        assign(context, result, key, value)?;
+    }
+    let der = cert
+        .to_der()
+        .map_err(|error| crate::modules::crypto_error_shared_vm::decorated(context, error))?;
+    let raw = crate::modules::buffer_shared_vm::from_bytes(context, &der)?;
+    assign(context, result, "raw", raw)?;
+    let pem = cert
+        .to_pem()
+        .map_err(|error| crate::modules::crypto_error_shared_vm::decorated(context, error))?;
+    let pem_text = context.string_rooted(&String::from_utf8_lossy(&pem));
+    assign(context, result, "pem", pem_text)?;
+    let legacy = super::tls_shared_vm::certificate::legacy(context, &cert)?;
+    assign(context, result, "legacy", legacy)?;
+    let alt_name_key = context.string_rooted("subjectaltname");
+    let alt_name = context.get_property_rooted(legacy, alt_name_key)?;
+    assign(context, result, "subjectAltName", alt_name)?;
+    let info_access_key = context.string_rooted("infoaccess");
+    let info_access = context.get_property_rooted(legacy, info_access_key)?;
+    assign(context, result, "infoAccess", info_access)?;
+    let ca_key = context.string_rooted("ca");
+    let ca = context.get_property_rooted(legacy, ca_key)?;
+    assign(context, result, "ca", ca)?;
+    #[cfg(quench_openssl_provider)]
+    {
+        let key = cert
+            .public_key()
+            .map_err(|error| crate::modules::crypto_error_shared_vm::decorated(context, error))?;
+        let key = super::crypto_key_shared_vm::generated_asymmetric(
+            context,
+            Arc::new(super::crypto_asymmetric::OwnedKey::Public(key)),
+            None,
+        )?;
+        assign(context, result, "publicKey", key)?;
+    }
+    #[cfg(not(quench_openssl_provider))]
+    {
+        let undefined = context.undefined();
+        assign(context, result, "publicKey", undefined)?;
+    }
+    Ok(result)
+}
+
+pub(crate) fn x509_check_host(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    use foreign_types::ForeignType;
+    let bytes = args.first().copied().unwrap_or_else(|| context.undefined());
+    let Some(bytes) = context.bytes_prefix_rooted(bytes, usize::MAX) else {
+        return Err(type_error(context, "X509 input must be a BufferSource")?);
+    };
+    let cert = openssl::x509::X509::from_pem(&bytes)
+        .or_else(|_| openssl::x509::X509::from_der(&bytes))
+        .map_err(|error| crate::modules::crypto_error_shared_vm::decorated(context, error))?;
+    let hostname = args.get(1).copied().unwrap_or_else(|| context.undefined());
+    let Some(hostname) = context.string_text(hostname)? else {
+        return Err(type_error(context, "The \"name\" argument must be of type string")?);
+    };
+    if hostname.is_empty() || hostname.as_bytes().contains(&0) {
+        return Ok(context.undefined());
+    }
+    let options = args.get(2).copied().unwrap_or_else(|| context.undefined());
+    let subject = get(context, options, "subject")?;
+    let subject = context.string_text(subject)?.unwrap_or_else(|| "default".to_owned());
+    let flags = match subject.as_str() {
+        "default" => 0,
+        "always" => 0x1,
+        "never" => 0x20,
+        _ => return Err(type_error(context, "Invalid subject option")?),
+    };
+    let mut peer_name = std::ptr::null_mut();
+    let result = unsafe {
+        openssl_sys::X509_check_host(
+            cert.as_ptr(),
+            hostname.as_ptr().cast(),
+            hostname.len(),
+            flags,
+            &mut peer_name,
+        )
+    };
+    if result == 1 {
+        let name = if peer_name.is_null() {
+            hostname
+        } else {
+            let value = unsafe { std::ffi::CStr::from_ptr(peer_name) }
+                .to_string_lossy()
+                .into_owned();
+            unsafe { openssl_sys::OPENSSL_free(peer_name.cast()) };
+            value
+        };
+        Ok(context.string_rooted(&name))
+    } else {
+        if !peer_name.is_null() {
+            unsafe { openssl_sys::OPENSSL_free(peer_name.cast()) };
+        }
+        Ok(context.undefined())
+    }
 }
 
 fn private_key_from_pem(
@@ -2088,6 +2720,7 @@ pub(crate) fn generate_rsa_key_pair(
             "aes-128-ecb" => openssl::symm::Cipher::aes_128_ecb(),
             "aes-192-cbc" => openssl::symm::Cipher::aes_192_cbc(),
             "aes-256-cbc" => openssl::symm::Cipher::aes_256_cbc(),
+            "aes-256-ecb" => openssl::symm::Cipher::aes_256_ecb(),
             _ => return Err(RootedError::host(format!("Unknown cipher: {cipher_name}"))),
         };
         rsa.private_key_to_pem_passphrase(cipher, &passphrase)
@@ -2612,10 +3245,14 @@ pub(crate) fn cipher_process(
     let cipher = match algorithm.to_ascii_lowercase().as_str() {
         "aes-128-cbc" => openssl::symm::Cipher::aes_128_cbc(),
         "aes-128-ecb" => openssl::symm::Cipher::aes_128_ecb(),
+        "aes-256-ecb" => openssl::symm::Cipher::aes_256_ecb(),
         "aes-128-gcm" => openssl::symm::Cipher::aes_128_gcm(),
+        "aes-128-ocb" => openssl::symm::Cipher::aes_128_ocb(),
         "aes-192-gcm" => openssl::symm::Cipher::aes_192_gcm(),
+        "aes-192-ocb" => openssl::symm::Cipher::aes_192_ocb(),
         "aes-256-cbc" => openssl::symm::Cipher::aes_256_cbc(),
         "aes-256-gcm" => openssl::symm::Cipher::aes_256_gcm(),
+        "aes-256-ocb" => openssl::symm::Cipher::aes_256_ocb(),
         "chacha20-poly1305" => openssl::symm::Cipher::chacha20_poly1305(),
         "des-ede3-cbc" => openssl::symm::Cipher::des_ede3_cbc(),
         _ => {
@@ -2674,7 +3311,8 @@ pub(crate) fn cipher_process(
         .and_then(|value| value.as_bool())
         .unwrap_or(true);
     let is_gcm = algorithm.to_ascii_lowercase().ends_with("-gcm");
-    let is_aead = is_gcm || algorithm.eq_ignore_ascii_case("chacha20-poly1305");
+    let is_ocb = algorithm.to_ascii_lowercase().ends_with("-ocb");
+    let is_aead = is_gcm || is_ocb || algorithm.eq_ignore_ascii_case("chacha20-poly1305");
     let mode = if decrypt {
         openssl::symm::Mode::Decrypt
     } else {
@@ -2688,6 +3326,22 @@ pub(crate) fn cipher_process(
     let mut crypter = openssl::symm::Crypter::new(cipher, mode, &key, iv)
         .map_err(|error| RootedError::host(error.to_string()))?;
     crypter.pad(auto_padding);
+    // OCB requires its configured tag length (encryption) or tag value
+    // (decryption) before processing AAD or payload. GCM accepts its tag at
+    // finalization, so retain that existing path below.
+    if is_ocb {
+        // Node configures the expected tag length during cipher initialization,
+        // before a decipher receives the tag value. OpenSSL's provider rejects
+        // a shortened tag unless that length is established first.
+        crypter
+            .set_tag_len(auth_tag_length)
+            .map_err(|error| RootedError::host(error.to_string()))?;
+        if decrypt && !auth_tag.is_empty() {
+            crypter
+                .set_tag(&auth_tag)
+                .map_err(|error| RootedError::host(error.to_string()))?;
+        }
+    }
     if is_aead {
         if !aad.is_empty() {
             crypter
@@ -2700,7 +3354,7 @@ pub(crate) fn cipher_process(
         .update(&input, &mut output)
         .map_err(|error| RootedError::host(error.to_string()))?;
     if final_block {
-        if is_aead && decrypt {
+        if is_aead && decrypt && !is_ocb {
             crypter
                 .set_tag(&auth_tag)
                 .map_err(|error| RootedError::host(error.to_string()))?;
@@ -3084,6 +3738,67 @@ pub(crate) fn hash(
     let output = digest
         .hash(&bytes, length)
         .map_err(|error| errors::throw(context, Operation::Hash, error))?;
+    let roots = output
+        .into_iter()
+        .map(|byte| context.number(f64::from(byte)))
+        .collect::<Vec<_>>();
+    context.array_rooted(&roots)
+}
+
+pub(crate) fn mac_digest(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let key = args
+        .first()
+        .copied()
+        .ok_or_else(|| RootedError::host("crypto MAC key is missing"))?;
+    let input = args
+        .get(1)
+        .copied()
+        .ok_or_else(|| RootedError::host("crypto MAC input is missing"))?;
+    let cipher = args
+        .get(2)
+        .copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .unwrap_or_default();
+    let algorithm = args
+        .get(3)
+        .copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .unwrap_or_else(|| "cmac".to_string());
+    let key = byte_array(context, key)?;
+    let input = byte_array(context, input)?;
+    #[cfg(quench_openssl_provider)]
+    let output = match algorithm.as_str() {
+        "cmac" => super::crypto_secret_job_shared_vm::kmac_request::cmac(&key, &cipher, &input)
+            .map_err(|error| RootedError::host(format!("CMAC operation failed: {error}")))?,
+        "poly1305" => {
+            use openssl::pkey::{Id, PKey};
+            use openssl::sign::Signer;
+            let pkey = PKey::private_key_from_raw_bytes(&key, Id::POLY1305).map_err(|error| {
+                RootedError::host(format!("Poly1305 key initialization failed: {error}"))
+            })?;
+            let mut signer = Signer::new_without_digest(&pkey).map_err(|error| {
+                RootedError::host(format!("Poly1305 initialization failed: {error}"))
+            })?;
+            signer
+                .update(&input)
+                .map_err(|error| RootedError::host(format!("Poly1305 update failed: {error}")))?;
+            signer.sign_to_vec().map_err(|error| {
+                RootedError::host(format!("Poly1305 finalization failed: {error}"))
+            })?
+        }
+        _ => return Err(RootedError::host("unsupported crypto MAC algorithm")),
+    };
+    #[cfg(not(quench_openssl_provider))]
+    let output: Vec<u8> = {
+        let _ = (key, cipher, input, algorithm);
+        return Err(RootedError::host(
+            "CMAC is unavailable without OpenSSL provider",
+        ));
+    };
     let roots = output
         .into_iter()
         .map(|byte| context.number(f64::from(byte)))

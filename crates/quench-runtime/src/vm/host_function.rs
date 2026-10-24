@@ -142,7 +142,9 @@ impl<H: Host> Vm<H> {
         )?;
         self.set_builtin_function_name(function, name)?;
         if constructible {
-            let prototype = self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)));
+            let prototype = self
+                .heap
+                .alloc(Cell::Object(Self::empty_object(self.object_proto)));
             let constructor_atom = self.intern_atom("constructor");
             self.set_property_with_attributes(
                 prototype,
@@ -169,8 +171,10 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn host_function_constructible(&self, environment: Value) -> bool {
-        self.heap.environment_slot(environment, HostEnvironmentSlot::Constructible as usize)
-            .and_then(Value::as_bool) == Some(true)
+        self.heap
+            .environment_slot(environment, HostEnvironmentSlot::Constructible as usize)
+            .and_then(Value::as_bool)
+            == Some(true)
     }
 
     pub(crate) fn host_function_data(&self) -> Result<Value, JsError> {
@@ -190,7 +194,9 @@ impl<H: Host> Vm<H> {
         resource: Option<HostExecutionContext>,
         before: bool,
     ) -> Result<(), JsError> {
-        let Some(resource) = resource else { return Ok(()); };
+        let Some(resource) = resource else {
+            return Ok(());
+        };
         let mut context = NativeContext::new(self);
         H::promise_job_boundary(&mut context, resource, before)
             .map_err(|error| context.finish_error(error))
@@ -217,8 +223,12 @@ impl<H: Host> Vm<H> {
         let mut context = NativeContext::new(self);
         let callback = H::initialize_shadow_realm(&mut context, global)
             .map_err(|error| context.finish_error(error))?;
-        callback.map(|root| context.rooted_value(root)
-            .ok_or_else(|| JsError("Host realm formatter root expired".into())))
+        callback
+            .map(|root| {
+                context
+                    .rooted_value(root)
+                    .ok_or_else(|| JsError("Host realm formatter root expired".into()))
+            })
             .transpose()
     }
 

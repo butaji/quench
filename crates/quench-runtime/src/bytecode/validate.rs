@@ -881,7 +881,11 @@ impl ResidualProgram {
             }
         }
         for site in &self.field_sites {
-            if site.sources.iter().flatten().any(|(line, column)| *line == 0 || *column == 0)
+            if site
+                .sources
+                .iter()
+                .flatten()
+                .any(|(line, column)| *line == 0 || *column == 0)
                 || !field_base_in_bounds(site.base.0, REGISTER_MASK)
                 || !atom_in_bounds(site.first.0, self.atoms.len())
                 || !cache_in_bounds(site.first.1, self.cache_sites)
@@ -1018,8 +1022,8 @@ fn has_dynamic_scope_access(function: &super::Function) -> bool {
             .any(|instruction| {
                 instruction.op() == super::Op::ResolveName
                     || (instruction.op().is_call_with_eval_flags()
-                    && (super::ImmediateLayout::direct_eval(instruction.imm())
-                        || super::ImmediateLayout::parameter_eval(instruction.imm())))
+                        && (super::ImmediateLayout::direct_eval(instruction.imm())
+                            || super::ImmediateLayout::parameter_eval(instruction.imm())))
             })
 }
 

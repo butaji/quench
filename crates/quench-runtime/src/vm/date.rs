@@ -3,8 +3,10 @@ use super::*;
 mod legacy_parse;
 use crate::host::{CapabilityId, HostContext};
 use chrono::{
-    DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, Offset, TimeZone, Timelike, Utc,
+    DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, Offset, TimeZone,
+    Timelike, Utc,
 };
+use chrono_tz::OffsetName;
 
 const DATE_PROTOTYPE_METHODS: &[(&str, Native)] = &[
     ("toString", Native::DateToString),
@@ -617,13 +619,9 @@ fn date_getter(native: Native, milliseconds: f64) -> Option<f64> {
     if native == Native::DateGetTimezoneOffset {
         let offset = milliseconds
             .is_finite()
-            .then(|| {
-                Local
-                    .timestamp_millis_opt(milliseconds.trunc() as i64)
-                    .single()
-            })
+            .then(|| local_offset_at(milliseconds.trunc() as i64))
             .flatten()
-            .map(|date| -date.offset().local_minus_utc() / SECONDS_PER_MINUTE);
+            .map(|offset| -offset / SECONDS_PER_MINUTE);
         return Some(offset.map_or(f64::NAN, f64::from));
     }
     let utc = matches!(
@@ -726,15 +724,61 @@ pub(super) fn date_local(milliseconds: f64) -> Option<DateTime<FixedOffset>> {
         return None;
     }
     let timestamp = milliseconds.trunc() as i64;
-    let offset_seconds = Local
-        .timestamp_millis_opt(timestamp)
-        .single()
-        .map(|date| date.offset().fix().local_minus_utc())
-        .unwrap_or_else(|| Local::now().offset().fix().local_minus_utc());
+    let offset_seconds = local_offset_at(timestamp).unwrap_or_else(local_offset_now);
     let offset = FixedOffset::east_opt(date_offset_seconds(offset_seconds))?;
     Utc.timestamp_millis_opt(timestamp)
         .single()
         .map(|date| date.with_timezone(&offset))
+}
+
+fn local_timezone() -> Option<chrono_tz::Tz> {
+    std::env::var("TZ")
+        .ok()
+        .map(|zone| zone.strip_prefix(':').unwrap_or(&zone).to_owned())
+        .and_then(|zone| zone.parse().ok())
+}
+
+fn local_offset_at(timestamp: i64) -> Option<i32> {
+    if let Some(zone) = local_timezone() {
+        return zone
+            .timestamp_millis_opt(timestamp)
+            .single()
+            .map(|date| date.offset().fix().local_minus_utc());
+    }
+    Local
+        .timestamp_millis_opt(timestamp)
+        .single()
+        .map(|date| date.offset().fix().local_minus_utc())
+}
+
+fn local_offset_now() -> i32 {
+    local_timezone()
+        .and_then(|zone| {
+            zone.timestamp_millis_opt(Utc::now().timestamp_millis())
+                .single()
+        })
+        .map(|date| date.offset().fix().local_minus_utc())
+        .unwrap_or_else(|| Local::now().offset().fix().local_minus_utc())
+}
+
+fn local_timezone_abbreviation(milliseconds: f64) -> Option<String> {
+    let timestamp = milliseconds.trunc() as i64;
+    let zone = local_timezone()?;
+    let instant = Utc.timestamp_millis_opt(timestamp).single()?;
+    zone.offset_from_utc_datetime(&instant.naive_utc())
+        .abbreviation()
+        .map(str::to_owned)
+}
+
+fn resolve_local_date_time(date_time: NaiveDateTime) -> Option<DateTime<Utc>> {
+    if let Some(zone) = local_timezone() {
+        return super::local_time::resolve_local_datetime(
+            date_time,
+            &zone,
+            DATE_LOCAL_DISAMBIGUATION,
+        );
+    }
+    super::local_time::resolve_local_datetime(date_time, &Local, DATE_LOCAL_DISAMBIGUATION)
 }
 
 struct DateSetter {
@@ -900,7 +944,7 @@ fn make_date_milliseconds(components: [f64; DATE_COMPONENT_COUNT], utc: bool) ->
         + second * MILLISECONDS_PER_SECOND)
         + millisecond;
     let Some(date) = NaiveDate::from_ymd_opt(year, month, 1) else {
-        let offset = date_offset_seconds(Local::now().offset().fix().local_minus_utc());
+        let offset = date_offset_seconds(local_offset_now());
         return time_clip(
             day_ms + local_wall_time_ms - f64::from(offset) * MILLISECONDS_PER_SECOND,
         );
@@ -920,14 +964,12 @@ fn make_date_milliseconds(components: [f64; DATE_COMPONENT_COUNT], utc: bool) ->
         .and_then(|midnight| midnight.checked_add_signed(Duration::days(day_offset)))
         .and_then(|day| day.checked_add_signed(Duration::milliseconds(time_ms)))
     else {
-        let offset = date_offset_seconds(Local::now().offset().fix().local_minus_utc());
+        let offset = date_offset_seconds(local_offset_now());
         return time_clip(
             day_ms + local_wall_time_ms - f64::from(offset) * MILLISECONDS_PER_SECOND,
         );
     };
-    let Some(instant) =
-        super::local_time::resolve_local_datetime(date_time, &Local, DATE_LOCAL_DISAMBIGUATION)
-    else {
+    let Some(instant) = resolve_local_date_time(date_time) else {
         return f64::NAN;
     };
     let wall_milliseconds = date_time.and_utc().timestamp_millis();
@@ -1049,8 +1091,11 @@ pub(super) fn format_date_string(milliseconds: f64) -> String {
     };
     let offset = date.offset().fix().local_minus_utc() / SECONDS_PER_MINUTE;
     let offset_sign = if offset < 0 { '-' } else { '+' };
+    let time_zone_name = local_timezone_abbreviation(milliseconds)
+        .map(|name| format!(" ({name})"))
+        .unwrap_or_default();
     format!(
-        "{} {} {:0day_width$} {} {:0time_width$}:{:0time_width$}:{:0time_width$} GMT{}{:0offset_width$}{:0offset_width$}",
+        "{} {} {:0day_width$} {} {:0time_width$}:{:0time_width$}:{:0time_width$} GMT{}{:0offset_width$}{:0offset_width$}{}",
         DATE_WEEKDAYS[date.weekday().num_days_from_sunday() as usize],
         DATE_MONTHS[date.month0() as usize],
         date.day(),
@@ -1061,6 +1106,7 @@ pub(super) fn format_date_string(milliseconds: f64) -> String {
         offset_sign,
         offset.unsigned_abs() / DATE_MINUTES_PER_HOUR,
         offset.unsigned_abs() % DATE_MINUTES_PER_HOUR,
+        time_zone_name,
         day_width = DATE_DAY_FIELD_WIDTH,
         time_width = DATE_TIME_FIELD_WIDTH,
         offset_width = DATE_OFFSET_FIELD_WIDTH,

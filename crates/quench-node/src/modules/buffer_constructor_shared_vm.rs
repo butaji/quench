@@ -31,14 +31,21 @@ pub(crate) fn install(context: &mut Context<'_>, fast: RootId) -> Result<RootId,
     set(context, data, "warned", no)?;
     let zero = context.number(0.0);
     set(context, data, "checks", zero)?;
-    let pending = context.host_mut().shared_state().borrow().cli_options.enabled("--pending-deprecation");
+    let pending = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .cli_options
+        .enabled("--pending-deprecation");
     let pending = context.boolean(pending);
     set(context, data, "pending", pending)?;
     let global = context.global_root()?;
     let process = get(context, global, "process")?;
     set(context, data, "process", process)?;
-    let constructor = context
-        .host_constructor_with_data(crate::host::shared_vm::operation("bufferLegacyConstruct"), data)?;
+    let constructor = context.host_constructor_with_data(
+        crate::host::shared_vm::operation("bufferLegacyConstruct"),
+        data,
+    )?;
     name(context, constructor, "Buffer")?;
     let pool_size = context.number(super::buffer_pool_shared_vm::DEFAULT_POOL_SIZE as f64);
     set(context, constructor, "poolSize", pool_size)?;
@@ -61,8 +68,15 @@ pub(crate) fn install(context: &mut Context<'_>, fast: RootId) -> Result<RootId,
     set(context, prototype, "constructor", constructor)?;
     name(context, fast, "FastBuffer")?;
     let retained = context.retain(fast)?;
-    let previous = context.host_mut().shared_state().borrow_mut().builtin_cache.insert(FAST_BUFFER_CACHE.to_owned(), retained);
-    if let Some(previous) = previous { context.release_root(previous); }
+    let previous = context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .builtin_cache
+        .insert(FAST_BUFFER_CACHE.to_owned(), retained);
+    if let Some(previous) = previous {
+        context.release_root(previous);
+    }
     let is_buffer = context.host_constructor_with_data(
         crate::host::shared_vm::operation("bufferIsBuffer"),
         constructor,
@@ -70,9 +84,8 @@ pub(crate) fn install(context: &mut Context<'_>, fast: RootId) -> Result<RootId,
     name(context, is_buffer, "isBuffer")?;
     let key = context.string_rooted("isBuffer");
     context.define_data_property_rooted(constructor, key, is_buffer, true, true, true)?;
-    let of = context.host_function_with_data(
-        crate::host::shared_vm::operation("bufferOf"), fast,
-    )?;
+    let of =
+        context.host_function_with_data(crate::host::shared_vm::operation("bufferOf"), fast)?;
     name(context, of, "of")?;
     let key = context.string_rooted("of");
     context.define_data_property_rooted(constructor, key, of, true, true, true)?;
@@ -199,10 +212,19 @@ pub(crate) fn of(
 /// The canonical FastBuffer, loading the buffer module on first use.
 pub(crate) fn fast_buffer(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let shared = context.host_mut().shared_state();
-    if shared.borrow().builtin_cache.get(FAST_BUFFER_CACHE).is_none() {
+    if shared
+        .borrow()
+        .builtin_cache
+        .get(FAST_BUFFER_CACHE)
+        .is_none()
+    {
         crate::host::shared_vm::commonjs::buffer_module(context)?;
     }
-    let fast = shared.borrow().builtin_cache.get(FAST_BUFFER_CACHE).copied();
+    let fast = shared
+        .borrow()
+        .builtin_cache
+        .get(FAST_BUFFER_CACHE)
+        .copied();
     fast.ok_or_else(|| RootedError::host("canonical FastBuffer missing"))
 }
 

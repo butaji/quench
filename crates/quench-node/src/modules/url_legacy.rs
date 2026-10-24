@@ -5,6 +5,7 @@
 //! `url_whatwg`.
 
 use std::collections::BTreeMap;
+use unicode_normalization::UnicodeNormalization;
 
 pub(crate) const LEGACY_URL_FIELD_ORDER: &[&str] = &[
     "protocol", "slashes", "auth", "host", "port", "hostname", "hash", "search", "query",
@@ -202,6 +203,14 @@ fn normalize_legacy_host(
         }
     }
     if let Some(hostname) = parsed.get_mut("hostname") {
+        const FORBIDDEN: &str = "#%/:?@[\\]^|";
+        if hostname.contains('\u{00ad}')
+            || hostname
+                .nfkd()
+                .any(|character| FORBIDDEN.contains(character))
+        {
+            return Err(invalid_url_error("ERR_INVALID_URL", raw_url));
+        }
         *hostname = idna::domain_to_ascii(hostname)
             .map_err(|_| invalid_url_error("ERR_INVALID_URL", raw_url))?;
     }

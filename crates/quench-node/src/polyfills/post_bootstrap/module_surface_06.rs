@@ -2,7 +2,7 @@
 
 pub const JS: &str = quench_js_check::checked_js!(r##"{
   const validateURLPatternValue = (value, baseURL) => {
-    if (value != null && typeof value !== "string") {
+    if (value != null && typeof value !== "string" && typeof value !== "object") {
       const error = new TypeError("Invalid URLPattern input");
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -22,6 +22,14 @@ pub const JS: &str = quench_js_check::checked_js!(r##"{
   };
   const getURLPatternURL = (value, baseURL) => {
     validateURLPatternValue(value, baseURL);
+    if (value !== null && typeof value === "object") {
+      const protocol = value.protocol || "https:";
+      const host = value.hostname || value.host || "example.com";
+      const pathname = value.pathname || "/";
+      const search = value.search || "";
+      const hash = value.hash || "";
+      value = `${protocol}//${host}${pathname}${search}${hash}`;
+    }
     return new URL(value ?? "", baseURL ?? "https://example.com");
   };
   const getURLPatternGroups = (source, pathname) => {
@@ -34,7 +42,14 @@ pub const JS: &str = quench_js_check::checked_js!(r##"{
     return {
       hash: { input: url.hash },
       hostname: { input: url.hostname },
-      inputs: [value],
+      inputs: [value && typeof value === "object"
+        ? Object.fromEntries(
+            "hash hostname password pathname port protocol search username"
+              .split(" ")
+              .filter((key) => Object.hasOwn(value, key) && value[key] !== undefined)
+              .map((key) => [key, value[key]])
+          )
+        : value],
       password: { input: url.password },
       pathname: {
         groups: getURLPatternGroups(source, url.pathname),
@@ -102,9 +117,9 @@ pub const JS: &str = quench_js_check::checked_js!(r##"{
   const initializeURLPattern = (instance, options) => {
     const patternOptions =
       typeof options === "string" ? new URL(options) : options;
-    for (const property of "origin protocol username password hostname port pathname search hash".split(
-      " "
-    )) {
+    const order = "hash hostname password pathname port protocol search username".split(" ");
+    patternOptions?.baseURL;
+    for (const property of order) {
       setURLPatternProperty(instance, patternOptions, property);
     }
     instance._hasRegExpGroups = false;
@@ -429,6 +444,10 @@ pub const JS: &str = quench_js_check::checked_js!(r##"{
       optionsFlags?.ignoreCase;
     }
     installURLPatternProperties(URLPattern);
+    Object.defineProperty(URLPattern.prototype, Symbol.toStringTag, {
+      configurable: true,
+      value: "URLPattern"
+    });
     return URLPattern;
   };
   // URL descriptors are installed by the URL module once its constructor exists.

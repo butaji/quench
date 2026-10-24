@@ -9,7 +9,8 @@ use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime, 
 use std::{
     collections::HashMap,
     os::fd::{AsRawFd, FromRawFd},
-    os::unix::net::UnixStream,
+    os::unix::net::{UnixListener, UnixStream},
+    path::PathBuf,
 };
 type Context<'a> = NativeContext<'a, NodeHost>;
 #[derive(Default)]
@@ -23,6 +24,8 @@ struct Entry {
     owner: RootId,
     resource: Resource,
     pipe: Option<Pipe<WriteRequest>>,
+    bound_listener: Option<UnixListener>,
+    bound_path: Option<PathBuf>,
     referenced: bool,
     closing: bool,
 }
@@ -79,12 +82,17 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             crate::host::shared_vm::operation("nativePipeConstruct"),
             "Pipe",
         )?;
-        crate::host::shared_vm::commonjs::cached_native_binding(c,"\0native:PipeConstructor", |_|Ok(ctor))?;
+        crate::host::shared_vm::commonjs::cached_native_binding(
+            c,
+            "\0native:PipeConstructor",
+            |_| Ok(ctor),
+        )?;
         let p = get(c, ctor, "prototype")?;
         let parent = super::tcp_binding::libuv_prototype(c)?;
         c.set_prototype_rooted(p, parent)?;
         for (name, op) in [
             ("open", "nativePipeOpen"),
+            ("bind", "nativePipeBind"),
             ("readStart", "nativePipeReadStart"),
             ("readStop", "nativePipeReadStop"),
             ("writeUtf8String", "nativePipeWriteUtf8"),
@@ -149,6 +157,8 @@ pub(crate) fn construct(
                     provider: Provider::Pipe,
                 },
                 pipe: None,
+                bound_listener: None,
+                bound_path: None,
                 referenced: true,
                 closing: false,
             },
@@ -203,12 +213,48 @@ pub(crate) fn open(
     if super::fd_handle_type::guess(fd) != super::fd_handle_type::Kind::Pipe {
         return Ok(c.number(-f64::from(libc::EINVAL)));
     }
-    let socket=super::child_process_ipc_shared_vm::take_socket(c,fd)
-        .unwrap_or_else(||unsafe{UnixStream::from_raw_fd(fd)});
+    let socket = super::child_process_ipc_shared_vm::take_socket(c, fd)
+        .unwrap_or_else(|| unsafe { UnixStream::from_raw_fd(fd) });
     match adopt(c, receiver, socket) {
         Ok(()) => Ok(c.number(0.0)),
         Err(e) => Err(e),
     }
+}
+pub(crate) fn bind(
+    c: &mut Context<'_>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let endpoint = id(c, receiver)?;
+    let path_root = args.first().copied().unwrap_or_else(|| c.undefined());
+    let path = c
+        .string_text(path_root)?
+        .ok_or_else(|| RootedError::host("Pipe.bind path must be a string"))?;
+    let listener = match UnixListener::bind(&path) {
+        Ok(listener) => listener,
+        Err(error) => {
+            return Ok(c.number(-error.raw_os_error().unwrap_or(libc::EIO) as f64));
+        }
+    };
+    if let Err(error) = listener.set_nonblocking(true) {
+        let _ = std::fs::remove_file(&path);
+        return Ok(c.number(-error.raw_os_error().unwrap_or(libc::EIO) as f64));
+    }
+    let shared = c.host_mut().shared_state();
+    let mut state = shared.borrow_mut();
+    let Some(entry) = state.native_pipe.entries.get_mut(&endpoint) else {
+        drop(listener);
+        let _ = std::fs::remove_file(&path);
+        return Err(RootedError::host("Pipe owner closed"));
+    };
+    if entry.bound_listener.is_some() || entry.pipe.is_some() {
+        drop(listener);
+        let _ = std::fs::remove_file(&path);
+        return Ok(c.number(-libc::EBUSY as f64));
+    }
+    entry.bound_listener = Some(listener);
+    entry.bound_path = Some(PathBuf::from(path));
+    Ok(c.number(0.0))
 }
 fn change_read(c: &mut Context<'_>, receiver: RootId, start: bool) -> Result<RootId, RootedError> {
     let id = id(c, receiver)?;
@@ -306,9 +352,14 @@ pub(crate) fn fd(c: &mut Context<'_>, r: RootId, _: &[RootId]) -> Result<RootId,
         .native_pipe
         .entries
         .get(&id)
-        .and_then(|e| e.pipe.as_ref())
-        .and_then(Pipe::descriptor)
-        .map_or(-1, |fd| fd.as_raw_fd());
+        .and_then(|e| {
+            e.pipe
+                .as_ref()
+                .and_then(Pipe::descriptor)
+                .map(|fd| fd.as_raw_fd())
+                .or_else(|| e.bound_listener.as_ref().map(AsRawFd::as_raw_fd))
+        })
+        .unwrap_or(-1);
     Ok(c.number(fd as f64))
 }
 pub(crate) fn queue(c: &mut Context<'_>, r: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
@@ -352,16 +403,23 @@ fn write(
             .is_some_and(|v| v.is_null() || v.is_undefined())
     });
     let descriptor = match handle {
-        Some(handle) => Some(if super::udp_binding::identity(c,handle)?.is_some() {
-            super::udp_binding::duplicate_descriptor(c,handle)?
-        } else {super::tcp_binding::duplicate_descriptor(c,handle)?}),
+        Some(handle) => Some(if super::udp_binding::identity(c, handle)?.is_some() {
+            super::udp_binding::duplicate_descriptor(c, handle)?
+        } else {
+            super::tcp_binding::duplicate_descriptor(c, handle)?
+        }),
         None => None,
     };
     let shared = c.host_mut().shared_state();
     if descriptor.is_none() {
         let tried = {
             let state = shared.borrow();
-            match state.native_pipe.entries.get(&id).and_then(|e| e.pipe.as_ref()) {
+            match state
+                .native_pipe
+                .entries
+                .get(&id)
+                .and_then(|e| e.pipe.as_ref())
+            {
                 Some(pipe) => pipe.try_write(&bytes),
                 None => Err(std::io::Error::from_raw_os_error(libc::EPIPE)),
             }
@@ -371,7 +429,9 @@ fn write(
                 super::stream_binding::publish_write_result(c, size, false, 0)?;
                 return Ok(c.number(0.0));
             }
-            Ok(sent) => { bytes.drain(..sent); }
+            Ok(sent) => {
+                bytes.drain(..sent);
+            }
             Err(error) => {
                 let status = -error.raw_os_error().unwrap_or(libc::EIO);
                 super::stream_binding::publish_write_result(c, size, false, status)?;
@@ -379,22 +439,39 @@ fn write(
             }
         }
     }
-    let parent = shared.borrow().native_pipe.entries.get(&id)
-        .map(|e|e.resource).ok_or_else(||RootedError::host("Pipe owner closed"))?;
-    let lease = super::stream_binding::activate_request(c,request,
-        super::stream_binding::RequestKind::Write,parent)?;
+    let parent = shared
+        .borrow()
+        .native_pipe
+        .entries
+        .get(&id)
+        .map(|e| e.resource)
+        .ok_or_else(|| RootedError::host("Pipe owner closed"))?;
+    let lease = super::stream_binding::activate_request(
+        c,
+        request,
+        super::stream_binding::RequestKind::Write,
+        parent,
+    )?;
     let retained = c.retain(request)?;
-    let token = WriteRequest{root:retained,lease};
+    let token = WriteRequest {
+        root: retained,
+        lease,
+    };
     let result = {
         let mut state = shared.borrow_mut();
-        match state.native_pipe.entries.get_mut(&id).and_then(|e| e.pipe.as_mut()) {
+        match state
+            .native_pipe
+            .entries
+            .get_mut(&id)
+            .and_then(|e| e.pipe.as_mut())
+        {
             Some(pipe) => pipe.write(bytes, descriptor, token),
             None => Err((token, std::io::Error::from_raw_os_error(libc::EPIPE))),
         }
     };
     if let Err((token, error)) = result {
         c.release_root(token.root);
-        super::stream_binding::retire_unqueued_request(c,token.lease)?;
+        super::stream_binding::retire_unqueued_request(c, token.lease)?;
         let status = -error.raw_os_error().unwrap_or(libc::EIO);
         super::stream_binding::publish_write_result(c, size, false, status)?;
         return Ok(c.number(status as f64));
@@ -425,42 +502,74 @@ pub(crate) fn close(
     let id = id(c, r)?;
     let shared = c.host_mut().shared_state();
     let entry = {
-        let mut state=shared.borrow_mut();
-        let Some(entry)=state.native_pipe.entries.get_mut(&id) else{return Ok(c.undefined())};
-        if entry.closing { return Ok(c.undefined()); }
-        entry.closing=true;
-        (entry.owner,entry.pipe.take())
+        let mut state = shared.borrow_mut();
+        let Some(entry) = state.native_pipe.entries.get_mut(&id) else {
+            return Ok(c.undefined());
+        };
+        if entry.closing {
+            return Ok(c.undefined());
+        }
+        entry.closing = true;
+        (
+            entry.owner,
+            entry.pipe.take(),
+            entry.bound_listener.take(),
+            entry.bound_path.take(),
+        )
     };
-    let (owner,pipe)=entry;
-    if let Some(mut pipe)=pipe {
+    let (owner, pipe, listener, path) = entry;
+    if let Some(mut pipe) = pipe {
         for completion in pipe.close() {
-            queue_write_context(c,owner,completion.request,-libc::ECANCELED)?;
+            queue_write_context(c, owner, completion.request, -libc::ECANCELED)?;
         }
     }
-    let key=super::net_reference_shared_vm::onclose_symbol(c)?;
-    if let Some(callback)=args.first() {
-        if c.is_callable_rooted(*callback)? {c.set_property_rooted(owner,key,*callback,owner)?;}
+    drop(listener);
+    if let Some(path) = path {
+        let _ = std::fs::remove_file(path);
     }
-    let callback=c.undefined();
-    let invocation=super::shared_event_loop::SharedCallback {
-        execution:Some(super::shared_event_loop::CallbackExecution {
-            lifetime:super::shared_event_loop::CallbackLifetime::Operation,
-            optional_callback:Some(c.retain(key)?),id,resource:c.retain(owner)?,
-        }),callback:c.retain(callback)?,receiver:c.retain(owner)?,args:Vec::new(),
+    let key = super::net_reference_shared_vm::onclose_symbol(c)?;
+    if let Some(callback) = args.first() {
+        if c.is_callable_rooted(*callback)? {
+            c.set_property_rooted(owner, key, *callback, owner)?;
+        }
+    }
+    let callback = c.undefined();
+    let invocation = super::shared_event_loop::SharedCallback {
+        execution: Some(super::shared_event_loop::CallbackExecution {
+            lifetime: super::shared_event_loop::CallbackLifetime::Operation,
+            optional_callback: Some(c.retain(key)?),
+            id,
+            resource: c.retain(owner)?,
+        }),
+        callback: c.retain(callback)?,
+        receiver: c.retain(owner)?,
+        args: Vec::new(),
     };
-    shared.borrow_mut().scheduler.queue_shared_next_tick(invocation);
+    shared
+        .borrow_mut()
+        .scheduler
+        .queue_shared_next_tick(invocation);
     Ok(c.undefined())
 }
 /// The shared Operation tail owns native identity through callback and after hooks.
-pub(crate) fn detach(runtime:&mut Runtime<NodeHost>,id:u64){
-    let shared=runtime.host_mut().shared_state();
-    let entry={
-        let mut state=shared.borrow_mut();
-        if state.native_pipe.entries.get(&id).is_some_and(|e|e.closing){
+pub(crate) fn detach(runtime: &mut Runtime<NodeHost>, id: u64) {
+    let shared = runtime.host_mut().shared_state();
+    let entry = {
+        let mut state = shared.borrow_mut();
+        if state
+            .native_pipe
+            .entries
+            .get(&id)
+            .is_some_and(|e| e.closing)
+        {
             state.native_pipe.entries.remove(&id)
-        }else{None}
+        } else {
+            None
+        }
     };
-    if let Some(entry)=entry {runtime.release_root(entry.owner);}
+    if let Some(entry) = entry {
+        runtime.release_root(entry.owner);
+    }
 }
 fn queue_write_context(
     c: &mut Context<'_>,
@@ -470,16 +579,26 @@ fn queue_write_context(
 ) -> Result<(), RootedError> {
     let status = c.number(status as f64);
     let callback = c.host_function(crate::host::shared_vm::operation("nativePipeWriteComplete"))?;
-    let resource = request.lease.resource().ok_or_else(||RootedError::host("queued Pipe request detached"))?;
+    let resource = request
+        .lease
+        .resource()
+        .ok_or_else(|| RootedError::host("queued Pipe request detached"))?;
     let callback = super::shared_event_loop::SharedCallback {
         execution: Some(super::shared_event_loop::CallbackExecution {
             lifetime: super::shared_event_loop::CallbackLifetime::Operation,
-            optional_callback:None,id:resource.id,resource:c.retain(request.root)?,
+            optional_callback: None,
+            id: resource.id,
+            resource: c.retain(request.root)?,
         }),
-        callback:c.retain(callback)?,receiver:c.retain(handle)?,
-        args:vec![request.root,c.retain(status)?],
+        callback: c.retain(callback)?,
+        receiver: c.retain(handle)?,
+        args: vec![request.root, c.retain(status)?],
     };
-    c.host_mut().shared_state().borrow_mut().scheduler.queue_shared_next_tick(callback);
+    c.host_mut()
+        .shared_state()
+        .borrow_mut()
+        .scheduler
+        .queue_shared_next_tick(callback);
     Ok(())
 }
 
@@ -497,11 +616,11 @@ pub(crate) fn write_complete(
     Ok(c.undefined())
 }
 pub(crate) fn has_work(state: &SharedNodeState) -> bool {
-    state.native_pipe.entries.values().any(|e| {
-        e.pipe
-            .as_ref()
-            .is_some_and(|p| p.has_work())
-    })
+    state
+        .native_pipe
+        .entries
+        .values()
+        .any(|e| e.pipe.as_ref().is_some_and(|p| p.has_work()))
 }
 pub(crate) fn is_closed(state: &SharedNodeState, id: u64) -> bool {
     !state.native_pipe.entries.contains_key(&id)
@@ -551,9 +670,18 @@ pub(crate) fn poll(
                 .map_or(0, |e| -e.raw_os_error().unwrap_or(libc::EIO));
             let status = runtime.root(Value::number(status as f64));
             let request = completion.request;
-            let resource = request.lease.resource().ok_or("queued Pipe request detached")?;
-            queue_runtime(runtime,program,"nativePipeWriteComplete",handle,
-                &[request.root,status],Some((resource.id,request.root)))?;
+            let resource = request
+                .lease
+                .resource()
+                .ok_or("queued Pipe request detached")?;
+            queue_runtime(
+                runtime,
+                program,
+                "nativePipeWriteComplete",
+                handle,
+                &[request.root, status],
+                Some((resource.id, request.root)),
+            )?;
             runtime.release_root(status);
             runtime.release_root(request.root);
         }
@@ -579,37 +707,73 @@ pub(crate) fn poll(
 }
 /// Native read callbacks enter their real HandleWrap context. Each kernel read
 /// returns control before a subsequent recvmsg so guest readStop/close is authoritative.
-fn deliver_read_runtime(runtime:&mut Runtime<NodeHost>,program:&quench_runtime::ResidualProgram,
-    handle:RootId,token:RootId)->Result<(),String>{
-    let shared=runtime.host_mut().shared_state();
-    let resource=shared.borrow().native_pipe.entries.values()
-        .find(|e|e.owner==handle && !e.closing).map(|e|e.resource);
-    let Some(resource)=resource else{return Ok(())};
-    let prepare=runtime.host_function(crate::host::shared_vm::operation("nativePipePrepareRead"))
-        .map_err(|e|runtime.format_error(program,&e.error))?;
-    let prepared=runtime.call_rooted(prepare,handle,&[token]);
+fn deliver_read_runtime(
+    runtime: &mut Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    handle: RootId,
+    token: RootId,
+) -> Result<(), String> {
+    let shared = runtime.host_mut().shared_state();
+    let resource = shared
+        .borrow()
+        .native_pipe
+        .entries
+        .values()
+        .find(|e| e.owner == handle && !e.closing)
+        .map(|e| e.resource);
+    let Some(resource) = resource else {
+        return Ok(());
+    };
+    let prepare = runtime
+        .host_function(crate::host::shared_vm::operation("nativePipePrepareRead"))
+        .map_err(|e| runtime.format_error(program, &e.error))?;
+    let prepared = runtime.call_rooted(prepare, handle, &[token]);
     runtime.release_root(prepare);
     match prepared {
-        Ok(value)=>{runtime.release_root(value);},
-        Err(error)=>return super::process_shared_vm::route_callback_failure(runtime,program,error),
+        Ok(value) => {
+            runtime.release_root(value);
+        }
+        Err(error) => {
+            return super::process_shared_vm::route_callback_failure(runtime, program, error);
+        }
     }
-    if !shared.borrow().native_pipe.entries.values().any(|e|e.owner==handle&&!e.closing) {
-        if let Some(token)=runtime.rooted_value(token).and_then(Value::as_number) {
-            shared.borrow_mut().native_pipe.reads.remove(&(token as u64));
+    if !shared
+        .borrow()
+        .native_pipe
+        .entries
+        .values()
+        .any(|e| e.owner == handle && !e.closing)
+    {
+        if let Some(token) = runtime.rooted_value(token).and_then(Value::as_number) {
+            shared
+                .borrow_mut()
+                .native_pipe
+                .reads
+                .remove(&(token as u64));
         }
         return Ok(());
     }
-    let callback=runtime.host_function(crate::host::shared_vm::operation("nativePipeReadComplete"))
-        .map_err(|e|runtime.format_error(program,&e.error))?;
-    let owner_value=runtime.rooted_value(handle).ok_or("Pipe read owner missing")?;
-    let token_value=runtime.rooted_value(token).ok_or("Pipe read token missing")?;
-    let invocation=super::shared_event_loop::SharedCallback {
-        execution:Some(super::shared_event_loop::CallbackExecution {
-            lifetime:super::shared_event_loop::CallbackLifetime::Resource,
-            optional_callback:None,id:resource.id,resource:runtime.root(owner_value),
-        }),callback,receiver:runtime.root(owner_value),args:vec![runtime.root(token_value)],
+    let callback = runtime
+        .host_function(crate::host::shared_vm::operation("nativePipeReadComplete"))
+        .map_err(|e| runtime.format_error(program, &e.error))?;
+    let owner_value = runtime
+        .rooted_value(handle)
+        .ok_or("Pipe read owner missing")?;
+    let token_value = runtime
+        .rooted_value(token)
+        .ok_or("Pipe read token missing")?;
+    let invocation = super::shared_event_loop::SharedCallback {
+        execution: Some(super::shared_event_loop::CallbackExecution {
+            lifetime: super::shared_event_loop::CallbackLifetime::Resource,
+            optional_callback: None,
+            id: resource.id,
+            resource: runtime.root(owner_value),
+        }),
+        callback,
+        receiver: runtime.root(owner_value),
+        args: vec![runtime.root(token_value)],
     };
-    super::process_shared_vm::invoke_async_callback(runtime,program,invocation)
+    super::process_shared_vm::invoke_async_callback(runtime, program, invocation)
 }
 fn queue_runtime(
     runtime: &mut Runtime<NodeHost>,
@@ -617,7 +781,7 @@ fn queue_runtime(
     op: &str,
     handle: RootId,
     args: &[RootId],
-    execution: Option<(u64,RootId)>,
+    execution: Option<(u64, RootId)>,
 ) -> Result<(), String> {
     let callback = runtime
         .host_function(crate::host::shared_vm::operation(op))
@@ -637,10 +801,18 @@ fn queue_runtime(
             ),
         );
     }
-    let execution = execution.map(|(id,resource)| super::shared_event_loop::CallbackExecution {
-        lifetime:super::shared_event_loop::CallbackLifetime::Operation,
-        optional_callback:None,id,resource:runtime.root(runtime.rooted_value(resource).expect("request owns resource")),
-    });
+    let execution = execution.map(
+        |(id, resource)| super::shared_event_loop::CallbackExecution {
+            lifetime: super::shared_event_loop::CallbackLifetime::Operation,
+            optional_callback: None,
+            id,
+            resource: runtime.root(
+                runtime
+                    .rooted_value(resource)
+                    .expect("request owns resource"),
+            ),
+        },
+    );
     runtime
         .host_mut()
         .shared_state()
@@ -656,26 +828,43 @@ fn queue_runtime(
 }
 /// Accept received native handles before MakeCallback, preserving outer execution
 /// and ALS while setting only the parent Pipe trigger for UDP initialization.
-pub(crate) fn prepare_read(c:&mut Context<'_>,handle:RootId,args:&[RootId])->Result<RootId,RootedError>{
-    let id=id(c,handle)?;
-    let shared=c.host_mut().shared_state();
-    let token=args.first().copied().unwrap_or_else(||c.undefined());
-    let descriptor=if let Some(token)=c.rooted_value(token).and_then(Value::as_number) {
-        shared.borrow_mut().native_pipe.reads.get_mut(&(token as u64))
-            .and_then(|chunk|chunk.descriptor.take())
-    }else{None};
-    if let Some(descriptor)=descriptor {
-        if !shared.borrow().native_pipe.entries.get(&id).is_some_and(|e|!e.closing) {
+pub(crate) fn prepare_read(
+    c: &mut Context<'_>,
+    handle: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = id(c, handle)?;
+    let shared = c.host_mut().shared_state();
+    let token = args.first().copied().unwrap_or_else(|| c.undefined());
+    let descriptor = if let Some(token) = c.rooted_value(token).and_then(Value::as_number) {
+        shared
+            .borrow_mut()
+            .native_pipe
+            .reads
+            .get_mut(&(token as u64))
+            .and_then(|chunk| chunk.descriptor.take())
+    } else {
+        None
+    };
+    if let Some(descriptor) = descriptor {
+        if !shared
+            .borrow()
+            .native_pipe
+            .entries
+            .get(&id)
+            .is_some_and(|e| !e.closing)
+        {
             return Ok(c.undefined());
         }
-        let _trigger=super::async_hooks_shared_vm::enter_default_trigger(&shared,id as f64);
-        let kind=super::unix_rights::socket_type(&descriptor).map_err(|error|RootedError::host(error.to_string()))?;
-        let native=match kind {
-            libc::SOCK_DGRAM=>super::udp_binding::from_owned_descriptor(c,descriptor)?,
-            libc::SOCK_STREAM=>super::tcp_binding::from_owned_descriptor(c,descriptor)?,
-            _=>return Err(RootedError::host("Unsupported received socket type")),
+        let _trigger = super::async_hooks_shared_vm::enter_default_trigger(&shared, id as f64);
+        let kind = super::unix_rights::socket_type(&descriptor)
+            .map_err(|error| RootedError::host(error.to_string()))?;
+        let native = match kind {
+            libc::SOCK_DGRAM => super::udp_binding::from_owned_descriptor(c, descriptor)?,
+            libc::SOCK_STREAM => super::tcp_binding::from_owned_descriptor(c, descriptor)?,
+            _ => return Err(RootedError::host("Unsupported received socket type")),
         };
-        put(c,handle,"pendingHandle",native)?;
+        put(c, handle, "pendingHandle", native)?;
     }
     Ok(c.undefined())
 }
@@ -696,12 +885,20 @@ pub(crate) fn read_complete(
     } else {
         None
     };
-    if !shared.borrow().native_pipe.entries.get(&id).is_some_and(|entry|!entry.closing) {
+    if !shared
+        .borrow()
+        .native_pipe
+        .entries
+        .get(&id)
+        .is_some_and(|entry| !entry.closing)
+    {
         return Ok(c.undefined());
     }
     if let Some(read) = read {
         if read.descriptor.is_some() {
-            return Err(RootedError::host("native Pipe read handle was not prepared"));
+            return Err(RootedError::host(
+                "native Pipe read handle was not prepared",
+            ));
         }
         let count = read.bytes.len() as i32;
         let buffer = super::stream_binding::intrinsic_array_buffer(c, &read.bytes)?;
@@ -727,13 +924,21 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
                 runtime.release_root(completion.request.root);
             }
         }
+        drop(entry.bound_listener);
+        if let Some(path) = entry.bound_path {
+            let _ = std::fs::remove_file(path);
+        }
         runtime.release_root(entry.owner);
         super::async_hooks_shared_vm::clear_context(runtime, &shared, entry.resource.id);
     }
     // state.reads drops every not-yet-materialized received OwnedFd.
 }
 
-pub(crate) fn constructor(c:&mut Context<'_>)->Result<RootId,RootedError>{
- binding(c)?;
- crate::host::shared_vm::commonjs::cached_native_binding(c,"\0native:PipeConstructor", |_|Err(RootedError::host("native Pipe constructor authority missing")))
+pub(crate) fn constructor(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    binding(c)?;
+    crate::host::shared_vm::commonjs::cached_native_binding(c, "\0native:PipeConstructor", |_| {
+        Err(RootedError::host(
+            "native Pipe constructor authority missing",
+        ))
+    })
 }

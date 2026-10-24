@@ -56,4 +56,5 @@ impl ExecutionInterrupt {
 }
 
 #[cfg(test)]
-#[path="execution_interrupt_tests.rs"] mod tests;
+#[path = "execution_interrupt_tests.rs"]
+mod tests;

@@ -51,12 +51,28 @@ fn create_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
                 c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
             put(c, module, name, function)?;
         }
-        for (name,operation) in [("cwd","processCwd"),("umask","workerRawUmask")] {
-            let function=c.host_function_named(crate::host::shared_vm::operation(operation),name)?;
-            put(c,module,name,function)?;
+        let patch_process_object = c.host_function_named(
+            crate::host::shared_vm::operation("processMetricsPatchProcessObject"),
+            "patchProcessObject",
+        )?;
+        put(c, module, "patchProcessObject", patch_process_object)?;
+        for (name, operation) in [("cwd", "processCwd"), ("umask", "workerRawUmask")] {
+            let function =
+                c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+            put(c, module, name, function)?;
         }
         Ok(module)
     })
+}
+pub(crate) fn patch_process_object(
+    context: &mut Context<'_>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    // The shared host has already installed process.argv and process.execArgv.
+    // Node's native method refreshes those fields and installs native process
+    // title accessors; its JS caller performs the CLI path normalization.
+    Ok(context.undefined())
 }
 fn write_values(c: &mut Context<'_>, target: RootId, values: &[f64]) -> Result<(), RootedError> {
     for (index, value) in values.iter().enumerate() {

@@ -39,8 +39,8 @@ pub struct NodeHost {
     /// Node's default argument slice uses the normalized, nonempty eval source.
     pub(crate) eval_source_nonempty: bool,
     pub(crate) initial_node_debug: Option<String>,
-    pub(crate) net_pending_writes: Vec<(u64, Vec<u8>)>,
-    pub(crate) net_pending_ends: Vec<u64>,
+    pub(crate) net_pending_writes: Vec<(u64, Vec<u8>, bool)>,
+    pub(crate) net_pending_ends: Vec<(u64, bool)>,
     pub(crate) net_pending_destroys: Vec<(u64, bool)>,
 }
 
@@ -81,12 +81,14 @@ pub(crate) struct SharedNodeState {
     pub(crate) buffer_prototype: Option<quench_runtime::RootId>,
     pub(crate) module_parent_api: Option<quench_runtime::RootId>,
     pub(crate) active_esm_requires: std::collections::HashMap<String, quench_runtime::RootId>,
+    pub(crate) module_require_trace_active: bool,
     pub(crate) builtin_cache: std::collections::HashMap<String, quench_runtime::RootId>,
     pub(crate) commonjs_cache: Option<CommonJsCache>,
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
     pub(crate) realm_module_programs: std::collections::HashMap<
-        std::path::PathBuf, crate::host::shared_vm::commonjs::PreparedRealmModule,
+        std::path::PathBuf,
+        crate::host::shared_vm::commonjs::PreparedRealmModule,
     >,
     pub(crate) crypto_handle_symbol: Option<quench_runtime::RootId>,
     pub(crate) event_targets_api: Option<quench_runtime::RootId>,
@@ -109,6 +111,9 @@ pub(crate) struct SharedNodeState {
     pub(crate) zlib_native: crate::modules::zlib_native_shared_vm::State,
     pub(crate) unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode,
     pub(crate) output: Option<NodeOutputSink>,
+    /// Optional stdout-only sink. Worker stdio pipes use this to keep stdout
+    /// separate from diagnostic and stderr output.
+    pub(crate) stdout_output: Option<NodeOutputSink>,
     pub(crate) net_auto_select_family_attempt_timeout: u64,
     pub(crate) net_auto_select_family: bool,
     pub(crate) process_module: Option<quench_runtime::RootId>,
@@ -123,6 +128,10 @@ pub(crate) struct SharedNodeState {
     pub(crate) exec_argv: Vec<String>,
     pub(crate) cli_options: crate::modules::cli_options::CliOptions,
     pub(crate) report_config: crate::modules::report_configuration_shared_vm::State,
+    /// Per-worker process.env snapshot, when Worker({ env }) supplied one.
+    pub(crate) process_env_override: Option<std::collections::HashMap<String, String>>,
+    /// Whether this isolate participates in worker_threads.SHARE_ENV.
+    pub(crate) process_env_shared: bool,
     initial_node_options: Option<String>,
     initial_pending_deprecation: bool,
     pub(crate) fetch: crate::modules::fetch_shared_vm::FetchState,
@@ -185,19 +194,29 @@ pub(crate) struct SharedChildProcess {
     pub(crate) stderr_pipe: crate::modules::child_process_output_shared_vm::Output,
     pub(crate) stdin_stream: Option<quench_runtime::RootId>,
     pub(crate) stdin: crate::modules::child_process_input_shared_vm::Input,
+    #[cfg(unix)]
+    pub(crate) extra_inputs: Vec<(usize, crate::modules::child_process_input_shared_vm::Input)>,
+    #[cfg(unix)]
+    pub(crate) extra_outputs: Vec<(
+        usize,
+        crate::modules::child_process_output_shared_vm::Output,
+    )>,
     pub(crate) ipc: Option<crate::modules::child_process_ipc_shared_vm::IpcChannel>,
     pub(crate) ipc_pipe: Option<u64>,
     pub(crate) events: std::sync::mpsc::Receiver<ChildProcessEvent>,
     pub(crate) stdout_terminal: bool,
     pub(crate) stderr_terminal: bool,
     pub(crate) exit: Option<(Option<i32>, Option<String>)>,
+    pub(crate) exit_event_dispatched: bool,
 }
 
 pub(crate) enum ChildProcessEvent {
     Stdout(Vec<u8>),
     Stderr(Vec<u8>),
+    ExtraStdout(usize, Vec<u8>),
     StdoutEnd,
     StderrEnd,
+    ExtraStdoutEnd(usize),
     Exit(Option<i32>, Option<String>),
 }
 
@@ -210,6 +229,7 @@ impl SharedNodeState {
         self.commonjs_cache = None;
         self.module_parent_api = None;
         self.active_esm_requires.clear();
+        self.module_require_trace_active = false;
         self.buffer_prototype = None;
         self.workers.reset_vm_roots();
         self.primordials_module = None;
@@ -238,7 +258,9 @@ impl SharedNodeState {
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
         self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
         #[cfg(quench_icu)]
-        { self.icu_converters = crate::modules::icu_binding_shared_vm::State::default(); }
+        {
+            self.icu_converters = crate::modules::icu_binding_shared_vm::State::default();
+        }
         self.fs_stats = crate::modules::fs_shared_vm::stat::types::State::default();
         self.fs_policy = crate::modules::fs_policy_shared_vm::State::default();
         self.fs_stat_watch = crate::modules::fs_stat_watch_shared_vm::State::default();
@@ -277,6 +299,7 @@ impl SharedNodeState {
             commonjs_cache: None,
             module_parent_api: None,
             active_esm_requires: std::collections::HashMap::new(),
+            module_require_trace_active: false,
             primordials_module: None,
             realm_module_programs: std::collections::HashMap::new(),
             crypto_handle_symbol: None,
@@ -299,6 +322,7 @@ impl SharedNodeState {
             zlib_native: crate::modules::zlib_native_shared_vm::State::default(),
             unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode::Throw,
             output: None,
+            stdout_output: None,
             net_auto_select_family: crate::modules::net_config::DEFAULT_AUTO_SELECT_FAMILY,
             net_auto_select_family_attempt_timeout:
                 crate::modules::net_config::DEFAULT_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT,
@@ -313,8 +337,11 @@ impl SharedNodeState {
             exec_argv: Vec::new(),
             cli_options: Default::default(),
             report_config: Default::default(),
+            process_env_override: None,
+            process_env_shared: false,
             initial_node_options: std::env::var("NODE_OPTIONS").ok(),
-            initial_pending_deprecation: std::env::var("NODE_PENDING_DEPRECATION").as_deref() == Ok("1"),
+            initial_pending_deprecation: std::env::var("NODE_PENDING_DEPRECATION").as_deref()
+                == Ok("1"),
             fetch: crate::modules::fetch_shared_vm::FetchState::new(),
             diagnostics:
                 crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState::default(),
@@ -386,7 +413,8 @@ impl NodeHost {
             inline_source: InlineSource::default(),
             eval_builtin_globals: false,
             eval_source_nonempty: false,
-            initial_node_debug: std::env::var_os("NODE_DEBUG").map(|value| value.to_string_lossy().into_owned()),
+            initial_node_debug: std::env::var_os("NODE_DEBUG")
+                .map(|value| value.to_string_lossy().into_owned()),
             net_pending_writes: Vec::new(),
             net_pending_ends: Vec::new(),
             net_pending_destroys: Vec::new(),
@@ -400,7 +428,10 @@ impl NodeHost {
 
     /// The last VFS CLI switch owns feature availability for this logical process.
     pub(crate) fn vfs_enabled(&self) -> bool {
-        self.shared_state.borrow().cli_options.enabled("--experimental-vfs")
+        self.shared_state
+            .borrow()
+            .cli_options
+            .enabled("--experimental-vfs")
     }
 
     /// Execute a file through the CommonJS loader during shared-VM initialization.
@@ -427,8 +458,14 @@ impl NodeHost {
             );
         let net_family = crate::modules::net_config::auto_select_family_from_exec_argv(&exec_argv);
         let mut shared = self.shared_state.borrow_mut();
-        shared.cli_options=crate::modules::cli_options::CliOptions::parse(shared.initial_node_options.as_deref(),&exec_argv,shared.initial_pending_deprecation)?;
-        shared.report_config=crate::modules::report_configuration_shared_vm::State::from_options(&shared.cli_options);
+        shared.cli_options = crate::modules::cli_options::CliOptions::parse(
+            shared.initial_node_options.as_deref(),
+            &exec_argv,
+            shared.initial_pending_deprecation,
+        )?;
+        shared.report_config = crate::modules::report_configuration_shared_vm::State::from_options(
+            &shared.cli_options,
+        );
         shared.trace.configure(&exec_argv);
         shared.exec_argv = exec_argv;
         shared.unhandled_rejection_mode = mode;
@@ -444,6 +481,16 @@ impl NodeHost {
 
     pub fn with_output_sink(self, sink: NodeOutputSink) -> Self {
         self.shared_state.borrow_mut().output = Some(sink);
+        self
+    }
+
+    pub fn with_stdout_sink(self, sink: NodeOutputSink) -> Self {
+        self.shared_state.borrow_mut().stdout_output = Some(sink);
+        self
+    }
+
+    pub fn with_initial_node_options(self, options: Option<String>) -> Self {
+        self.shared_state.borrow_mut().initial_node_options = options;
         self
     }
 

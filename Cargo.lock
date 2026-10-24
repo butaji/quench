@@ -1567,6 +1567,7 @@ dependencies = [
  "sha1",
  "socket2",
  "sysinfo",
+ "unicode-normalization",
  "url",
  "zlib-rs",
  "zstd",

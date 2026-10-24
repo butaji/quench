@@ -25,15 +25,25 @@ struct FetchRequest {
     method: String,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
+    started_at: std::time::Instant,
+    started_at_ms: f64,
+}
+
+#[derive(Clone, Copy, Default)]
+struct FetchTiming {
+    start_time: f64,
+    response_headers_time: f64,
+    end_time: f64,
+    body_size: usize,
 }
 
 struct FetchResponse {
-    url: String,
-    redirected: bool,
+    requested_url: String,
     status: u16,
     status_text: String,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
+    timing: FetchTiming,
 }
 
 struct FetchCompletion {
@@ -88,6 +98,23 @@ pub(crate) fn fetch(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let request = request_from_args(context, args)?;
+    // The shared native fetch entry is installed after the bootstrap JS
+    // wrappers, so blob: URLs must be handled here rather than by the
+    // bootstrap fetch polyfill. Resolve the URL through buffer's private
+    // object-URL registry and let the pinned Response implementation consume
+    // the Blob as usual.
+    if request.url.starts_with("blob:") {
+        return fetch_blob_url(context, &request.url);
+    }
+    let process_control = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .clone();
+    let mut request = request;
+    request.started_at = std::time::Instant::now();
+    request.started_at_ms = process_control.uptime() * 1_000.0;
     let id = context
         .host_mut()
         .shared_state()
@@ -113,6 +140,30 @@ pub(crate) fn fetch(
             Err(error)
         }
     }
+}
+
+fn fetch_blob_url(
+    context: &mut NativeContext<'_, NodeHost>,
+    url: &str,
+) -> Result<RootId, RootedError> {
+    let buffer = crate::host::shared_vm::commonjs::buffer_module(context)?;
+    let resolver_key = context.string_rooted("resolveObjectURL");
+    let resolver = context.get_property_rooted(buffer, resolver_key)?;
+    let this = buffer;
+    let url = context.string_rooted(url);
+    let blob = context.call_rooted(resolver, this, &[url])?;
+    let make_response = context.evaluate_script_rooted(
+        r#"(blob) => {
+          if (blob === undefined) return Promise.reject(new TypeError("Invalid blob URL"));
+          return Promise.resolve(new Response(blob, {
+            status: 200,
+            headers: blob.type ? { "content-type": blob.type } : {},
+          }));
+        }"#,
+        "node:internal/fetch/blob-url.js",
+    )?;
+    let undefined = context.undefined();
+    context.call_rooted(make_response, undefined, &[blob])
 }
 
 fn request_from_args(
@@ -162,9 +213,15 @@ fn request_from_args(
         .filter(|root| {
             context
                 .rooted_value(*root)
-                .is_some_and(|value| !value.is_undefined())
+                .is_some_and(|value| !value.is_undefined() && !value.is_null())
         })
-        .or(request_headers);
+        .or_else(|| {
+            request_headers.filter(|root| {
+                context
+                    .rooted_value(*root)
+                    .is_some_and(|value| !value.is_undefined() && !value.is_null())
+            })
+        });
     let headers = headers_root
         .map(|root| headers_from_object(context, root))
         .transpose()?
@@ -203,6 +260,8 @@ fn request_from_args(
         method,
         headers,
         body,
+        started_at: std::time::Instant::now(),
+        started_at_ms: 0.0,
     })
 }
 
@@ -409,28 +468,88 @@ fn response_object(
     response: FetchResponse,
 ) -> Result<RootId, RootedError> {
     let body = String::from_utf8_lossy(&response.body).into_owned();
-    let object = context.object_rooted()?;
-    set_number(context, object, "status", response.status as f64)?;
-    set_text(context, object, "statusText", &response.status_text)?;
-    set_text(context, object, "url", &response.url)?;
-    set_bool(context, object, "ok", (200..300).contains(&response.status))?;
-    set_bool(context, object, "redirected", response.redirected)?;
-    set_bool(context, object, "bodyUsed", false)?;
-    let null = context.null();
-    set(context, object, "body", null)?;
-
     let headers = context.object_rooted()?;
-    for (name, value) in response.headers {
+    for (name, value) in response.headers.iter().cloned() {
         set_text(context, headers, &name, &value)?;
     }
-    install_method(context, headers, "get", "fetchHeaderGet")?;
-    install_method(context, headers, "has", "fetchHeaderHas")?;
-    set(context, object, "headers", headers)?;
-
+    let init = context.object_rooted()?;
+    set_number(context, init, "status", response.status as f64)?;
+    set_text(context, init, "statusText", &response.status_text)?;
+    set(context, init, "headers", headers)?;
     let body = context.string_rooted(&body);
-    install_data_method(context, object, "text", "fetchResponseText", body)?;
-    install_data_method(context, object, "json", "fetchResponseJson", body)?;
+    let global = context.global_root()?;
+    let response_key = context.string_rooted("Response");
+    let response_constructor = context.get_property_rooted(global, response_key)?;
+    let object =
+        context.construct_rooted(response_constructor, response_constructor, &[body, init])?;
+    record_resource_timing(context, &response)?;
     Ok(object)
+}
+
+fn record_resource_timing(
+    context: &mut NativeContext<'_, NodeHost>,
+    response: &FetchResponse,
+) -> Result<(), RootedError> {
+    let timing = context.object_rooted()?;
+    for (name, value) in [
+        ("startTime", response.timing.start_time),
+        ("endTime", response.timing.end_time),
+        ("finalServiceWorkerStartTime", 0.0),
+        ("redirectStartTime", 0.0),
+        ("redirectEndTime", 0.0),
+        ("postRedirectStartTime", response.timing.start_time),
+        ("finalNetworkRequestStartTime", response.timing.start_time),
+        (
+            "finalNetworkResponseStartTime",
+            response.timing.response_headers_time,
+        ),
+        ("firstInterimNetworkResponseStartTime", 0.0),
+        ("encodedBodySize", response.timing.body_size as f64),
+        ("decodedBodySize", response.timing.body_size as f64),
+    ] {
+        set_number(context, timing, name, value)?;
+    }
+    set_bool(context, timing, "renderBlocking", false)?;
+    let connection = context.object_rooted()?;
+    for (name, value) in [
+        ("domainLookupStartTime", response.timing.start_time),
+        ("domainLookupEndTime", response.timing.start_time),
+        ("connectionStartTime", response.timing.start_time),
+        ("connectionEndTime", response.timing.start_time),
+        ("secureConnectionStartTime", 0.0),
+    ] {
+        set_number(context, connection, name, value)?;
+    }
+    set_text(context, connection, "ALPNNegotiatedProtocol", "http/1.1")?;
+    set(context, timing, "finalConnectionTimingInfo", connection)?;
+
+    let module = crate::host::shared_vm::commonjs::perf_hooks_module(context)?;
+    let performance = property(context, module, "performance")?
+        .ok_or_else(|| RootedError::host("perf_hooks did not export performance"))?;
+    let mark = property(context, performance, "markResourceTiming")?
+        .ok_or_else(|| RootedError::host("performance.markResourceTiming is missing"))?;
+    let requested_url = context.string_rooted(&response.requested_url);
+    let initiator = context.string_rooted("fetch");
+    let global = context.global_root()?;
+    let cache_mode = context.string_rooted("");
+    let body_info = context.undefined();
+    let status = context.number(response.status as f64);
+    let delivery_type = context.string_rooted("");
+    context.call_rooted(
+        mark,
+        performance,
+        &[
+            timing,
+            requested_url,
+            initiator,
+            global,
+            cache_mode,
+            body_info,
+            status,
+            delivery_type,
+        ],
+    )?;
+    Ok(())
 }
 
 pub(crate) fn response_text(
@@ -537,28 +656,6 @@ fn property(
     context.get_property_rooted(object, key).map(Some)
 }
 
-fn install_method(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-    operation: &str,
-) -> Result<(), RootedError> {
-    let function = context.host_function(crate::host::shared_vm::operation(operation))?;
-    set(context, object, name, function)
-}
-
-fn install_data_method(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-    operation: &str,
-    data: RootId,
-) -> Result<(), RootedError> {
-    let function =
-        context.host_function_with_data(crate::host::shared_vm::operation(operation), data)?;
-    set(context, object, name, function)
-}
-
 fn set_text(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,
@@ -624,13 +721,21 @@ fn perform_fetch(mut request: FetchRequest) -> Result<FetchResponse, String> {
             .map(|(_, value)| value.clone());
         let is_redirect = matches!(response.status, 301 | 302 | 303 | 307 | 308);
         if !is_redirect || location.is_none() {
+            let response_end =
+                request.started_at_ms + request.started_at.elapsed().as_secs_f64() * 1_000.0;
+            let timing = FetchTiming {
+                start_time: request.started_at_ms,
+                response_headers_time: response_end,
+                end_time: response_end,
+                body_size: response.body.len(),
+            };
             return Ok(FetchResponse {
-                url: request.url,
-                redirected: redirect_count != 0,
+                requested_url: initial_url,
                 status: response.status,
                 status_text: response.status_text,
                 headers: response.headers,
                 body: response.body,
+                timing,
             });
         }
         if redirect_count == MAX_FETCH_REDIRECTS {
@@ -818,12 +923,12 @@ fn parse_response(mut bytes: Vec<u8>, head_only: bool) -> Result<FetchResponse, 
         body
     };
     Ok(FetchResponse {
-        url: String::new(),
-        redirected: false,
+        requested_url: String::new(),
         status,
         status_text,
         headers,
         body,
+        timing: FetchTiming::default(),
     })
 }
 

@@ -103,14 +103,17 @@ pub(crate) fn initialize(
 ) -> Result<RootId, RootedError> {
     #[cfg(quench_icu)]
     let constructors = crate::host::shared_vm::commonjs::node_library_module(
-        context, "util.js", "internal/encoding.js"
+        context,
+        "util.js",
+        "internal/encoding.js",
     )?;
     #[cfg(not(quench_icu))]
     let constructors = {
         let canonical = context.host_function(crate::host::shared_vm::operation(
             "textDecoderCanonicalEncoding",
         ))?;
-        let decode = context.host_function(crate::host::shared_vm::operation("textDecoderDecode"))?;
+        let decode =
+            context.host_function(crate::host::shared_vm::operation("textDecoderDecode"))?;
         let factory = context.evaluate_script_rooted(FACTORY, "node:text-decoder/shared-vm.js")?;
         let undefined = context.undefined();
         let constructors = context.call_rooted(factory, undefined, &[canonical, decode])?;

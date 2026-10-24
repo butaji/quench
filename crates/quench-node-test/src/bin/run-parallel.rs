@@ -13,6 +13,8 @@
 //!   cargo run -p quench-node-test --bin run-parallel -- --profile framework-core
 //!   cargo run -p quench-node-test --bin run-parallel -- --triage [--filter NAME]
 
+use std::collections::HashMap;
+use std::io::{BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -20,7 +22,8 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use quench_node_test::case_process::{
-    observe_parallel_case, worker_entry, RunResult, DEFAULT_CASE_TIMEOUT_SECS,
+    cleanup_adopted_children, observe_parallel_case, worker_entry, RunResult,
+    DEFAULT_CASE_TIMEOUT_SECS,
 };
 
 const PARALLEL_DIR: &str = "tests/node/test/parallel";
@@ -90,6 +93,11 @@ fn main() -> ExitCode {
             .iter()
             .position(|a| a == "--results")
             .and_then(|i| args.get(i + 1));
+        let checkpoint = args
+            .iter()
+            .position(|a| a == "--checkpoint")
+            .and_then(|i| args.get(i + 1));
+        let resume = args.iter().any(|a| a == "--resume");
         let root = match args.iter().position(|arg| arg == "--parallel-dir") {
             Some(index) => match args.get(index + 1) {
                 Some(path) => PathBuf::from(path),
@@ -100,7 +108,7 @@ fn main() -> ExitCode {
             },
             None => PathBuf::from(PARALLEL_DIR),
         };
-        return run_all(filter, timeout, jobs, results, root);
+        return run_all(filter, timeout, jobs, results, checkpoint, resume, root);
     }
     let profile = args
         .iter()
@@ -136,6 +144,8 @@ fn print_help() {
     println!("  --timeout-secs N    isolate each fixture with an N-second timeout (default 30)");
     println!("  --jobs N            run up to N isolated fixtures concurrently (default: available CPUs)");
     println!("  --results PATH      write machine-readable results and inventory hash");
+    println!("  --checkpoint PATH   persist each completed fixture as JSONL");
+    println!("  --resume            continue completed fixtures from --checkpoint");
 }
 
 fn run_one(path: PathBuf) -> ExitCode {
@@ -231,6 +241,8 @@ fn run_all(
     timeout_secs: u64,
     jobs: usize,
     results_path: Option<&String>,
+    checkpoint_path: Option<&String>,
+    resume: bool,
     root: PathBuf,
 ) -> ExitCode {
     let runtime_commit = command_output("git", &["rev-parse", "HEAD"]);
@@ -254,21 +266,61 @@ fn run_all(
             })
     });
     let inventory_hash = inventory_hash(&entries);
+    if resume && checkpoint_path.is_none() {
+        eprintln!("error: --resume requires --checkpoint PATH");
+        return ExitCode::from(2);
+    }
+    let mut observations = (0..entries.len()).map(|_| None).collect::<Vec<_>>();
+    if resume {
+        let path = checkpoint_path.expect("resume requires checkpoint path");
+        match load_checkpoint(path, inventory_hash, &entries) {
+            Ok(restored) => {
+                for (index, observation) in restored {
+                    observations[index] = Some(observation);
+                }
+            }
+            Err(error) => {
+                eprintln!("error: cannot resume {path}: {error}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    let pending_indices = observations
+        .iter()
+        .enumerate()
+        .filter_map(|(index, observation)| observation.is_none().then_some(index))
+        .collect::<Vec<_>>();
+    let mut checkpoint_writer = match checkpoint_path {
+        Some(path) => match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            Ok(file) => Some(BufWriter::new(file)),
+            Err(error) => {
+                eprintln!("error: cannot open checkpoint {path}: {error}");
+                return ExitCode::from(2);
+            }
+        },
+        None => None,
+    };
+    let mut checkpoint_error = None;
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     let next_entry = AtomicUsize::new(0);
     let (sender, receiver) = mpsc::channel();
-    let mut observations = (0..entries.len()).map(|_| None).collect::<Vec<_>>();
     std::thread::scope(|scope| {
-        for _ in 0..jobs.min(entries.len()).max(1) {
+        for _ in 0..jobs.min(pending_indices.len()).max(1) {
             let sender = sender.clone();
             let entries = &entries;
+            let pending_indices = &pending_indices;
             let exe = &exe;
             let next_entry = &next_entry;
             scope.spawn(move || loop {
-                let index = next_entry.fetch_add(1, Ordering::Relaxed);
-                let Some(path) = entries.get(index) else {
+                let pending_index = next_entry.fetch_add(1, Ordering::Relaxed);
+                let Some(&index) = pending_indices.get(pending_index) else {
                     break;
                 };
+                let path = &entries[index];
                 let observation =
                     observe_parallel_case(exe, path, Duration::from_secs(timeout_secs));
                 if sender.send((index, observation)).is_err() {
@@ -283,9 +335,21 @@ fn run_all(
                 .map(|record| record.outcome())
                 .unwrap_or(RunResult::Unclassified);
             println!("{:?} {}", result, entries[index].display());
+            if let Some(writer) = checkpoint_writer.as_mut() {
+                if let Err(error) =
+                    write_checkpoint_record(writer, inventory_hash, &entries[index], &observation)
+                {
+                    checkpoint_error.get_or_insert(error.to_string());
+                }
+            }
             observations[index] = Some(observation);
         }
     });
+    cleanup_adopted_children();
+    if let Some(error) = checkpoint_error {
+        eprintln!("error: cannot write checkpoint: {error}");
+        return ExitCode::from(2);
+    }
     let mut counts = [0usize; RunResult::COUNT];
     let mut results = Vec::with_capacity(entries.len());
     for (path, observation) in entries.iter().zip(observations) {
@@ -320,6 +384,91 @@ fn run_all(
     gate_exit(passed + skipped, entries.len())
 }
 
+fn write_checkpoint_record(
+    writer: &mut BufWriter<std::fs::File>,
+    inventory_hash: u64,
+    fixture: &PathBuf,
+    observation: &Result<quench_node_test::case_process::CaseObservation, String>,
+) -> std::io::Result<()> {
+    let record = serde_json::json!({
+        "inventory_hash": format!("{inventory_hash:016x}"),
+        "fixture": fixture,
+        "observation": observation,
+    });
+    serde_json::to_writer(&mut *writer, &record).map_err(std::io::Error::other)?;
+    writer.write_all(b"\n")?;
+    writer.flush()
+}
+
+fn load_checkpoint(
+    path: &str,
+    inventory_hash: u64,
+    entries: &[PathBuf],
+) -> Result<
+    Vec<(
+        usize,
+        Result<quench_node_test::case_process::CaseObservation, String>,
+    )>,
+    String,
+> {
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.to_string()),
+    };
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    let complete_len = bytes
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |index| index + 1);
+    let index_by_path = entries
+        .iter()
+        .enumerate()
+        .map(|(index, path)| (path.to_string_lossy().into_owned(), index))
+        .collect::<HashMap<_, _>>();
+    let expected_hash = format!("{inventory_hash:016x}");
+    let mut restored = HashMap::new();
+    for (line_index, line) in bytes[..complete_len]
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .enumerate()
+    {
+        let line = std::str::from_utf8(line)
+            .map_err(|error| format!("checkpoint line {}: {error}", line_index + 1))?;
+        let record: serde_json::Value = serde_json::from_str(&line)
+            .map_err(|error| format!("checkpoint line {}: {error}", line_index + 1))?;
+        if record
+            .get("inventory_hash")
+            .and_then(serde_json::Value::as_str)
+            != Some(expected_hash.as_str())
+        {
+            return Err(format!(
+                "inventory hash mismatch on line {}",
+                line_index + 1
+            ));
+        }
+        let fixture = record
+            .get("fixture")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("missing fixture on line {}", line_index + 1))?;
+        let Some(&index) = index_by_path.get(fixture) else {
+            continue;
+        };
+        let observation: Result<quench_node_test::case_process::CaseObservation, String> =
+            serde_json::from_value(
+                record
+                    .get("observation")
+                    .cloned()
+                    .ok_or_else(|| format!("missing observation on line {}", line_index + 1))?,
+            )
+            .map_err(|error| format!("checkpoint line {}: {error}", line_index + 1))?;
+        restored.insert(index, observation);
+    }
+    Ok(restored.into_iter().collect())
+}
+
 fn gate_exit(passed: usize, total: usize) -> ExitCode {
     if total != 0 && passed == total {
         ExitCode::SUCCESS
@@ -352,7 +501,7 @@ fn write_results(
         .collect();
     let report = serde_json::json!({
         "schema_version":2,"inventory_hash":format!("{inventory_hash:016x}"),"timeout_secs":timeout_secs,"jobs":jobs,
-        "node_version":command_output("node", &["--version"]),
+        "node_version":node_version_output(),
         "runtime_commit":runtime_commit,
         "tests_node_commit":tests_node_commit,
         "platform":format!("{}-{}",std::env::consts::OS,std::env::consts::ARCH),
@@ -385,4 +534,18 @@ fn command_output(program: &str, args: &[&str]) -> String {
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
         .filter(|output| !output.is_empty())
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn node_version_output() -> String {
+    if let Some(executable) = std::env::var_os("QUENCH_NODE_TEST_EXECUTABLE") {
+        return std::process::Command::new(executable)
+            .arg("--version")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .filter(|output| !output.is_empty())
+            .unwrap_or_else(|| "unknown".to_string());
+    }
+    command_output("node", &["--version"])
 }

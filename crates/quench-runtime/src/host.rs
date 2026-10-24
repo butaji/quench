@@ -106,7 +106,10 @@ pub trait Host {
 
     /// Allocate host metadata before Promise creation becomes observable. This
     /// phase cannot call guest code; reentrant init hooks see the stored identity.
-    fn create_promise_context(&mut self, _parent: Option<HostExecutionContext>) -> Option<HostExecutionContext> {
+    fn create_promise_context(
+        &mut self,
+        _parent: Option<HostExecutionContext>,
+    ) -> Option<HostExecutionContext> {
         None
     }
 
@@ -116,7 +119,8 @@ pub trait Host {
         _promise: crate::RootId,
         _resource: HostExecutionContext,
     ) -> Result<(), crate::RootedError>
-    where Self: Sized,
+    where
+        Self: Sized,
     {
         Ok(())
     }
@@ -126,17 +130,30 @@ pub trait Host {
         _context: &mut crate::NativeContext<'_, Self>,
         _resource: HostExecutionContext,
         _before: bool,
-    ) -> Result<(), crate::RootedError> where Self: Sized { Ok(()) }
+    ) -> Result<(), crate::RootedError>
+    where
+        Self: Sized,
+    {
+        Ok(())
+    }
 
     fn promise_settled(
         _context: &mut crate::NativeContext<'_, Self>,
         _resource: HostExecutionContext,
-    ) -> Result<(), crate::RootedError> where Self: Sized { Ok(()) }
+    ) -> Result<(), crate::RootedError>
+    where
+        Self: Sized,
+    {
+        Ok(())
+    }
 
     /// Capture the host context when the VM creates a Promise or thenable job.
     /// The returned token remains owned by that job until it runs or the VM
     /// collects it.
-    fn capture_job_context(&mut self, _resource: Option<HostExecutionContext>) -> Option<HostExecutionContext> {
+    fn capture_job_context(
+        &mut self,
+        _resource: Option<HostExecutionContext>,
+    ) -> Option<HostExecutionContext> {
         None
     }
 
@@ -199,6 +216,12 @@ pub trait Host {
     /// source identity used by module resolution.
     fn import_meta_url(&mut self, source_name: &str) -> String {
         source_name.to_owned()
+    }
+
+    /// Absolute filesystem name for a file-backed module. Non-file modules
+    /// leave this unset, matching the optional Node `import.meta.filename`.
+    fn import_meta_filename(&mut self, _source_name: &str) -> Option<String> {
+        None
     }
 
     /// Display identity for source locations in captured stacks. This must not

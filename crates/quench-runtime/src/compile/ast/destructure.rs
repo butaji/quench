@@ -42,8 +42,16 @@ pub(super) enum AssignmentReference {
 impl FunctionCompiler<'_, '_> {
     pub(super) fn assignment(&mut self, value: &AssignmentExpression<'_>) -> Register {
         if let Some(target) = value.left.as_simple_assignment_target() {
-            let write_source = self.owner.source_delimiter(value.left.span().end, value.right.span().start,
-                value.operator.as_str().chars().next().expect("assignment operator"));
+            let write_source = self.owner.source_delimiter(
+                value.left.span().end,
+                value.right.span().start,
+                value
+                    .operator
+                    .as_str()
+                    .chars()
+                    .next()
+                    .expect("assignment operator"),
+            );
             let reference = self.prepare_assignment_reference(target);
             if let AssignmentReference::Abrupt(result) = reference {
                 return result;
@@ -56,7 +64,9 @@ impl FunctionCompiler<'_, '_> {
                 {
                     self.emit(Op::SetFunctionName, right, 0, 0, name);
                 }
-                self.with_source_offset(write_source, |compiler| compiler.store_assignment_reference(reference, right));
+                self.with_source_offset(write_source, |compiler| {
+                    compiler.store_assignment_reference(reference, right)
+                });
                 return right;
             }
 
@@ -100,7 +110,9 @@ impl FunctionCompiler<'_, '_> {
                     self.emit(Op::SetFunctionName, right, 0, 0, name);
                 }
                 self.emit(Op::Move, old, right, 0, 0);
-                self.with_source_offset(write_source, |compiler| compiler.store_assignment_reference(reference, old));
+                self.with_source_offset(write_source, |compiler| {
+                    compiler.store_assignment_reference(reference, old)
+                });
                 self.patch(skip);
                 return old;
             }
@@ -111,7 +123,9 @@ impl FunctionCompiler<'_, '_> {
                 Operand::register(old),
                 Operand::register(right),
             );
-            self.with_source_offset(write_source, |compiler| compiler.store_assignment_reference(reference, result));
+            self.with_source_offset(write_source, |compiler| {
+                compiler.store_assignment_reference(reference, result)
+            });
             result
         } else if value.operator == AssignmentOperator::Assign {
             let right = self.expression(&value.right);

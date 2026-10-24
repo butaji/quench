@@ -2,6 +2,169 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    /// Pushes a cached `CallMethod` target onto the general dispatch loop when it is an
+    /// eligible same-realm user function. On a cache miss, leave lookup and invocation to the
+    /// existing path so getters and method-cache warming retain their normal order.
+    pub(super) fn try_inline_cached_method_call(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        instruction: WideInstruction,
+        pc: usize,
+    ) -> Option<Result<StepResult, JsError>> {
+        if instruction.op() != Op::CallMethod
+            || self.direct_eval
+            || self.parameter_eval
+            || p.kind == crate::bytecode::ProgramKind::Wasm
+            || frame + 1 != self.frames.len()
+            || self.frames[frame].function == super::ROOT_FUNCTION_ID
+            || (self.host.proper_tail_calls()
+                && instruction.returns_from_frame()
+                && p.functions[self.frames[frame].function as usize].strict)
+        {
+            return None;
+        }
+
+        let site = instruction.method_site_index();
+        let metadata = *p.method_sites.get(site)?;
+        let this = self.read(frame, instruction.register_b());
+        let (shape, proto) = self
+            .object_data(this)
+            .map(|object| (object.shape(), object.proto()))
+            .unwrap_or((u32::MAX - 1, Value::UNDEFINED));
+        if !self.specialized || !p.specialized {
+            return None;
+        }
+        let cache_site = self.method_cache_index(site);
+        let candidate = self.method_caches[cache_site]
+            .iter()
+            .find(|entry| {
+                entry.shape == shape
+                    && entry.atom == metadata.atom
+                    && (entry.proto == proto || entry.proto == this)
+            })
+            .copied()
+            .or_else(|| {
+                self.megamorphic_methods
+                    .iter()
+                    .find(|set| set.site == cache_site)
+                    .and_then(|set| {
+                        set.entries[..usize::from(set.len)]
+                            .iter()
+                            .find(|entry| {
+                                entry.shape == shape
+                                    && entry.atom == metadata.atom
+                                    && (entry.proto == proto || entry.proto == this)
+                            })
+                            .copied()
+                    })
+            })?;
+        let owner = self.method_cache_owner(this, metadata.atom, candidate.guard)?;
+        let owner_data = self.object_data(owner)?;
+        if owner_data.shape() != candidate.guard.owner_shape {
+            return None;
+        }
+        let callee = self
+            .heap
+            .property_get(owner_data, candidate.guard.slot as usize)?;
+        if candidate.callee != callee {
+            return None;
+        }
+        if candidate.target == Some(CallTarget::Native(Native::ReflectApply)) {
+            let start = metadata.argument_start as usize;
+            let registers = &p.method_arguments[start..start + metadata.argument_count as usize];
+            if registers.len() >= 3 {
+                let target = self.read(frame, registers[0]);
+                let this_argument = self.read(frame, registers[1]);
+                let list = self.read(frame, registers[2]);
+                if self.is_function(target)
+                    && (list.is_null() || list.is_undefined() || self.is_object_like(list))
+                    && let Some(arguments) = self.dense_apply_arguments(list)
+                    && let Some((program_id, function, env)) = self.same_realm_user_target(target)
+                {
+                    self.profile.call_source(2);
+                    self.profile.method_args(registers.len());
+                    self.profile.method_cache(true);
+                    if let Some(result) = self.try_push_reflect_apply_target(
+                        frame,
+                        instruction,
+                        pc,
+                        target,
+                        this_argument,
+                        program_id,
+                        function,
+                        env,
+                        arguments,
+                    ) {
+                        return Some(result);
+                    }
+                }
+            }
+            return None;
+        }
+        let CallTarget::User(program_id, function, env) = candidate.target? else {
+            return None;
+        };
+        let Some((actual_program, actual_function, actual_env)) =
+            self.same_realm_user_target(callee)
+        else {
+            return None;
+        };
+        if (program_id, function, env) != (actual_program, actual_function, actual_env)
+            || function == super::ROOT_FUNCTION_ID
+        {
+            return None;
+        }
+        let target_program = if program_id == self.active_program {
+            None
+        } else {
+            Some(self.programs.get(program_id)?)
+        };
+        let target_residual = target_program.as_deref().unwrap_or(p);
+        if !target_residual
+            .functions
+            .get(function as usize)
+            .is_some_and(|function| function.call_plan(&target_residual.atoms).in_loop)
+        {
+            return None;
+        }
+
+        let start = metadata.argument_start as usize;
+        let registers = &p.method_arguments[start..start + metadata.argument_count as usize];
+        let arguments = CallArguments::from_values(
+            registers.iter().map(|register| self.read(frame, *register)),
+        );
+        self.profile.call_source(2);
+        self.profile.method_args(registers.len());
+        self.profile.method_cache(true);
+        self.profile.call_target(1, arguments.as_slice().len());
+        self.frames[frame].pc = pc;
+        self.frames[frame].pc_is_resume = true;
+        let previous_program = if program_id != self.active_program {
+            Some(self.replace_active_program(program_id))
+        } else {
+            None
+        };
+        let pushed = self.push_general_user_frame(
+            target_residual,
+            function,
+            env,
+            this,
+            arguments.as_slice(),
+            CallContext::user_function(function, callee),
+        );
+        if pushed.is_err()
+            && let Some(previous_program) = previous_program
+        {
+            self.set_active_program(previous_program);
+        }
+        Some(pushed.map(|call_guard| StepResult::PushFrame {
+            destination: instruction.result_register(),
+            call_guard,
+            construct_this: None,
+        }))
+    }
+
     pub(super) fn invalidate_method_caches(&mut self) {
         self.clear_method_caches(1);
     }

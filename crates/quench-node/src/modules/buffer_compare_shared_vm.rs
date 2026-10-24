@@ -102,16 +102,22 @@ fn order(left: &[u8], right: &[u8]) -> f64 {
 }
 
 /// The native comparison ABI also consumes non-byte typed arrays and DataViews.
-pub(crate) fn raw_compare(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn raw_compare(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     let missing = context.undefined();
     let left = args.first().copied().unwrap_or(missing);
     let right = args.get(1).copied().unwrap_or(missing);
     let Some(left) = context.view_bytes_rooted(left) else {
-        let error = context.type_error_rooted("First comparison argument must have byte storage")?;
+        let error =
+            context.type_error_rooted("First comparison argument must have byte storage")?;
         return Err(context.throw(error));
     };
     let Some(right) = context.view_bytes_rooted(right) else {
-        let error = context.type_error_rooted("Second comparison argument must have byte storage")?;
+        let error =
+            context.type_error_rooted("Second comparison argument must have byte storage")?;
         return Err(context.throw(error));
     };
     Ok(context.number(order(&left, &right)))

@@ -43,6 +43,33 @@ pub(crate) fn construct(
             context, options, "options", "Object",
         )?);
     }
+    // Node's TLS Server validates the effective handshake timeout after
+    // applying its default (so falsy values keep the default semantics).
+    // This facade constructs Server directly rather than using Node's
+    // internal/tls/wrap.js constructor, so perform that public validation here.
+    let handshake_timeout = get(context, options, "handshakeTimeout")?;
+    if context.truthy_rooted(handshake_timeout)?
+        && context
+            .rooted_value(handshake_timeout)
+            .and_then(|value| value.as_number())
+            .is_none()
+    {
+        return Err(super::super::util_shared_vm::argument_type_error(
+            context,
+            handshake_timeout,
+            "options.handshakeTimeout",
+            "number",
+        )?);
+    }
+    let sni_callback = get(context, options, "SNICallback")?;
+    if context.truthy_rooted(sni_callback)? && !context.is_callable_rooted(sni_callback)? {
+        return Err(super::super::util_shared_vm::argument_type_error(
+            context,
+            sni_callback,
+            "options.SNICallback",
+            "function",
+        )?);
+    }
     let contexts = context.array_rooted(&[])?;
     set(context, receiver, "_contexts", contexts)?;
     let request = get(context, options, "requestCert")?;
@@ -57,13 +84,41 @@ pub(crate) fn construct(
         .is_some_and(|value| value.as_bool() == Some(false));
     let reject = context.boolean(reject);
     set(context, receiver, "rejectUnauthorized", reject)?;
-    method(context, receiver, "setSecureContext", &[options])?;
     let api = super::facade::install(context)?;
+    let tls_module = get(context, api, "module")?;
+    let convert_alpn = get(context, tls_module, "convertALPNProtocols")?;
+    let alpn_protocols = get(context, options, "ALPNProtocols")?;
+    let converted = context.object_rooted()?;
+    // Node keeps the public Server.ALPNProtocols value as the wire-format
+    // Buffer produced while normalizing the constructor options. Preserve
+    // that projection as well as the encoded value used by TLS sockets.
+    context.call_rooted(convert_alpn, undefined, &[alpn_protocols, converted])?;
+    let alpn_protocols = get(context, converted, "ALPNProtocols")?;
+    set(context, receiver, "ALPNProtocols", alpn_protocols)?;
+    let alpn_callback = get(context, options, "ALPNCallback")?;
+    set(context, receiver, "ALPNCallback", alpn_callback)?;
+    method(context, receiver, "setSecureContext", &[options])?;
     let net = get(context, api, "identityNet")?;
     let base = get(context, net, "Server")?;
     let connection =
         context.host_function(crate::host::shared_vm::operation("tlsServerConnection"))?;
     context.call_rooted(base, receiver, &[options, connection])?;
+    // Node exposes TLS ticket rotation on the Server as a thin projection of
+    // its shared SecureContext. The SecureContext operation is already backed
+    // by OpenSSL; installing the forwarding method here makes that session
+    // control reachable through tls.Server/https.Server as expected.
+    let ticket_keys_factory = context.evaluate_script_rooted(
+        "server => function setTicketKeys(keys) { return server._sharedCreds.context.setTicketKeys(keys); }",
+        "node:tls/server-ticket-keys.js",
+    )?;
+    let ticket_keys = context.call_rooted(ticket_keys_factory, undefined, &[receiver])?;
+    set(context, receiver, "setTicketKeys", ticket_keys)?;
+    let get_ticket_keys_factory = context.evaluate_script_rooted(
+        "server => function getTicketKeys() { return server._sharedCreds.context.getTicketKeys(); }",
+        "node:tls/server-get-ticket-keys.js",
+    )?;
+    let get_ticket_keys = context.call_rooted(get_ticket_keys_factory, undefined, &[receiver])?;
+    set(context, receiver, "getTicketKeys", get_ticket_keys)?;
     if context.truthy_rooted(listener)? {
         let secure = context.string_rooted("secureConnection");
         method(context, receiver, "on", &[secure, listener])?;
