@@ -69,7 +69,12 @@ impl<H: Host> Vm<H> {
         if self.steps_as_array_iterator(receiver, method) {
             return self.array_iterator_step(p, receiver);
         }
-        let step = self.call_value(p, method, receiver, &[])?;
+        // The intrinsic `next` of the other built-in iterators, stepped without a call frame.
+        let step = if self.is_current_realm_native(method, Native::IteratorNext) {
+            self.iterator_next(p, receiver)?
+        } else {
+            self.call_value(p, method, receiver, &[])?
+        };
         self.iterator_result_value(p, step)
     }
 

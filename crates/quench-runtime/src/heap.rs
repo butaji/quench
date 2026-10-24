@@ -62,6 +62,10 @@ fn dense_storage_fits(present: usize, length: usize) -> bool {
     present.saturating_mul(SPARSE_ENTRY_SLOTS) >= length
 }
 pub use pacing::MemoryPolicy;
+/// The prototypes `Heap::mark_prototype` remembers: an ordinary object's and an array's,
+/// whose allocations alternate (array literals and objects in one request handler), so one
+/// remembered prototype would look the other up on nearly every allocation.
+const MARKED_PROTOTYPE_WAYS: usize = 2;
 #[inline(always)]
 fn payload_unit() -> usize {
     #[cfg(feature = "gc-tuning")]
@@ -447,10 +451,10 @@ pub(crate) struct Heap {
     threshold: usize,
     total_allocations: u64,
     collections: u64,
-    /// The prototype `mark_prototype` marked last, which keeps its mark for life: an
-    /// allocation with the same prototype needs no lookup. A collection may free it and
-    /// reuse its handle, so each one forgets it.
-    marked_prototype: Option<Value>,
+    /// The prototypes `mark_prototype` marked last, most recent first, which keep their
+    /// mark for life: an allocation with one of them needs no lookup. A collection may free
+    /// one and reuse its handle, so each one forgets them.
+    marked_prototypes: [Option<Value>; MARKED_PROTOTYPE_WAYS],
     peak_live: usize,
     peak_survivors: usize,
     max_threshold: usize,
@@ -957,7 +961,7 @@ impl Heap {
 
     #[inline(always)]
     pub(crate) fn mark_prototype(&mut self, prototype: Value) {
-        if self.marked_prototype != Some(prototype) {
+        if !self.marked_prototypes.contains(&Some(prototype)) {
             self.mark_new_prototype(prototype);
         }
     }
@@ -973,11 +977,51 @@ impl Heap {
         };
         if let Some(object) = object {
             object.mark_as_prototype();
-            self.marked_prototype = Some(prototype);
+            self.marked_prototypes.rotate_right(1);
+            self.marked_prototypes[0] = Some(prototype);
         }
     }
 
+    /// Allocates `cell`. An array, whose kind a call site's literal cell fixes, takes its
+    /// record directly (`alloc_array`) without the dispatch on the cell's kind.
+    #[inline(always)]
     pub fn alloc(&mut self, cell: Cell) -> Value {
+        match cell {
+            Cell::Array { object } if !cfg!(feature = "profile-aggregate") => self.alloc_array(object),
+            cell => self.alloc_cell(cell),
+        }
+    }
+
+    /// `alloc(Cell::Array { object })`: an array record while one is free, charged as any
+    /// allocation (`charge_allocation`) for its element storage.
+    fn alloc_array(&mut self, object: ArrayObject) -> Value {
+        self.mark_prototype(object.proto());
+        self.charge_allocation(array_payload_bytes(&object), 0);
+        match self.array_records.try_insert(object) {
+            Ok(record_id) => {
+                let value = Value::direct_array(record_id);
+                #[cfg(feature = "profile-memory")]
+                self.profile_allocation(value);
+                value
+            }
+            Err(object) => self.alloc_in_slot(Cell::Array { object }, self.tracks_young_cells()),
+        }
+    }
+
+    /// The allocation ledger's charge for one cell owning `payload` bytes beyond its slot, of
+    /// which `external` are external buffers.
+    #[inline(always)]
+    fn charge_allocation(&mut self, payload: usize, external: usize) {
+        self.charge_materialized_text();
+        let weight = 1 + payload / payload_unit();
+        self.payload_bytes = self.payload_bytes.saturating_add(payload);
+        self.allocations += weight;
+        self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
+        self.total_allocations += 1;
+        self.charge_external_growth(external);
+    }
+
+    fn alloc_cell(&mut self, cell: Cell) -> Value {
         if let Some(object) = cell.object() { self.mark_prototype(object.proto()); }
         #[cfg(feature = "profile-aggregate")]
         {
@@ -991,15 +1035,8 @@ impl Heap {
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
             self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
         }
-        self.charge_materialized_text();
-        let payload = cell.payload_bytes();
-        let weight = 1 + payload / payload_unit();
-        self.payload_bytes = self.payload_bytes.saturating_add(payload);
-        self.allocations += weight;
-        self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
+        self.charge_allocation(cell.payload_bytes(), cell.external_bytes());
         let track_young = self.tracks_young_cells();
-        self.total_allocations += 1;
-        self.charge_external_growth(cell.external_bytes());
         let cell = match cell {
             Cell::Object(object) => match self.object_records.try_insert(object) {
                 Ok(record_id) => {
@@ -1759,7 +1796,7 @@ impl Heap {
         // observed here and when it is reported rather than on every allocation.
         self.peak_live = self.peak_live.max(self.live_slots());
         self.collections += 1;
-        self.marked_prototype = None;
+        self.marked_prototypes = [None; MARKED_PROTOTYPE_WAYS];
         #[cfg(feature = "profile-aggregate")]
         let allocations_between_collections = self.allocations as u64;
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]

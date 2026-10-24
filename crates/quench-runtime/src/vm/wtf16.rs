@@ -330,7 +330,10 @@ impl<'a> Units<'a> {
         }
         let last = self.len() - search.len();
         if let (Self::Ascii(haystack), Units::Ascii(needle)) = (self, search) {
-            return (start..=last).find(|index| haystack[*index..*index + needle.len()] == *needle);
+            if start > last {
+                return None;
+            }
+            return memchr::memmem::find(&haystack[start..], needle).map(|offset| start + offset);
         }
         let first = search.at(0);
         (start..=last).find(|index| {
@@ -978,9 +981,23 @@ impl JsString {
         }
     }
 
+    /// The string's unit storage and host text, each as (address, bytes), for the memory
+    /// report. It reads the string as it is: a rope not yet flattened reports its own node,
+    /// whose halves are strings of their own, and is not flattened to be measured (that
+    /// kept a flat copy for the string's life, so a report inflated the memory it reported).
     pub(crate) fn memory_parts(&self) -> ((usize, usize), Option<(usize, usize)>) {
         const RC_HEADER_BYTES: usize = 2 * std::mem::size_of::<usize>();
-        let unit_storage = match self.flat() {
+        let Some(flat) = self.existing_flat() else {
+            let Repr::Shared(inner) = &self.repr else {
+                unreachable!("a flat representation always has flat units");
+            };
+            let node = (
+                Rc::as_ptr(inner) as usize,
+                RC_HEADER_BYTES + std::mem::size_of::<JsStringInner>(),
+            );
+            return (node, None);
+        };
+        let unit_storage = match flat {
             // Inline units live in the string's own allocation.
             FlatUnits::Short(text) => (text.bytes.as_ptr() as usize, 0),
             FlatUnits::Ascii(text) => (
@@ -1016,6 +1033,21 @@ impl JsString {
             return;
         }
         if text.len() == 0 {
+            return;
+        }
+        // Two flat ASCII pieces the policy below joins are joined by one copy of each, straight
+        // into the joined storage (a template literal's pieces, a key built from parts).
+        if let (Some(Units::Ascii(left)), Some(Units::Ascii(right))) =
+            (self.existing_flat().map(FlatUnits::view), text.existing_flat().map(FlatUnits::view))
+            && right.len() <= ROPE_LEAF_MAX_UNITS
+            && left.len() <= FLAT_PREFIX_MAX_UNITS
+        {
+            let units = FlatUnits::ascii_with(left.len() + right.len(), |bytes| {
+                let (head, tail) = bytes.split_at_mut(left.len());
+                head.write_copy_of_slice(left);
+                tail.write_copy_of_slice(right);
+            });
+            *self = Self { repr: Repr::Flat(units) };
             return;
         }
         let short = |piece: &Self| piece.len() <= ROPE_LEAF_MAX_UNITS;

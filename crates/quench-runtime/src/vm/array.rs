@@ -566,6 +566,14 @@ impl<H: Host> Vm<H> {
                 if next.saturating_add(length) as f64 > MAX_SAFE_INTEGER {
                     return Err(vm.type_error(p, "array concat length exceeds safe integer".into()));
                 }
+                // Present own data elements read without observing anything, and append as
+                // the definitions would.
+                if let Some(values) = vm.present_dense_elements(item, 0..length).map(<[Value]>::to_vec)
+                    && vm.append_dense_definitions(target, next, &values)
+                {
+                    next += length;
+                    continue;
+                }
                 for index in 0..length {
                     let source_key = Value::number(index as f64);
                     if vm.has_property(p, item, source_key)? {
@@ -635,6 +643,27 @@ impl<H: Host> Vm<H> {
         }
         let elements = object.elements().get(range)?;
         elements.iter().all(|value| !value.is_deleted()).then_some(elements)
+    }
+
+    /// CreateDataPropertyOrThrow of `values` at indices `start..` of `array`, a dense array
+    /// (`dense_array_length`) of length `start`: each definition appends a plain element,
+    /// whatever its prototypes hold, as a definition consults none. `false` leaves `array`
+    /// untouched.
+    pub(super) fn append_dense_definitions(&mut self, array: Value, start: usize, values: &[Value]) -> bool {
+        if self.dense_array_length(array) != Some(start)
+            || start.checked_add(values.len()).is_none_or(|end| end > MAX_ARRAY_LENGTH)
+        {
+            return false;
+        }
+        let Some(object) = self.heap.array_mut(array) else {
+            unreachable!("matched an array above");
+        };
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        let capacity = elements.capacity();
+        elements.extend_from_slice(values);
+        let grown = elements.capacity() - capacity;
+        self.heap.charge_payload_growth(grown * size_of::<Value>());
+        true
     }
 
     /// CreateDataPropertyOrThrow of `values` at indices `0..` of `array`, a dense array
