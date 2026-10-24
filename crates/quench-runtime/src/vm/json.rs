@@ -21,6 +21,23 @@ const JSON_HEX_LETTER_VALUE_START: u16 = 10;
 const JSON_BACKSPACE: u16 = b'\x08' as u16;
 const JSON_FORM_FEED: u16 = b'\x0C' as u16;
 const JSON_WHITESPACE: [u16; 4] = [b' ' as u16, b'\t' as u16, b'\n' as u16, b'\r' as u16];
+/// `JSON_WHITESPACE` as a bit per unit value, every one of which is below `u64::BITS`.
+const JSON_WHITESPACE_MASK: u64 = {
+    let mut mask = 0;
+    let mut index = 0;
+    while index < JSON_WHITESPACE.len() {
+        assert!((JSON_WHITESPACE[index] as u32) < u64::BITS);
+        mask |= 1 << JSON_WHITESPACE[index];
+        index += 1;
+    }
+    mask
+};
+
+/// Whether `unit` is one of `JSON_WHITESPACE`.
+#[inline(always)]
+fn is_json_whitespace(unit: u16) -> bool {
+    u32::from(unit) < u64::BITS && JSON_WHITESPACE_MASK >> unit & 1 != 0
+}
 
 enum JsonValue {
     Null,
@@ -793,12 +810,8 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
     }
 
     fn whitespace(&mut self) {
-        while self
-            .peek()
-            .is_some_and(|unit| JSON_WHITESPACE.contains(&unit))
-        {
-            self.index += 1;
-        }
+        let rest = &self.units[self.index..];
+        self.index += rest.iter().take_while(|unit| is_json_whitespace(unit.unit())).count();
     }
 
     fn expect(&mut self, expected: u8) -> Result<(), JsonParseError> {
@@ -856,10 +869,10 @@ impl<H: Host> Vm<H> {
         let units: &[u16] = &wide;
         if units
             .first()
-            .is_some_and(|unit| JSON_WHITESPACE.contains(unit))
+            .is_some_and(|unit| is_json_whitespace(*unit))
             || units
                 .last()
-                .is_some_and(|unit| JSON_WHITESPACE.contains(unit))
+                .is_some_and(|unit| is_json_whitespace(*unit))
         {
             return self.syntax_error_result(p, "Invalid raw JSON text");
         }
