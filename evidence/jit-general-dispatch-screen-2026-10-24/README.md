@@ -56,3 +56,27 @@ hashes, order, process measurements, and per-round outputs:
 - `entry-gate-jit-treatment-3rounds.json`
 - `entry-gate-nojit-control-3rounds.json`
 - `entry-gate-nojit-treatment-3rounds.json`
+
+## GeneralDispatch hot-operation diagnostic
+
+At clean source `861a9d3715a2fe2db4bb69d80b86d2925754feed`, I ran a separate,
+overhead-instrumented, 1-round web-ssr diagnostic with both `--jit` and
+`--jit-js-general-dispatch`. Output validated and matched; Quench scored 14.15
+and used 119.0 MiB peak RSS. It is diagnostic only and must not be compared
+with the uninstrumented screens.
+
+The stats included 4,096 function rows, 66 compile attempts (38 successful),
+235,767 native entries and 583,840 interpreter fallback entries. Across those
+rows, the most frequent general-dispatch operations were Call (211,084),
+GetIterator (206,938), LoadName (150,438), LoadNameCall (59,595), LoadCapture
+(53,339), GetField (45,765), and SetIndex (6,711). These are dispatch counts,
+not CPU shares. The largest `interpreter_inclusive_ns` rows were repeated
+`<Eval:...>` dynamic programs; those timers overlap across callers and cannot
+be summed as exclusive cost. Most top dynamic functions had no compile attempt
+and were reclaimed after execution, so entry count alone does not show a
+profitable tier candidate.
+
+This supports testing guarded direct own-data GetField reads next while
+building TOD-190's time-weighted region/prerequisite matrix. Do not infer that
+GetField is the largest CPU cost from the opcode histogram. The full raw
+instrumented report is `web-ssr-general-dispatch-diagnostics-1round.json`.
