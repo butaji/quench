@@ -367,6 +367,25 @@ const CASES: &[Case] = &[
         probes: &[("big", true)],
         hot: true,
     },
+    Case {
+        name: "many_closures_over_one_scope",
+        source: r#"
+            function make() {
+              const a = {tag: 'a'}; weak.a = new WeakRef(a);
+              const b = {tag: 'b'}; weak.b = new WeakRef(b);
+              const c = {tag: 'c'}; weak.c = new WeakRef(c);
+              const big = {tag: 'unread'}; weak.big = new WeakRef(big);
+              const sibling = () => big; sibling();
+              const readers = [() => a.tag, () => b.tag, () => c.tag, () => a.tag + b.tag, () => b.tag + c.tag, () => c.tag + a.tag];
+              return () => readers.map(read => read()).join();
+            }
+        "#,
+        // Seven kept closures of distinct functions reach `make`'s environment: their demands
+        // cost more than tracing its slots whole (`PartialEnvironment::whole_cost`), so the
+        // trace reads it whole and keeps `big` while they live, a bounded loss of precision.
+        probes: &[("a", true), ("b", true), ("c", true), ("big", true)],
+        hot: true,
+    },
 ];
 
 /// The compilations the interpreter, specialized and native tiers share.
@@ -485,4 +504,5 @@ retention_tests! {
     closure_retention_direct_eval_keeps_scope => "direct_eval_keeps_scope",
     closure_retention_sibling_direct_eval_keeps_scope => "sibling_direct_eval_keeps_scope",
     closure_retention_with_keeps_scope => "with_keeps_scope",
+    closure_retention_many_closures_over_one_scope => "many_closures_over_one_scope",
 }
