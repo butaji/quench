@@ -124,15 +124,35 @@ pub fn release_at_collection(policy: quench_runtime::MemoryPolicy) {
     note_collection();
 }
 
-/// Releases the read-only pages around a native compilation under every policy: the code
-/// generator's pages are not the run's, which it does not touch again, so the release
-/// refaults none of the run's code, and a native compilation is a short numeric program's
-/// peak (V8-v7 `--jit` max RSS, TOD-185: Crypto 11.6-13.2 -> 9.2-9.7 MB, NavierStokes
-/// 11.1 -> 9.1).
+/// Releases the read-only pages around a native compilation: the code generator's pages are
+/// not the run's, and a native compilation is a short numeric program's peak (V8-v7 `--jit`
+/// max RSS, TOD-185: Crypto 11.6-13.2 -> 9.2-9.7 MB, NavierStokes 11.1 -> 9.1). The releases
+/// around the first compilation (`UNPACED_NATIVE_COMPILATION_RELEASES`) run under every
+/// policy; later ones when a release is due (`process_release_due`). A run that compiles
+/// many functions had refaulted the code it runs at each (npm scenarios `--jit`, plain
+/// x86_64 build, interleaved, 2026-10-24: whatwg-url 126 -> 102 ms CPU and 19.3K -> 9.4K
+/// faults at 19.3 -> 22.8 MB, axios 123 -> 113 ms, semver 121 -> 110, schema-utils 242 -> 222,
+/// node-fetch 51 -> 48, browserslist flat; V8-v7 `--jit` max RSS NavierStokes 12.3 -> 14.1 MB,
+/// Crypto 15.5 -> 16.3, RayTrace 12.6 -> 13.1, the rest within 0.2 MB, scores within noise).
+/// Releasing around the first eight compilations kept NavierStokes at 13.8 MB and lost the
+/// npm gains.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_at_native_compilation() {
-    discard_read_only_pages();
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static RELEASES: AtomicU32 = AtomicU32::new(0);
+    let unpaced = RELEASES.fetch_add(1, Ordering::Relaxed) < UNPACED_NATIVE_COMPILATION_RELEASES;
+    if unpaced || process_release_due() {
+        discard_read_only_pages();
+    } else {
+        discard_tracked_mappings();
+    }
 }
+
+/// The native-compilation releases that run whatever the pace: the one before and the one
+/// after the first compilation (`Host::before_native_compilation`,
+/// `Host::after_native_compilation`).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const UNPACED_NATIVE_COMPILATION_RELEASES: u32 = 2;
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_at_native_compilation() {}
