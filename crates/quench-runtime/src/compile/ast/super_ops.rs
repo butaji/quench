@@ -64,7 +64,7 @@ impl FunctionCompiler<'_, '_> {
         if !self.super_home {
             return home;
         }
-        let getter = self.load_name("\0quench:super-base");
+        let getter = self.load_name(crate::bytecode::SUPER_BASE_BINDING);
         let this = self.literal(Constant::Undefined);
         let start = self.next_reg;
         let arg = self.reg();

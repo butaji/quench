@@ -456,7 +456,7 @@ impl FunctionCompiler<'_, '_> {
 
     pub(super) fn super_constructor(&mut self) -> Register {
         let active = self.load_name("\0quench:super");
-        let get_prototype = self.load_name("\0quench:super-base");
+        let get_prototype = self.load_name(crate::bytecode::SUPER_BASE_BINDING);
         let receiver = self.literal(Constant::Undefined);
         let argument = self.reg();
         self.emit(Op::Move, argument, active, 0, 0);
