@@ -171,6 +171,9 @@ pub(super) struct LaneView {
     /// The tier prologue (`lane_tier_prologue`), outside the records so the function's PCs
     /// stay its records'; written when the tier may claim the function.
     prologue: std::cell::UnsafeCell<LaneInstruction>,
+    /// The prologue's direct run of the compiled body, once the tier compiled it
+    /// (`Vm::direct_tier_entry`).
+    tier_direct: std::cell::Cell<Option<super::compiled::DirectTierEntry>>,
     plain_backward_jump_sites: usize,
     osr_rejections: Option<Box<[(super::compiled::RegionRejection, usize)]>>,
 }
@@ -10747,16 +10750,36 @@ script_handler! {
         let receiver = (binds_this && !this.is_deleted()).then_some(this);
         // SAFETY: the activation's registers hold its parameters from its first.
         let parameters = unsafe { std::slice::from_raw_parts(r.0, usize::from(params)) };
+        // SAFETY: the program's views outlive the lane run.
+        let own = unsafe { &*(*cx).views }.get(function as usize).and_then(std::cell::OnceCell::get);
+        // A compiled body that reads only its parameters runs directly, as kept.
+        if let Some(own) = own
+            && let Some(direct) = own.tier_direct.take()
+        {
+            let entered = vm.run_direct_tier_entry(&direct, program, parameters);
+            if !direct.retired() {
+                own.tier_direct.set(Some(direct));
+            }
+            if let Some((pc, register, value)) = entered {
+                r.set(register, value);
+                // SAFETY: the entry's `Return` is a record of the function.
+                next!(cx, r, unsafe { base.add(pc) }, Carried::script(cx))
+            }
+        }
         if let Some((pc, register, value)) =
             vm.js_tier_activation_entry(code, program, function, parameters, receiver, env)
         {
             r.set(register, value);
+            if let Some(own) = own
+                && let Some(direct) = vm.direct_tier_entry(code, program, function)
+            {
+                own.tier_direct.set(Some(direct));
+            }
             // SAFETY: the tier returns a PC of the function, whose records are contiguous.
             next!(cx, r, unsafe { base.add(pc) }, Carried::script(cx))
         }
         if !vm.js_tier_may_claim(code, program, function)
-            // SAFETY: the program's views outlive the lane run.
-            && let Some(own) = unsafe { &*(*cx).views }.get(function as usize).and_then(std::cell::OnceCell::get)
+            && let Some(own) = own
         {
             own.release_from_tier();
         }
@@ -14375,6 +14398,7 @@ fn derive_lane_view<H: Host>(
             c: 0,
             call_link: std::cell::Cell::new(NO_CALL_LINK),
         }),
+        tier_direct: std::cell::Cell::new(None),
         plain_backward_jump_sites: decoded
             .iter()
             .enumerate()
