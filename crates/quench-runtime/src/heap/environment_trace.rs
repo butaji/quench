@@ -73,22 +73,24 @@ impl EnvironmentEdge {
 
 /// A set of slot indexes, one bit each, inline for an environment of up to one word's slots.
 #[derive(Debug)]
-struct SlotSet(SmallVec<[u64; 1]>);
+struct SlotSet {
+    words: SmallVec<[u64; 1]>,
+}
 
 impl SlotSet {
     fn new(slots: usize) -> Self {
-        Self(smallvec::smallvec![0; slots.div_ceil(u64::BITS as usize)])
+        Self { words: smallvec::smallvec![0; slots.div_ceil(u64::BITS as usize)] }
     }
 
     fn contains(&self, slot: usize) -> bool {
-        self.0
+        self.words
             .get(slot / u64::BITS as usize)
             .is_some_and(|word| word & (1 << (slot % u64::BITS as usize)) != 0)
     }
 
     /// Adds `slot`; `false` when it was in the set (or past its slots).
     fn insert(&mut self, slot: usize) -> bool {
-        let Some(word) = self.0.get_mut(slot / u64::BITS as usize) else {
+        let Some(word) = self.words.get_mut(slot / u64::BITS as usize) else {
             return false;
         };
         let bit = 1 << (slot % u64::BITS as usize);
@@ -167,8 +169,9 @@ pub(crate) struct EnvironmentTrace<'s> {
     entries: rustc_hash::FxHashMap<u32, u32>,
     pending: Vec<EnvironmentEdge>,
     /// The closure edges followed, as (environment heap slot, program, function, distance):
-    /// closures of one function made in one activation read the same slots, so the edge
-    /// is followed once.
+    /// closures of one function made in one activation read the same slots, so each is
+    /// followed once. One set for the trace, since a module environment reaches thousands
+    /// of functions' edges and a per-environment list made each check linear in them.
     followed: rustc_hash::FxHashSet<(u32, u32, u32, u32)>,
     /// The last program whose table a closure edge read, which the next one most often reads.
     last_reads: Option<(u32, Option<&'s ClosureReads>)>,
