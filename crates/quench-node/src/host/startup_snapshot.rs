@@ -224,7 +224,6 @@ const SNAPSHOT_EXTENSION: &str = "qss";
 const LOCK_EXTENSION: &str = "lock";
 /// Builds whose snapshots are kept: a few builds in use side by side (an installed one and a
 /// development one) keep theirs, while older ones go.
-const KEPT_BUILDS: usize = 3;
 /// A build lock older than this belongs to a builder that died: another may start.
 const STALE_BUILD: std::time::Duration = std::time::Duration::from_secs(60);
 /// The Node builtins a `Preloaded` snapshot loads, as Node's own startup snapshot does: the
@@ -426,29 +425,12 @@ pub(crate) fn build(path: &std::path::Path) -> Result<(), String> {
         let temporary = path.with_extension(format!("{SNAPSHOT_EXTENSION}.{}", std::process::id()));
         std::fs::write(&temporary, &bytes).map_err(|error| error.to_string())?;
         std::fs::rename(&temporary, path).map_err(|error| error.to_string())?;
-        remove_other_builds(path);
+        if let Some(builds) = path.parent().and_then(std::path::Path::parent) {
+            crate::host::compile_cache::remove_other_builds(builds);
+        }
         Ok(())
     })();
     let _ = std::fs::remove_file(path.with_extension(LOCK_EXTENSION));
     result
 }
 
-/// Removes the snapshots of all but the `KEPT_BUILDS` most recently built builds, the one that
-/// wrote `path` among them: a rebuild leaves its predecessor's behind, which no process of the
-/// new build reads.
-fn remove_other_builds(path: &std::path::Path) {
-    let Some(builds) = path.parent().and_then(std::path::Path::parent) else {
-        return;
-    };
-    let Ok(entries) = std::fs::read_dir(builds) else {
-        return;
-    };
-    let mut builds = entries
-        .flatten()
-        .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
-        .collect::<Vec<_>>();
-    builds.sort_by(|left, right| right.0.cmp(&left.0));
-    for (_, build) in builds.into_iter().skip(KEPT_BUILDS) {
-        let _ = std::fs::remove_dir_all(build);
-    }
-}
