@@ -25,3 +25,29 @@ target/production/quench-bench --fixtures web-ssr,hash-map \
 All four fixture/mode reports validate and produce equal output. The report marks `qualification_ready=false` and `fixture_set_matches=false`: this is a three-round two-fixture screen, not the full JetStream qualification. The peer scores vary substantially across the two short runs, and these results show no reliable end-to-end gain. Quench remains far behind both JIT peers on score; the feature did not meet the 1.20x target.
 
 Raw reports: [before.json](before.json) and [after.json](after.json).
+
+## Current Web-SSR JIT census
+
+I ran a separate one-round stats-enabled diagnostic with the after binary. It
+validated output but is excluded from timing comparisons. The run recorded
+2,146 JS-function rows. Six dynamic eval copies of the generated 785-bytecode
+`Ru` compiled GeneralDispatch: each emitted 50,016 bytes, took 21–25 ms to
+compile, and entered native code about 7,760–7,800 times. Across 37 successful
+compile rows, the diagnostic recorded 427,072 code bytes and 167 ms compile
+time. Most dynamic eval copies remained `reclaimed`, `hot`, or
+`general-compile-due`. This points to repeated dynamic code and call/frame
+transitions as the next coverage question; function entry counts alone do not
+measure the time saved.
+
+Command:
+
+```sh
+target/production/quench-bench --fixtures web-ssr --suite jetstream3 --jit \
+  --jit-js-general-dispatch --jit-diagnostics --runs 1 --timeout-ms 600000 \
+  --quench target/quench-node-after-callarray \
+  --node /workspace/node-v26.12.0-linux-x64/bin/node \
+  --bun /workspace/bun-cache-1.4.4/bun-linux-x64/bun --qjs /bin/true \
+  --out target/callarray-screen/web-ssr-diagnostics.json
+```
+
+Raw one-round diagnostic: [web-ssr-diagnostics.json](web-ssr-diagnostics.json).
