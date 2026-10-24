@@ -43,13 +43,14 @@ use cranelift_codegen::ir::{
     types,
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use std::ops::{Deref, DerefMut};
 use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 pub(super) use osr_loop::{
-    FieldReceiver, LoopEntry, LoopOutcome, LoopRegion, Observation, RegionRejection, Widening,
+    ArrayUse, FieldReceiver, FieldUse, LoopEntry, LoopOutcome, LoopRegion, Observation, RegionRejection, Widening,
 };
 
 #[derive(Clone, Copy)]
@@ -499,7 +500,7 @@ pub(super) fn compile_js_numeric_region(
     let function = program.function_get(function_id as usize)?;
     let (reachable, predecessors) = js_numeric_control_flow(function)?;
     let params = usize::from(function.params);
-    let isa = super::jit_backend::target_isa("speed", true)?;
+    let isa = super::jit_backend::target_isa("speed")?;
 
     let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
     let name = UserFuncName::user(0x5155_454e, function_id);
@@ -884,8 +885,7 @@ pub(super) fn compile_js_numeric_region(
     }
 
     body.builder.seal_all_blocks();
-    let Body { builder, .. } = body;
-    builder.finalize(isa.frontend_config());
+    body.into_builder().finalize(isa.frontend_config());
     let mut context = cranelift_codegen::Context::for_function(native);
     let compiled = match context.compile(
         &*isa,
@@ -1271,14 +1271,8 @@ fn emit_js_step_fallback(
 /// Read the VM's atomic cancellation flag at a JS loop backedge. The caller
 /// sends a set flag to the exact-PC `Vm::step` callout, which reports the same
 /// interruption as the interpreter before consuming the branch.
-fn emit_js_interrupt_requested(builder: &mut FunctionBuilder<'_>, context: ir::Value) -> ir::Value {
-    let interrupt = builder
-        .ins()
-        .load(types::I64, invariant(), context, CONTEXT_INTERRUPT);
-    let requested = builder
-        .ins()
-        .atomic_load(types::I8, MemFlagsData::trusted(), interrupt);
-    builder.ins().icmp_imm_u(IntCC::NotEqual, requested, 0)
+fn emit_js_interrupt_requested(builder: &mut RegionCore<'_>) -> ir::Value {
+    builder.interrupt_requested()
 }
 
 enum JsGeneralBranch {
@@ -1311,7 +1305,7 @@ pub(super) fn compile_js_general_dispatch(
         return Err("bytecode-candidate-rejected");
     }
 
-    let isa = super::jit_backend::target_isa("speed", true)
+    let isa = super::jit_backend::target_isa("speed")
         .ok_or("target-isa-unavailable")?;
     let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
     let name = UserFuncName::user(0x5155_454e, function_id);
@@ -1325,6 +1319,7 @@ pub(super) fn compile_js_general_dispatch(
     builder.seal_block(entry);
     let parameters = builder.block_params(entry).to_vec();
     let context = parameters[0];
+    let mut builder = RegionCore::new(builder, context, None);
     let locals = parameters[1];
     let local_count = parameters[2];
     let arguments = parameters[3];
@@ -1401,7 +1396,7 @@ pub(super) fn compile_js_general_dispatch(
         {
             let fallback = builder.create_block();
             let resume = builder.create_block();
-            let interrupted = emit_js_interrupt_requested(&mut builder, context);
+            let interrupted = emit_js_interrupt_requested(&mut builder);
             builder.ins().brif(interrupted, fallback, &[], resume, &[]);
             builder.switch_to_block(resume);
             let value = builder.ins().load(
@@ -1486,7 +1481,7 @@ pub(super) fn compile_js_general_dispatch(
                         {
                             let fallback = builder.create_block();
                             let resume = builder.create_block();
-                            let interrupted = emit_js_interrupt_requested(&mut builder, context);
+                            let interrupted = emit_js_interrupt_requested(&mut builder);
                             builder.ins().brif(interrupted, fallback, &[], resume, &[]);
                             builder.switch_to_block(fallback);
                             emit_js_step_fallback(
@@ -1814,7 +1809,7 @@ pub(super) fn compile_js_general_dispatch(
             };
             if target <= pc {
                 let resume = builder.create_block();
-                let interrupted = emit_js_interrupt_requested(&mut builder, context);
+                let interrupted = emit_js_interrupt_requested(&mut builder);
                 builder.ins().brif(interrupted, fallback, &[], resume, &[]);
                 builder.switch_to_block(resume);
             }
@@ -1891,6 +1886,14 @@ pub(super) fn compile_js_general_dispatch(
             })
             .flatten();
         let operands = numeric_binary.then(|| (instruction.operand_b(), instruction.operand_c()));
+        let bitwise = numeric_binary
+            .then(|| {
+                super::operations::NumberBitwise::from_js_instruction(
+                    instruction.op(),
+                    instruction.binary_operator(),
+                )
+            })
+            .flatten();
         let numeric_result = numeric_binary
             && arithmetic.is_some()
             && instruction.numeric_local_target().is_none()
@@ -1969,6 +1972,174 @@ pub(super) fn compile_js_general_dispatch(
             continue;
         }
 
+        // Bitwise Number operators have an exact native domain when both
+        // operands already carry Quench's signed-int32 Number tag. Any value
+        // requiring ToPrimitive/ToNumeric or a BigInt operation takes the
+        // existing exact-PC VM fallback before either operand is coerced.
+        let bitwise_result = numeric_binary
+            && bitwise.is_some()
+            && instruction.numeric_local_target().is_none()
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && register_offset(instruction.result_register()).is_some()
+            && operands.is_some_and(|(left, right)| {
+                js_tagged_operand_supported(program, left, &register_offset)
+                    && js_tagged_operand_supported(program, right, &register_offset)
+            });
+        if let (true, Some(next), Some(operation), Some((left_operand, right_operand))) =
+            (bitwise_result, next, bitwise, operands)
+        {
+            let fallback = builder.create_block();
+            let native = builder.create_block();
+            let destination = register_offset(instruction.result_register())
+                .expect("prevalidated JS bitwise destination");
+            let left_bits = read_js_tagged_operand(
+                &mut builder,
+                program,
+                left_operand,
+                arguments,
+                &register_offset,
+            )
+            .expect("prevalidated JS bitwise operand");
+            let right_bits = read_js_tagged_operand(
+                &mut builder,
+                program,
+                right_operand,
+                arguments,
+                &register_offset,
+            )
+            .expect("prevalidated JS bitwise operand");
+            let shift = i64::from(crate::value::ValueLayout::TAG_SHIFT);
+            let int_tag = (crate::value::ValueLayout::INT_TAG >> shift) as i64;
+            let left_tag = builder.ins().ushr_imm_u(left_bits, shift);
+            let right_tag = builder.ins().ushr_imm_u(right_bits, shift);
+            let left_integer = builder
+                .ins()
+                .icmp_imm_u(IntCC::Equal, left_tag, int_tag);
+            let right_integer = builder
+                .ins()
+                .icmp_imm_u(IntCC::Equal, right_tag, int_tag);
+            let both_integer = builder.ins().band(left_integer, right_integer);
+            builder
+                .ins()
+                .brif(both_integer, native, &[], fallback, &[]);
+
+            builder.switch_to_block(native);
+            let left = builder.ins().ireduce(types::I32, left_bits);
+            let right = builder.ins().ireduce(types::I32, right_bits);
+            let encoded = if operation
+                == super::operations::NumberBitwise::ShiftRightUnsigned
+            {
+                let number = emit_number_bitwise_operation(&mut builder, operation, left, right);
+                emit_js_box_number(&mut builder, number)
+            } else {
+                let result = emit_number_bitwise_bits(&mut builder, operation, left, right);
+                let payload = builder.ins().uextend(types::I64, result);
+                builder
+                    .ins()
+                    .bor_imm_u(payload, crate::value::ValueLayout::INT_TAG as i64)
+            };
+            builder.ins().store(
+                MemFlagsData::trusted(),
+                encoded,
+                arguments,
+                destination,
+            );
+            builder.ins().jump(next, &[]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(
+                &mut builder,
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            );
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+
+        // Value-producing Number relations use the same guarded tagged-number
+        // domain as arithmetic. The VM remains responsible for string order,
+        // coercion, and any effectful or throwing non-number comparisons.
+        let relation = numeric_binary
+            .then(|| {
+                super::operations::NumberRelation::from_operator(instruction.binary_operator())
+            })
+            .flatten();
+        let relation_result = numeric_binary
+            && relation.is_some()
+            && instruction.numeric_local_target().is_none()
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && register_offset(instruction.result_register()).is_some()
+            && operands.is_some_and(|(left, right)| {
+                js_tagged_operand_supported(program, left, &register_offset)
+                    && js_tagged_operand_supported(program, right, &register_offset)
+            });
+        if let (true, Some(next), Some(_relation), Some((left_operand, right_operand))) =
+            (relation_result, next, relation, operands)
+        {
+            let fallback = builder.create_block();
+            let destination = register_offset(instruction.result_register())
+                .expect("prevalidated JS relation destination");
+            let left_bits = read_js_tagged_operand(
+                &mut builder,
+                program,
+                left_operand,
+                arguments,
+                &register_offset,
+            )
+            .expect("prevalidated JS relation left operand");
+            let left = emit_js_tagged_number(&mut builder, left_bits, fallback);
+            let right_bits = read_js_tagged_operand(
+                &mut builder,
+                program,
+                right_operand,
+                arguments,
+                &register_offset,
+            )
+            .expect("prevalidated JS relation right operand");
+            let right = emit_js_tagged_number(&mut builder, right_bits, fallback);
+            let holds = emit_number_relation(
+                &mut builder,
+                instruction.binary_operator(),
+                left,
+                right,
+                NumberRelationDomain::Float64,
+            )
+            .expect("prevalidated JavaScript Number relation");
+            let true_value = builder.ins().iconst(types::I64, Value::TRUE.to_bits() as i64);
+            let false_value = builder
+                .ins()
+                .iconst(types::I64, Value::FALSE.to_bits() as i64);
+            let encoded = builder.ins().select(holds, true_value, false_value);
+            builder.ins().store(
+                MemFlagsData::trusted(),
+                encoded,
+                arguments,
+                destination,
+            );
+            builder.ins().jump(next, &[]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(
+                &mut builder,
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            );
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+
         emit_js_step_fallback(
             &mut builder,
             context,
@@ -1996,7 +2167,7 @@ pub(super) fn compile_js_general_dispatch(
     builder.ins().br_table(selector, table);
     builder.seal_block(continue_block);
     builder.seal_all_blocks();
-    builder.finalize(isa.frontend_config());
+    builder.into_builder().finalize(isa.frontend_config());
     let code = compile_native_function(
         native,
         &*isa,
@@ -2294,6 +2465,15 @@ const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 /// polymorphic module cannot turn a tier promotion into eager compilation.
 const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
+/// Functions of at most this many bytecodes are compiled eagerly though they hold
+/// `unreachable` (C asserts and aborts, which most Emscripten functions do): their trap
+/// lowers to a return of the trap status. Larger ones stay interpreted: admitting every
+/// function compiled TSF's few very large ones, its max RSS 24 -> 242 MiB and Score down a
+/// fifth. JetStream 3 `--jit` against no admission (Linux x86_64, 2026-10-24): at 4096,
+/// zlib 14.8 -> 24.4, TSF 12.6 -> 16.0, sqlite3 12.8 -> 15.1, gcc-loops 49.6 -> 60.1,
+/// quicksort 76.9 -> 86.8 (3-round medians), RSS flat; at 2048 zlib's hot pair (over 2700
+/// bytecodes each) stayed interpreted.
+const MAX_JIT_UNREACHABLE_BYTECODES: usize = 4_096;
 
 /// An opt-in JIT switch the environment sets ("1" or "true"), read once per process: a
 /// compiled call consults several, and reading the environment on each call cost more than
@@ -2408,6 +2588,31 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     static WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
         const { std::cell::Cell::new(None) };
+    static WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// `MAX_JIT_UNREACHABLE_BYTECODES`, which a test may lower to keep a function holding
+/// `unreachable` out of the eager artifact.
+fn jit_unreachable_bytecodes_limit() -> usize {
+    #[cfg(test)]
+    if let Some(limit) = WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return limit;
+    }
+    MAX_JIT_UNREACHABLE_BYTECODES
+}
+
+#[cfg(test)]
+pub(super) fn with_jit_unreachable_bytecodes_limit_for_test<R>(limit: usize, run: impl FnOnce() -> R) -> R {
+    struct Restore(Option<usize>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE.with(|override_limit| override_limit.set(self.0));
+        }
+    }
+    let previous = WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE.with(|override_limit| override_limit.replace(Some(limit)));
+    let _restore = Restore(previous);
+    run()
 }
 
 #[cfg(test)]
@@ -4407,7 +4612,7 @@ impl CompiledOsrRegion {
     pub(super) unsafe fn run(
         &self,
         registers: *mut crate::value::Value,
-        entry: &LoopEntry,
+        entry: &mut LoopEntry,
         interrupt: &crate::execution_interrupt::ExecutionInterrupt,
     ) -> LoopOutcome {
         let mut context = CallContext::interrupt_only(interrupt);
@@ -4419,7 +4624,7 @@ impl CompiledOsrRegion {
                 &mut context,
                 registers.addr() as u64,
                 0,
-                entry.words(),
+                entry.words_mut(),
                 &mut word,
                 NativeEntryMode::Resumable,
                 self.entry,
@@ -4490,13 +4695,15 @@ pub(super) fn compile_osr_region(
     observation: &Observation<'_>,
     interrupt: &crate::execution_interrupt::ExecutionInterrupt,
     policy: crate::MemoryPolicy,
+    track_backedges: bool,
 ) -> Option<CompiledOsrRegion> {
-    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?, false)?;
+    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?)?;
     let (function, widenings) = osr_loop::lower(
         region,
         observation,
         &*isa,
         poll_address(interrupt),
+        track_backedges,
     )?;
     let (_code, entry) = compile_and_publish_entry(function, &*isa, osr_loop::MAX_CODE_BYTES)?;
     Some(CompiledOsrRegion {
@@ -4939,7 +5146,9 @@ unsafe extern "C" fn js_step_callout<H: Host>(
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
-            let step = if dispatch.allow_inline_calls && current_instruction.op() == Op::Call {
+            let step = if dispatch.allow_inline_calls
+                && matches!(current_instruction.op(), Op::Call | Op::CallArray)
+            {
                 match vm.try_inline_user_call(
                     &program,
                     dispatch.frame,
@@ -6677,7 +6886,12 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
-            Op::WasmUnreachable if self.experimental_root_compilation => Some(()),
+            Op::WasmUnreachable
+                if self.experimental_root_compilation
+                    || function.code.len() <= jit_unreachable_bytecodes_limit() =>
+            {
+                Some(())
+            }
             Op::Return => match result {
                 Some(ty) => (value(state, instruction.a())? == Kind::of(ty)?).then_some(()),
                 None => Some(()),
@@ -7190,39 +7404,116 @@ fn dispatch_path(instructions: &[WideInstruction], plan: &Plan, start: usize) ->
     }
 }
 
-/// The core every native body lowers through, whichever frontend's bytecode it compiles: the
-/// builder, each register's typed views, the call context, and the interrupt check.
+/// The common native region core: builder, call context, interrupt check and its
+/// termination block. Frontends keep their own state representation and exit semantics.
+struct RegionCore<'b> {
+    builder: FunctionBuilder<'b>,
+    context: ir::Value,
+    /// The VM's poll page when every entry runs through the fault-resuming trampoline.
+    poll: Option<i64>,
+    /// Where a flag check that finds termination requested goes; the frontend fills it with
+    /// the terminated status (`TERMINATED_STATUS`).
+    termination_block: Option<ir::Block>,
+}
+
+impl<'b> RegionCore<'b> {
+    fn new(builder: FunctionBuilder<'b>, context: ir::Value, poll: Option<i64>) -> Self {
+        Self {
+            builder,
+            context,
+            poll,
+            termination_block: None,
+        }
+    }
+
+    fn into_builder(self) -> FunctionBuilder<'b> {
+        self.builder
+    }
+
+    /// Read the call context's interrupt flag. A JS region uses the result to
+    /// take its exact-PC callout; scalar regions use it for termination exits.
+    fn interrupt_requested(&mut self) -> ir::Value {
+        let pointer = self
+            .builder
+            .ins()
+            .load(types::I64, invariant(), self.context, CONTEXT_INTERRUPT);
+        let requested = self
+            .builder
+            .ins()
+            .atomic_load(types::I8, MemFlagsData::trusted(), pointer);
+        self.builder
+            .ins()
+            .icmp_imm_u(IntCC::NotEqual, requested, 0)
+    }
+
+    /// Checks for a termination request: a read of the poll page, which faults once one is
+    /// made and resumes as the terminated status (`guard_fault`), else a test of the context's
+    /// flag that branches to `termination_block`.
+    fn interrupt_safepoint(&mut self) {
+        if let Some(poll) = self.poll {
+            // The read faults once termination is requested, and the fault resumes as the
+            // termination (`guard_fault`). Atomic, so it is neither merged nor dropped.
+            let page = self.builder.ins().iconst(types::I64, poll);
+            self.builder
+                .ins()
+                .atomic_load(types::I8, MemFlagsData::trusted(), page);
+            return;
+        }
+        let stop = self.interrupt_requested();
+        let termination = match self.termination_block {
+            Some(block) => block,
+            None => {
+                let block = self.builder.create_block();
+                self.termination_block = Some(block);
+                block
+            }
+        };
+        let next = self.builder.create_block();
+        self.builder.ins().brif(stop, termination, &[], next, &[]);
+        self.builder.switch_to_block(next);
+        self.builder.seal_block(next);
+    }
+}
+
+impl<'b> Deref for RegionCore<'b> {
+    type Target = FunctionBuilder<'b>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.builder
+    }
+}
+
+impl<'b> DerefMut for RegionCore<'b> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.builder
+    }
+}
+
+/// Scalar Wasm and speculative JS numeric register views layered on the common region core.
 ///
 /// A register has one SSA variable per view type (`VIEW_TYPES`). Writing a value defines its
 /// own view and the other view of the same bits (`counterpart`); a view nothing reads costs
 /// nothing, since its conversion is dead. A Wasm value is its scalar; a JavaScript Number a
 /// region holds unboxed is an `i32` or an `f64` view.
 struct Body<'b> {
-    builder: FunctionBuilder<'b>,
+    core: RegionCore<'b>,
     /// Per register, its views, declared on first use.
     variables: Vec<Option<[Variable; VIEW_TYPES.len()]>>,
-    /// The call context (`CallContext`).
-    context: ir::Value,
-    /// The VM's poll page when every entry runs through the fault-resuming trampoline: an
-    /// interrupt check is then one read of it (`poll_address`).
-    poll: Option<i64>,
     /// Each i32 read from a register's view, by the zero-extended value it was read from.
     zero_extended: std::collections::HashMap<ir::Value, ir::Value>,
-    /// Where a flag check that finds termination requested goes; the frontend fills it with
-    /// the terminated status (`TERMINATED_STATUS`).
-    termination_block: Option<ir::Block>,
 }
 
 impl<'b> Body<'b> {
     fn new(builder: FunctionBuilder<'b>, context: ir::Value, poll: Option<i64>) -> Self {
         Self {
-            builder,
+            core: RegionCore::new(builder, context, poll),
             variables: Vec::new(),
-            context,
-            poll,
             zero_extended: std::collections::HashMap::new(),
-            termination_block: None,
         }
+    }
+
+    fn into_builder(self) -> FunctionBuilder<'b> {
+        self.core.into_builder()
     }
 
     /// The register's views.
@@ -7281,43 +7572,22 @@ impl<'b> Body<'b> {
         self.builder.def_var(variables[view(other)], converted);
     }
 
-    /// Checks for a termination request: a read of the poll page, which faults once one is
-    /// made and resumes as the terminated status (`guard_fault`), else a test of the context's
-    /// flag that branches to `termination_block`.
     fn interrupt_safepoint(&mut self) {
-        if let Some(poll) = self.poll {
-            // The read faults once termination is requested, and the fault resumes as the
-            // termination (`guard_fault`). Atomic, so it is neither merged nor dropped.
-            let page = self.builder.ins().iconst(types::I64, poll);
-            self.builder
-                .ins()
-                .atomic_load(types::I8, MemFlagsData::trusted(), page);
-            return;
-        }
-        // The flag's address is fixed for the call; only the flag changes.
-        let pointer = self
-            .builder
-            .ins()
-            .load(types::I64, invariant(), self.context, CONTEXT_INTERRUPT);
-        let requested = self
-            .builder
-            .ins()
-            // Atomic, so no check reuses an earlier one's load: Cranelift's alias analysis
-            // would merge plain loads of the flag across the loop.
-            .atomic_load(types::I8, MemFlagsData::trusted(), pointer);
-        let stop = self.builder.ins().icmp_imm_u(IntCC::NotEqual, requested, 0);
-        let termination = match self.termination_block {
-            Some(block) => block,
-            None => {
-                let block = self.builder.create_block();
-                self.termination_block = Some(block);
-                block
-            }
-        };
-        let next = self.builder.create_block();
-        self.builder.ins().brif(stop, termination, &[], next, &[]);
-        self.builder.switch_to_block(next);
-        self.builder.seal_block(next);
+        self.core.interrupt_safepoint();
+    }
+}
+
+impl<'b> Deref for Body<'b> {
+    type Target = RegionCore<'b>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.core
+    }
+}
+
+impl<'b> DerefMut for Body<'b> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.core
     }
 }
 
@@ -7418,21 +7688,21 @@ impl<H: Host> Emitter<'_, '_, H> {
         let (integer, float) = match kind {
             // The i32 view holds the constant zero-extended (`view_ir`).
             Kind::I32 => (
-                self.body.builder
+                self.body.core.builder
                     .ins()
                     .iconst(types::I64, i64::from(bits as u32)),
-                self.body.builder.ins().f32const(Ieee32::with_bits(bits as u32)),
+                self.body.core.builder.ins().f32const(Ieee32::with_bits(bits as u32)),
             ),
             Kind::I64 => (
-                self.body.builder.ins().iconst(types::I64, bits),
-                self.body.builder.ins().f64const(Ieee64::with_bits(bits as u64)),
+                self.body.core.builder.ins().iconst(types::I64, bits),
+                self.body.core.builder.ins().f64const(Ieee64::with_bits(bits as u64)),
             ),
         };
         let float_type = counterpart(kind.integer());
         let variables = self.body.views(register);
-        self.body.builder
+        self.body.core.builder
             .def_var(variables[view(kind.integer())], integer);
-        self.body.builder.def_var(variables[view(float_type)], float);
+        self.body.core.builder.def_var(variables[view(float_type)], float);
     }
 
     /// The kind of the `b` register of instruction `pc`.
@@ -7444,7 +7714,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     fn block(&mut self, pc: usize) -> ir::Block {
-        *self.blocks[pc].get_or_insert_with(|| self.body.builder.create_block())
+        *self.blocks[pc].get_or_insert_with(|| self.body.core.builder.create_block())
     }
 
     fn trap_block(&mut self, trap: crate::WasmTrap) -> ir::Block {
@@ -7452,8 +7722,8 @@ impl<H: Host> Emitter<'_, '_, H> {
         if let Some(block) = self.trap_blocks[index] {
             return block;
         }
-        let block = self.body.builder.create_block();
-        self.body.builder.set_cold_block(block);
+        let block = self.body.core.builder.create_block();
+        self.body.core.builder.set_cold_block(block);
         self.trap_blocks[index] = Some(block);
         block
     }
@@ -7461,10 +7731,10 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// Branch to the trap when `condition` is nonzero; continue otherwise.
     fn trap_if(&mut self, condition: ir::Value, trap: crate::WasmTrap) {
         let trap = self.trap_block(trap);
-        let next = self.body.builder.create_block();
-        self.body.builder.ins().brif(condition, trap, &[], next, &[]);
-        self.body.builder.switch_to_block(next);
-        self.body.builder.seal_block(next);
+        let next = self.body.core.builder.create_block();
+        self.body.core.builder.ins().brif(condition, trap, &[], next, &[]);
+        self.body.core.builder.switch_to_block(next);
+        self.body.core.builder.seal_block(next);
     }
 
     fn interrupt_safepoint(&mut self) {
@@ -7479,125 +7749,125 @@ impl<H: Host> Emitter<'_, '_, H> {
         let attempt = self
             .affine_attempt
             .expect("affine loop has an attempt variable");
-        let scalar = self.body.builder.create_block();
-        let first_attempt = self.body.builder.create_block();
-        let attempted = self.body.builder.use_var(attempt);
-        let already_attempted = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, attempted, 0);
-        self.body.builder
+        let scalar = self.body.core.builder.create_block();
+        let first_attempt = self.body.core.builder.create_block();
+        let attempted = self.body.core.builder.use_var(attempt);
+        let already_attempted = self.body.core.builder.ins().icmp_imm_u(IntCC::NotEqual, attempted, 0);
+        self.body.core.builder
             .ins()
             .brif(already_attempted, scalar, &[], first_attempt, &[]);
 
-        self.body.builder.switch_to_block(first_attempt);
-        let one = self.body.builder.ins().iconst(types::I32, 1);
-        self.body.builder.def_var(attempt, one);
-        let memory_length = self.body.builder.ins().load(
+        self.body.core.builder.switch_to_block(first_attempt);
+        let one = self.body.core.builder.ins().iconst(types::I32, 1);
+        self.body.core.builder.def_var(attempt, one);
+        let memory_length = self.body.core.builder.ins().load(
             types::I64,
             MemFlagsData::trusted(),
-            self.body.context,
+            self.body.core.context,
             CONTEXT_MEMORY_LENGTH,
         );
         let minimum_length = self
-            .body.builder
+            .body.core.builder
             .ins()
             .iconst(types::I64, candidate.max_end as i64);
-        let in_bounds = self.body.builder.ins().icmp(
+        let in_bounds = self.body.core.builder.ins().icmp(
             IntCC::UnsignedGreaterThanOrEqual,
             memory_length,
             minimum_length,
         );
-        let vector = self.body.builder.create_block();
-        self.body.builder.ins().brif(in_bounds, vector, &[], scalar, &[]);
+        let vector = self.body.core.builder.create_block();
+        self.body.core.builder.ins().brif(in_bounds, vector, &[], scalar, &[]);
 
-        self.body.builder.switch_to_block(vector);
+        self.body.core.builder.switch_to_block(vector);
         self.affine_pair_vector_loop(candidate);
-        self.body.builder.switch_to_block(scalar);
+        self.body.core.builder.switch_to_block(scalar);
     }
 
     /// Emit the guarded vector body. Its induction range is proven to fit
     /// memory32 without wrap, the input and output ranges are disjoint, and
     /// it polls after each original pair of writes.
     fn affine_pair_vector_loop(&mut self, candidate: AffinePairLoop) {
-        let loop_block = self.body.builder.create_block();
-        let index = self.body.builder.append_block_param(loop_block, types::I32);
-        let initial = self.body.builder.ins().iconst(types::I32, 0);
-        self.body.builder
+        let loop_block = self.body.core.builder.create_block();
+        let index = self.body.core.builder.append_block_param(loop_block, types::I32);
+        let initial = self.body.core.builder.ins().iconst(types::I32, 0);
+        self.body.core.builder
             .ins()
             .jump(loop_block, &[ir::BlockArg::Value(initial)]);
-        self.body.builder.switch_to_block(loop_block);
+        self.body.core.builder.switch_to_block(loop_block);
 
-        let scaled = self.body.builder.ins().ishl_imm_u(index, 2);
-        let scaled = self.body.builder.ins().uextend(types::I64, scaled);
+        let scaled = self.body.core.builder.ins().ishl_imm_u(index, 2);
+        let scaled = self.body.core.builder.ins().uextend(types::I64, scaled);
         let address = |this: &mut Self, offset: u32| {
-            let address = this.body.builder.ins().iadd(this.base, scaled);
-            this.body.builder.ins().iadd_imm_s(address, i64::from(offset))
+            let address = this.body.core.builder.ins().iadd(this.base, scaled);
+            this.body.core.builder.ins().iadd_imm_s(address, i64::from(offset))
         };
         let left_address = address(self, candidate.left);
         let right_address = address(self, candidate.right);
         let destination_address = address(self, candidate.destination);
         let flags = self.flags(Region::LinearMemory);
         let left = self
-            .body.builder
+            .body.core.builder
             .ins()
             .load(types::I32X4, flags, left_address, 0);
         let right = self
-            .body.builder
+            .body.core.builder
             .ins()
             .load(types::I32X4, flags, right_address, 0);
-        let sum = self.body.builder.ins().iadd(left, right);
-        let first_low = self.body.builder.ins().extractlane(sum, 0);
-        let first_high = self.body.builder.ins().extractlane(sum, 1);
-        let first_pair = self.body.builder.ins().iconcat(first_low, first_high);
-        self.body.builder
+        let sum = self.body.core.builder.ins().iadd(left, right);
+        let first_low = self.body.core.builder.ins().extractlane(sum, 0);
+        let first_high = self.body.core.builder.ins().extractlane(sum, 1);
+        let first_pair = self.body.core.builder.ins().iconcat(first_low, first_high);
+        self.body.core.builder
             .ins()
             .store(flags, first_pair, destination_address, 0);
         self.interrupt_safepoint();
 
-        let second_low = self.body.builder.ins().extractlane(sum, 2);
-        let second_high = self.body.builder.ins().extractlane(sum, 3);
-        let second_pair = self.body.builder.ins().iconcat(second_low, second_high);
-        self.body.builder
+        let second_low = self.body.core.builder.ins().extractlane(sum, 2);
+        let second_high = self.body.core.builder.ins().extractlane(sum, 3);
+        let second_pair = self.body.core.builder.ins().iconcat(second_low, second_high);
+        self.body.core.builder
             .ins()
             .store(flags, second_pair, destination_address, 8);
         self.interrupt_safepoint();
 
-        let next_index = self.body.builder.ins().iadd_imm_s(index, 4);
+        let next_index = self.body.core.builder.ins().iadd_imm_s(index, 4);
         let more =
-            self.body.builder
+            self.body.core.builder
                 .ins()
                 .icmp_imm_u(IntCC::NotEqual, next_index, i64::from(candidate.bound));
-        let backedge = self.body.builder.create_block();
-        let done = self.body.builder.create_block();
-        self.body.builder.ins().brif(more, backedge, &[], done, &[]);
-        self.body.builder.switch_to_block(backedge);
+        let backedge = self.body.core.builder.create_block();
+        let done = self.body.core.builder.create_block();
+        self.body.core.builder.ins().brif(more, backedge, &[], done, &[]);
+        self.body.core.builder.switch_to_block(backedge);
         self.interrupt_safepoint();
-        self.body.builder
+        self.body.core.builder
             .ins()
             .jump(loop_block, &[ir::BlockArg::Value(next_index)]);
-        self.body.builder.switch_to_block(done);
+        self.body.core.builder.switch_to_block(done);
         let exit = self.edge(candidate.exit);
-        self.body.builder.ins().jump(exit, &[]);
+        self.body.core.builder.ins().jump(exit, &[]);
     }
     fn finish_traps(&mut self) {
         if let Some(block) = self.body.termination_block {
-            self.body.builder.switch_to_block(block);
-            let status = self.body.builder.ins().iconst(types::I64, TERMINATED_STATUS);
+            self.body.core.builder.switch_to_block(block);
+            let status = self.body.core.builder.ins().iconst(types::I64, TERMINATED_STATUS);
             let mut values = vec![status];
             if let Some(ty) = self.plan.result {
                 let kind = Kind::of(ty).expect("planned");
-                values.push(self.body.builder.ins().iconst(kind.ir(), 0));
+                values.push(self.body.core.builder.ins().iconst(kind.ir(), 0));
             }
-            self.body.builder.ins().return_(&values);
+            self.body.core.builder.ins().return_(&values);
         }
         for (index, block) in self.trap_blocks.into_iter().enumerate() {
             let Some(block) = block else { continue };
-            self.body.builder.switch_to_block(block);
-            let status = self.body.builder.ins().iconst(types::I64, index as i64 + 1);
+            self.body.core.builder.switch_to_block(block);
+            let status = self.body.core.builder.ins().iconst(types::I64, index as i64 + 1);
             let mut values = vec![status];
             if let Some(ty) = self.plan.result {
                 let kind = Kind::of(ty).expect("planned");
-                values.push(self.body.builder.ins().iconst(kind.ir(), 0));
+                values.push(self.body.core.builder.ins().iconst(kind.ir(), 0));
             }
-            self.body.builder.ins().return_(&values);
+            self.body.core.builder.ins().return_(&values);
         }
     }
 
@@ -7609,25 +7879,25 @@ impl<H: Host> Emitter<'_, '_, H> {
         right: ir::Value,
     ) -> ir::Value {
         use I64BinaryOperator as B;
-        let ty = self.body.builder.func.dfg.value_type(left);
+        let ty = self.body.core.builder.func.dfg.value_type(left);
         let compare = |this: &mut Self, cc: IntCC| {
-            let flag = this.body.builder.ins().icmp(cc, left, right);
-            this.body.builder.ins().uextend(types::I32, flag)
+            let flag = this.body.core.builder.ins().icmp(cc, left, right);
+            this.body.core.builder.ins().uextend(types::I32, flag)
         };
         match operator {
-            B::Add => self.body.builder.ins().iadd(left, right),
-            B::Subtract => self.body.builder.ins().isub(left, right),
-            B::Multiply => self.body.builder.ins().imul(left, right),
-            B::And => self.body.builder.ins().band(left, right),
-            B::Or => self.body.builder.ins().bor(left, right),
-            B::Xor => self.body.builder.ins().bxor(left, right),
-            B::ShiftLeft => self.body.builder.ins().ishl(left, right),
-            B::ShiftRightSigned => self.body.builder.ins().sshr(left, right),
-            B::ShiftRightUnsigned => self.body.builder.ins().ushr(left, right),
-            B::RotateLeft => self.body.builder.ins().rotl(left, right),
-            B::RotateRight => self.body.builder.ins().rotr(left, right),
-            B::MultiplyHighSigned => self.body.builder.ins().smulhi(left, right),
-            B::MultiplyHighUnsigned => self.body.builder.ins().umulhi(left, right),
+            B::Add => self.body.core.builder.ins().iadd(left, right),
+            B::Subtract => self.body.core.builder.ins().isub(left, right),
+            B::Multiply => self.body.core.builder.ins().imul(left, right),
+            B::And => self.body.core.builder.ins().band(left, right),
+            B::Or => self.body.core.builder.ins().bor(left, right),
+            B::Xor => self.body.core.builder.ins().bxor(left, right),
+            B::ShiftLeft => self.body.core.builder.ins().ishl(left, right),
+            B::ShiftRightSigned => self.body.core.builder.ins().sshr(left, right),
+            B::ShiftRightUnsigned => self.body.core.builder.ins().ushr(left, right),
+            B::RotateLeft => self.body.core.builder.ins().rotl(left, right),
+            B::RotateRight => self.body.core.builder.ins().rotr(left, right),
+            B::MultiplyHighSigned => self.body.core.builder.ins().smulhi(left, right),
+            B::MultiplyHighUnsigned => self.body.core.builder.ins().umulhi(left, right),
             B::Equal => compare(self, IntCC::Equal),
             B::NotEqual => compare(self, IntCC::NotEqual),
             B::LessSigned => compare(self, IntCC::SignedLessThan),
@@ -7639,29 +7909,29 @@ impl<H: Host> Emitter<'_, '_, H> {
             B::GreaterEqualSigned => compare(self, IntCC::SignedGreaterThanOrEqual),
             B::GreaterEqualUnsigned => compare(self, IntCC::UnsignedGreaterThanOrEqual),
             B::DivideSigned | B::RemainderSigned | B::DivideUnsigned | B::RemainderUnsigned => {
-                let zero = self.body.builder.ins().icmp_imm_s(IntCC::Equal, right, 0);
+                let zero = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, right, 0);
                 self.trap_if(zero, crate::WasmTrap::IntegerDivideByZero);
                 match operator {
-                    B::DivideUnsigned => self.body.builder.ins().udiv(left, right),
-                    B::RemainderUnsigned => self.body.builder.ins().urem(left, right),
+                    B::DivideUnsigned => self.body.core.builder.ins().udiv(left, right),
+                    B::RemainderUnsigned => self.body.core.builder.ins().urem(left, right),
                     B::DivideSigned => {
                         let minimum = if ty == types::I32 {
                             i64::from(i32::MIN)
                         } else {
                             i64::MIN
                         };
-                        let minimum = self.body.builder.ins().icmp_imm_s(IntCC::Equal, left, minimum);
-                        let negative_one = self.body.builder.ins().icmp_imm_s(IntCC::Equal, right, -1);
-                        let overflow = self.body.builder.ins().band(minimum, negative_one);
+                        let minimum = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, left, minimum);
+                        let negative_one = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, right, -1);
+                        let overflow = self.body.core.builder.ins().band(minimum, negative_one);
                         self.trap_if(overflow, crate::WasmTrap::IntegerOverflow);
-                        self.body.builder.ins().sdiv(left, right)
+                        self.body.core.builder.ins().sdiv(left, right)
                     }
                     _ => {
                         // `MIN % -1` is 0; the machine division would fault.
-                        let negative_one = self.body.builder.ins().icmp_imm_s(IntCC::Equal, right, -1);
-                        let one = self.body.builder.ins().iconst(ty, 1);
-                        let divisor = self.body.builder.ins().select(negative_one, one, right);
-                        self.body.builder.ins().srem(left, divisor)
+                        let negative_one = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, right, -1);
+                        let one = self.body.core.builder.ins().iconst(ty, 1);
+                        let divisor = self.body.core.builder.ins().select(negative_one, one, right);
+                        self.body.core.builder.ins().srem(left, divisor)
                     }
                 }
             }
@@ -7693,25 +7963,25 @@ impl<H: Host> Emitter<'_, '_, H> {
             B::GreaterEqualUnsigned => IntCC::UnsignedGreaterThanOrEqual,
             _ => unreachable!("only comparison opcodes branch on an i32 comparison"),
         };
-        self.body.builder.ins().icmp(condition, left, right)
+        self.body.core.builder.ins().icmp(condition, left, right)
     }
 
     /// An integer unary operator at the operand's width.
     fn integer_unary(&mut self, operator: I64UnaryOperator, value: ir::Value) -> ir::Value {
         use I64UnaryOperator as U;
-        let ty = self.body.builder.func.dfg.value_type(value);
+        let ty = self.body.core.builder.func.dfg.value_type(value);
         let mut extend = |narrow_type| {
-            let narrow = self.body.builder.ins().ireduce(narrow_type, value);
-            self.body.builder.ins().sextend(ty, narrow)
+            let narrow = self.body.core.builder.ins().ireduce(narrow_type, value);
+            self.body.core.builder.ins().sextend(ty, narrow)
         };
         match operator {
             U::EqualZero => {
-                let flag = self.body.builder.ins().icmp_imm_s(IntCC::Equal, value, 0);
-                self.body.builder.ins().uextend(types::I32, flag)
+                let flag = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, value, 0);
+                self.body.core.builder.ins().uextend(types::I32, flag)
             }
-            U::LeadingZeros => self.body.builder.ins().clz(value),
-            U::TrailingZeros => self.body.builder.ins().ctz(value),
-            U::PopulationCount => self.body.builder.ins().popcnt(value),
+            U::LeadingZeros => self.body.core.builder.ins().clz(value),
+            U::TrailingZeros => self.body.core.builder.ins().ctz(value),
+            U::PopulationCount => self.body.core.builder.ins().popcnt(value),
             U::ExtendSigned8 => extend(types::I8),
             U::ExtendSigned16 => extend(types::I16),
             U::ExtendSigned32 => extend(types::I32),
@@ -7723,10 +7993,10 @@ impl<H: Host> Emitter<'_, '_, H> {
         use crate::wasm::numeric::canonical_nan_bits;
         if ty == types::F32 {
             let bits = canonical_nan_bits(f32::MANTISSA_DIGITS, u64::from(f32::INFINITY.to_bits()));
-            self.body.builder.ins().f32const(Ieee32::with_bits(bits as u32))
+            self.body.core.builder.ins().f32const(Ieee32::with_bits(bits as u32))
         } else {
             let bits = canonical_nan_bits(f64::MANTISSA_DIGITS, f64::INFINITY.to_bits());
-            self.body.builder.ins().f64const(Ieee64::with_bits(bits))
+            self.body.core.builder.ins().f64const(Ieee64::with_bits(bits))
         }
     }
 
@@ -7739,28 +8009,28 @@ impl<H: Host> Emitter<'_, '_, H> {
     ) -> ir::Value {
         use F64BinaryOperator as F;
         let compare = |this: &mut Self, cc: FloatCC| {
-            let flag = this.body.builder.ins().fcmp(cc, left, right);
-            this.body.builder.ins().uextend(types::I32, flag)
+            let flag = this.body.core.builder.ins().fcmp(cc, left, right);
+            this.body.core.builder.ins().uextend(types::I32, flag)
         };
         match operator {
-            F::Add => self.body.builder.ins().fadd(left, right),
-            F::Subtract => self.body.builder.ins().fsub(left, right),
-            F::Multiply => self.body.builder.ins().fmul(left, right),
-            F::Divide => self.body.builder.ins().fdiv(left, right),
+            F::Add => self.body.core.builder.ins().fadd(left, right),
+            F::Subtract => self.body.core.builder.ins().fsub(left, right),
+            F::Multiply => self.body.core.builder.ins().fmul(left, right),
+            F::Divide => self.body.core.builder.ins().fdiv(left, right),
             F::Minimum | F::Maximum => {
                 // Signed zeros order as Wasm requires; a NaN operand gives
                 // the canonical NaN.
                 let extremum = if operator == F::Minimum {
-                    self.body.builder.ins().fmin(left, right)
+                    self.body.core.builder.ins().fmin(left, right)
                 } else {
-                    self.body.builder.ins().fmax(left, right)
+                    self.body.core.builder.ins().fmax(left, right)
                 };
-                let unordered = self.body.builder.ins().fcmp(FloatCC::Unordered, left, right);
-                let ty = self.body.builder.func.dfg.value_type(left);
+                let unordered = self.body.core.builder.ins().fcmp(FloatCC::Unordered, left, right);
+                let ty = self.body.core.builder.func.dfg.value_type(left);
                 let nan = self.canonical_nan(ty);
-                self.body.builder.ins().select(unordered, nan, extremum)
+                self.body.core.builder.ins().select(unordered, nan, extremum)
             }
-            F::CopySign => self.body.builder.ins().fcopysign(left, right),
+            F::CopySign => self.body.core.builder.ins().fcopysign(left, right),
             F::Equal => compare(self, FloatCC::Equal),
             F::NotEqual => compare(self, FloatCC::NotEqual),
             F::Less => compare(self, FloatCC::LessThan),
@@ -7775,13 +8045,13 @@ impl<H: Host> Emitter<'_, '_, H> {
     fn float_unary(&mut self, operator: F64UnaryOperator, value: ir::Value) -> ir::Value {
         use F64UnaryOperator as U;
         match operator {
-            U::Absolute => self.body.builder.ins().fabs(value),
-            U::Negate => self.body.builder.ins().fneg(value),
-            U::Ceiling => self.body.builder.ins().ceil(value),
-            U::Floor => self.body.builder.ins().floor(value),
-            U::Truncate => self.body.builder.ins().trunc(value),
-            U::Nearest => self.body.builder.ins().nearest(value),
-            U::SquareRoot => self.body.builder.ins().sqrt(value),
+            U::Absolute => self.body.core.builder.ins().fabs(value),
+            U::Negate => self.body.core.builder.ins().fneg(value),
+            U::Ceiling => self.body.core.builder.ins().ceil(value),
+            U::Floor => self.body.core.builder.ins().floor(value),
+            U::Truncate => self.body.core.builder.ins().trunc(value),
+            U::Nearest => self.body.core.builder.ins().nearest(value),
+            U::SquareRoot => self.body.core.builder.ins().sqrt(value),
         }
     }
 
@@ -7791,9 +8061,9 @@ impl<H: Host> Emitter<'_, '_, H> {
         let result = scalar_ir(operator.result_type());
         let source = operator.source_type();
         match operator {
-            C::WrapI64 => self.body.builder.ins().ireduce(result, value),
-            C::ExtendI32Signed => self.body.builder.ins().sextend(result, value),
-            C::ExtendI32Unsigned => self.body.builder.ins().uextend(result, value),
+            C::WrapI64 => self.body.core.builder.ins().ireduce(result, value),
+            C::ExtendI32Signed => self.body.core.builder.ins().sextend(result, value),
+            C::ExtendI32Unsigned => self.body.core.builder.ins().uextend(result, value),
             C::TruncateF32SignedI32
             | C::TruncateF64SignedI32
             | C::TruncateF32SignedI64
@@ -7805,26 +8075,26 @@ impl<H: Host> Emitter<'_, '_, H> {
             C::SaturateF32SignedI32
             | C::SaturateF64SignedI32
             | C::SaturateF32SignedI64
-            | C::SaturateF64SignedI64 => self.body.builder.ins().fcvt_to_sint_sat(result, value),
+            | C::SaturateF64SignedI64 => self.body.core.builder.ins().fcvt_to_sint_sat(result, value),
             C::SaturateF32UnsignedI32
             | C::SaturateF64UnsignedI32
             | C::SaturateF32UnsignedI64
-            | C::SaturateF64UnsignedI64 => self.body.builder.ins().fcvt_to_uint_sat(result, value),
+            | C::SaturateF64UnsignedI64 => self.body.core.builder.ins().fcvt_to_uint_sat(result, value),
             C::ConvertI32SignedF32
             | C::ConvertI64SignedF32
             | C::ConvertI32SignedF64
-            | C::ConvertI64SignedF64 => self.body.builder.ins().fcvt_from_sint(result, value),
+            | C::ConvertI64SignedF64 => self.body.core.builder.ins().fcvt_from_sint(result, value),
             C::ConvertI32UnsignedF32
             | C::ConvertI64UnsignedF32
             | C::ConvertI32UnsignedF64
-            | C::ConvertI64UnsignedF64 => self.body.builder.ins().fcvt_from_uint(result, value),
-            C::PromoteF32 => self.body.builder.ins().fpromote(result, value),
-            C::DemoteF64 => self.body.builder.ins().fdemote(result, value),
+            | C::ConvertI64UnsignedF64 => self.body.core.builder.ins().fcvt_from_uint(result, value),
+            C::PromoteF32 => self.body.core.builder.ins().fpromote(result, value),
+            C::DemoteF64 => self.body.core.builder.ins().fdemote(result, value),
             C::ReinterpretF32I32
             | C::ReinterpretF64I64
             | C::ReinterpretI32F32
             | C::ReinterpretI64F64 => {
-                self.body.builder
+                self.body.core.builder
                     .ins()
                     .bitcast(result, MemFlagsData::new(), value)
             }
@@ -7842,27 +8112,27 @@ impl<H: Host> Emitter<'_, '_, H> {
         signed: bool,
     ) -> ir::Value {
         let wide = if source == crate::WasmType::F32 {
-            self.body.builder.ins().fpromote(types::F64, value)
+            self.body.core.builder.ins().fpromote(types::F64, value)
         } else {
             value
         };
-        let nan = self.body.builder.ins().fcmp(FloatCC::Unordered, wide, wide);
+        let nan = self.body.core.builder.ins().fcmp(FloatCC::Unordered, wide, wide);
         self.trap_if(nan, crate::WasmTrap::InvalidConversionToInteger);
-        let truncated = self.body.builder.ins().trunc(wide);
+        let truncated = self.body.core.builder.ins().trunc(wide);
         let (lower, limit) = crate::wasm::conversion::truncation_bounds(result.bits(), signed);
-        let lower = self.body.builder.ins().f64const(lower);
-        let limit = self.body.builder.ins().f64const(limit);
-        let below = self.body.builder.ins().fcmp(FloatCC::LessThan, truncated, lower);
+        let lower = self.body.core.builder.ins().f64const(lower);
+        let limit = self.body.core.builder.ins().f64const(limit);
+        let below = self.body.core.builder.ins().fcmp(FloatCC::LessThan, truncated, lower);
         let above = self
-            .body.builder
+            .body.core.builder
             .ins()
             .fcmp(FloatCC::GreaterThanOrEqual, truncated, limit);
-        let overflow = self.body.builder.ins().bor(below, above);
+        let overflow = self.body.core.builder.ins().bor(below, above);
         self.trap_if(overflow, crate::WasmTrap::IntegerOverflow);
         if signed {
-            self.body.builder.ins().fcvt_to_sint_sat(result, truncated)
+            self.body.core.builder.ins().fcvt_to_sint_sat(result, truncated)
         } else {
-            self.body.builder.ins().fcvt_to_uint_sat(result, truncated)
+            self.body.core.builder.ins().fcvt_to_uint_sat(result, truncated)
         }
     }
 
@@ -7873,21 +8143,21 @@ impl<H: Host> Emitter<'_, '_, H> {
             // Index plus offset plus width stays inside the reservation; past
             // the accessible prefix the access faults, and the fault handler
             // raises the out-of-bounds trap (see `guard_fault`).
-            let host = self.body.builder.ins().iadd(self.base, address);
-            return self.body.builder.ins().iadd_imm_s(host, i64::from(offset));
+            let host = self.body.core.builder.ins().iadd(self.base, address);
+            return self.body.core.builder.ins().iadd_imm_s(host, i64::from(offset));
         }
         let end = self
-            .body.builder
+            .body.core.builder
             .ins()
             .iadd_imm_s(address, i64::from(offset) + width as i64);
-        let out_of_bounds = self.body.builder.ins().icmp(
+        let out_of_bounds = self.body.core.builder.ins().icmp(
             IntCC::UnsignedGreaterThan,
             end,
             self.length.expect("unguarded accesses receive the length"),
         );
         self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-        let host = self.body.builder.ins().iadd(self.base, address);
-        self.body.builder.ins().iadd_imm_s(host, i64::from(offset))
+        let host = self.body.core.builder.ins().iadd(self.base, address);
+        self.body.core.builder.ins().iadd_imm_s(host, i64::from(offset))
     }
 
     /// The address of the value of the global bound at `slot`.
@@ -7898,10 +8168,10 @@ impl<H: Host> Emitter<'_, '_, H> {
             .position(|candidate| *candidate == slot)
             .expect("planned globals are collected");
         let table = self
-            .body.builder
+            .body.core.builder
             .ins()
-            .load(types::I64, invariant(), self.body.context, CONTEXT_GLOBALS);
-        self.body.builder
+            .load(types::I64, invariant(), self.body.core.context, CONTEXT_GLOBALS);
+        self.body.core.builder
             .ins()
             .load(types::I64, invariant(), table, (position * 8) as i32)
     }
@@ -7917,23 +8187,23 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// A nonzero status from a call (a trap or a raised callout) unwinds
     /// this activation too.
     fn propagate(&mut self, status: ir::Value) {
-        let unwound = self.body.builder.create_block();
-        self.body.builder.set_cold_block(unwound);
-        let next = self.body.builder.create_block();
-        self.body.builder.ins().brif(status, unwound, &[], next, &[]);
-        self.body.builder.switch_to_block(unwound);
-        self.body.builder.seal_block(unwound);
+        let unwound = self.body.core.builder.create_block();
+        self.body.core.builder.set_cold_block(unwound);
+        let next = self.body.core.builder.create_block();
+        self.body.core.builder.ins().brif(status, unwound, &[], next, &[]);
+        self.body.core.builder.switch_to_block(unwound);
+        self.body.core.builder.seal_block(unwound);
         let mut values = vec![status];
         if let Some(ty) = self.plan.result {
             values.push(
-                self.body.builder
+                self.body.core.builder
                     .ins()
                     .iconst(Kind::of(ty).expect("planned").ir(), 0),
             );
         }
-        self.body.builder.ins().return_(&values);
-        self.body.builder.switch_to_block(next);
-        self.body.builder.seal_block(next);
+        self.body.core.builder.ins().return_(&values);
+        self.body.core.builder.switch_to_block(next);
+        self.body.core.builder.seal_block(next);
     }
 
     /// An imported call: arguments go to the VM in a stack array, through
@@ -8015,45 +8285,45 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     fn callout_emscripten_memcpy_leaf(&mut self, function: u32, instruction: WideInstruction) {
-        let fast = self.body.builder.create_block();
-        let slow = self.body.builder.create_block();
-        let success = self.body.builder.create_block();
-        let done = self.body.builder.create_block();
-        let cache = self.body.builder.ins().load(
+        let fast = self.body.core.builder.create_block();
+        let slow = self.body.core.builder.create_block();
+        let success = self.body.core.builder.create_block();
+        let done = self.body.core.builder.create_block();
+        let cache = self.body.core.builder.ins().load(
             types::I64,
             invariant(),
-            self.body.context,
+            self.body.core.context,
             CONTEXT_EMSCRIPTEN_MEMCPY_CACHE,
         );
-        let valid = self.body.builder.ins().load(
+        let valid = self.body.core.builder.ins().load(
             types::I64,
             MemFlagsData::trusted(),
             cache,
             MEMCPY_CACHE_VALID,
         );
-        let valid = self.body.builder.ins().icmp_imm_u(IntCC::Equal, valid, 1);
-        let cached_function = self.body.builder.ins().load(
+        let valid = self.body.core.builder.ins().icmp_imm_u(IntCC::Equal, valid, 1);
+        let cached_function = self.body.core.builder.ins().load(
             types::I64,
             MemFlagsData::trusted(),
             cache,
             MEMCPY_CACHE_FUNCTION,
         );
         let matching_function =
-            self.body.builder
+            self.body.core.builder
                 .ins()
                 .icmp_imm_u(IntCC::Equal, cached_function, i64::from(function));
-        let valid = self.body.builder.ins().band(valid, matching_function);
-        self.body.builder.ins().brif(valid, fast, &[], slow, &[]);
+        let valid = self.body.core.builder.ins().band(valid, matching_function);
+        self.body.core.builder.ins().brif(valid, fast, &[], slow, &[]);
 
-        self.body.builder.switch_to_block(fast);
+        self.body.core.builder.switch_to_block(fast);
         let window = instruction.call_window();
         let args = (0..3)
             .map(|offset| self.read(window.base + offset, Kind::I32))
             .collect::<Vec<_>>();
-        let target = self.body.builder.ins().load(
+        let target = self.body.core.builder.ins().load(
             types::I64,
             invariant(),
-            self.body.context,
+            self.body.core.context,
             CONTEXT_EMSCRIPTEN_MEMCPY_LEAF,
         );
         let mut leaf = Signature::new(self.call_conv);
@@ -8062,26 +8332,26 @@ impl<H: Host> Emitter<'_, '_, H> {
         leaf.params
             .extend((0..3).map(|_| AbiParam::new(types::I32)));
         leaf.returns.push(AbiParam::new(types::I64));
-        let leaf = self.body.builder.import_signature(leaf);
-        let function_value = self.body.builder.ins().iconst(types::I64, i64::from(function));
-        let call = self.body.builder.ins().call_indirect(
+        let leaf = self.body.core.builder.import_signature(leaf);
+        let function_value = self.body.core.builder.ins().iconst(types::I64, i64::from(function));
+        let call = self.body.core.builder.ins().call_indirect(
             leaf,
             target,
-            &[self.body.context, function_value, args[0], args[1], args[2]],
+            &[self.body.core.context, function_value, args[0], args[1], args[2]],
         );
-        let status = self.body.builder.inst_results(call)[0];
+        let status = self.body.core.builder.inst_results(call)[0];
         let miss = self
-            .body.builder
+            .body.core.builder
             .ins()
             .icmp_imm_u(IntCC::Equal, status, MEMCPY_LEAF_MISS_STATUS);
-        self.body.builder.ins().brif(miss, slow, &[], success, &[]);
+        self.body.core.builder.ins().brif(miss, slow, &[], success, &[]);
 
-        self.body.builder.switch_to_block(success);
+        self.body.core.builder.switch_to_block(success);
         self.propagate(status);
         self.write_constant(instruction.result_register(), Kind::I32, 0);
-        self.body.builder.ins().jump(done, &[]);
+        self.body.core.builder.ins().jump(done, &[]);
 
-        self.body.builder.switch_to_block(slow);
+        self.body.core.builder.switch_to_block(slow);
         self.callout_function_generic(
             function,
             &crate::WasmSignature {
@@ -8090,8 +8360,8 @@ impl<H: Host> Emitter<'_, '_, H> {
             },
             instruction,
         );
-        self.body.builder.ins().jump(done, &[]);
-        self.body.builder.switch_to_block(done);
+        self.body.core.builder.ins().jump(done, &[]);
+        self.body.core.builder.switch_to_block(done);
     }
 
     fn callout_function_generic(
@@ -8103,7 +8373,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let word = types::I64.bytes();
         let signature = signature.clone();
         let words = signature.params.len() + 1;
-        let slot = self.body.builder.create_sized_stack_slot(ir::StackSlotData::new(
+        let slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
             ir::StackSlotKind::ExplicitSlot,
             word * words as u32,
             word.trailing_zeros() as u8,
@@ -8113,21 +8383,21 @@ impl<H: Host> Emitter<'_, '_, H> {
             let kind = Kind::of(*ty).expect("planned");
             let value = self.read(window.base + offset as u16, kind);
             let value = match kind {
-                Kind::I32 => self.body.builder.ins().uextend(types::I64, value),
+                Kind::I32 => self.body.core.builder.ins().uextend(types::I64, value),
                 Kind::I64 => value,
             };
             let address =
-                self.body.builder
+                self.body.core.builder
                     .ins()
                     .stack_addr(types::I64, slot, (offset as u32 * word) as i32);
-            self.body.builder
+            self.body.core.builder
                 .ins()
                 .store(MemFlagsData::trusted(), value, address, 0);
         }
         let result_offset = (signature.params.len() as u32 * word) as i32;
-        let args = self.body.builder.ins().stack_addr(types::I64, slot, 0);
+        let args = self.body.core.builder.ins().stack_addr(types::I64, slot, 0);
         let out = self
-            .body.builder
+            .body.core.builder
             .ins()
             .stack_addr(types::I64, slot, result_offset);
         let callout_signature = match self.callout_signature {
@@ -8138,33 +8408,33 @@ impl<H: Host> Emitter<'_, '_, H> {
                     callout.params.push(AbiParam::new(types::I64));
                 }
                 callout.returns.push(AbiParam::new(types::I64));
-                let callout = self.body.builder.import_signature(callout);
+                let callout = self.body.core.builder.import_signature(callout);
                 self.callout_signature = Some(callout);
                 callout
             }
         };
         let target =
-            self.body.builder
+            self.body.core.builder
                 .ins()
-                .load(types::I64, invariant(), self.body.context, CONTEXT_CALLOUT);
-        let function = self.body.builder.ins().iconst(types::I64, i64::from(function));
-        let call = self.body.builder.ins().call_indirect(
+                .load(types::I64, invariant(), self.body.core.context, CONTEXT_CALLOUT);
+        let function = self.body.core.builder.ins().iconst(types::I64, i64::from(function));
+        let call = self.body.core.builder.ins().call_indirect(
             callout_signature,
             target,
-            &[self.body.context, function, args, out],
+            &[self.body.core.context, function, args, out],
         );
-        let status = self.body.builder.inst_results(call)[0];
+        let status = self.body.core.builder.inst_results(call)[0];
         self.propagate(status);
         let destination = instruction.result_register();
         match signature.results.first() {
             Some(ty) => {
                 let kind = Kind::of(*ty).expect("planned");
                 let bits = self
-                    .body.builder
+                    .body.core.builder
                     .ins()
                     .load(types::I64, MemFlagsData::trusted(), out, 0);
                 let value = match kind {
-                    Kind::I32 => self.body.builder.ins().ireduce(types::I32, bits),
+                    Kind::I32 => self.body.core.builder.ins().ireduce(types::I32, bits),
                     Kind::I64 => bits,
                 };
                 self.write(destination, kind, value);
@@ -8176,7 +8446,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// Keep the table index in native code until the combined VM callout.
     fn indirect_target(&mut self, _pc: usize, instruction: WideInstruction) {
         let index = self.read(instruction.c(), Kind::I32);
-        let index = self.body.builder.ins().uextend(types::I64, index);
+        let index = self.body.core.builder.ins().uextend(types::I64, index);
         self.write(instruction.a(), Kind::I64, index);
     }
 
@@ -8196,7 +8466,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             .clone();
         let word = types::I64.bytes();
         let words = wasm_signature.params.len() + 1;
-        let slot = self.body.builder.create_sized_stack_slot(ir::StackSlotData::new(
+        let slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
             ir::StackSlotKind::ExplicitSlot,
             word * words as u32,
             word.trailing_zeros() as u8,
@@ -8206,27 +8476,27 @@ impl<H: Host> Emitter<'_, '_, H> {
             let kind = Kind::of(*ty).expect("planned");
             let value = self.read(window.base + offset as u16, kind);
             let value = match kind {
-                Kind::I32 => self.body.builder.ins().uextend(types::I64, value),
+                Kind::I32 => self.body.core.builder.ins().uextend(types::I64, value),
                 Kind::I64 => value,
             };
             let address =
-                self.body.builder
+                self.body.core.builder
                     .ins()
                     .stack_addr(types::I64, slot, (offset as u32 * word) as i32);
-            self.body.builder
+            self.body.core.builder
                 .ins()
                 .store(MemFlagsData::trusted(), value, address, 0);
         }
         let result_offset = (wasm_signature.params.len() as u32 * word) as i32;
-        let args = self.body.builder.ins().stack_addr(types::I64, slot, 0);
+        let args = self.body.core.builder.ins().stack_addr(types::I64, slot, 0);
         let out = self
-            .body.builder
+            .body.core.builder
             .ins()
             .stack_addr(types::I64, slot, result_offset);
         let index = self.read(instruction.b(), Kind::I64);
-        let table_slot = self.body.builder.ins().iconst(types::I64, i64::from(table));
+        let table_slot = self.body.core.builder.ins().iconst(types::I64, i64::from(table));
         let signature_index = self
-            .body.builder
+            .body.core.builder
             .ins()
             .iconst(types::I64, i64::from(signature_index));
         let site_id = self
@@ -8235,214 +8505,214 @@ impl<H: Host> Emitter<'_, '_, H> {
             .ok()
             .map(|index| self.reference_site_ids[index].1)
             .expect("compiled indirect call has a cache site id");
-        let fast_cache_base = self.body.builder.ins().load(
+        let fast_cache_base = self.body.core.builder.ins().load(
             types::I64,
             invariant(),
-            self.body.context,
+            self.body.core.context,
             CONTEXT_REFERENCE_FAST_CACHES,
         );
-        let fast_cache = self.body.builder.ins().iadd_imm_s(
+        let fast_cache = self.body.core.builder.ins().iadd_imm_s(
             fast_cache_base,
             (site_id * std::mem::size_of::<FastReferenceCache>()) as i64,
         );
-        let cached_epoch = self.body.builder.ins().load(
+        let cached_epoch = self.body.core.builder.ins().load(
             types::I64,
             MemFlagsData::trusted(),
             fast_cache,
             std::mem::offset_of!(FastReferenceCache, epoch) as i32,
         );
         let cache_initialized = self
-            .body.builder
+            .body.core.builder
             .ins()
             .icmp_imm_u(IntCC::NotEqual, cached_epoch, 0);
-        let check_cache = self.body.builder.create_block();
-        let check_entry = self.body.builder.create_block();
-        let fast_call = self.body.builder.create_block();
-        let slow_call = self.body.builder.create_block();
-        let done = self.body.builder.create_block();
-        let status_slot = self.body.builder.create_sized_stack_slot(ir::StackSlotData::new(
+        let check_cache = self.body.core.builder.create_block();
+        let check_entry = self.body.core.builder.create_block();
+        let fast_call = self.body.core.builder.create_block();
+        let slow_call = self.body.core.builder.create_block();
+        let done = self.body.core.builder.create_block();
+        let status_slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
             ir::StackSlotKind::ExplicitSlot,
             types::I64.bytes() as u32,
             types::I64.bytes().trailing_zeros() as u8,
         ));
-        self.body.builder
+        self.body.core.builder
             .ins()
             .brif(cache_initialized, check_cache, &[], slow_call, &[]);
 
         // Table writes and collection advance the VM-local epoch. This makes
         // artifact-local certificates stale without invalidation walks through
         // recursive native frames.
-        self.body.builder.switch_to_block(check_cache);
-        let epoch_pointer = self.body.builder.ins().load(
+        self.body.core.builder.switch_to_block(check_cache);
+        let epoch_pointer = self.body.core.builder.ins().load(
             types::I64,
             MemFlagsData::trusted(),
-            self.body.context,
+            self.body.core.context,
             CONTEXT_REFERENCE_EPOCH,
         );
         let current_epoch =
-            self.body.builder
+            self.body.core.builder
                 .ins()
                 .load(types::I64, MemFlagsData::trusted(), epoch_pointer, 0);
         let epoch_matches = self
-            .body.builder
+            .body.core.builder
             .ins()
             .icmp(IntCC::Equal, current_epoch, cached_epoch);
         let current_env =
-            self.body.builder
+            self.body.core.builder
                 .ins()
-                .load(types::I64, invariant(), self.body.context, CONTEXT_ENV);
-        let cached_env = self.body.builder.ins().load(
+                .load(types::I64, invariant(), self.body.core.context, CONTEXT_ENV);
+        let cached_env = self.body.core.builder.ins().load(
             types::I64,
             MemFlagsData::trusted(),
             fast_cache,
             std::mem::offset_of!(FastReferenceCache, env) as i32,
         );
         let env_matches = self
-            .body.builder
+            .body.core.builder
             .ins()
             .icmp(IntCC::Equal, current_env, cached_env);
-        let cached_index = self.body.builder.ins().load(
+        let cached_index = self.body.core.builder.ins().load(
             types::I64,
             MemFlagsData::trusted(),
             fast_cache,
             std::mem::offset_of!(FastReferenceCache, index) as i32,
         );
-        let index_matches = self.body.builder.ins().icmp(IntCC::Equal, index, cached_index);
-        let epoch_and_env_match = self.body.builder.ins().band(epoch_matches, env_matches);
-        let cache_matches = self.body.builder.ins().band(epoch_and_env_match, index_matches);
-        self.body.builder
+        let index_matches = self.body.core.builder.ins().icmp(IntCC::Equal, index, cached_index);
+        let epoch_and_env_match = self.body.core.builder.ins().band(epoch_matches, env_matches);
+        let cache_matches = self.body.core.builder.ins().band(epoch_and_env_match, index_matches);
+        self.body.core.builder
             .ins()
             .brif(cache_matches, check_entry, &[], slow_call, &[]);
-        self.body.builder.seal_block(check_cache);
+        self.body.core.builder.seal_block(check_cache);
 
         // A valid cache is populated only from a checked same-artifact target,
         // but keep the index and non-null tests here as a cheap corruption
         // guard before indexing the artifact's entry table.
-        self.body.builder.switch_to_block(check_entry);
-        let cached_function = self.body.builder.ins().load(
+        self.body.core.builder.switch_to_block(check_entry);
+        let cached_function = self.body.core.builder.ins().load(
             types::I64,
             MemFlagsData::trusted(),
             fast_cache,
             std::mem::offset_of!(FastReferenceCache, function) as i32,
         );
-        let function_in_range = self.body.builder.ins().icmp_imm_u(
+        let function_in_range = self.body.core.builder.ins().icmp_imm_u(
             IntCC::UnsignedLessThan,
             cached_function,
             self.plans.len() as i64,
         );
         let body = if self.reference_body_cache {
-            let load_body = self.body.builder.create_block();
-            self.body.builder
+            let load_body = self.body.core.builder.create_block();
+            self.body.core.builder
                 .ins()
                 .brif(function_in_range, load_body, &[], slow_call, &[]);
-            self.body.builder.seal_block(check_entry);
-            self.body.builder.switch_to_block(load_body);
-            let body = self.body.builder.ins().load(
+            self.body.core.builder.seal_block(check_entry);
+            self.body.core.builder.switch_to_block(load_body);
+            let body = self.body.core.builder.ins().load(
                 types::I64,
                 MemFlagsData::trusted(),
                 fast_cache,
                 std::mem::offset_of!(FastReferenceCache, body) as i32,
             );
-            let body_present = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, body, 0);
-            self.body.builder
+            let body_present = self.body.core.builder.ins().icmp_imm_u(IntCC::NotEqual, body, 0);
+            self.body.core.builder
                 .ins()
                 .brif(body_present, fast_call, &[], slow_call, &[]);
-            self.body.builder.seal_block(load_body);
+            self.body.core.builder.seal_block(load_body);
             body
         } else {
-            let lookup_entry = self.body.builder.create_block();
-            self.body.builder
+            let lookup_entry = self.body.core.builder.create_block();
+            self.body.core.builder
                 .ins()
                 .brif(function_in_range, lookup_entry, &[], slow_call, &[]);
-            self.body.builder.seal_block(check_entry);
-            self.body.builder.switch_to_block(lookup_entry);
+            self.body.core.builder.seal_block(check_entry);
+            self.body.core.builder.switch_to_block(lookup_entry);
             let artifact_table =
-                self.body.builder
+                self.body.core.builder
                     .ins()
-                    .load(types::I64, invariant(), self.body.context, CONTEXT_TABLE);
-            let entry_offset = self.body.builder.ins().ishl_imm_u(cached_function, 3);
-            let entry_address = self.body.builder.ins().iadd(artifact_table, entry_offset);
+                    .load(types::I64, invariant(), self.body.core.context, CONTEXT_TABLE);
+            let entry_offset = self.body.core.builder.ins().ishl_imm_u(cached_function, 3);
+            let entry_address = self.body.core.builder.ins().iadd(artifact_table, entry_offset);
             let entry =
-                self.body.builder
+                self.body.core.builder
                     .ins()
                     .load(types::I64, MemFlagsData::trusted(), entry_address, 0);
-            let entry_present = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, entry, 0);
-            self.body.builder
+            let entry_present = self.body.core.builder.ins().icmp_imm_u(IntCC::NotEqual, entry, 0);
+            self.body.core.builder
                 .ins()
                 .brif(entry_present, fast_call, &[], slow_call, &[]);
-            self.body.builder.seal_block(lookup_entry);
+            self.body.core.builder.seal_block(lookup_entry);
             entry
         };
 
-        self.body.builder.switch_to_block(fast_call);
-        let mut direct_args = vec![self.body.context];
+        self.body.core.builder.switch_to_block(fast_call);
+        let mut direct_args = vec![self.body.core.context];
         if self.memory.base {
             direct_args.push(self.base);
         }
         direct_args.extend(self.length);
         for (offset, ty) in wasm_signature.params.iter().enumerate() {
-            let raw = self.body.builder.ins().load(
+            let raw = self.body.core.builder.ins().load(
                 types::I64,
                 MemFlagsData::trusted(),
                 args,
                 (offset as u32 * word) as i32,
             );
             direct_args.push(match Kind::of(*ty).expect("planned") {
-                Kind::I32 => self.body.builder.ins().ireduce(types::I32, raw),
+                Kind::I32 => self.body.core.builder.ins().ireduce(types::I32, raw),
                 Kind::I64 => raw,
             });
         }
-        let entry_signature = self.body.builder.import_signature(internal_signature(
+        let entry_signature = self.body.core.builder.import_signature(internal_signature(
             self.memory,
             &wasm_signature.params,
             wasm_signature.results.first().copied(),
             self.call_conv,
         ));
         let call = self
-            .body.builder
+            .body.core.builder
             .ins()
             .call_indirect(entry_signature, body, &direct_args);
-        let fast_results = self.body.builder.inst_results(call).to_vec();
+        let fast_results = self.body.core.builder.inst_results(call).to_vec();
         let fast_status = fast_results[0];
         if let Some(result) = wasm_signature.results.first() {
             let value = match Kind::of(*result).expect("planned") {
-                Kind::I32 => self.body.builder.ins().uextend(types::I64, fast_results[1]),
+                Kind::I32 => self.body.core.builder.ins().uextend(types::I64, fast_results[1]),
                 Kind::I64 => fast_results[1],
             };
-            self.body.builder
+            self.body.core.builder
                 .ins()
                 .store(MemFlagsData::trusted(), value, out, 0);
         }
-        let status_address = self.body.builder.ins().stack_addr(types::I64, status_slot, 0);
-        self.body.builder
+        let status_address = self.body.core.builder.ins().stack_addr(types::I64, status_slot, 0);
+        self.body.core.builder
             .ins()
             .store(MemFlagsData::trusted(), fast_status, status_address, 0);
-        self.body.builder.ins().jump(done, &[]);
-        self.body.builder.seal_block(fast_call);
+        self.body.core.builder.ins().jump(done, &[]);
+        self.body.core.builder.seal_block(fast_call);
 
-        self.body.builder.switch_to_block(slow_call);
-        self.body.builder.set_cold_block(slow_call);
+        self.body.core.builder.switch_to_block(slow_call);
+        self.body.core.builder.set_cold_block(slow_call);
         let target_offset = if self.diagnostics_enabled {
             CONTEXT_CALL_REFERENCE_DIAGNOSTIC
         } else {
             CONTEXT_CALL_REFERENCE
         };
         let target = self
-            .body.builder
+            .body.core.builder
             .ins()
-            .load(types::I64, invariant(), self.body.context, target_offset);
+            .load(types::I64, invariant(), self.body.core.context, target_offset);
         let mut call_signature = Signature::new(self.call_conv);
         for _ in 0..8 {
             call_signature.params.push(AbiParam::new(types::I64));
         }
         call_signature.returns.push(AbiParam::new(types::I64));
-        let call_signature = self.body.builder.import_signature(call_signature);
-        let site_id = self.body.builder.ins().iconst(types::I64, site_id as i64);
-        let call = self.body.builder.ins().call_indirect(
+        let call_signature = self.body.core.builder.import_signature(call_signature);
+        let site_id = self.body.core.builder.ins().iconst(types::I64, site_id as i64);
+        let call = self.body.core.builder.ins().call_indirect(
             call_signature,
             target,
             &[
-                self.body.context,
+                self.body.core.context,
                 table_slot,
                 index,
                 signature_index,
@@ -8452,19 +8722,19 @@ impl<H: Host> Emitter<'_, '_, H> {
                 fast_cache,
             ],
         );
-        let slow_status = self.body.builder.inst_results(call)[0];
-        let status_address = self.body.builder.ins().stack_addr(types::I64, status_slot, 0);
-        self.body.builder
+        let slow_status = self.body.core.builder.inst_results(call)[0];
+        let status_address = self.body.core.builder.ins().stack_addr(types::I64, status_slot, 0);
+        self.body.core.builder
             .ins()
             .store(MemFlagsData::trusted(), slow_status, status_address, 0);
-        self.body.builder.ins().jump(done, &[]);
-        self.body.builder.seal_block(slow_call);
+        self.body.core.builder.ins().jump(done, &[]);
+        self.body.core.builder.seal_block(slow_call);
 
-        self.body.builder.switch_to_block(done);
-        self.body.builder.seal_block(done);
-        let status_address = self.body.builder.ins().stack_addr(types::I64, status_slot, 0);
+        self.body.core.builder.switch_to_block(done);
+        self.body.core.builder.seal_block(done);
+        let status_address = self.body.core.builder.ins().stack_addr(types::I64, status_slot, 0);
         let status =
-            self.body.builder
+            self.body.core.builder
                 .ins()
                 .load(types::I64, MemFlagsData::trusted(), status_address, 0);
         self.propagate(status);
@@ -8473,11 +8743,11 @@ impl<H: Host> Emitter<'_, '_, H> {
             Some(ty) => {
                 let kind = Kind::of(*ty).expect("planned");
                 let bits = self
-                    .body.builder
+                    .body.core.builder
                     .ins()
                     .load(types::I64, MemFlagsData::trusted(), out, 0);
                 let value = match kind {
-                    Kind::I32 => self.body.builder.ins().ireduce(types::I32, bits),
+                    Kind::I32 => self.body.core.builder.ins().ireduce(types::I32, bits),
                     Kind::I64 => bits,
                 };
                 self.write(destination, kind, value);
@@ -8498,10 +8768,10 @@ impl<H: Host> Emitter<'_, '_, H> {
             && Some(block) == self.blocks[target]
             && let Some(thread) = dispatch_path(self.instructions, self.plan, target)
         {
-            block = self.body.builder.create_block();
+            block = self.body.core.builder.create_block();
             self.pending.push((block, thread));
         }
-        self.body.builder.ins().jump(block, &[]);
+        self.body.core.builder.ins().jump(block, &[]);
     }
 
     /// A conditional transfer from `pc`. It checks for an interrupt when
@@ -8520,13 +8790,13 @@ impl<H: Host> Emitter<'_, '_, H> {
         let taken = self.edge(target);
         let next = self.edge(fallthrough);
         if target >= fallthrough {
-            self.body.builder.ins().brif(condition, taken, &[], next, &[]);
+            self.body.core.builder.ins().brif(condition, taken, &[], next, &[]);
             return;
         }
-        let exit = self.body.builder.create_block();
-        self.body.builder.ins().brif(condition, taken, &[], exit, &[]);
-        self.body.builder.switch_to_block(exit);
-        self.body.builder.ins().jump(next, &[]);
+        let exit = self.body.core.builder.create_block();
+        self.body.core.builder.ins().brif(condition, taken, &[], exit, &[]);
+        self.body.core.builder.switch_to_block(exit);
+        self.body.core.builder.ins().jump(next, &[]);
     }
 
     /// Whether an edge from `pc` to `target` checks for an interrupt: a back edge does, except
@@ -8565,7 +8835,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
         let thread = thread_path(self.instructions, self.plan, target, selector, value);
         let block = thread.map(|thread| {
-            let block = self.body.builder.create_block();
+            let block = self.body.core.builder.create_block();
             self.pending.push((block, thread));
             block
         });
@@ -8581,7 +8851,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             return self.instruction(function, pc, instruction);
         };
         let copies = (1..unrolled.factor)
-            .map(|_| self.body.builder.create_block())
+            .map(|_| self.body.core.builder.create_block())
             .collect::<Vec<_>>();
         for (index, &copy) in copies.iter().enumerate() {
             let next = copies.get(index + 1).copied();
@@ -8604,16 +8874,16 @@ impl<H: Host> Emitter<'_, '_, H> {
         latch: usize,
         next: Option<ir::Block>,
     ) {
-        self.body.builder.switch_to_block(block);
+        self.body.core.builder.switch_to_block(block);
         self.known.clear();
         for pc in unrolled.header..latch {
             let instruction = self.instructions[pc];
             if instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump {
-                let continuation = self.body.builder.create_block();
+                let continuation = self.body.core.builder.create_block();
                 self.redirect = Some((pc + 1, continuation));
                 self.instruction(function, pc, instruction);
                 self.redirect = None;
-                self.body.builder.switch_to_block(continuation);
+                self.body.core.builder.switch_to_block(continuation);
                 self.known.clear();
             } else {
                 self.instruction(function, pc, instruction);
@@ -8625,7 +8895,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     fn emit_thread(&mut self, function: &Function, block: ir::Block, thread: &Thread) {
-        self.body.builder.switch_to_block(block);
+        self.body.core.builder.switch_to_block(block);
         self.interrupt_safepoint();
         for (index, &pc) in thread.path.iter().enumerate() {
             let instruction = self.instructions[pc];
@@ -8642,11 +8912,11 @@ impl<H: Host> Emitter<'_, '_, H> {
                         continue;
                     }
                     let next = thread.path[index + 1];
-                    let continuation = self.body.builder.create_block();
+                    let continuation = self.body.core.builder.create_block();
                     self.redirect = Some((next, continuation));
                     self.instruction(function, pc, instruction);
                     self.redirect = None;
-                    self.body.builder.switch_to_block(continuation);
+                    self.body.core.builder.switch_to_block(continuation);
                 }
                 _ => {
                     self.instruction(function, pc, instruction);
@@ -8657,7 +8927,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             return;
         };
         let target = self.block(target);
-        self.body.builder.ins().jump(target, &[]);
+        self.body.core.builder.ins().jump(target, &[]);
     }
 
     /// Emit the instruction at `pc`; returns whether control falls through.
@@ -8679,7 +8949,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         if let Some(operator) = I32BinaryOperator::from_immediate_op(op) {
             let left = self.read(b, Kind::I32);
             let right = self
-                .body.builder
+                .body.core.builder
                 .ins()
                 .iconst(types::I32, i64::from(instruction.imm() as i32));
             let value = self.integer_binary(widen_binary(operator), left, right);
@@ -8699,7 +8969,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
         if let Some(operator) = I32BinaryOperator::from_immediate_jump_op(op) {
             let left = self.read(a, Kind::I32);
-            let right = self.body.builder.ins().iconst(types::I32, i64::from(b as i16));
+            let right = self.body.core.builder.ins().iconst(types::I32, i64::from(b as i16));
             let holds = if self.direct_compare_branches {
                 self.i32_comparison_condition(operator, left, right)
             } else {
@@ -8718,15 +8988,15 @@ impl<H: Host> Emitter<'_, '_, H> {
             let value = match (load.width(), load_signed(load)) {
                 // A float loads straight into its view.
                 _ if result != kind.integer() => {
-                    self.body.builder.ins().load(scalar_ir(result), flags, host, 0)
+                    self.body.core.builder.ins().load(scalar_ir(result), flags, host, 0)
                 }
-                (1, false) => self.body.builder.ins().uload8(ty, flags, host, 0),
-                (1, true) => self.body.builder.ins().sload8(ty, flags, host, 0),
-                (2, false) => self.body.builder.ins().uload16(ty, flags, host, 0),
-                (2, true) => self.body.builder.ins().sload16(ty, flags, host, 0),
-                (4, false) if kind == Kind::I64 => self.body.builder.ins().uload32(flags, host, 0),
-                (4, true) if kind == Kind::I64 => self.body.builder.ins().sload32(flags, host, 0),
-                _ => self.body.builder.ins().load(ty, flags, host, 0),
+                (1, false) => self.body.core.builder.ins().uload8(ty, flags, host, 0),
+                (1, true) => self.body.core.builder.ins().sload8(ty, flags, host, 0),
+                (2, false) => self.body.core.builder.ins().uload16(ty, flags, host, 0),
+                (2, true) => self.body.core.builder.ins().sload16(ty, flags, host, 0),
+                (4, false) if kind == Kind::I64 => self.body.core.builder.ins().uload32(flags, host, 0),
+                (4, true) if kind == Kind::I64 => self.body.core.builder.ins().sload32(flags, host, 0),
+                _ => self.body.core.builder.ins().load(ty, flags, host, 0),
             };
             self.write_typed(a, result, value);
             return true;
@@ -8739,57 +9009,57 @@ impl<H: Host> Emitter<'_, '_, H> {
             let host = self.address(address, instruction.imm(), width);
             let flags = self.flags(Region::LinearMemory);
             match width {
-                1 => self.body.builder.ins().istore8(flags, value, host, 0),
-                2 => self.body.builder.ins().istore16(flags, value, host, 0),
-                4 if kind == Kind::I64 => self.body.builder.ins().istore32(flags, value, host, 0),
-                _ => self.body.builder.ins().store(flags, value, host, 0),
+                1 => self.body.core.builder.ins().istore8(flags, value, host, 0),
+                2 => self.body.core.builder.ins().istore16(flags, value, host, 0),
+                4 if kind == Kind::I64 => self.body.core.builder.ins().istore32(flags, value, host, 0),
+                _ => self.body.core.builder.ins().store(flags, value, host, 0),
             };
             return true;
         }
         if op == Op::WasmMemorySize {
-            let bytes = self.body.builder.ins().load(
+            let bytes = self.body.core.builder.ins().load(
                 types::I64,
                 MemFlagsData::trusted(),
-                self.body.context,
+                self.body.core.context,
                 CONTEXT_MEMORY_LENGTH,
             );
-            let pages = self.body.builder.ins().ushr_imm_u(bytes, 16);
-            let pages = self.body.builder.ins().ireduce(types::I32, pages);
+            let pages = self.body.core.builder.ins().ushr_imm_u(bytes, 16);
+            let pages = self.body.core.builder.ins().ireduce(types::I32, pages);
             self.write(a, Kind::I32, pages);
             return true;
         }
         if op == Op::WasmMemoryFill {
             let (destination, _) = instruction.register_pair();
             let destination = self.read(destination, Kind::I32);
-            let destination = self.body.builder.ins().uextend(types::I64, destination);
+            let destination = self.body.core.builder.ins().uextend(types::I64, destination);
             let raw_length = self.read(c, Kind::I32);
-            let length = self.body.builder.ins().uextend(types::I64, raw_length);
-            let end = self.body.builder.ins().iadd(destination, length);
-            let memory_length = self.body.builder.ins().load(
+            let length = self.body.core.builder.ins().uextend(types::I64, raw_length);
+            let end = self.body.core.builder.ins().iadd(destination, length);
+            let memory_length = self.body.core.builder.ins().load(
                 types::I64,
                 MemFlagsData::trusted(),
-                self.body.context,
+                self.body.core.context,
                 CONTEXT_MEMORY_LENGTH,
             );
             let out_of_bounds =
-                self.body.builder
+                self.body.core.builder
                     .ins()
                     .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
             self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-            let address = self.body.builder.ins().iadd(self.base, destination);
+            let address = self.body.core.builder.ins().iadd(self.base, destination);
             let raw_byte = self.read(b, Kind::I32);
-            let byte = self.body.builder.ins().uextend(types::I64, raw_byte);
+            let byte = self.body.core.builder.ins().uextend(types::I64, raw_byte);
             let mut signature = Signature::new(self.call_conv);
             for _ in 0..3 {
                 signature.params.push(AbiParam::new(types::I64));
             }
             signature.returns.push(AbiParam::new(types::I64));
-            let signature = self.body.builder.import_signature(signature);
-            let target = self.body.builder.ins().iconst(
+            let signature = self.body.core.builder.import_signature(signature);
+            let target = self.body.core.builder.ins().iconst(
                 types::I64,
                 compiled_memory_fill as *const () as usize as i64,
             );
-            self.body.builder
+            self.body.core.builder
                 .ins()
                 .call_indirect(signature, target, &[address, byte, length]);
             return true;
@@ -8798,7 +9068,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             let left = self.read_typed(b, ty);
             let right = self.read_typed(c, ty);
             let value = self.float_binary(operator, left, right);
-            let result = if self.body.builder.func.dfg.value_type(value) == types::I32 {
+            let result = if self.body.core.builder.func.dfg.value_type(value) == types::I32 {
                 crate::WasmType::I32
             } else {
                 ty
@@ -8818,14 +9088,14 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let left = self.read(b, Kind::I64);
                 let right = self.read(c, Kind::I64);
                 let value = self.integer_binary(operator, left, right);
-                let kind = Kind::of_ir(self.body.builder.func.dfg.value_type(value));
+                let kind = Kind::of_ir(self.body.core.builder.func.dfg.value_type(value));
                 self.write(a, kind, value);
             }
             Op::WasmI64Unary => {
                 let operator = I64UnaryOperator::from_tag(instruction.imm()).expect("planned");
                 let input = self.read(b, Kind::I64);
                 let value = self.integer_unary(operator, input);
-                let kind = Kind::of_ir(self.body.builder.func.dfg.value_type(value));
+                let kind = Kind::of_ir(self.body.core.builder.func.dfg.value_type(value));
                 self.write(a, kind, value);
             }
             Op::WasmScalarConvert => {
@@ -8864,11 +9134,11 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             Op::WasmI32ShiftRightUnsignedAndImmediate => {
                 let input = self.read(b, Kind::I32);
-                let shift = self.body.builder.ins().iconst(types::I32, i64::from(c as i16));
+                let shift = self.body.core.builder.ins().iconst(types::I32, i64::from(c as i16));
                 let shifted =
                     self.integer_binary(I64BinaryOperator::ShiftRightUnsigned, input, shift);
                 let mask = self
-                    .body.builder
+                    .body.core.builder
                     .ins()
                     .iconst(types::I32, i64::from(instruction.imm() as i32));
                 let value = self.integer_binary(I64BinaryOperator::And, shifted, mask);
@@ -8876,8 +9146,8 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             Op::WasmI32AddImmediateJumpNonZero => {
                 let input = self.read(b, Kind::I32);
-                let addend = self.body.builder.ins().iconst(types::I32, i64::from(c as i16));
-                let sum = self.body.builder.ins().iadd(input, addend);
+                let addend = self.body.core.builder.ins().iconst(types::I32, i64::from(c as i16));
+                let sum = self.body.core.builder.ins().iadd(input, addend);
                 self.write(a, Kind::I32, sum);
                 self.branch(pc, sum, instruction.jump_target() as usize, pc + 1);
                 return false;
@@ -8912,17 +9182,17 @@ impl<H: Host> Emitter<'_, '_, H> {
                 }
                 let (default, cases) = entries.split_last().expect("a default entry");
                 let default = self.block(*default);
-                let default = self.body.builder.func.dfg.block_call(default, &[]);
+                let default = self.body.core.builder.func.dfg.block_call(default, &[]);
                 let cases: Vec<_> = cases
                     .iter()
                     .map(|target| {
                         let block = self.block(*target);
-                        self.body.builder.func.dfg.block_call(block, &[])
+                        self.body.core.builder.func.dfg.block_call(block, &[])
                     })
                     .collect();
                 let table = ir::JumpTableData::new(default, &cases);
-                let table = self.body.builder.create_jump_table(table);
-                self.body.builder.ins().br_table(selector, table);
+                let table = self.body.core.builder.create_jump_table(table);
+                self.body.core.builder.ins().br_table(selector, table);
                 return false;
             }
             Op::WasmSelect => {
@@ -8931,7 +9201,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let condition = self.read(condition, Kind::I32);
                 let taken = self.read(b, kind);
                 let other = self.read(c, kind);
-                let value = self.body.builder.ins().select(condition, taken, other);
+                let value = self.body.core.builder.ins().select(condition, taken, other);
                 self.write(a, kind, value);
             }
             Op::CallKnown => {
@@ -8941,7 +9211,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                     return true;
                 };
                 let window = instruction.call_window();
-                let mut args = vec![self.body.context];
+                let mut args = vec![self.body.core.context];
                 if self.memory.base {
                     args.push(self.base);
                 }
@@ -8961,12 +9231,12 @@ impl<H: Host> Emitter<'_, '_, H> {
                             callee_plan.result,
                             self.call_conv,
                         );
-                        let signature = self.body.builder.import_signature(signature);
+                        let signature = self.body.core.builder.import_signature(signature);
                         let name = self
-                            .body.builder
+                            .body.core.builder
                             .func
                             .declare_imported_user_function(function_name(callee));
-                        let target = self.body.builder.import_function(ir::ExtFuncData {
+                        let target = self.body.core.builder.import_function(ir::ExtFuncData {
                             name: ir::ExternalName::User(name),
                             signature,
                             colocated: true,
@@ -8976,14 +9246,14 @@ impl<H: Host> Emitter<'_, '_, H> {
                         target
                     }
                 };
-                let call = self.body.builder.ins().call(target, &args);
-                let results = self.body.builder.inst_results(call).to_vec();
+                let call = self.body.core.builder.ins().call(target, &args);
+                let results = self.body.core.builder.inst_results(call).to_vec();
                 self.propagate(results[0]);
                 let destination = instruction.result_register();
                 match callee_plan.result {
                     Some(ty) => self.write(destination, Kind::of(ty).expect("planned"), results[1]),
                     None => {
-                        let zero = self.body.builder.ins().iconst(types::I32, 0);
+                        let zero = self.body.core.builder.ins().iconst(types::I32, 0);
                         self.write(destination, Kind::I32, zero);
                     }
                 }
@@ -8997,16 +9267,16 @@ impl<H: Host> Emitter<'_, '_, H> {
             },
             Op::WasmUnreachable => {
                 let trap = self.trap_block(crate::WasmTrap::Unreachable);
-                self.body.builder.ins().jump(trap, &[]);
+                self.body.core.builder.ins().jump(trap, &[]);
                 return false;
             }
             Op::Return => {
-                let status = self.body.builder.ins().iconst(types::I64, 0);
+                let status = self.body.core.builder.ins().iconst(types::I64, 0);
                 let mut values = vec![status];
                 if let Some(ty) = self.plan.result {
                     values.push(self.read(a, Kind::of(ty).expect("planned")));
                 }
-                self.body.builder.ins().return_(&values);
+                self.body.core.builder.ins().return_(&values);
                 return false;
             }
             // A binding is known statically per instruction; the globals it
@@ -9016,17 +9286,17 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let slot = self.binding_slot(pc);
                 let address = self.global_address(slot);
                 let flags = self.flags(Region::Globals);
-                let value = self.body.builder.ins().load(types::I32, flags, address, 0);
+                let value = self.body.core.builder.ins().load(types::I32, flags, address, 0);
                 self.write(a, Kind::I32, value);
             }
             Op::WasmGlobalSet => {
                 let slot = self.binding_slot(pc);
                 let address = self.global_address(slot);
                 let value = self.read(a, Kind::I32);
-                let wide = self.body.builder.ins().uextend(types::I64, value);
-                let encoded = self.body.builder.ins().bor_imm_u(wide, INTEGER_TAG as i64);
+                let wide = self.body.core.builder.ins().uextend(types::I64, value);
+                let encoded = self.body.core.builder.ins().bor_imm_u(wide, INTEGER_TAG as i64);
                 let flags = self.flags(Region::Globals);
-                self.body.builder.ins().store(flags, encoded, address, 0);
+                self.body.core.builder.ins().store(flags, encoded, address, 0);
             }
             _ => unreachable!("planned instructions have a denotation"),
         }
@@ -9182,14 +9452,14 @@ impl<'a, H: Host> Analysis<'a, H> {
             );
         }
         // Each activation checks the stack it may still use.
-        let stack_pointer = emitter.body.builder.ins().get_stack_pointer(types::I64);
+        let stack_pointer = emitter.body.core.builder.ins().get_stack_pointer(types::I64);
         let limit =
             emitter
-                .body.builder
+                .body.core.builder
                 .ins()
                 .load(types::I64, invariant(), context, CONTEXT_STACK_LIMIT);
         let exhausted = emitter
-            .body.builder
+            .body.core.builder
             .ins()
             .icmp(IntCC::UnsignedLessThan, stack_pointer, limit);
         emitter.trap_if(exhausted, crate::WasmTrap::CallStackExhausted);
@@ -9229,9 +9499,9 @@ impl<'a, H: Host> Analysis<'a, H> {
                 emitter.known.clear();
                 let block = emitter.block(pc);
                 if open {
-                    emitter.body.builder.ins().jump(block, &[]);
+                    emitter.body.core.builder.ins().jump(block, &[]);
                 }
-                emitter.body.builder.switch_to_block(block);
+                emitter.body.core.builder.switch_to_block(block);
                 if emitter
                     .affine_loop
                     .is_some_and(|candidate| candidate.header == pc)
@@ -9249,7 +9519,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             // now so falling into it stays explicit.
             if open && emitter.blocks.get(pc + 1).is_some_and(Option::is_some) {
                 let next = emitter.block(pc + 1);
-                emitter.body.builder.ins().jump(next, &[]);
+                emitter.body.core.builder.ins().jump(next, &[]);
                 open = false;
             }
         }
@@ -9261,8 +9531,8 @@ impl<'a, H: Host> Analysis<'a, H> {
             emitter.emit_thread(function, block, &thread);
         }
         emitter.finish_traps();
-        emitter.body.builder.seal_all_blocks();
-        emitter.body.builder.finalize(isa.frontend_config());
+        emitter.body.core.builder.seal_all_blocks();
+        emitter.body.into_builder().finalize(isa.frontend_config());
         let mut context = cranelift_codegen::Context::for_function(func);
         let compiled = context
             .compile(
@@ -9932,7 +10202,14 @@ impl<H: Host> Vm<H> {
         function: u32,
         facts: &super::js_compiled::JsEntryFacts,
     ) -> (bool, bool) {
-        let Some(body) = program.function_get(function as usize).filter(|_| facts.general) else {
+        let Some(body) = program
+            .function_get(function as usize)
+            // A body without backward jumps can pay only through its entries; one with a loop
+            // can also pay through its backedge work (`note_js_general_dispatch_backedge`).
+            .filter(|body| {
+                facts.general && (!facts.general_acyclic || self.programs.general_baseline_may_pay(body.code.len()))
+            })
+        else {
             return (false, false);
         };
         let state = self.programs.js_tier(program_id, function);
@@ -11342,7 +11619,7 @@ impl<H: Host> Vm<H> {
         if diagnostics_enabled {
             eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
         }
-        let isa = super::jit_backend::target_isa(opt_level, false)?;
+        let isa = super::jit_backend::target_isa(opt_level)?;
         // The full plan of a callable function, derived again where needed.
         let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
         let mut reference_site_ids = vec![Vec::new(); count];
