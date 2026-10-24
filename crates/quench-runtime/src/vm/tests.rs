@@ -13075,7 +13075,7 @@ fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
       }
       function caller(shouldThrow) {
         const live = { value: 40 };
-        try { return callee(live, shouldThrow) + 2; }
+        try { return callee(live, ...[shouldThrow]) + 2; }
         catch (error) { return error === marker ? live.value + 2 : -1; }
       }
       var result = 0;
