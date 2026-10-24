@@ -15612,3 +15612,35 @@ print(JSON.stringify(out));
     vm.execute(&Engine::specialize(source, "array-holes.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), [r#"[null,"proto1",null,"obj2",null,"getter3","getter3",true,null,"setter0:x",false,"y","ro",false,"pushed",null,"proxy:1",null,1,null,null,"late",null]"#]);
 }
+
+#[test]
+fn cached_accessor_reads_follow_getter_redefinitions() {
+    // A site's accessor entry keeps whether the holder's slot holds the getter
+    // (`AccessorFieldCache::getter_in_slot`); redefined, shadowed and own getters must still
+    // be the ones called. Expected output is Node's (v22).
+    let source = r#"
+const out = [];
+class E { constructor(k) { this._k = k; } get key() { return this._k; } }
+const items = [new E(1), new E(2), new E(3)];
+const read = (o) => o.key;
+for (let r = 0; r < 4; r++) {
+  let sum = 0; for (const it of items) sum += read(it); out.push(sum);
+  if (r === 0) Object.defineProperty(E.prototype, "key", { get() { return this._k * 10; }, configurable: true });
+  if (r === 1) Object.defineProperty(items[1], "key", { get() { return 100; }, configurable: true });
+  if (r === 2) Object.defineProperty(E.prototype, "key", { value: 7, configurable: true, writable: true });
+}
+// own accessors: each receiver of a shape keeps its own getter in the slot
+const mk = (v) => { const o = {}; Object.defineProperty(o, "g", { get() { return v; }, configurable: true, enumerable: true }); return o; };
+const own = [mk("a"), mk("b"), mk("c")]; const rg = (o) => o.g;
+for (let r = 0; r < 3; r++) { out.push(own.map(rg).join("")); if (r === 0) Object.defineProperty(own[0], "g", { get() { return "z"; }, configurable: true }); if (r === 1) Object.defineProperty(own[2], "g", { set(v) {}, configurable: true }); }
+// inherited through two levels, holder getter swapped by assignment to a setter-less accessor slot replacement
+class A { get v() { return "A"; } } class B extends A {} class C extends B {}
+const cs = [new C(), new C()]; const rv = (o) => o.v;
+for (let r = 0; r < 3; r++) { out.push(cs.map(rv).join("")); if (r === 0) Object.defineProperty(A.prototype, "v", { get() { return "A2"; }, configurable: true }); if (r === 1) Object.defineProperty(B.prototype, "v", { get() { return "B"; }, configurable: true }); }
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "accessor-reads.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"[6,60,140,114,"abc","zbc","zbc","AA","A2A2","BB"]"#]);
+}
