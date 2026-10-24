@@ -10746,7 +10746,7 @@ impl<H: Host> Vm<H> {
                     .programs
                     .install_js_tier(program_id, function_id, compiled.clone(), false);
                 if let Some(compile_started) = compile_started {
-                    self.programs.record_js_jit_compile(
+                    self.programs.record_js_jit_general_compile(
                         program_id,
                         function_id,
                         u64::try_from(compile_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
