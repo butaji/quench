@@ -918,6 +918,7 @@ pub(super) fn compile_js_numeric_region(
         field_argument,
         numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.to_vec()),
         capture_arguments: captures.to_vec(),
+        general_dispatch_native_pcs: Vec::new(),
     })
 }
 
@@ -1235,6 +1236,7 @@ pub(super) fn compile_js_general_dispatch(
     let blocks: Vec<_> = (0..instruction_count)
         .map(|_| builder.create_block())
         .collect();
+    let mut general_dispatch_native_pcs = vec![0; instruction_count];
     builder.ins().jump(blocks[0], &[]);
 
     let mut callout_signature = Signature::new(isa.default_call_conv());
@@ -1482,6 +1484,7 @@ pub(super) fn compile_js_general_dispatch(
             false
         };
         if direct {
+            general_dispatch_native_pcs[pc] = 1;
             continue;
         }
 
@@ -1582,6 +1585,7 @@ pub(super) fn compile_js_general_dispatch(
                 continue_block,
                 pc,
             );
+            general_dispatch_native_pcs[pc] = 1;
             continue;
         }
 
@@ -1627,6 +1631,7 @@ pub(super) fn compile_js_general_dispatch(
                 continue_block,
                 pc,
             );
+            general_dispatch_native_pcs[pc] = 1;
             continue;
         }
 
@@ -1696,6 +1701,7 @@ pub(super) fn compile_js_general_dispatch(
                 continue_block,
                 pc,
             );
+            general_dispatch_native_pcs[pc] = 1;
             continue;
         }
 
@@ -1741,6 +1747,7 @@ pub(super) fn compile_js_general_dispatch(
         field_argument: None,
         numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
+        general_dispatch_native_pcs,
     })
 }
 
@@ -4231,8 +4238,11 @@ pub(super) struct CompiledJsFunction {
     numeric_field_inputs: Vec<super::js_compiled::JsJitNumericFieldInput>,
     capture_argument: Option<super::js_compiled::JsJitCaptureArgument>,
     capture_arguments: Vec<super::js_compiled::JsJitCaptureArgument>,
+    general_dispatch_native_pcs: Vec<u8>,
     #[cfg(test)]
     native_entries: std::cell::Cell<u64>,
+    #[cfg(test)]
+    general_dispatch_island_steps: std::cell::Cell<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -4330,6 +4340,10 @@ struct JsStepDispatch {
     register_count: usize,
     native_locals: *mut Value,
     local_count: usize,
+    native_pcs: *const u8,
+    native_pc_count: usize,
+    #[cfg(test)]
+    island_steps: u64,
     outcome: Option<JsNativeStep>,
 }
 
@@ -4515,48 +4529,110 @@ unsafe extern "C" fn js_step_callout<H: Host>(
             }
         }
 
+        let frame_depth = vm.frames.len();
+        let frame_function = vm.frames[dispatch.frame].function;
+        let mut current_pc = pc;
+        let mut current_instruction = instruction;
         let mut next = next_pc;
-        let step = vm.step(
-            &program,
-            dispatch.frame,
-            instruction,
-            &mut next,
-            dispatch.allow_inline_calls,
-        );
-        match step {
-            Ok(super::StepResult::Continue) => {
-                if next >= body.code.len() {
-                    vm.frames[dispatch.frame].pc = pc;
-                    vm.frames[dispatch.frame].pc_is_resume = false;
+        loop {
+            let layout = current_instruction.op().control_flow_layout();
+            let step = vm.step(
+                &program,
+                dispatch.frame,
+                current_instruction,
+                &mut next,
+                dispatch.allow_inline_calls,
+            );
+            match step {
+                Ok(super::StepResult::Continue) => {
+                    if next >= body.code.len() {
+                        vm.frames[dispatch.frame].pc = current_pc;
+                        vm.frames[dispatch.frame].pc_is_resume = false;
+                        return Ok(JsCalloutStep::Stop(JsNativeStep {
+                            instruction_pc: current_pc,
+                            next_pc: next,
+                            result: Err(JsError::validation(
+                                "native JS continuation is outside its function".into(),
+                            )),
+                        }));
+                    }
+                    let frame = &mut vm.frames[dispatch.frame];
+                    frame.pc = next;
+                    frame.pc_is_resume = true;
+                    if !js_native_frame_storage_unchanged(frame, dispatch) {
+                        // The operation ran once. Stop native execution and resume
+                        // the interpreter at its already-computed successor.
+                        frame.js_jit_skip_entry_once = next == 0;
+                        vm.active_registers = frame.registers.as_mut_ptr();
+                        return Ok(JsCalloutStep::Stop(JsNativeStep {
+                            instruction_pc: current_pc,
+                            next_pc: next,
+                            result: Ok(super::StepResult::Continue),
+                        }));
+                    }
+                    if vm.frames.len() != frame_depth
+                        || vm.frames[dispatch.frame].function != frame_function
+                    {
+                        // Do not carry a native continuation across a call or
+                        // return that changed the active VM frame.
+                        return Ok(JsCalloutStep::Stop(JsNativeStep {
+                            instruction_pc: current_pc,
+                            next_pc: next,
+                            result: Ok(super::StepResult::Continue),
+                        }));
+                    }
+
+                    let fallthrough = layout == ControlFlowLayout::Fallthrough
+                        && next == current_pc.saturating_add(1);
+                    let resumes_native = next < dispatch.native_pc_count
+                        // SAFETY: the compiler emits one byte for every PC in
+                        // this function and the artifact outlives this entry.
+                        && unsafe { *dispatch.native_pcs.add(next) != 0 };
+                    if !fallthrough || resumes_native {
+                        return Ok(JsCalloutStep::Continue(next));
+                    }
+
+                    current_pc = next;
+                    let Some(packed) = body.code.get(current_pc).copied() else {
+                        return Ok(JsCalloutStep::Stop(JsNativeStep {
+                            instruction_pc: current_pc,
+                            next_pc: current_pc,
+                            result: Err(JsError::validation(
+                                "native JS continuation is outside function".into(),
+                            )),
+                        }));
+                    };
+                    current_instruction =
+                        super::dispatch_fast::decoded_instruction(body, packed);
+                    next = current_pc
+                        .checked_add(1)
+                        .ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
+                    let frame = &mut vm.frames[dispatch.frame];
+                    frame.pc = current_pc;
+                    frame.pc_is_resume = false;
+                    if let Err(error) = vm.check_execution_interrupt() {
+                        return Ok(JsCalloutStep::Stop(JsNativeStep {
+                            instruction_pc: current_pc,
+                            next_pc: next,
+                            result: Err(error),
+                        }));
+                    }
+                    #[cfg(test)]
+                    {
+                        let dispatch = unsafe {
+                            &mut *context_ref.adapter_payload.cast::<JsStepDispatch>()
+                        };
+                        dispatch.island_steps = dispatch.island_steps.saturating_add(1);
+                    }
+                }
+                result => {
                     return Ok(JsCalloutStep::Stop(JsNativeStep {
-                        instruction_pc: pc,
+                        instruction_pc: current_pc,
                         next_pc: next,
-                        result: Err(JsError::validation(
-                            "native JS continuation is outside its function".into(),
-                        )),
+                        result,
                     }));
                 }
-                let frame = &mut vm.frames[dispatch.frame];
-                frame.pc = next;
-                frame.pc_is_resume = true;
-                if !js_native_frame_storage_unchanged(frame, dispatch) {
-                    // The operation ran once. Stop native execution and resume
-                    // the interpreter at its already-computed successor.
-                    frame.js_jit_skip_entry_once = next == 0;
-                    vm.active_registers = frame.registers.as_mut_ptr();
-                    return Ok(JsCalloutStep::Stop(JsNativeStep {
-                        instruction_pc: pc,
-                        next_pc: next,
-                        result: Ok(super::StepResult::Continue),
-                    }));
-                }
-                Ok(JsCalloutStep::Continue(next))
             }
-            result => Ok(JsCalloutStep::Stop(JsNativeStep {
-                instruction_pc: pc,
-                next_pc: next,
-                result,
-            })),
         }
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
@@ -4620,6 +4696,7 @@ impl CompiledJsFunction {
         let field_argument = artifact.field_argument;
         let numeric_field_inputs = artifact.numeric_field_inputs;
         let capture_arguments = artifact.capture_arguments;
+        let general_dispatch_native_pcs = artifact.general_dispatch_native_pcs;
         let (entry, return_constants, capture_argument) = match artifact.result {
             super::js_compiled::JsJitResultKind::SharedNumberEntry => {
                 // SAFETY: the bytecode numeric-region compiler uses `native_entry_signature`.
@@ -4769,8 +4846,11 @@ impl CompiledJsFunction {
             numeric_field_inputs,
             capture_argument,
             capture_arguments,
+            general_dispatch_native_pcs,
             #[cfg(test)]
             native_entries: std::cell::Cell::new(0),
+            #[cfg(test)]
+            general_dispatch_island_steps: std::cell::Cell::new(0),
         })
     }
 
@@ -4797,6 +4877,11 @@ impl CompiledJsFunction {
 
     pub(super) fn is_general_dispatch(&self) -> bool {
         matches!(self.entry, CompiledJsEntry::GeneralDispatch(_))
+    }
+
+    #[cfg(test)]
+    pub(super) fn general_dispatch_island_steps(&self) -> u64 {
+        self.general_dispatch_island_steps.get()
     }
 
     pub(super) fn requires_signed_int32_arguments(&self) -> bool {
@@ -4884,6 +4969,8 @@ impl CompiledJsFunction {
             dispatch.register_count = register_count;
             dispatch.native_locals = native_locals;
             dispatch.local_count = local_count;
+            dispatch.native_pcs = self.general_dispatch_native_pcs.as_ptr();
+            dispatch.native_pc_count = self.general_dispatch_native_pcs.len();
         }
         // Frame registers and locals are the canonical tagged homes and remain
         // rooted while native code runs. Callouts keep only raw pointers; they
@@ -4904,6 +4991,12 @@ impl CompiledJsFunction {
                 entry,
             )
         };
+        #[cfg(test)]
+        self.general_dispatch_island_steps.set(
+            self.general_dispatch_island_steps
+                .get()
+                .saturating_add(unsafe { (*payload.cast::<JsStepDispatch>()).island_steps }),
+        );
         if let Some(Raised::Panic(panic)) = context.raised.take() {
             std::panic::resume_unwind(panic);
         }
@@ -9623,6 +9716,10 @@ impl<H: Host> Vm<H> {
             register_count: 0,
             native_locals: std::ptr::null_mut(),
             local_count: 0,
+            native_pcs: std::ptr::null(),
+            native_pc_count: 0,
+            #[cfg(test)]
+            island_steps: 0,
             outcome: None,
         };
         let interrupt = self.execution_interrupt.atomic_flag();
