@@ -114,9 +114,8 @@ impl<H: Host> Vm<H> {
         let arguments: &[Value] = array_arguments
             .as_deref()
             .unwrap_or_else(|| unsafe { &*register_arguments });
-        if i.op() == Op::Call
-            && let Some(value) =
-                self.js_jit_compiled_call(p, (target.0, target.1), i.returns_from_frame(), arguments)
+        if let Some(value) =
+            self.js_jit_compiled_call(p, (target.0, target.1), i.returns_from_frame(), arguments)
         {
             self.write(f, i.result_register(), value);
             return Some(Ok(StepResult::Continue));
@@ -828,20 +827,9 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::MakeConstArray => {
-                let start = i.constant_index();
-                let end = start + i.element_count() as usize;
-                let elements = self
-                    .programs
-                    .const_array(self.frames[f].program, start, end - start)
-                    .ok_or_else(|| {
-                        JsError::validation("constant array is outside program".into())
-                    })?;
-                let v = self.heap.alloc(Cell::Array {
-                    object: crate::heap::ArrayObject::new(
-                        Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                        elements,
-                    ),
-                });
+                let v = self
+                    .const_array_value(self.frames[f].program, i)
+                    .ok_or_else(|| JsError::validation("constant array is outside program".into()))?;
                 self.write(f, i.result_register(), v);
             }
             Op::MakeLiteralTemplate => {
@@ -1899,5 +1887,19 @@ impl<H: Host> Vm<H> {
             }
             op => unreachable!("{op:?} is no value step"),
         }
+    }
+}
+
+impl<H: Host> Vm<H> {
+    /// The new array `MakeConstArray` record `i` of `program` makes from its constant
+    /// elements; `None` for a range outside the program's constants.
+    pub(super) fn const_array_value(&mut self, program: ProgramId, i: WideInstruction) -> Option<Value> {
+        let elements = self.programs.const_array(program, i.constant_index(), usize::from(i.element_count()))?;
+        Some(self.heap.alloc(Cell::Array {
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                elements,
+            ),
+        }))
     }
 }

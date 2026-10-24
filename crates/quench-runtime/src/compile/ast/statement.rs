@@ -589,12 +589,7 @@ impl FunctionCompiler<'_, '_> {
         let discriminant_binding = self.hidden_local("\0quench:switch-discriminant");
         let typeof_operand = Self::typeof_switch_operand(item);
         let discriminant = match typeof_operand {
-            Some(argument) => {
-                let input = self.typeof_operand(argument);
-                let index = self.reg();
-                self.emit(Op::Unary, index, input, 0, crate::bytecode::UNARY_TYPEOF_INDEX);
-                index
-            }
+            Some(argument) => self.typeof_index(argument),
             None => self.expression(&item.discriminant),
         };
         self.store_atom(discriminant_binding, discriminant);
