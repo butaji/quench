@@ -606,11 +606,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     fn parameter_name(pattern: &BindingPattern<'_>, index: usize, hidden: bool) -> String {
         if hidden {
-            return format!("\0quench:param:{index}");
+            return format!("{}{index}", crate::bytecode::HIDDEN_PARAMETER_PREFIX);
         }
         match pattern {
             BindingPattern::BindingIdentifier(id) => id.name.to_string(),
-            _ => format!("\0quench:param:{index}"),
+            _ => format!("{}{index}", crate::bytecode::HIDDEN_PARAMETER_PREFIX),
         }
     }
 
