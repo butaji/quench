@@ -1,0 +1,18 @@
+== node-jitless
+richards ratio=1.4692 wins=9/9 rssA=44696 rssB=12428
+deltablue ratio=1.2882 wins=9/9 rssA=46824 rssB=12428
+crypto ratio=2.3422 wins=9/9 rssA=44972 rssB=12428
+raytrace ratio=1.3412 wins=9/9 rssA=47236 rssB=12428
+earley-boyer ratio=1.3098 wins=9/9 rssA=76204 rssB=15296
+regexp ratio=1.3218 wins=9/9 rssA=54784 rssB=13784
+splay ratio=1.9088 wins=9/9 rssA=307924 rssB=50976
+navier-stokes ratio=1.6811 wins=9/9 rssA=49256 rssB=12428
+== bun-nojit
+richards ratio=1.2173 wins=8/9 rssA=23872 rssB=12728
+deltablue ratio=1.4944 wins=9/9 rssA=36004 rssB=12728
+crypto ratio=1.8133 wins=9/9 rssA=32720 rssB=12728
+raytrace ratio=1.6977 wins=9/9 rssA=34452 rssB=12728
+earley-boyer ratio=1.6335 wins=9/9 rssA=34688 rssB=15268
+regexp ratio=5.4438 wins=9/9 rssA=35400 rssB=13756
+splay ratio=2.8742 wins=9/9 rssA=62596 rssB=50952
+navier-stokes ratio=1.2664 wins=9/9 rssA=24672 rssB=12728
