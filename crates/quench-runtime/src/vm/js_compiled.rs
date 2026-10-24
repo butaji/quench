@@ -32,6 +32,8 @@ pub(super) struct JsJitArtifact {
     pub(super) numeric_field_inputs: Vec<JsJitNumericFieldInput>,
     /// Numeric lexical captures are appended after formal parameters in the ABI.
     pub(super) capture_arguments: Vec<JsJitCaptureArgument>,
+    /// Directly emitted bytecode PCs for the shared general JS dispatcher.
+    pub(super) general_dispatch_native_pcs: Vec<u8>,
 }
 
 #[derive(Clone, Copy)]
@@ -472,6 +474,7 @@ fn compile_int32_identity(function_id: u32, return_pc: u32) -> Option<JsJitArtif
         field_argument: None,
         numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
+        general_dispatch_native_pcs: Vec::new(),
     })
 }
 
@@ -701,6 +704,7 @@ fn compile_capture_number(
         field_argument: None,
         numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
+        general_dispatch_native_pcs: Vec::new(),
     })
 }
 
@@ -1725,6 +1729,7 @@ fn compile_string_hash_loop(
         field_argument: None,
         numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
+        general_dispatch_native_pcs: Vec::new(),
     })
 }
 
@@ -1839,6 +1844,7 @@ fn compile_string_transform(
         field_argument: None,
         numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
+        general_dispatch_native_pcs: Vec::new(),
     })
 }
 
@@ -2677,6 +2683,7 @@ fn compile_number_domain_boolean_tree(
         field_argument,
         numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.into_vec()),
         capture_arguments: capture_arguments.into_vec(),
+        general_dispatch_native_pcs: Vec::new(),
     })
 }
 
@@ -3516,6 +3523,7 @@ fn compile_numeric_loop(
         field_argument: None,
         numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
+        general_dispatch_native_pcs: Vec::new(),
     })
 }
 
@@ -3893,6 +3901,7 @@ fn compile_string_branches(
         field_argument: None,
         numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
+        general_dispatch_native_pcs: Vec::new(),
     })
 }
 
@@ -4236,6 +4245,7 @@ fn compile_field_reject(
         field_argument: Some(field_argument),
         numeric_field_inputs: Vec::new(),
         capture_arguments: Vec::new(),
+        general_dispatch_native_pcs: Vec::new(),
     })
 }
 
