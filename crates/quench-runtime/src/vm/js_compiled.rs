@@ -103,6 +103,9 @@ pub(super) struct JsJitCaptureArgument {
 pub(super) enum JsJitResultKind {
     /// Numeric bytecode regions emit the common VM native-entry ABI.
     SharedNumberEntry,
+    /// A full function CFG whose operation blocks call the shared VM step
+    /// helper and branch directly to the next validated bytecode PC.
+    GeneralDispatch,
     /// An Int32-guarded return path proven by the bytecode's `typeof` switch.
     Int32Identity(u32),
     CaptureNumber(JsJitCaptureArgument),

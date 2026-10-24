@@ -1436,13 +1436,22 @@ impl<H: Host> Vm<H> {
             // A supported native function still returns through the ordinary
             // Return instruction, preserving the dispatch loop's frame and
             // constructor unwind path. Guard misses leave pc at zero.
-            if pc == 0
-                && let Some(return_pc) = self.js_tier_frame_entry(p, frame)
-            {
-                pc = return_pc;
-                continue;
+            let mut native_step = None;
+            if pc == 0 {
+                match self.js_tier_frame_entry(p, frame, allow_inline_calls) {
+                    super::compiled::JsTierFrameEntry::Interpreter => {}
+                    super::compiled::JsTierFrameEntry::ContinueAt(return_pc)
+                    | super::compiled::JsTierFrameEntry::NativeResume(return_pc) => {
+                        pc = return_pc;
+                        continue;
+                    }
+                    super::compiled::JsTierFrameEntry::NativeStep(step) => {
+                        pc = step.next_pc;
+                        native_step = Some(step);
+                    }
+                }
             }
-            if Self::lane_runs(cursor.lane, pc) {
+            if native_step.is_none() && Self::lane_runs(cursor.lane, pc) {
                 let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
                 pc = self.run_fast_lane(
                     p,
@@ -1666,14 +1675,18 @@ impl<H: Host> Vm<H> {
             }
             debug_assert_eq!(cursor.program, self.frames[frame].program);
             debug_assert_eq!(cursor.function, self.frames[frame].function);
-            let instruction_pc = pc;
+            let native_step = native_step.take();
+            let instruction_pc = native_step.as_ref().map_or(pc, |step| step.instruction_pc);
+            let ins = cursor.instruction(instruction_pc);
+            let step = if let Some(step) = native_step {
+                step.result
+            } else {
             #[cfg(feature = "profile-memory")]
             self.heap.set_memory_allocation_site(
                 cursor.program.raw(),
                 cursor.function,
                 instruction_pc,
             );
-            let ins = cursor.instruction(pc);
             if self.programs.js_jit_diagnostics_enabled() {
                 self.programs.record_js_jit_general_dispatch_opcode(
                     cursor.program,
@@ -1958,7 +1971,7 @@ impl<H: Host> Vm<H> {
             self.frames[frame].pc_is_resume = false;
             // Returns and inline calls produce their step result here rather than through the
             // general `step` dispatch.
-            let step = match ins.op() {
+            match ins.op() {
                 // A call the lane made returned its callee's completion from this frame.
                 _ if let Some(value) = self.lane_returned.take() => Ok(StepResult::Return(value)),
                 Op::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
@@ -1969,6 +1982,7 @@ impl<H: Host> Vm<H> {
                     }
                 }
                 _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+            }
             };
             match step {
                 Ok(StepResult::Return(mut value)) => {

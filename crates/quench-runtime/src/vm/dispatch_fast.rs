@@ -12214,11 +12214,24 @@ fn lane_push_frame_call<H: Host>(
             // The tier observes the frame's entry as the general loop's would, and a
             // native result continues at the `Return` that completes the frame.
             let callee_frame = frame + 1;
-            // SAFETY: the context's program, now the callee's, outlives the lane run.
-            if let Some(return_pc) = vm.js_tier_frame_entry(unsafe { &*(*cx).code }, callee_frame) {
-                vm.frames[callee_frame].pc = return_pc;
+            let handoff = vm.js_tier_needs_general_entry(
+                vm.frames[callee_frame].program,
+                vm.frames[callee_frame].function,
+            );
+            if !handoff {
+                // SAFETY: the context's program, now the callee's, outlives the lane run.
+                if let super::compiled::JsTierFrameEntry::ContinueAt(return_pc) = vm
+                    .js_tier_frame_entry(unsafe { &*(*cx).code }, callee_frame, false)
+                {
+                    vm.frames[callee_frame].pc = return_pc;
+                }
             }
-            lane_enter_script_frame(cx, callee_frame)
+            let callee_ip = lane_enter_script_frame(cx, callee_frame);
+            if handoff {
+                exit(callee_ip)
+            } else {
+                callee_ip
+            }
         }
         // A failed push (the guest call depth) throws at the call, as the general path's.
         Some(Err(error)) => {
@@ -12318,10 +12331,23 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
             // The pushed frame's guard narrows the activations the thread admits.
             vm.lane_stack.refresh_activation_limit();
             let callee_frame = frame + 1;
-            if let Some(return_pc) = vm.js_tier_frame_entry(code, callee_frame) {
-                vm.frames[callee_frame].pc = return_pc;
+            let handoff = vm.js_tier_needs_general_entry(
+                vm.frames[callee_frame].program,
+                vm.frames[callee_frame].function,
+            );
+            if !handoff {
+                if let super::compiled::JsTierFrameEntry::ContinueAt(return_pc) =
+                    vm.js_tier_frame_entry(code, callee_frame, false)
+                {
+                    vm.frames[callee_frame].pc = return_pc;
+                }
             }
-            lane_enter_script_frame(cx, callee_frame)
+            let callee_ip = lane_enter_script_frame(cx, callee_frame);
+            if handoff {
+                exit(callee_ip)
+            } else {
+                callee_ip
+            }
         }
         // A failed push (the guest call depth) throws at the construction, as the general
         // path's. The caller's program is the executing one again.
