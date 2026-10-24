@@ -144,6 +144,9 @@ pub(crate) struct LoopRegion {
     pub(crate) captures: Vec<u16>,
     /// Numeric cached data fields, in entry-record order.
     pub(crate) fields: Vec<FieldUse>,
+    /// Strict identity branches against `null` or `undefined` that read an unchanged
+    /// tagged register directly from the activation's rooted register file.
+    identity_branches: std::collections::BTreeMap<u32, IdentityBranch>,
     /// The region's instructions, from the header.
     instructions: Vec<WideInstruction>,
     /// The Number constants the region reads, by constant index.
@@ -176,6 +179,41 @@ pub(crate) struct FieldUse {
     pub(crate) receiver: FieldReceiver,
     pub(crate) atom: crate::bytecode::Atom,
     pub(crate) cache_site: u16,
+}
+
+#[derive(Clone, Copy)]
+struct IdentityBranch {
+    register: Register,
+    constant: Value,
+    negated: bool,
+}
+
+/// A branch whose exact identity comparison can be emitted from the tagged value word.
+/// Equality to null/undefined has no coercion or heap effect, and comparison against these
+/// constants cannot match a Number, string, BigInt, or object by contents.
+fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<IdentityBranch> {
+    if instruction.op() != Op::JumpBinaryFalse {
+        return None;
+    }
+    let (strict, negated) =
+        super::super::operations::equality_operator(instruction.binary_operator_field())?;
+    strict.then_some(())?;
+    let (register, constant) = match (instruction.operand_b().kind()?, instruction.operand_c().kind()?) {
+        (OperandKind::Register, OperandKind::Constant) => (
+            instruction.operand_b().payload(),
+            *constants.get(usize::from(instruction.operand_c().payload()))?,
+        ),
+        (OperandKind::Constant, OperandKind::Register) => (
+            instruction.operand_c().payload(),
+            *constants.get(usize::from(instruction.operand_b().payload()))?,
+        ),
+        _ => return None,
+    };
+    (constant.is_null() || constant.is_undefined()).then_some(IdentityBranch {
+        register,
+        constant,
+        negated,
+    })
 }
 
 impl LoopRegion {
@@ -369,8 +407,21 @@ pub(super) fn region(
         writes_indexed: false,
     };
     for instruction in &decoded[start..=end] {
-        admit(&mut admission, *instruction)
+        admit(&mut admission, *instruction, constants)
             .ok_or(RegionRejection::UnsupportedInstruction(instruction.op()))?;
+    }
+    let mut identity_branches = std::collections::BTreeMap::new();
+    for (offset, instruction) in decoded[start..=end].iter().copied().enumerate() {
+        let Some(branch) = identity_branch(instruction, constants) else {
+            continue;
+        };
+        if decoded[start..=end]
+            .iter()
+            .any(|instruction| number_definition(*instruction) == Some(branch.register))
+        {
+            return Err(RegionRejection::UnsupportedInstruction(Op::JumpBinaryFalse));
+        }
+        identity_branches.insert(header + offset as u32, branch);
     }
     if admission.fields.len() > MAX_REGION_FIELDS {
         return Err(RegionRejection::FieldLimit);
@@ -419,13 +470,14 @@ pub(super) fn region(
         arrays,
         captures: admission.captures,
         fields: admission.fields,
+        identity_branches,
         instructions: decoded[start..=end].to_vec(),
         constants: admission.numbers,
         live: live.map(Box::from),
     })
 }
 
-fn admit(admission: &mut Admission<'_>, instruction: WideInstruction) -> Option<()> {
+fn admit(admission: &mut Admission<'_>, instruction: WideInstruction, constants: &[Value]) -> Option<()> {
     match instruction.op() {
         Op::LoadConst => {
             admission.constant(u16::try_from(instruction.constant_index()).ok()?)?;
@@ -496,11 +548,19 @@ fn admit(admission: &mut Admission<'_>, instruction: WideInstruction) -> Option<
         }
         Op::Jump => {}
         Op::JumpBinaryFalse => {
-            super::super::operations::NumberRelation::from_operator(
+            if identity_branch(instruction, constants).is_some() {
+                // The compared value remains a tagged word in the rooted activation; the
+                // region check below rejects it if any instruction writes that register.
+            } else if super::super::operations::NumberRelation::from_operator(
                 instruction.binary_operator_field(),
-            )?;
-            admission.source(instruction.operand_b())?;
-            admission.source(instruction.operand_c())?;
+            )
+            .is_some()
+            {
+                admission.source(instruction.operand_b())?;
+                admission.source(instruction.operand_c())?;
+            } else {
+                return None;
+            }
         }
         Op::JumpFalse | Op::JumpTrue => {
             admission.number(instruction.register_a())?;
@@ -2497,6 +2557,20 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             Op::Jump => self.jump(pc, instruction.jump_target()),
             Op::JumpBinaryFalse => {
+                if let Some(branch) = self.region.identity_branches.get(&pc).copied() {
+                    let bits = self.body.builder.ins().load(
+                        types::I64,
+                        flags(),
+                        self.registers,
+                        i32::from(branch.register) * WORD_BYTES,
+                    );
+                    let identity = self.body.builder.ins().icmp_imm_u(
+                        if branch.negated { IntCC::NotEqual } else { IntCC::Equal },
+                        bits,
+                        branch.constant.to_bits() as i64,
+                    );
+                    return self.branch(pc, instruction.jump_target(), identity, false);
+                }
                 let operator = instruction.binary_operator_field();
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
@@ -2523,19 +2597,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     right,
                     domain,
                 )?;
-                let taken = self.body.builder.create_block();
-                let not_taken = self.body.builder.create_block();
-                let tested = self.body.builder.current_block().expect("lowering inside a block");
-                self.body.builder.ins().brif(holds, not_taken, &[], taken, &[]);
-                // Each arm's only predecessor is the test's block.
-                self.body.builder.switch_to_block(taken);
-                self.body.builder.seal_block(taken);
-                self.jump(pc, instruction.jump_target())?;
-                let chain = self.chain(tested);
-                self.chains.insert(not_taken, chain);
-                self.body.builder.switch_to_block(not_taken);
-                self.body.builder.seal_block(not_taken);
-                self.fall_through(pc)
+                self.branch(pc, instruction.jump_target(), holds, false)
             }
             Op::JumpFalse | Op::JumpTrue => {
                 let value = self.read(Source::Register(instruction.register_a()));
