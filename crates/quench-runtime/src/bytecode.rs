@@ -1478,6 +1478,10 @@ pub(crate) struct SourcePosition {
     pub(crate) column: u32,
 }
 
+/// The name of a parameter slot whose argument a list's patterns or defaults bind apart
+/// (`FunctionCompiler::parameter_name`): an argument's own slot, which no source name reaches.
+pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
+
 /// Whether register liveness covers a function's register forms, so a frame may leave its
 /// dead registers stale; and the per-pc live register masks the collector scans, derived
 /// when a collection first finds the function on the stack. Most of a program's functions
@@ -2078,6 +2082,21 @@ impl Function {
     /// read this one rule.
     pub(crate) fn parameters_own_their_slots<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
         self.simple_parameters || self.rest && self.parameters_bind_directly(name)
+    }
+
+    /// Whether each argument arrives in a slot of its own that only the activation's own
+    /// loads and stores reach: `parameters_own_their_slots`, or a list without a rest
+    /// parameter whose patterns or defaults bind its names apart, each argument then in its
+    /// hidden parameter slot (`HIDDEN_PARAMETER_PREFIX`). Promoted locals require it.
+    pub(crate) fn arguments_own_their_slots<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
+        self.parameters_own_their_slots(&name)
+            || !self.rest
+                && self.local_atoms[..usize::from(self.params).min(self.local_atoms.len())].iter().all(|atom| {
+                    usize::try_from(*atom)
+                        .ok()
+                        .and_then(&name)
+                        .is_some_and(|name| name.starts_with(HIDDEN_PARAMETER_PREFIX))
+                })
     }
 
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.

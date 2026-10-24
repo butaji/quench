@@ -88,6 +88,7 @@ impl Compiler<'_> {
                 && !value.r#async
                 && with_depth == 0
                 && !dynamic_eval,
+            false,
             None,
             body_statements,
             expression_body,

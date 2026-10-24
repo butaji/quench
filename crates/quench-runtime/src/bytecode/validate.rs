@@ -170,8 +170,9 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
         // An arrow inside an initializer owns its locals (`compile/arrow.rs`).
         && !(function.class_initializer && !function.is_arrow)
         // A rest parameter is promoted where the list binds its names directly
-        // (`FunctionCompiler::binds_parameters_directly`), each its own slot.
-        && function.parameters_own_their_slots(|atom| atoms.get(atom))
+        // (`FunctionCompiler::binds_parameters_directly`), each its own slot; a list binding
+        // its names apart promotes its hidden argument slots.
+        && function.arguments_own_their_slots(|atom| atoms.get(atom))
         // Promoted parameters leave their slots, which only an aliasing `arguments` reads.
         && (function.arguments_slot.is_none() || !function.arguments_alias_parameters())
         && !function.inherited_with_scope
@@ -198,7 +199,10 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
                         !function.lexical_atoms.contains(atom)
                             && usize::try_from(*atom).is_ok_and(|atom| atom < atoms.len())
                             && &atoms[*atom as usize] != "arguments"
-                            && !atoms[*atom as usize].starts_with('\0')
+                            // A hidden argument slot is a parameter's own (`arguments_own_their_slots`).
+                            && (!atoms[*atom as usize].starts_with('\0')
+                                || entry.local < function.params
+                                    && atoms[*atom as usize].starts_with(super::HIDDEN_PARAMETER_PREFIX))
                             && entry.local != function.self_binding_slot.unwrap_or(u16::MAX)
                     })
                 && function
