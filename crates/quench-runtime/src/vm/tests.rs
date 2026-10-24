@@ -10662,6 +10662,58 @@ fn js_jit_enters_compiled_callees_from_frameless_lane_activations() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_routes_rejected_lane_candidates_through_the_general_frame_handoff() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function label(value) { return value + '!'; }
+          var result = '';
+          for (let index = 0; index < 200; index++) result = label(index);
+          if (result !== '199!') throw Error('generic lane JIT result');
+        "#,
+        "js-jit-general-lane-entry.js",
+    ))
+    .unwrap();
+    let label = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|atom| &program.atoms[atom as usize] == "label")
+        })
+        .unwrap() as u32;
+    let body = program.function(label as usize);
+    assert!(body.call_plan(&program).registers_only);
+    assert!(super::js_compiled::function_candidate(body, &program));
+
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    let tier = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, label);
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = tier else {
+        let state = match tier {
+            None => "untracked",
+            Some(super::program_store::JsTierState::Hot { .. }) => "hot",
+            Some(super::program_store::JsTierState::PromotionPending) => "promotion-pending",
+            Some(super::program_store::JsTierState::GeneralPromotionPending) => {
+                "general-promotion-pending"
+            }
+            Some(super::program_store::JsTierState::Rejected { .. }) => "rejected",
+            Some(super::program_store::JsTierState::Unsupported) => "unsupported",
+            Some(super::program_store::JsTierState::Compiled(_)) => "compiled-other-tier",
+        };
+        panic!("the lane callee should reach GeneralDispatch, got {state}");
+    };
+    assert!(compiled.is_general_dispatch());
+    assert!(compiled.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_forward_numeric_decision_trees() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -12366,7 +12418,7 @@ fn js_jit_rejected_functions_promote_to_general_dispatch_and_keep_frames() {
     }
     exhausted
         .programs
-        .install_js_tier(exhausted_id, function, None);
+        .install_js_tier(exhausted_id, function, None, false);
     assert!(
         !exhausted.js_tier_may_claim(&program, exhausted_id, function),
         "code-cache or codegen exhaustion remains terminal"

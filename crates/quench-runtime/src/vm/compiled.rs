@@ -9305,6 +9305,62 @@ impl<H: Host> Vm<H> {
         legacy_candidate || js_general_dispatch_candidate(program, body)
     }
 
+    /// A rejected specialized candidate can still run through the generic
+    /// dispatcher, but it needs frame-owned registers and locals. Route it
+    /// through the existing frame handoff only after specialized admission
+    /// has rejected it, so cold calls keep their frameless lane path.
+    pub(super) fn js_tier_requires_general_frame_entry(
+        &self,
+        program: &ResidualProgram,
+        id: ProgramId,
+        function: u32,
+    ) -> bool {
+        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm {
+            return false;
+        }
+        let Some(body) = program.function_get(function as usize) else {
+            return false;
+        };
+        if !js_general_dispatch_candidate(program, body) {
+            return false;
+        }
+        match self.programs.js_tier(id, function) {
+            Some(super::program_store::JsTierState::GeneralPromotionPending) => true,
+            Some(super::program_store::JsTierState::Compiled(compiled)) => {
+                compiled.is_general_dispatch()
+            }
+            _ => false,
+        }
+    }
+
+    /// Sample lane entries only for acyclic generic regions. Loop candidates
+    /// keep their OSR policy; generic-only straight-line functions can become
+    /// frame entries after the ordinary general-tier threshold.
+    fn js_tier_observes_general_lane_entry(
+        &self,
+        program: &ResidualProgram,
+        id: ProgramId,
+        function: u32,
+    ) -> bool {
+        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm {
+            return false;
+        }
+        let Some(body) = program.function_get(function as usize) else {
+            return false;
+        };
+        if !js_general_dispatch_acyclic_candidate(program, body) {
+            return false;
+        }
+        !super::js_compiled::function_candidate(body, program)
+            || matches!(
+                self.programs.js_tier(id, function),
+                Some(
+                    super::program_store::JsTierState::Rejected { .. }
+                        | super::program_store::JsTierState::GeneralPromotionPending
+                )
+            )
+    }
+
     /// Whether a lane-entered frame must hand control to the general frame
     /// loop so a pending or installed generic native region can run there.
     pub(super) fn js_tier_needs_general_entry(&self, id: ProgramId, function: u32) -> bool {
@@ -9352,6 +9408,10 @@ impl<H: Host> Vm<H> {
         };
         let entered = self.js_jit_at_entry(program, &entry);
         if entered.is_none() {
+            if self.js_tier_observes_general_lane_entry(program, id, function) {
+                self.programs
+                    .note_js_general_dispatch_entry(id, function);
+            }
             self.programs.record_js_jit_fallback_entry(id, function);
         }
         entered
@@ -9537,7 +9597,7 @@ impl<H: Host> Vm<H> {
                     .map(Rc::new);
                 let installed = self
                     .programs
-                    .install_js_tier(program_id, function_id, compiled.clone());
+                    .install_js_tier(program_id, function_id, compiled.clone(), false);
                 if let Some(compile_started) = compile_started {
                     self.programs.record_js_jit_compile(
                         program_id,
@@ -10170,7 +10230,13 @@ impl<H: Host> Vm<H> {
                 };
                 let installed =
                     self.programs
-                        .install_js_tier(program_id, function_id, compiled.clone());
+                        .install_js_tier(
+                            program_id,
+                            function_id,
+                            compiled.clone(),
+                            artifact_failed
+                                && js_general_dispatch_acyclic_candidate(program, function),
+                        );
                 if let Some(compile_started) = compile_started {
                     let code_bytes = if installed {
                         compiled
