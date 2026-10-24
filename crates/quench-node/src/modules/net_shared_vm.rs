@@ -1154,8 +1154,8 @@ pub(crate) fn listen_with_backlog(
     transport: &mut Transport,
     address: SocketAddr,
     backlog: i32,
-) -> Result<u64, String> {
-    listen_with_reuse_port(transport, address, false, backlog).map_err(|error| error.to_string())
+) -> Result<u64, std::io::Error> {
+    listen_with_reuse_port(transport, address, false, backlog)
 }
 
 pub(super) fn listen_with_reuse_port(

@@ -1049,6 +1049,8 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
         let position = start === undefined ? null : start;
         let bytesWritten = 0;
         let writerClosed = false;
+        let writerClosing = false;
+        let writerErrored = false;
         let queuedWrites = Promise.resolve();
         let queuedWriteCount = 0;
         const checkWriter = (writeOptions) => {
@@ -1124,7 +1126,9 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
         };
         const finish = async (writeOptions) => {
           checkWriter(writeOptions);
+          writerClosing = true;
           await queuedWrites;
+          writerClosing = false;
           writerClosed = true;
           writerActive = false;
           if (options.autoClose) await handle.close();
@@ -1132,6 +1136,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
         };
         const fail = async (error) => {
           if (writerClosed) return;
+          writerErrored = true;
           writerClosed = true;
           writerActive = false;
           if (options.autoClose) await handle.close();
@@ -1150,10 +1155,27 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
             return bytesWritten;
           },
           end: finish,
+          endSync() {
+            if (writerErrored) return -1;
+            if (writerClosed) return bytesWritten;
+            if (writerClosing || queuedWriteCount !== 0) return -1;
+            writerClosed = true;
+            writerActive = false;
+            if (options.autoClose) {
+              fs.closeSync(fd);
+              closed = true;
+              closeHandle(handle);
+              handle.fd = -1;
+              try { readableWebStreamController?.close(); } catch {}
+              handle.emit("close");
+            }
+            return bytesWritten;
+          },
           fail,
           [Symbol.asyncDispose]: () => writerClosed ? undefined : finish(),
           [Symbol.dispose]: () => {
             if (writerClosed) return;
+            writerErrored = true;
             writerClosed = true;
             writerActive = false;
             if (options.autoClose) void handle.close();

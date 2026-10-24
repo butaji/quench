@@ -21,6 +21,26 @@ const __quenchDnsIsIP = (value) => {
   return typeof value === "string" &&
     (/^\d+(?:\.\d+){3}$/.test(value) ? 4 : 0);
 };
+const __quenchDnsReceived = (value) => {
+  if (value === null || value === undefined) return `Received ${value}`;
+  if (typeof value === "string") return `Received type string ('${value}')`;
+  if (typeof value === "function") return `Received function ${value.name}`;
+  if (typeof value === "object") {
+    const name = value.constructor?.name;
+    return `Received an instance of ${typeof name === "string" && name ? name : "Object"}`;
+  }
+  return `Received type ${typeof value} (${String(value)})`;
+};
+const __quenchDnsValidateName = (name) => {
+  if (typeof name !== "string") {
+    throw Object.assign(new TypeError(`The "name" argument must be of type string. ${__quenchDnsReceived(name)}`), { code: "ERR_INVALID_ARG_TYPE" });
+  }
+  if (name.includes("\0")) {
+    const displayed = name.replaceAll("\0", "\\x00");
+    throw Object.assign(new TypeError(`The argument 'name' must be a string without null bytes. Received '${displayed}'`), { code: "ERR_INVALID_ARG_VALUE" });
+  }
+  return name;
+};
 const __quenchDnsPermissionError = (hostname, syscall) => {
   const permission = globalThis.process?.permission;
   const audit = (globalThis.process?.execArgv || []).includes("--permission-audit");
@@ -79,12 +99,11 @@ const __quenchDnsNormalizeServers = (servers) => {
 };
 const __quenchDnsValidateServers = (servers) => {
   if (!Array.isArray(servers)) {
-    throw Object.assign(new TypeError('The "servers" argument must be an instance of Array.'), { code: "ERR_INVALID_ARG_TYPE" });
+    throw Object.assign(new TypeError(`The "servers" argument must be an instance of Array. ${__quenchDnsReceived(servers)}`), { code: "ERR_INVALID_ARG_TYPE" });
   }
   for (let index = 0; index < servers.length; index += 1) {
-    if (servers[index] === undefined) continue;
     if (typeof servers[index] !== "string") {
-      throw Object.assign(new TypeError(`The "servers[${index}]" argument must be of type string.`), { code: "ERR_INVALID_ARG_TYPE" });
+      throw Object.assign(new TypeError(`The "servers[${index}]" argument must be of type string. ${__quenchDnsReceived(servers[index])}`), { code: "ERR_INVALID_ARG_TYPE" });
     }
     const value = servers[index];
     const bracketed = /^\[[^\]]+\]:(\d+)$/.exec(value);
@@ -245,9 +264,7 @@ const __quenchDnsLookup = (hostname, options, callback) => {
   });
 };
 const __quenchDnsResolve = (hostname, rrtype, callback) => {
-  if (typeof hostname !== "string") {
-    throw Object.assign(new TypeError(`The "name" argument must be of type string. Received ${hostname}`), { code: "ERR_INVALID_ARG_TYPE" });
-  }
+  __quenchDnsValidateName(hostname);
   if (typeof rrtype === "function") {
     callback = rrtype;
     rrtype = "A";
@@ -306,9 +323,7 @@ const __quenchDnsResolve = (hostname, rrtype, callback) => {
   });
 };
 const __quenchDnsResolveAny = (hostname, callback) => {
-  if (typeof hostname !== "string") {
-    throw Object.assign(new TypeError(`The "name" argument must be of type string. Received ${hostname}`), { code: "ERR_INVALID_ARG_TYPE" });
-  }
+  __quenchDnsValidateName(hostname);
   if (typeof callback !== "function") {
     throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
@@ -340,9 +355,7 @@ const __quenchDnsResolveAny = (hostname, callback) => {
   });
 };
 const __quenchDnsResolveNs = (hostname, callback) => {
-  if (typeof hostname !== "string") {
-    throw Object.assign(new TypeError(`The "name" argument must be of type string. Received ${hostname}`), { code: "ERR_INVALID_ARG_TYPE" });
-  }
+  __quenchDnsValidateName(hostname);
   if (typeof callback !== "function") {
     throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
@@ -415,6 +428,7 @@ const __quenchDnsReverse = (address, callback) => {
       { code: "ERR_INVALID_ARG_TYPE" },
     );
   }
+  __quenchDnsValidateName(address);
   if (__quenchDnsIsIP(address) === 0) {
     throw Object.assign(
       new TypeError(`The argument 'address' is invalid. Received '${address}'`),
@@ -438,6 +452,7 @@ const __quenchDnsReverse = (address, callback) => {
   });
 };
 const __quenchDnsResolveMx = (hostname, callback) => {
+  __quenchDnsValidateName(hostname);
   if (typeof callback !== "function") {
     throw new TypeError('The "callback" argument must be of type function');
   }
@@ -479,13 +494,23 @@ const __quenchDnsValidateResolverOptions = (options) => {
             : typeof value === "function"
               ? "function "
               : `type ${typeof value} (${String(value)})`;
-      throw Object.assign(new TypeError(`The "options.${key}" property must be of type number. Received ${received}`), { code: "ERR_INVALID_ARG_TYPE" });
+      const error = Object.assign(new TypeError(`The "options.${key}" property must be of type number. Received ${received}`), { code: "ERR_INVALID_ARG_TYPE" });
+      Object.defineProperty(error, "toString", {
+        configurable: true,
+        value() { return `${this.name} [${this.code}]: ${this.message}`; },
+      });
+      throw error;
     }
     if (!Number.isInteger(value) || value < min || value > max) {
       const constraint = Number.isInteger(value)
         ? `>= ${min} && <= ${max}`
         : "an integer";
-      throw Object.assign(new RangeError(`The value of "options.${key}" is out of range. It must be ${constraint}. Received ${String(value)}`), { code: "ERR_OUT_OF_RANGE" });
+      const error = Object.assign(new RangeError(`The value of "options.${key}" is out of range. It must be ${constraint}. Received ${String(value)}`), { code: "ERR_OUT_OF_RANGE" });
+      Object.defineProperty(error, "toString", {
+        configurable: true,
+        value() { return `${this.name} [${this.code}]: ${this.message}`; },
+      });
+      throw error;
     }
   };
   validateInteger("timeout", -1, 0x7fffffff);
@@ -502,6 +527,28 @@ class __quenchResolver {
   }
   setServers(servers) {
     __quenchDnsServers = __quenchDnsValidateServers(servers);
+  }
+  setLocalAddress(ipv4, ipv6) {
+    if (typeof ipv4 !== "string") {
+      throw Object.assign(new TypeError(`The "ipv4" argument must be of type string. ${__quenchDnsReceived(ipv4)}`), { code: "ERR_INVALID_ARG_TYPE" });
+    }
+    if (ipv4.includes("\0")) {
+      const displayed = ipv4.replaceAll("\0", "\\x00");
+      throw Object.assign(new TypeError(`The argument 'ipv4' must be a string without null bytes. Received '${displayed}'`), { code: "ERR_INVALID_ARG_VALUE" });
+    }
+    if (ipv6 !== undefined && typeof ipv6 !== "string") {
+      throw Object.assign(new TypeError(`The "ipv6" argument must be of type string. ${__quenchDnsReceived(ipv6)}`), { code: "ERR_INVALID_ARG_TYPE" });
+    }
+    if (ipv6?.includes("\0")) {
+      const displayed = ipv6.replaceAll("\0", "\\x00");
+      throw Object.assign(new TypeError(`The argument 'ipv6' must be a string without null bytes. Received '${displayed}'`), { code: "ERR_INVALID_ARG_VALUE" });
+    }
+    const ipv4Family = __quenchDnsIsIP(ipv4);
+    const ipv6Family = ipv6 === undefined ? 0 : __quenchDnsIsIP(ipv6);
+    if (ipv4Family === 0 || (ipv6 !== undefined && (ipv6Family === 0 || ipv4Family === ipv6Family))) {
+      throw new Error("Invalid local address");
+    }
+    this._localAddress = { ipv4, ipv6 };
   }
   getDefaultResultOrder() {
     return __quenchDnsDefaultResultOrder;
@@ -534,42 +581,75 @@ class __quenchResolver {
     __quenchDnsReverse(address, callback);
   }
 }
+const __quenchDnsResolveTypes = {
+  resolveCaa: "CAA",
+  resolveCname: "CNAME",
+  resolveNaptr: "NAPTR",
+  resolvePtr: "PTR",
+  resolveSoa: "SOA",
+  resolveSrv: "SRV",
+  resolveTlsa: "TLSA",
+  resolveTxt: "TXT",
+};
+const __quenchDnsResolveType = (hostname, rrtype, callback) =>
+  __quenchDnsResolve(hostname, rrtype, callback);
+const __quenchDnsPromiseResolveType = (hostname, rrtype) => {
+  __quenchDnsValidateName(hostname);
+  return new Promise((resolve, reject) =>
+    __quenchDnsResolve(hostname, rrtype, (error, value) =>
+      error ? reject(error) : resolve(value)));
+};
 class __quenchPromiseResolver extends __quenchResolver {
   resolve(hostname, rrtype = "A") {
+    __quenchDnsValidateName(hostname);
     return new Promise((resolve, reject) =>
       __quenchDnsResolve(hostname, rrtype, (error, value) =>
         error ? reject(error) : resolve(value)));
   }
   resolve4(hostname) {
+    __quenchDnsValidateName(hostname);
     return new Promise((resolve, reject) =>
       __quenchDnsResolve(hostname, "A", (error, value) =>
         error ? reject(error) : resolve(value)));
   }
   resolve6(hostname) {
+    __quenchDnsValidateName(hostname);
     return new Promise((resolve, reject) =>
       __quenchDnsResolve(hostname, "AAAA", (error, value) =>
         error ? reject(error) : resolve(value)));
   }
   resolveAny(hostname) {
+    __quenchDnsValidateName(hostname);
     return new Promise((resolve, reject) =>
       __quenchDnsResolveAny(hostname, (error, value) =>
         error ? reject(error) : resolve(value)));
   }
   resolveMx(hostname) {
+    __quenchDnsValidateName(hostname);
     return new Promise((resolve, reject) =>
       __quenchDnsResolveMx(hostname, (error, value) =>
         error ? reject(error) : resolve(value)));
   }
   resolveNs(hostname) {
+    __quenchDnsValidateName(hostname);
     return new Promise((resolve, reject) =>
       __quenchDnsResolveNs(hostname, (error, value) =>
         error ? reject(error) : resolve(value)));
   }
   reverse(address) {
+    __quenchDnsValidateName(address);
     return new Promise((resolve, reject) =>
       __quenchDnsReverse(address, (error, value) =>
         error ? reject(error) : resolve(value)));
   }
+}
+for (const [method, rrtype] of Object.entries(__quenchDnsResolveTypes)) {
+  __quenchResolver.prototype[method] = function(hostname, callback) {
+    return __quenchDnsResolveType(hostname, rrtype, callback);
+  };
+  __quenchPromiseResolver.prototype[method] = function(hostname) {
+    return __quenchDnsPromiseResolveType(hostname, rrtype);
+  };
 }
 const __quenchDns = {
   getServers: () => [...__quenchDnsServers],
@@ -583,6 +663,8 @@ const __quenchDns = {
   lookup: __quenchDnsLookup,
   resolve: __quenchDnsResolve,
   resolveAny: __quenchDnsResolveAny,
+  ...Object.fromEntries(Object.entries(__quenchDnsResolveTypes).map(([method, rrtype]) =>
+    [method, (hostname, callback) => __quenchDnsResolve(hostname, rrtype, callback)])),
   resolve4: (hostname, callback) => __quenchDnsResolve(hostname, "A", callback),
   resolve6: (hostname, callback) =>
     __quenchDnsResolve(hostname, "AAAA", callback),
@@ -593,7 +675,12 @@ const __quenchDns = {
   Resolver: __quenchResolver,
   promises: {
     Resolver: __quenchPromiseResolver,
+    getServers: () => [...__quenchDnsServers],
+    setServers: (servers) => {
+      __quenchDnsServers = __quenchDnsValidateServers(servers);
+    },
     resolve: (hostname, rrtype = "A") => {
+      __quenchDnsValidateName(hostname);
       if (typeof hostname !== "string") {
         throw Object.assign(
           new TypeError(
@@ -625,33 +712,24 @@ const __quenchDns = {
       );
     },
     resolve4: (hostname) =>
-      new Promise((resolve, reject) =>
-        __quenchDnsResolve(
-          hostname,
-          "A",
-          (error, value) => error ? reject(error) : resolve(value),
-        )
-      ),
+      __quenchDnsPromiseResolveType(hostname, "A"),
     resolve6: (hostname) =>
-      new Promise((resolve, reject) =>
-        __quenchDnsResolve(
-          hostname,
-          "AAAA",
-          (error, value) => error ? reject(error) : resolve(value),
-        )
-      ),
-    resolveAny: (hostname) =>
-      new Promise((resolve, reject) =>
+      __quenchDnsPromiseResolveType(hostname, "AAAA"),
+    resolveAny: (hostname) => {
+      __quenchDnsValidateName(hostname);
+      return new Promise((resolve, reject) =>
         __quenchDnsResolveAny(hostname, (error, value) => error ? reject(error) : resolve(value))
-      ),
+      );
+    },
+    resolveMx: (hostname) => __quenchDnsPromiseResolveType(hostname, "MX"),
     resolveNs: (hostname) => {
-      if (typeof hostname !== "string") {
-        throw Object.assign(new TypeError(`The "name" argument must be of type string. Received ${hostname}`), { code: "ERR_INVALID_ARG_TYPE" });
-      }
+      __quenchDnsValidateName(hostname);
       return new Promise((resolve, reject) =>
         __quenchDnsResolveNs(hostname, (error, value) => error ? reject(error) : resolve(value))
       );
     },
+    ...Object.fromEntries(Object.entries(__quenchDnsResolveTypes).map(([method, rrtype]) =>
+      [method, (hostname) => __quenchDnsPromiseResolveType(hostname, rrtype)])),
     lookupService: (address, ...args) => {
       const port = args[0];
       if (typeof address !== "string" || args.length === 0) {
@@ -689,12 +767,12 @@ const __quenchDns = {
       });
     },
     reverse: (address) =>
-      new Promise((resolve, reject) =>
+      (__quenchDnsValidateName(address), new Promise((resolve, reject) =>
         __quenchDnsReverse(
           address,
           (error, value) => error ? reject(error) : resolve(value),
         )
-      ),
+      )),
     lookup: (hostname, options = {}) => {
       if (hostname && typeof hostname !== "string") {
         throw Object.assign(
