@@ -118,6 +118,7 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
 fn third_receiver_promotes_field_site_to_megamorphic() {
     let mut vm = Vm::new(TestHost::default());
     vm.field_caches.push(EMPTY_CACHE);
+    vm.refresh_active_field_entries();
     vm.megamorphic_field_indices.push(NO_MEGAMORPHIC_FIELD);
     for receiver in 1..=4 {
         vm.record_field_cache(
@@ -1158,6 +1159,7 @@ fn field_cache_invalidation_resets_every_written_site() {
     const SITES: usize = 64;
     let mut vm = Vm::new(TestHost::default());
     vm.field_caches = SiteTable::with_empty(SITES);
+    vm.refresh_active_field_entries();
     vm.megamorphic_field_indices = SiteTable::with_empty(SITES);
     vm.field_add_indices = SiteTable::with_empty(SITES);
     vm.inherited_field_indices = SiteTable::with_empty(SITES);
