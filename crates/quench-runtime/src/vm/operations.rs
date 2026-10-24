@@ -35,6 +35,7 @@ macro_rules! number_relations {
         pub(super) enum NumberRelation { $($relation),+ }
 
         impl NumberRelation {
+            #[inline(always)]
             pub(super) fn from_operator(op: u32) -> Option<Self> {
                 $(
                     if $(op == BinaryOperator::$operator as u32)||+ {
@@ -85,6 +86,7 @@ macro_rules! number_arithmetic {
         pub(super) enum NumberArithmetic { $($operation),+ }
 
         impl NumberArithmetic {
+            #[inline(always)]
             pub(super) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == BinaryOperator::$operator as u32 {
@@ -163,6 +165,7 @@ macro_rules! number_unary {
         pub(super) enum NumberUnary { $($operation),+ }
 
         impl NumberUnary {
+            #[inline(always)]
             pub(super) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == UnaryOperator::$operator as u32 {
@@ -219,6 +222,7 @@ macro_rules! number_bitwise {
         pub(super) enum NumberBitwise { $($operation),+ }
 
         impl NumberBitwise {
+            #[inline(always)]
             pub(super) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == BinaryOperator::$operator as u32 {
@@ -309,9 +313,18 @@ fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) ->
     }
 }
 
+/// The Value of a bitwise operation on Int32 operands: its Int32 result, or for `>>>` its
+/// Uint32 result, which is an integer Value while it fits in an Int32. Built from the bits, not
+/// through `Value::number`, whose integral test a bitwise result needs no more than an integer
+/// operator's does.
 #[inline(always)]
 fn number_bitwise_result(operation: NumberBitwise, left: i32, right: i32) -> Value {
-    Value::number(number_bitwise_f64_result(operation, left, right))
+    let bits = operation.apply(&mut I32BitwiseStage, left, right);
+    if operation == NumberBitwise::ShiftRightUnsigned && bits < 0 {
+        Value::number(f64::from(bits as u32))
+    } else {
+        Value::integer(bits)
+    }
 }
 
 struct NumberF64Stage;
