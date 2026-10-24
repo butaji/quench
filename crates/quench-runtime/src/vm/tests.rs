@@ -13899,3 +13899,16 @@ fn set_iteration_copies_only_while_the_intrinsics_iterate() {
         Vm::new(TestHost::default()).execute(&program).unwrap();
     }
 }
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_function_tiers_follow_the_memory_policy() {
+    for policy in crate::MemoryPolicy::ALL {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_memory_policy(policy);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        assert_eq!(vm.js_tier_runs(), super::compiled::js_function_tiers_compile(policy), "{policy:?}");
+    }
+    assert!(super::compiled::js_function_tiers_compile(crate::MemoryPolicy::Throughput));
+    assert!(!super::compiled::js_function_tiers_compile(crate::MemoryPolicy::MemoryFirst));
+}

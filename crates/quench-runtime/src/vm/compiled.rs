@@ -4153,19 +4153,19 @@ pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
     LOOP_TIER_OPT_LEVELS[policy as usize].is_some()
 }
 
-/// Whether the general-dispatch tier compiles whole functions under each memory policy
-/// (`MemoryPolicy` order). Its functions are the largest the JavaScript tiers compile, and
-/// regalloc2's state for one set memory-first's peak, as a loop region's did
-/// (`LOOP_TIER_OPT_LEVELS`): V8-v7 Crypto `--jit` peaked at the end of its run while one
-/// compiled (static BOLT x86_64, memory-first: 3220 -> 5496 KiB median once the tier
-/// landed, 2026-10-24). Memory-first compiles none, on the owner's direction that it may
-/// trade Score for memory under `--jit` (TOD-123).
-const GENERAL_DISPATCH_TIER: [bool; crate::MemoryPolicy::ALL.len()] = [true, false];
+/// Whether the JavaScript function tiers (the per-function tier and the general-dispatch
+/// tier) compile under each memory policy (`MemoryPolicy` order). Memory-first compiles
+/// none, on the owner's direction that it may trade Score for memory under `--jit` (TOD-123).
+/// Under memory-first their code and regalloc2 state set the `--jit` peaks: the general-dispatch
+/// tier took V8-v7 Crypto `--jit` from 3220 to 5496 KiB (median, bolted static x86_64). With
+/// both off, every V8-v7 `--jit` row peaked 84-380 KiB lower, at its no-JIT level. Scores moved
+/// both ways: EarleyBoyer +125%, Splay +15%, RayTrace +11%, NavierStokes +8%, but DeltaBlue -9%,
+/// Richards -7%, RegExp -7% (same unbolted static binary, 5 runs, 2026-10-24).
+const JS_FUNCTION_TIERS: [bool; crate::MemoryPolicy::ALL.len()] = [true, false];
 
-/// Whether the general-dispatch tier compiles functions under `policy`
-/// (`GENERAL_DISPATCH_TIER`).
-pub(super) fn general_dispatch_compiles(policy: crate::MemoryPolicy) -> bool {
-    GENERAL_DISPATCH_TIER[policy as usize]
+/// Whether the JavaScript function tiers compile under `policy` (`JS_FUNCTION_TIERS`).
+pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
+    JS_FUNCTION_TIERS[policy as usize]
 }
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
@@ -9288,10 +9288,13 @@ impl<H: Host> Vm<H> {
         native_poll_page(&self.execution_interrupt)
     }
 
-    /// Whether the per-function JavaScript tier runs: compiled execution, in a build whose
-    /// profiles do not count interpreted work exactly.
+    /// Whether the JavaScript function tiers run: compiled execution under a memory policy
+    /// that compiles them (`JS_FUNCTION_TIERS`), in a build whose profiles do not count
+    /// interpreted work exactly.
     pub(super) fn js_tier_runs(&self) -> bool {
-        !cfg!(quench_profiled) && self.execution_mode == ExecutionMode::Compiled
+        !cfg!(quench_profiled)
+            && self.execution_mode == ExecutionMode::Compiled
+            && js_function_tiers_compile(self.memory_policy())
     }
 
     /// Keep usable legacy specialized candidates first. If that tier rejects a
