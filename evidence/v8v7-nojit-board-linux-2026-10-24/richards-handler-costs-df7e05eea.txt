@@ -1,0 +1,21 @@
+total 1042.6M
+   262.2M  25.2% calls=  1699570 per= 154.3 dispatch_fast::lane_script_call::<>
+   174.0M  16.7% calls=  4627401 per=  37.6 dispatch_fast::lane_get_field_own::<true>
+    99.5M   9.5% calls=  1423404 per=  69.9 dispatch_fast::lane_get_field_holder::<false>
+    85.1M   8.2% calls=   595010 per= 143.1 dispatch_fast::lane_get_field_sink_own::<>
+    82.0M   7.9% calls=  1194368 per=  68.6 dispatch_fast::lane_set_this_field_own::<>
+    34.8M   3.3% calls=   424830 per=  82.0 dispatch_fast::lane_returning::<2>
+    33.0M   3.2% calls=  1734892 per=  19.0 dispatch_fast::lane_load_capture::<>
+    25.3M   2.4% calls=   276057 per=  91.8 dispatch_fast::lane_get_field_polymorphic::<false>
+    22.6M   2.2% calls=   335380 per=  67.3 dispatch_fast::lane_set_object_field_own::<>
+    21.4M   2.0% calls=   551831 per=  38.7 dispatch_fast::lane_get_field_own::<false>
+    16.8M   1.6% calls=   488953 per=  34.3 dispatch_fast::lane_return::<>
+    15.9M   1.5% calls=   166147 per=  95.5 dispatch_fast::lane_get_field_nested::<>
+    14.6M   1.4% calls=   140007 per= 104.3 dispatch_fast::lane_return_general::<>
+    14.1M   1.4% calls=   896374 per=  15.8 dispatch_fast::lane_jump_false::<false>
+    13.9M   1.3% calls=   448182 per=  31.1 dispatch_fast::lane_relation_value::<true>
+    12.8M   1.2% calls=   136584 per=  94.0 dispatch_fast::lane_return_value_general::<>
+    11.7M   1.1% calls=   763102 per=  15.4 dispatch_fast::lane_jump_nullish_false::<false, true, 2>
+    10.8M   1.0% calls=   490138 per=  22.0 dispatch_fast::lane_operator::<19>
+    10.1M   1.0% calls=   633279 per=  16.0 dispatch_fast::lane_jump_nullish_false::<false, false, 2>
+     8.3M   0.8% calls=   334823 per=  24.7 dispatch_fast::lane_jump_binary_false_registers::<false, 0>
