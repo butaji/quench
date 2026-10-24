@@ -1219,9 +1219,34 @@ pub(crate) fn normalize_url(
         "protocol",
         &format!("{}:", parsed.scheme()),
     )?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        let username = decode_url_auth_component(parsed.username());
+        let password = parsed.password().map(decode_url_auth_component).unwrap_or_default();
+        set_text(context, options, "auth", &format!("{username}:{password}"))?;
+    }
     set_text(context, options, "path", &path)?;
     set_text(context, options, "method", "GET")?;
     Ok(options)
+}
+
+fn decode_url_auth_component(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let high = (bytes[index + 1] as char).to_digit(16);
+            let low = (bytes[index + 2] as char).to_digit(16);
+            if let (Some(high), Some(low)) = (high, low) {
+                decoded.push(((high << 4) | low) as u8);
+                index += 3;
+                continue;
+            }
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 fn invalid_url(context: &mut Context<'_>, message: &str) -> Result<RootId, RootedError> {
