@@ -11977,6 +11977,14 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
       function write(target, key, value) {
         try { target[key] = value; return target[key]; } catch (error) { return error; }
       }
+      function writeFixed(target, value) {
+        try { target.fallback = value; return target.fallback; } catch (error) { return error; }
+      }
+      function strictWriteGetter(target) {
+        'use strict';
+        try { target.value = 99; return false; }
+        catch (error) { return error instanceof TypeError; }
+      }
       function readFixed(target) {
         try { return target.fallback; } catch (error) { return error; }
       }
@@ -11994,9 +12002,11 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
         if (read(target, 'value') !== index * 2 - 1) throw Error('getter result');
         if (write(target, 'fallback', index) !== index) throw Error('dynamic write result');
         if (readFixed(target) !== index) throw Error('cached field result');
+        if (writeFixed(target, index + 100) !== index + 100) throw Error('cached own store result');
         if (readFixedGetter(target) !== index * 2) throw Error('cached getter result');
+        if (!strictWriteGetter(target)) throw Error('strict getter-only store fallback');
       }
-      if (getterCalls !== 96 || target.fallback !== 48) throw Error('dynamic property effects');
+      if (getterCalls !== 96 || target.fallback !== 148) throw Error('dynamic property effects');
       if (read(target, 'throwing') !== marker) throw Error('caught getter throw');
     "#;
     let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-general.js"))
@@ -12008,7 +12018,7 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
 
-    for name in ["read", "write", "readFixed", "readFixedGetter"] {
+    for name in ["read", "write", "writeFixed", "readFixed", "readFixedGetter"] {
         let function = program
             .functions
             .iter()
