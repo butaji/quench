@@ -12037,6 +12037,192 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
 
 #[cfg(not(quench_profiled))]
 #[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
+    let source = r#"
+      function read(target, key) {
+        try { return target[key]; } catch (error) { return error; }
+      }
+      function write(target, key, value) {
+        try { target[key] = value; return target[key]; } catch (error) { return error; }
+      }
+      function readFixed(target) {
+        try { return target.fallback; } catch (error) { return error; }
+      }
+      function readFixedGetter(target) {
+        try { return target.value; } catch (error) { return error; }
+      }
+      let getterCalls = 0;
+      const marker = {};
+      const target = {
+        get value() { getterCalls++; return getterCalls; },
+        get throwing() { throw marker; },
+        fallback: 0
+      };
+      for (let index = 1; index <= 48; index++) {
+        if (read(target, 'value') !== index * 2 - 1) throw Error('getter result');
+        if (write(target, 'fallback', index) !== index) throw Error('dynamic write result');
+        if (readFixed(target) !== index) throw Error('cached field result');
+        if (readFixedGetter(target) !== index * 2) throw Error('cached getter result');
+      }
+      if (getterCalls !== 96 || target.fallback !== 48) throw Error('dynamic property effects');
+      if (read(target, 'throwing') !== marker) throw Error('caught getter throw');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-general.js"))
+        .unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    for name in ["read", "write", "readFixed", "readFixedGetter"] {
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should use the general JavaScript dispatch compiler");
+        };
+        assert!(native.is_general_dispatch(), "{name} should not need a source shape");
+        assert!(native.native_entries() > 0, "{name} should enter its native CFG");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly() {
+    let source = r#"
+      function combine(left, right) {
+        try { return left + right; }
+        catch (error) { return error instanceof TypeError; }
+      }
+      function negate(value) {
+        try { return -value; }
+        catch (error) { return error instanceof TypeError; }
+      }
+      function positive(value) {
+        try { return +value; }
+        catch (error) { return error instanceof TypeError; }
+      }
+      for (let index = 0; index < 48; index++) {
+        if (combine(index, 0.5) !== index + 0.5) throw Error('number result');
+        if (negate(index) !== -index) throw Error('unary minus');
+        if (positive(index) !== index) throw Error('unary plus');
+      }
+      if (!Object.is(combine(-0, -0), -0)) throw Error('negative zero');
+      if (combine(2147483647, 1) !== 2147483648) throw Error('integer boundary');
+      if (combine('left', 'right') !== 'leftright') throw Error('string fallback');
+      if (combine(Symbol('value'), 1) !== true) throw Error('throw fallback');
+      if (!Number.isNaN(combine(NaN, 1))) throw Error('NaN result');
+      if (!Object.is(negate(0), -0) || !Object.is(negate(-0), 0)) {
+        throw Error('unary zero signs');
+      }
+      if (negate(Symbol('value')) !== true || positive(Symbol('value')) !== true) {
+        throw Error('unary throw fallback');
+      }
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-arithmetic.js",
+    ))
+    .unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    for name in ["combine", "negate", "positive"] {
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should use the general JavaScript dispatch compiler");
+        };
+        assert!(native.is_general_dispatch());
+        assert!(native.native_entries() > 0);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
+    let source = r#"
+      function sum(values) {
+        let total = 0;
+        let index = 0;
+        while (index < values.length) {
+          try { total += values[index]; }
+          catch (error) { total += 0; }
+          index++;
+        }
+        return total;
+      }
+      var result = 0;
+      for (let run = 0; run < 48; run++) result = sum([1, 2, 3, 4]);
+      if (result !== 10) throw Error('loop result');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-loop.js",
+    ))
+    .unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "sum")
+        })
+        .unwrap() as u32;
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("loop function should use the general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let name = compiled.intern_atom("result");
+    let result = compiled.own_property(compiled.realm.globals, name).unwrap();
+    assert_eq!(result, Value::number(10.0));
+}
+
+#[test]
 fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         "function add(a, b) { return a + b; } add(1, 2);",

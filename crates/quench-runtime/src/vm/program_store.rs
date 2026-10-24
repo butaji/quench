@@ -27,6 +27,8 @@ struct JsJitCounters {
     rejection_reason: Option<&'static str>,
     compile_ns: u64,
     native_entries: u64,
+    field_cache_probes: u64,
+    field_cache_hits: u64,
     field_return_candidate_entries: u64,
     field_return_fixed_this_entries: u64,
     field_return_fast_entries: u64,
@@ -48,6 +50,10 @@ struct JsJitCounters {
 /// under a stationary Bernoulli model; it is not a VM-wide multiple-test bound.
 pub(super) const JS_JIT_PROMOTION_LOOKS: [(u8, u8); 4] =
     [(32, 31), (64, 59), (128, 113), (255, 219)];
+/// The general tagged-dispatch baseline compiles after a fixed number of
+/// function entries; unlike the optimizing tier, it does not require numeric
+/// arguments or a bytecode-shape candidate.
+const JS_JIT_GENERAL_PROMOTION_ENTRIES: u8 = 32;
 const JS_JIT_MAX_FUNCTIONS: usize = 64;
 const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 256;
 const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
@@ -1442,6 +1448,64 @@ impl ProgramStore {
         decision.compile
     }
 
+    /// Promote any ordinary JS function to the complete-semantics native
+    /// dispatch baseline after it is hot. The existing tier record and shared
+    /// code-cache budget remain the single owners for both baseline and
+    /// specialized artifacts.
+    pub(super) fn note_js_general_dispatch_entry(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+    ) -> bool {
+        let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
+        let Some(entry) = self.entry_mut(id) else {
+            return false;
+        };
+        if entry.jit_tiers.is_wasm() {
+            return false;
+        }
+        let mut promoted = false;
+        let Some(state) = entry.jit_tiers.js_mut(function) else {
+            if !can_track {
+                return false;
+            }
+            let tracked = entry.jit_tiers.js_insert(
+                function,
+                JsTierState::Hot {
+                    observations: 1,
+                    numeric: 0,
+                },
+            );
+            debug_assert!(tracked);
+            if tracked {
+                self.js_jit_tracked_functions += 1;
+            }
+            return false;
+        };
+        match state {
+            JsTierState::Hot { observations, .. } => {
+                *observations = observations.saturating_add(1);
+                if *observations >= JS_JIT_GENERAL_PROMOTION_ENTRIES {
+                    *state = JsTierState::PromotionPending;
+                    promoted = true;
+                }
+            }
+            JsTierState::PromotionPending => return true,
+            JsTierState::Rejected { entries, .. } => {
+                *entries = entries.saturating_add(1);
+                if *entries >= u64::from(JS_JIT_GENERAL_PROMOTION_ENTRIES) {
+                    *state = JsTierState::PromotionPending;
+                    promoted = true;
+                }
+            }
+            JsTierState::Compiled(_) | JsTierState::Unsupported => return false,
+        }
+        if promoted {
+            self.record_js_jit_promotion(id, function);
+        }
+        promoted
+    }
+
     /// Memoize an unsupported bytecode shape separately from tier candidates.
     /// Cold bootstrap helpers therefore cannot consume the hot-function
     /// promotion table. Return its accumulated count only once diagnostic
@@ -1723,6 +1787,24 @@ impl ProgramStore {
             .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
         {
             counters.native_entries = counters.native_entries.saturating_add(1);
+        }
+    }
+
+    pub(super) fn record_js_jit_field_cache_probe(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        hit: bool,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.field_cache_probes = counters.field_cache_probes.saturating_add(1);
+            counters.field_cache_hits = counters
+                .field_cache_hits
+                .saturating_add(u64::from(hit));
         }
     }
 
@@ -2166,7 +2248,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"opcodes\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"opcodes\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -2179,6 +2261,8 @@ impl Drop for ProgramStore {
                 counters.native_entries,
                 native_entry_coverage_ppm,
                 all_entry_native_coverage_ppm,
+                counters.field_cache_probes,
+                counters.field_cache_hits,
                 counters.field_return_candidate_entries,
                 counters.field_return_fixed_this_entries,
                 counters.field_return_fast_entries,
