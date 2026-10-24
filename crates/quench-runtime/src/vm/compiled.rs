@@ -1220,6 +1220,8 @@ pub(super) fn compile_js_general_dispatch(
     builder.seal_block(entry);
     let parameters = builder.block_params(entry).to_vec();
     let context = parameters[0];
+    let locals = parameters[1];
+    let local_count = parameters[2];
     let arguments = parameters[3];
     let result_pointer = parameters[4];
     let stopped_block = builder.create_block();
@@ -1352,6 +1354,122 @@ pub(super) fn compile_js_general_dispatch(
                             arguments,
                             destination,
                         );
+                        builder.ins().jump(next, &[]);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                JsDenotation::PlainLocalLoad
+                    if instruction.result_flags() == 0
+                        && !instruction.returns_from_frame()
+                        && !instruction.writes_current_this()
+                        && instruction.numeric_local_target().is_none() =>
+                {
+                    let slot = instruction.local_slot();
+                    let slot_offset = slot
+                        .checked_mul(std::mem::size_of::<u64>())
+                        .and_then(|offset| i32::try_from(offset).ok());
+                    if slot < usize::from(function.locals)
+                        && let (Some(slot_offset), Some(destination)) =
+                            (slot_offset, register_offset(instruction.result_register()))
+                    {
+                        let fast = builder.create_block();
+                        let fallback = builder.create_block();
+                        let in_bounds = builder.ins().icmp_imm_u(
+                            IntCC::UnsignedGreaterThan,
+                            local_count,
+                            i64::try_from(slot).expect("validated bytecode local slot"),
+                        );
+                        builder.ins().brif(in_bounds, fast, &[], fallback, &[]);
+                        builder.switch_to_block(fallback);
+                        emit_js_step_fallback(
+                            &mut builder,
+                            context,
+                            callout,
+                            callout_signature,
+                            result_pointer,
+                            stopped_block,
+                            continue_block,
+                            pc,
+                        );
+                        builder.switch_to_block(fast);
+                        let value = builder.ins().load(
+                            types::I64,
+                            MemFlagsData::trusted(),
+                            locals,
+                            slot_offset,
+                        );
+                        builder.ins().store(
+                            MemFlagsData::trusted(),
+                            value,
+                            arguments,
+                            destination,
+                        );
+                        builder.ins().jump(next, &[]);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                JsDenotation::PlainLocalStore
+                    if instruction.result_flags() == 0
+                        && !instruction.returns_from_frame()
+                        && !instruction.writes_current_this() =>
+                {
+                    let slot = instruction.local_slot();
+                    let slot_offset = slot
+                        .checked_mul(std::mem::size_of::<u64>())
+                        .and_then(|offset| i32::try_from(offset).ok());
+                    let source = register_offset(instruction.register_a());
+                    let duplicate = match instruction.optional_register_b() {
+                        None => Some(None),
+                        Some(register) => register_offset(register).map(Some),
+                    };
+                    if slot < usize::from(function.locals)
+                        && let (Some(slot_offset), Some(source), Some(duplicate)) =
+                            (slot_offset, source, duplicate)
+                    {
+                        let fast = builder.create_block();
+                        let fallback = builder.create_block();
+                        let in_bounds = builder.ins().icmp_imm_u(
+                            IntCC::UnsignedGreaterThan,
+                            local_count,
+                            i64::try_from(slot).expect("validated bytecode local slot"),
+                        );
+                        builder.ins().brif(in_bounds, fast, &[], fallback, &[]);
+                        builder.switch_to_block(fallback);
+                        emit_js_step_fallback(
+                            &mut builder,
+                            context,
+                            callout,
+                            callout_signature,
+                            result_pointer,
+                            stopped_block,
+                            continue_block,
+                            pc,
+                        );
+                        builder.switch_to_block(fast);
+                        let value = builder.ins().load(
+                            types::I64,
+                            MemFlagsData::trusted(),
+                            arguments,
+                            source,
+                        );
+                        builder.ins().store(
+                            MemFlagsData::trusted(),
+                            value,
+                            locals,
+                            slot_offset,
+                        );
+                        if let Some(duplicate) = duplicate {
+                            builder.ins().store(
+                                MemFlagsData::trusted(),
+                                value,
+                                arguments,
+                                duplicate,
+                            );
+                        }
                         builder.ins().jump(next, &[]);
                         true
                     } else {
@@ -4212,7 +4330,16 @@ struct JsStepDispatch {
     allow_inline_calls: bool,
     native_registers: *mut Value,
     register_count: usize,
+    native_locals: *mut Value,
+    local_count: usize,
     outcome: Option<JsNativeStep>,
+}
+
+fn js_native_frame_storage_unchanged(frame: &Frame, dispatch: &JsStepDispatch) -> bool {
+    frame.registers.len() == dispatch.register_count
+        && frame.registers.as_ptr() == dispatch.native_registers
+        && frame.locals.len() == dispatch.local_count
+        && frame.locals.as_ptr() == dispatch.native_locals
 }
 
 pub(super) enum JsNativeDispatchResult {
@@ -4267,9 +4394,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
             .ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
 
         let frame = &mut vm.frames[dispatch.frame];
-        if frame.registers.len() != dispatch.register_count
-            || frame.registers.as_mut_ptr() != dispatch.native_registers
-        {
+        if !js_native_frame_storage_unchanged(frame, dispatch) {
             // A prior resumable callback changed the frame storage. Leave this
             // instruction untouched and finish through the ordinary dispatcher.
             frame.pc = pc;
@@ -4335,9 +4460,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                 *destination = value;
                 frame.pc = next_pc;
                 frame.pc_is_resume = true;
-                if frame.registers.len() != dispatch.register_count
-                    || frame.registers.as_mut_ptr() != dispatch.native_registers
-                {
+                if !js_native_frame_storage_unchanged(frame, dispatch) {
                     vm.active_registers = frame.registers.as_mut_ptr();
                     return Ok(JsCalloutStep::Stop(JsNativeStep {
                         instruction_pc: pc,
@@ -4382,9 +4505,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                 let frame = &mut vm.frames[dispatch.frame];
                 frame.pc = next_pc;
                 frame.pc_is_resume = true;
-                if frame.registers.len() != dispatch.register_count
-                    || frame.registers.as_mut_ptr() != dispatch.native_registers
-                {
+                if !js_native_frame_storage_unchanged(frame, dispatch) {
                     vm.active_registers = frame.registers.as_mut_ptr();
                     return Ok(JsCalloutStep::Stop(JsNativeStep {
                         instruction_pc: pc,
@@ -4420,9 +4541,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                 let frame = &mut vm.frames[dispatch.frame];
                 frame.pc = next;
                 frame.pc_is_resume = true;
-                if frame.registers.len() != dispatch.register_count
-                    || frame.registers.as_mut_ptr() != dispatch.native_registers
-                {
+                if !js_native_frame_storage_unchanged(frame, dispatch) {
                     // The operation ran once. Stop native execution and resume
                     // the interpreter at its already-computed successor.
                     frame.js_jit_skip_entry_once = next == 0;
@@ -4751,19 +4870,27 @@ impl CompiledJsFunction {
         context.program = program;
         context.callout = js_step_callout::<H> as Callout as usize;
         let dispatch_frame = unsafe { (*payload.cast::<JsStepDispatch>()).frame };
-        let (native_registers, register_count) = unsafe {
+        let (native_registers, register_count, native_locals, local_count) = unsafe {
             let vm = &mut *vm.cast::<Vm<H>>();
             let frame = vm.frames.get_mut(dispatch_frame)?;
-            (frame.registers.as_mut_ptr(), frame.registers.len())
+            (
+                frame.registers.as_mut_ptr(),
+                frame.registers.len(),
+                frame.locals.as_mut_ptr(),
+                frame.locals.len(),
+            )
         };
         unsafe {
             let dispatch = &mut *payload.cast::<JsStepDispatch>();
             dispatch.native_registers = native_registers;
             dispatch.register_count = register_count;
+            dispatch.native_locals = native_locals;
+            dispatch.local_count = local_count;
         }
-        // The frame is the canonical tagged register home and remains rooted
-        // while native code runs. Callouts keep only this raw pointer; they
-        // must not hold a Rust slice across `Vm::step` or any re-entrant call.
+        // Frame registers and locals are the canonical tagged homes and remain
+        // rooted while native code runs. Callouts keep only raw pointers; they
+        // must not hold a Rust slice across `Vm::step` or re-entrant calls.
+        let locals = native_locals.cast::<u64>();
         let arguments = native_registers.cast::<u64>();
         let mut word = 0u64;
         // SAFETY: the function's bytecode, frame and adapter payload outlive
@@ -4771,8 +4898,8 @@ impl CompiledJsFunction {
         let status = unsafe {
             enter_native(
                 &mut context,
-                0,
-                0,
+                locals as u64,
+                u64::try_from(local_count).unwrap_or(u64::MAX),
                 arguments,
                 &mut word,
                 NativeEntryMode::Resumable,
@@ -9391,6 +9518,8 @@ impl<H: Host> Vm<H> {
             allow_inline_calls,
             native_registers: std::ptr::null_mut(),
             register_count: 0,
+            native_locals: std::ptr::null_mut(),
+            local_count: 0,
             outcome: None,
         };
         let interrupt = self.execution_interrupt.atomic_flag();
