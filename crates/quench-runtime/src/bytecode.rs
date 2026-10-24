@@ -1582,6 +1582,17 @@ impl SourcePositions {
         self.last
     }
 
+    /// The coded entries and the final one, as a residual stores them
+    /// (`BinaryWriter::source_positions`).
+    pub(crate) fn encoded(&self) -> (&[u8], Option<SourcePosition>) {
+        (&self.bytes, self.last)
+    }
+
+    /// The table a residual stored (`encoded`); validation judges it against its function.
+    pub(crate) fn from_encoded(bytes: Vec<u8>, last: Option<SourcePosition>) -> Self {
+        Self { bytes, last, checkpoints: std::cell::OnceCell::new() }
+    }
+
     /// Appends `position`. Compiled code orders positions by pc; a decoded table keeps any
     /// order exactly, for validation to judge.
     pub(crate) fn push(&mut self, position: SourcePosition) {
@@ -1696,7 +1707,9 @@ impl SourcePositionIter<'_> {
         let mut shift = 0;
         while let Some((&byte, rest)) = self.bytes.split_first() {
             self.bytes = rest;
-            value |= u64::from(byte & !LEB128_CONTINUATION) << shift;
+            // A stored table is validated after decoding; an overlong varint decodes to junk
+            // the validation rejects rather than shifting past the value's width.
+            value |= u64::from(byte & !LEB128_CONTINUATION).checked_shl(shift).unwrap_or(0);
             if byte & LEB128_CONTINUATION == 0 {
                 break;
             }
@@ -3408,7 +3421,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 106;
+    pub const FORMAT_VERSION: u8 = 107;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
