@@ -640,6 +640,7 @@ function.plain_local_slots(&self.superinstructions)
                 || positions.clone().any(|position| {
                     position.pc >= code_len || position.line == 0 || position.column == 0
                 })
+                || positions.clone().last() != function.source_positions.last()
             {
                 return Err(format!("function {index} has invalid source positions"));
             }

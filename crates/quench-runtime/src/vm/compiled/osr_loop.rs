@@ -2,14 +2,17 @@
 //! nothing, entered at its backward jump in compiled execution.
 //!
 //! A region is a loop's instructions, header to backward jump, every one of which reads and
-//! writes Numbers in registers, depth-0 captures and present dense elements of record arrays.
+//! writes Numbers in registers, depth-0 captures and dense elements of record arrays: it
+//! reads present elements, and stores below an array's length or appends at it within the
+//! capacity its backing already has.
 //! Native code keeps each Number register in an SSA value: an `i32` where every value it
 //! takes is one (`representations`), else an `f64`. Registers are the
 //! interpreter's state at every instruction boundary the code leaves at, so leaving is
 //! writing them back:
 //!
 //! - entry guards every register the region uses: a Number, or a record array the region
-//!   reads (and, for one it writes, one whose elements a write may replace in place);
+//!   reads (and, for one it writes, a dense array whose backing it alone owns and no
+//!   prototype of which holds an index, so a store defines or replaces an own data element);
 //!   otherwise nothing runs and the interpreter takes the jump;
 //! - a jump out of the region resumes the lane at its target;
 //! - an instruction whose operands leave the subset (a hole, a non-Number element, an index
@@ -146,7 +149,9 @@ pub(crate) struct LoopRegion {
     numbers: Vec<Register>,
     /// Registers held as tagged `Value` words in the shared register web.
     tagged: Vec<Register>,
-    /// The arrays, in entry-record order.
+    /// The arrays, in entry-record order. Entry admits one the region writes only when it is
+    /// dense (`Vm::dense_array_length`), owns its backing alone, and no prototype of it holds
+    /// an index (`Vm::prototypes_hold_no_index`).
     pub(crate) arrays: Vec<ArrayUse>,
     /// The depth-0 capture slots `LoadCapture` reads, in entry-record order.
     pub(crate) captures: Vec<u16>,
@@ -823,8 +828,9 @@ const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
 const ENTRY_BACKEDGE_COUNT: usize = 0;
 const ENTRY_CAPTURES: usize = 1;
 const WORD_BYTES: i32 = 8;
-/// An array's two entry words: its element pointer, then its length.
-const ARRAY_WORDS: usize = 2;
+/// An array's entry words: its element pointer, its length, then its capacity (which only
+/// a written array's appends read).
+const ARRAY_WORDS: usize = 3;
 /// The scratch registers' address an inlining region's record ends with.
 const SCRATCH_WORDS: usize = 1;
 const ENTRY_WORDS: usize =
@@ -872,10 +878,11 @@ impl LoopEntry {
 
     /// Arrays follow the captures, in the region's order. An array longer than
     /// `MAX_INDEXED_LENGTH` declines the entry.
-    pub(crate) fn push_array(&mut self, elements: *mut Value, length: usize) -> Option<()> {
+    pub(crate) fn push_array(&mut self, elements: *mut Value, length: usize, capacity: usize) -> Option<()> {
         (length <= MAX_INDEXED_LENGTH).then_some(())?;
         self.push(elements.addr() as u64);
         self.push(length as u64);
+        self.push(capacity.min(MAX_INDEXED_LENGTH) as u64);
         Some(())
     }
 
@@ -1103,8 +1110,9 @@ fn admit_region(
     }
     // A field read holds the value its receiver had at entry, so no instruction may give a
     // receiver register another value. Element stores cannot change one: a store writes an
-    // existing, non-hole element within the length it guards (`Lowering::index`), which
-    // neither adds, removes nor redefines a named property.
+    // own data element below the length or at it (`Lowering::store_index`), which adds,
+    // removes or redefines no property a field cache holds (an array's `length` is no
+    // shape slot).
     if admission.fields.iter().any(|field| match field.receiver {
         FieldReceiver::This => false,
         FieldReceiver::Register(register) => instructions
@@ -1711,6 +1719,24 @@ struct Fact {
     bound: Bound,
 }
 
+/// An array as native code indexes it: its element pointer and how its length is known.
+#[derive(Clone, Copy)]
+struct ArrayView {
+    elements: ir::Value,
+    access: ArrayAccess,
+}
+
+#[derive(Clone, Copy)]
+enum ArrayAccess {
+    /// A read array keeps the length the entry read: only a written array's appends extend
+    /// a length, so one aliasing a written array reads the elements it read at entry or
+    /// exits for the general path.
+    Read { length: ir::Value },
+    /// A written array's length is its backing's, which an append within `capacity`
+    /// advances (`Lowering::store_index`): every array of one backing reads it alike.
+    Written { capacity: ir::Value },
+}
+
 /// An element index as an access uses it: a 64-bit index scaled by the element size, plus a
 /// constant byte displacement.
 #[derive(Clone, Copy)]
@@ -2104,8 +2130,8 @@ struct Lowering<'a, 'b> {
     result: ir::Value,
     /// Count the region's taken backedges only for the opt-in shared-tier admission path.
     track_backedges: bool,
-    /// Each array's element pointer and length, by register.
-    arrays: std::collections::BTreeMap<Register, (ir::Value, ir::Value)>,
+    /// Each array as native code indexes it, by register.
+    arrays: std::collections::BTreeMap<Register, ArrayView>,
     widenings: std::collections::BTreeMap<u32, Widening>,
     /// Per block, the first block of the chain it continues: each block after the first
     /// has its predecessors inside the chain (a guard's passing branch, the join of a test
@@ -2398,7 +2424,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let (low, high) = if step >= 0 { (first, last) } else { (last, first) };
             let (above, below) = match fact.bound {
                 Bound::Index(array) => {
-                    let length = self.arrays[&array].1;
+                    let length = self.length(self.arrays[&array]);
                     (
                         self.body.builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, low, 0),
                         self.body.builder.ins().icmp(IntCC::SignedLessThan, high, length),
@@ -2481,8 +2507,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
         for (index, array) in self.region.arrays.iter().enumerate() {
             let base = ENTRY_CAPTURES + self.region.captures.len() + ARRAY_WORDS * index;
             let elements = self.word(base);
-            let length = self.word(base + 1);
-            self.arrays.insert(array.register, (elements, length));
+            let access = if array.written {
+                ArrayAccess::Written { capacity: self.word(base + 2) }
+            } else {
+                ArrayAccess::Read { length: self.word(base + 1) }
+            };
+            self.arrays.insert(array.register, ArrayView { elements, access });
         }
         for index in 0..self.region.captures.len() {
             let bits = self.word(ENTRY_CAPTURES + index);
@@ -2933,10 +2963,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
         Some(())
     }
 
-    /// The element index `key` names in an array of `length` elements, exiting at `pc`
-    /// unless it is an integral Number below the length; an `i32` key a proof covers is.
-    fn index(&mut self, pc: u32, key: Typed, length: ir::Value) -> ElementIndex {
-        let (index, element) = match key.representation {
+    /// The element index `key` names and the access it makes, exiting at `pc` unless `key`
+    /// is an integral Number.
+    fn element_index(&mut self, pc: u32, key: Typed) -> (ir::Value, ElementIndex) {
+        match key.representation {
             // Every `i32` sum the region computes is exact (guarded or proved), so a key that
             // is a root plus constants is the root's sign extension plus their total, which
             // an access folds into its displacement. A negative key extends below zero,
@@ -2958,12 +2988,62 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 (index, ElementIndex { wide: index, displacement: 0 })
             }
             Representation::Tagged => unreachable!("indexed operands are Number values"),
-        };
-        if !self.proved(pc) {
-            let beyond = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, length);
-            self.guard(pc, beyond);
         }
-        element
+    }
+
+    /// Exits at `pc` unless `index` is below `array`'s length; an `i32` key a proof covers is.
+    fn read_index(&mut self, pc: u32, array: ArrayView, index: ir::Value) {
+        if self.proved(pc) {
+            return;
+        }
+        let length = self.length(array);
+        let beyond = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, length);
+        self.guard(pc, beyond);
+    }
+
+    /// `array`'s length as an `i64`.
+    fn length(&mut self, array: ArrayView) -> ir::Value {
+        match array.access {
+            ArrayAccess::Read { length } => length,
+            ArrayAccess::Written { .. } => {
+                let length = self.body.builder.ins().load(types::I32, flags(), array.elements, crate::heap::LENGTH_FROM_VALUES);
+                self.body.builder.ins().uextend(types::I64, length)
+            }
+        }
+    }
+
+    /// Makes `index` a slot `array`'s store at `pc` may write: one below its length, or its
+    /// length itself while the capacity has room, which the store appends, advancing the
+    /// backing's length. Any other index exits for the general path; an `i32` key a proof
+    /// covers is below the length.
+    fn store_index(&mut self, pc: u32, array: ArrayView, index: ir::Value) {
+        if self.proved(pc) {
+            return;
+        }
+        let ArrayAccess::Written { capacity } = array.access else {
+            unreachable!("a region stores only into arrays it writes")
+        };
+        let length = self.length(array);
+        let within = self.body.builder.ins().icmp(IntCC::UnsignedLessThan, index, length);
+        let current = self.body.builder.current_block().expect("lowering inside a block");
+        let chain = self.chain(current);
+        let append = self.cold_block();
+        let join = self.body.builder.create_block();
+        self.body.builder.ins().brif(within, join, &[], append, &[]);
+        self.body.builder.switch_to_block(append);
+        self.body.builder.seal_block(append);
+        let past = self.body.builder.ins().icmp(IntCC::NotEqual, index, length);
+        self.guard(pc, past);
+        let full = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, length, capacity);
+        self.guard(pc, full);
+        let grown = self.body.builder.ins().iadd_imm_s(length, 1);
+        let word = self.body.builder.ins().ireduce(types::I32, grown);
+        self.body.builder.ins().store(flags(), word, array.elements, crate::heap::LENGTH_FROM_VALUES);
+        self.body.builder.ins().jump(join, &[]);
+        // The join's other predecessor is the append, which `current` dominates.
+        self.chains.insert(join, chain);
+        self.body.builder.switch_to_block(join);
+        self.body.builder.seal_block(join);
     }
 
     /// The value an `i32` is a constant sum from, and that sum: the chain of constant
@@ -3322,10 +3402,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             Op::GetIndex => {
                 let base = instruction.operand_b().register_index()?;
-                let (elements, length) = self.arrays[&base];
+                let array = self.arrays[&base];
                 let key = self.operand(instruction.operand_c())?;
-                let index = self.index(pc, key, length);
-                let (address, displacement) = self.element_address(elements, index);
+                let (index, element) = self.element_index(pc, key);
+                self.read_index(pc, array, index);
+                let (address, displacement) = self.element_address(array.elements, element);
                 // A hole is tagged, so unboxing sends it to the general path too. A Float64
                 // element loads straight into a float register.
                 let representation = element_representation(&instruction, self.observation);
@@ -3346,14 +3427,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.fall_through(pc)
             }
             Op::SetIndex => {
-                let (elements, length) = self.arrays[&instruction.register_b()];
+                let array = self.arrays[&instruction.register_b()];
                 let key = self.register(instruction.register_c());
-                let index = self.index(pc, key, length);
-                let (address, displacement) = self.element_address(elements, index);
-                let old = self.body.builder.ins().load(types::I64, flags(), address, displacement);
-                let tag = self.body.builder.ins().band_imm_u(old, ValueLayout::TAG_MASK as i64);
-                let hole = self.body.builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::DELETED_TAG as i64);
-                self.guard(pc, hole);
+                let (index, element) = self.element_index(pc, key);
+                self.store_index(pc, array, index);
+                let (address, displacement) = self.element_address(array.elements, element);
+                // A hole takes the value as an own data element: the entry found no prototype
+                // that holds an index (`LoopRegion::arrays`).
                 let value = self.register(instruction.register_a());
                 let bits = self.encoding(value);
                 self.body.builder.ins().store(flags(), bits, address, displacement);
