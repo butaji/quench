@@ -1692,6 +1692,7 @@ impl std::ops::DerefMut for FinalizationEntries {
     }
 }
 impl Object {
+    #[inline]
     pub(crate) fn new(proto: Value) -> Self {
         Self::with_property_storage(
             proto,
@@ -1905,6 +1906,7 @@ impl Object {
         }
     }
 
+    #[inline]
     pub(crate) fn with_property_storage(
         proto: Value,
         properties: ValueVec,
@@ -1916,8 +1918,12 @@ impl Object {
             payload: 0,
         };
         object.set_properties(properties);
+        // A new object has no extras: its payload word holds the values when each is narrow.
         if properties.has_inline_property_storage() {
-            object.store_inline_values(inline_properties);
+            match Self::pack_inline(inline_properties) {
+                Some(word) => object.payload = word,
+                None => object.extras_mut().inline_properties.0 = inline_properties,
+            }
         }
         object
     }
