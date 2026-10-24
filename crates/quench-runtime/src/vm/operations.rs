@@ -81,7 +81,7 @@ pub(super) trait NumberArithmeticStage<T> {
 
 macro_rules! number_arithmetic {
     ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident;)+) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
         pub(super) enum NumberArithmetic { $($operation),+ }
 
         impl NumberArithmetic {
