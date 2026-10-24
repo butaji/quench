@@ -8,7 +8,9 @@
 //!
 //! An entry also keeps the private method or accessor the site's name resolved to under that
 //! home, once found (`PrivateElement`): a class evaluation makes its private methods and
-//! accessors once, under its own home, and no program can redefine them.
+//! accessors once, under its own home, and no program can redefine them. The element follows
+//! the home alone, so it outlives a new environment that finds the same home again (an arrow
+//! field's closure per instance).
 
 use super::Value;
 
@@ -59,25 +61,29 @@ impl PrivateSiteHomes {
     }
 
     pub(super) fn record(&self, site: usize, environment: Value, epoch: u64, home: Value) {
-        self.entries.set(Self::index(site), SiteHome { site, environment, epoch, home, element: None });
+        let index = Self::index(site);
+        // The element found under the same home stays (`element`).
+        let element = self
+            .entries
+            .get(index)
+            .filter(|entry| entry.site == site && entry.epoch == epoch && entry.home == home)
+            .and_then(|entry| entry.element);
+        self.entries.set(index, SiteHome { site, environment, epoch, home, element });
     }
 
-    /// The private method or accessor site `site` found for its name under `home`, with
-    /// `environment` under collection `epoch` (`record_element`).
+    /// The private method or accessor site `site` found for its name under `home` and
+    /// collection `epoch` (`record_element`).
     #[inline(always)]
-    pub(super) fn element(&self, site: usize, environment: Value, epoch: u64, home: Value) -> Option<PrivateElement> {
+    pub(super) fn element(&self, site: usize, epoch: u64, home: Value) -> Option<PrivateElement> {
         let entry = self.entries.get(Self::index(site))?;
-        (entry.site == site && entry.environment == environment && entry.epoch == epoch && entry.home == home)
-            .then_some(entry.element)
-            .flatten()
+        (entry.site == site && entry.epoch == epoch && entry.home == home).then_some(entry.element).flatten()
     }
 
     /// Records the element site `site`'s name resolved to, for its entry under `home`.
-    pub(super) fn record_element(&self, site: usize, environment: Value, epoch: u64, home: Value, element: PrivateElement) {
+    pub(super) fn record_element(&self, site: usize, epoch: u64, home: Value, element: PrivateElement) {
         let index = Self::index(site);
         if let Some(entry) = self.entries.get(index)
             && entry.site == site
-            && entry.environment == environment
             && entry.epoch == epoch
             && entry.home == home
         {

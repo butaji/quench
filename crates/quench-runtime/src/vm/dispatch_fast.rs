@@ -4405,6 +4405,9 @@ script_handler! {
     #[inline(never)]
     fn lane_get_field<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { lane_field_value(cx, r, i) }) else {
+            if lane_field_read_beside_activations(cx, r, i).is_some() {
+                sibling!(lane_get_field_beside_activations::<H>, r, ip, Carried::script(cx))
+            }
             return match lane_getter_activation(cx, r, ip, i) {
                 Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
                 Err(next) => next,
@@ -4431,6 +4434,41 @@ script_handler! {
                 sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
             }
         }
+    }
+}
+
+/// The base of a `GetField` of a register or `this` that a frameless activation makes in
+/// place (`lane_get_field_beside_activations`): a public name whose site caches no getter,
+/// which `lane_getter_activation` would run as an activation. `None` for a frame's run, a
+/// nested or local base, a private name or such a getter.
+#[inline(never)]
+fn lane_field_read_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    if vm.lane_stack.activations.is_empty() || i.b == crate::bytecode::FieldBase::NESTED || vm.is_private_name(i.imm()) {
+        return None;
+    }
+    let base = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }?;
+    vm.cached_field_getter(base, i.imm(), vm.field_cache_index(i.c)).is_none().then_some(base)
+}
+
+script_handler! {
+    /// `lane_get_field` past its caches within a frameless activation
+    /// (`lane_field_read_beside_activations`): the general read made in place
+    /// (`lane_in_place`), so an uncached getter, a proxy or a throw makes the activations
+    /// frames only when it runs, instead of leaving the lane, which makes them all frames.
+    #[inline(never)]
+    fn lane_get_field_beside_activations<>(cx, r, ip, i, view) {
+        let Some(base) = lane_field_read_beside_activations(cx, r, i) else {
+            return exit(ip);
+        };
+        let (atom, site) = (i.imm(), i.c);
+        let Some(value) = lane_in_place(cx, ip, |vm, code| vm.get_field_cached(code, base, atom, site)) else {
+            return exit(ip);
+        };
+        // Guest code the read ran made the activations frames, whose registers these are.
+        let r = unsafe { (*cx).registers };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
@@ -4789,16 +4827,54 @@ fn lane_set_field<H: Host>(
     // A private field's store writes the object's private element, as the general loop's
     // `SetField` does, before any cache; the general loop's cached write otherwise: the store
     // inline, the add out of line.
-    let stored = if vm.is_private_name(i.imm()) {
+    let private = vm.is_private_name(i.imm());
+    let stored = if private {
         lane_private_field_store(cx, ip, code, object, i.imm(), r.get(i.a))
     } else {
         vm.cached_field_write_hit(code, object, i.imm(), r.get(i.a), i.c)
     };
     if !stored {
-        return exit(ip);
+        if private || vm.lane_stack.activations.is_empty() {
+            return exit(ip);
+        }
+        return lane_set_field_beside_activations(cx, r, ip, object, i);
     }
     // Adding a property can allocate.
     note_allocation(vm);
+    next!(cx, r, following(ip), Carried::script(cx))
+}
+
+/// `lane_set_field` of a public name past its caches within a frameless activation: the
+/// general store made in place (`lane_in_place`), as `lane_get_field_beside_activations`
+/// makes a read, strict as its record is.
+#[cold]
+#[inline(never)]
+fn lane_set_field_beside_activations<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    object: Value,
+    i: &LaneInstruction,
+) -> Ip {
+    let vm = unsafe { vm(cx) };
+    let Some(function) = vm.lane_stack.activations.last().map(|activation| activation.function) else {
+        return exit(ip);
+    };
+    // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
+    // innermost activation's view.
+    let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+    let body = code.function(function as usize);
+    let strict = match decoded_instruction(body, body.code[pc]).op() {
+        Op::SetFieldStrict | Op::SetThisFieldStrict => true,
+        Op::SetField | Op::SetThisField => false,
+        _ => return exit(ip),
+    };
+    let (atom, value, site) = (i.imm(), r.get(i.a), i.c);
+    if lane_in_place(cx, ip, |vm, code| vm.set_field_cached(code, object, atom, value, site, strict)).is_none() {
+        return exit(ip);
+    }
+    // Guest code the store ran made the activations frames, whose registers these are.
+    let r = unsafe { (*cx).registers };
     next!(cx, r, following(ip), Carried::script(cx))
 }
 
@@ -4976,8 +5052,7 @@ script_handler! {
                 Some(value) => Some(PrivateRead::Value(value)),
                 // A method or accessor of a brand the object carries (`Vm::site_private_element`).
                 None if data.has_private_name(brand) => {
-                    let (environment, ..) = lane_private_site(cx)?;
-                    match (unsafe { vm(cx) }).site_private_element(ip.addr(), environment, brand, object)? {
+                    match (unsafe { vm(cx) }).site_private_element(ip.addr(), brand, object)? {
                         super::private_site_home::PrivateElement::Method(value) => Some(PrivateRead::Value(value)),
                         super::private_site_home::PrivateElement::Getter(getter) => Some(PrivateRead::Getter(object, getter)),
                     }
