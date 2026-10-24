@@ -309,6 +309,7 @@ measured on the same binary and lost.
 |---|---|---|
 | headroom | `MemoryPolicy` selects one of two pacing tables; MemoryFirst's young minimum is 2^12: against 2^13, max RSS −76 to −416 KiB on 14 of 16 V8-v7 rows for Score ×0.86–0.91 on four fixtures (768 cost ×0.80 Score) | `tod137-young-minimum-4096-…`, `tod167-young-and-release-sweep-…` |
 | code (steady state) | MemoryFirst releases read-only pages and runs `malloc_trim` at every collection boundary | `tod137-collection-code-release-…` |
+| transients (compile scratch) | MemoryFirst compiles loop regions without Cranelift's e-graph pass (`LOOP_TIER_OPT_LEVELS`): `--jit` max RSS Crypto −576 KiB, NavierStokes −648 KiB, for Score −2.8% / −6.1%; Throughput unchanged | `tod137-loop-tier-opt-level-…` |
 | transients (compile) | Read-only pages released before every native compile (Wasm, JS function, OSR region); read-only and free malloc pages after every JS compile: `--jit` max RSS −1 to −3.5 MB on five fixtures | `tod137-jit-compile-release-…` (TOD-185) |
 | retention (strings) | Regexp replace reads a rope through one unkept flattening: RegExp −0.5 to −0.6 MB | `tod137-replace-unkept-…` (TOD-184) |
 | live × overhead | Record families with narrow inline slots, COW array elements, narrow arena vectors (TOD-147/148/162/166/168/170) | earlier evidence on those issues |
@@ -330,7 +331,8 @@ measured on the same binary and lost.
 | Weigh payload bytes more toward collections | RegExp and Crypto unchanged; Score −4 to −10% | `tod181-payload-unit-sweep-…` |
 | Trim array slack at full collections | No max RSS gain; the tails stay in malloc's arena | `tod137-array-slack-trim-…` |
 | Load and compile-phase release interval 0–20 ms under MemoryFirst | Max RSS unchanged (0.616–0.620 of Throughput) | session sweep, TOD-137 comment |
-| `single_pass` register allocation, `opt_level=none` for the JIT | −1.6 / −0.5 MB on NavierStokes, Score ÷3 / −20% | TOD-110 comment |
+| `single_pass` register allocation for the JIT | −1.4 MB on NavierStokes `--jit`, Score −65% (Crypto −640 KiB, −22%); `opt_level=none` for every tier, measured −20% before, now costs −3 to −5%, and its loop-tier part is kept under MemoryFirst (§8.1) | TOD-110 comment, `tod137-loop-tier-opt-level-…` |
+| Cranelift verifier off | No max RSS change on any `--jit` row | `tod137-loop-tier-opt-level-…` |
 | Allocate the memos on first record with the allocation inlined | DeltaBlue `--jit` −8% over 20 alternating runs; making it cold restored the speed | `tod137-lazy-memo-tables-…` |
 | First-call release at every first call / geometric back-off | Every call: npm 1.4–2.9× slower; back-off: V8-v7 `--jit` up to +312 KiB | `tod137-first-call-release-…` |
 | Lazy `process` / EventEmitter for V8-v7 | No payoff possible: `console.log` writes through `process.stdout` (an EventEmitter) in Node and Quench, and every fixture prints | TOD-21 comment |
@@ -385,7 +387,9 @@ Against the target, max RSS ≤ 0.8 × the lowest other runtime
   remaining gap.
 - **JIT compile scratch** (jit lane, TOD-110): OSR regions lower to about 64 IR instructions
   and 11 blocks per bytecode, mostly exit write-back blocks. regalloc2 scratch scales with
-  blocks × values, and this sets NavierStokes `--jit`.
+  blocks × values, and this sets NavierStokes `--jit`. Under MemoryFirst the e-graph pass is
+  off for loop regions. What is left at the peak is about 2.8 MB of regalloc2 state for one
+  region of 3,893 instructions.
 - **Score** (Score and jit lanes): ×1.1–1.8 without JIT and ×1.8–63 with it, outside memory
   management. MemoryFirst costs ×0.90–0.93 against Throughput, and the code release is a
   known part of that.
