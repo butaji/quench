@@ -1503,7 +1503,7 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(
     let readLength;
     let readPosition = null;
     if (!ArrayBuffer.isView(bufferOrOptions)) {
-      if (bufferOrOptions && typeof bufferOrOptions === "object" && ArrayBuffer.isView(bufferOrOptions.buffer)) {
+      if (bufferOrOptions && typeof bufferOrOptions === "object" && "buffer" in bufferOrOptions) {
         buffer = bufferOrOptions.buffer;
         offset = bufferOrOptions.offset ?? 0;
         readLength = bufferOrOptions.length;
