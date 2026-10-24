@@ -11836,6 +11836,93 @@ print(total + " " + w.arr.slice(35, 50).join(","));
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_inlines_calls_on_a_receiver_a_field_read_gives() {
+    // `reduce` calls `this.m.am(…)` and reads `this.m.t`, a nested field: its loop runs am3
+    // in place, the receiver the value of `this.m` at entry.
+    // Wrapped in a function, as a CommonJS module is, so `DM` and `DV` are captures.
+    let source = r#"(function () {
+var DM = 0xfffffff, DV = 0x10000000;
+function am3(i,x,w,j,c,n) {
+  var this_array = this.array;
+  var w_array    = w.array;
+  var xl = x&0x3fff, xh = x>>14;
+  while(--n >= 0) {
+    var l = this_array[i]&0x3fff;
+    var h = this_array[i++]>>14;
+    var m = xh*l+h*xl;
+    l = xl*l+((m&0x3fff)<<14)+w_array[j]+c;
+    c = (l>>28)+(m>>14)+xh*h;
+    w_array[j++] = l&0xfffffff;
+  }
+  return c;
+}
+function B(n, seed) { this.array = []; this.t = n; for (var k = 0; k < n; k++) this.array.push(((k + seed) * 2654435761) & 0xfffffff); }
+B.prototype.am = am3;
+function M(m) { this.m = m; this.mpl = 0x1234; this.mph = 0x56; this.um = 0x7fff; }
+M.prototype.reduce = function reduce(x) {
+  var x_array = x.array;
+  for (var i = 0; i < this.m.t; ++i) {
+    var j = x_array[i]&0x7fff;
+    var u0 = (j*this.mpl+(((j*this.mph+(x_array[i]>>15)*this.mpl)&this.um)<<15))&DM;
+    j = i+this.m.t;
+    x_array[j] += this.m.am(0,u0,x,i,0,this.m.t);
+    while(x_array[j] >= DV) { x_array[j] -= DV; x_array[++j]++; }
+  }
+  var s = 0;
+  for (var k = 0; k < x_array.length; k++) s = (s * 31 + x_array[k]) | 0;
+  return s;
+};
+var mod = new M(new B(30, 7)), t = 0;
+for (var q = 0; q < 2000; q++) { var x = new B(61, q); x.array.push(0); t = (t + mod.reduce(x)) | 0; }
+print(t);
+})();
+"#;
+    let program = Engine::specialize(source, "osr-inline-field-receiver.js").unwrap();
+    let function = |wanted: &str| {
+        program
+            .functions
+            .iter()
+            .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == wanted))
+            .unwrap()
+    };
+    let (am3, reduce) = (function("am3"), function("reduce"));
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["-1925714172"]);
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = |function: usize| {
+            views.get(function).and_then(std::cell::OnceCell::get).expect("hot lane view").osr_diagnostics()
+        };
+        let (callee, caller) = (osr(am3), osr(reduce));
+        assert!(caller.native_region_runs > 0, "no native caller run under {policy:?}: {caller:?}");
+        // Out of line, am3's loop would run once per call, 2000 reductions of 30 calls; the
+        // caller enters native code at its first backward jump, so a reduction's first
+        // call still runs out of line.
+        let calls = 2000 * 30;
+        assert!(
+            callee.native_region_runs * 4 < calls,
+            "am3 ran out of line under {policy:?}: {callee:?} against {caller:?}"
+        );
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
