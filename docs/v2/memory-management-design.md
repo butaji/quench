@@ -420,10 +420,13 @@ What is left on the three missing rows (1–8% over the target) lies outside the
 - **Crypto and RayTrace:** code pages, about 1.2–1.5 MB at the peak, which the code-layout
   lane owns (TOD-171); and start-up state, about 1.5 MB, which the start-up lane owns
   (TOD-21, TOD-104).
-- **RegExp:** about 0.5 MB of compiled regexps, held live by the matcher cache and by live
-  RegExp objects; pruning the cache raised the peak (§8.2). Lowered programs, literal finders
-  and match sets are the regex engine's to shrink. RegExp also holds about 430 KiB of garbage
-  that only the −45% pacing removes.
+- **RegExp:** compiled regexps, held live by the matcher cache and by live RegExp objects;
+  pruning the cache raised the peak (§8.2).
+  - Their 237 patterns held 523 KiB. Match sets as two-word bitmaps, wide literal finders
+    built on demand and a boxed opt-in byte backend bring that to 309 KiB.
+  - Effect on V8-v7 RegExp: median −256 KiB without JIT and −128 with it, worst runs −200 and
+    −212, scores within noise (`tod137-regexp-compact-patterns-…`).
+  - RegExp also holds about 430 KiB of garbage that only the −45% pacing removes.
 
 Run-to-run spread is 100–300 KiB on these rows, with the peaks set by time-paced releases.
 It is of the same order as the remaining gaps.
