@@ -10,10 +10,10 @@ These counters were collected on the same source and production build as the ref
 
 The full package matrix still shows Quench far behind peers on these three JIT rows. A prior field-cache candidate that routed probes through a native callback was rejected after matched screens: it did not produce a reliable React or Pino gain and improved Zod by only about 7%. The useful signal is the high hit rate, not that callback implementation.
 
+A broad native `GetField` site-marking trial then let the existing callout skip `Vm::step` on cached hits. It improved Zod by 9.3% over control but regressed React by 1.3% and Pino by 9.3%, so the runtime change was reverted. Raw reports and details are in `fieldsite-trial/`.
+
 ## Next shared JIT slice
 
-Compile ordinary cached data-field hits into the native dispatch body. At each field site, guard the current receiver against the existing field-cache entry and read the cached slot only on a proven hit. Proxies, accessors, shape changes, unsupported storage, and cache misses must leave at the exact `GetField` PC and use the existing VM semantics. Use one stable field-cache ABI and keep receiver identity dynamic across iterations. Avoid a branch in every VM callback; only the native field site should pay its guard cost.
-
-The first implementation must carry the heap and cache layout invariants explicitly and must preserve write barriers for stores (stores are a later slice). Validate changing receivers, inherited properties, accessors, proxies, and exceptions before measuring. Run the focused React, Zod, and Pino production screens first; keep the feature only if the gains are repeatable and no-JIT behavior is unchanged. Then rerun the full 22-row matrix.
+The next iteration must avoid taxing cold field sites. First collect per-site call counts and cache-hit ratios from the same broad workloads; only then consider an adaptive native guard. A permanent object/cache ABI remains a separate, larger design task. Any field operation must validate changing receivers, inherited properties, accessors, proxies, and exceptions before measuring. Screen React, Zod, and Pino first and rerun the full 22-row matrix only if the shared feature wins across all three.
 
 Source counters: `work/tod173-jit-eval/zod-shared-jit-stats-100k.log`, `work/tod173-jit-eval/react-general-jit-stats.log`, and `work/tod173-jit-eval/pino-general-jit-stats.log`. Current exact package/mode measurements remain in `scorecard.md` and the row JSON reports.
