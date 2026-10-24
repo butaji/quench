@@ -11,6 +11,43 @@ fn collect_minor(heap: &mut Heap, roots: impl IntoIterator<Item = Value>) -> Vec
 }
 
 #[test]
+#[cfg(not(feature = "profile-aggregate"))]
+fn direct_array_record_base_resolves_the_current_live_array_value() {
+    let mut heap = Heap::new();
+    assert!(heap.array_record_base().is_none());
+
+    let array = heap.alloc(Cell::Array {
+        object: ArrayObject::new(plain_object(), vec![Value::integer(7)]),
+    });
+    let id = array
+        .direct_array_index()
+        .expect("ordinary array uses a direct record");
+    let base = heap
+        .array_record_base()
+        .expect("direct array allocation reserves its record range");
+    // SAFETY: `array` is a live direct-array Value owned by `heap`; its ID resolves within
+    // the base returned by that same heap.
+    let record = unsafe { &*base.add(id as usize) };
+    assert!(std::ptr::eq(record, heap.array(array).expect("live array record")));
+
+    let before = heap
+        .array_elements(array)
+        .expect("array elements")
+        .as_ptr();
+    heap.array_elements_mut(array)
+        .expect("array elements")
+        .make_mut()
+        .push(Value::integer(9));
+    assert_eq!(heap.array_record_base(), Some(base));
+    let after = heap
+        .array_elements(array)
+        .expect("current array elements")
+        .as_ptr();
+    assert_ne!(before, after, "copy-on-write can replace the backing");
+    assert_eq!(heap.array(array).unwrap().elements().len(), 2);
+}
+
+#[test]
 fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
     let mut heap = Heap::new();
     let owner = heap.alloc(Cell::Array {
@@ -258,11 +295,8 @@ fn scope_slot_owners_survive_collection_and_release() {
 #[test]
 fn ordinary_object_payloads_live_in_compact_records() {
     // The prototype reference packs beside the shape and integrity bits, so a record is a
-    // header the size of a property vector plus two inline values.
-    assert_eq!(
-        size_of::<Object>(),
-        size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
-    );
+    // header the size of a property vector plus one payload word of narrow inline values.
+    assert_eq!(size_of::<Object>(), size_of::<ValueVec>() + size_of::<u64>());
     assert_eq!(size_of::<Slot>(), size_of::<Option<Cell>>());
 }
 
