@@ -2227,7 +2227,11 @@ impl Function {
                                     | Op::StoreLocalPlain
                                     | Op::StoreEnvLocal
                                     | Op::InitializeTdz
-                            ))
+                            )
+                            // A read whose base is a plain local reads the window's local
+                            // (`lane_plain_local_operand`).
+                            || (op == Op::GetField
+                                && instruction.addressed_local_slots().eq(instruction.local_field_base())))
                 });
             CallPlan {
                 environment_activation,
