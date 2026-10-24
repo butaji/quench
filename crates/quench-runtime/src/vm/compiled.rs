@@ -7946,17 +7946,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
-        self.requested_execution_mode = mode;
-        self.apply_execution_mode();
-    }
-
-    /// Derives the running mode from the requested one and the memory policy.
-    pub(crate) fn apply_execution_mode(&mut self) {
-        self.execution_mode = if self.heap.memory_policy().compiles_native_code() {
-            self.requested_execution_mode
-        } else {
-            ExecutionMode::Interpreted
-        };
+        self.execution_mode = mode;
     }
 
     pub(crate) fn execution_mode(&self) -> ExecutionMode {
