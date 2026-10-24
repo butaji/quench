@@ -12181,6 +12181,8 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
         .unwrap();
     let mut interpreter = Vm::new(TestHost::default());
     interpreter.execute(&program).unwrap();
+    let name = interpreter.intern_atom("result");
+    let expected = interpreter.own_property(interpreter.realm.globals, name).unwrap();
 
     let mut compiled = Vm::new(TestHost::default());
 
@@ -12389,11 +12391,11 @@ fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
       function sum(values) {
         let total = 0;
         let index = 0;
-        while (index < values.length) {
+        do {
           try { total += values[index]; }
           catch (error) { total += 0; }
           index++;
-        }
+        } while (index < values.length);
         return total;
       }
       var result = 0;
@@ -12426,6 +12428,30 @@ fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
                 .is_some_and(|atom| &program.atoms[atom as usize] == "sum")
         })
         .unwrap() as u32;
+    let body = program.function(function as usize);
+    let backedges = body
+        .code
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, packed)| {
+            let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+            (matches!(
+                instruction.op(),
+                crate::bytecode::Op::Jump
+                    | crate::bytecode::Op::JumpFalse
+                    | crate::bytecode::Op::JumpTrue
+                    | crate::bytecode::Op::JumpBinaryFalse
+            ) && instruction.result_flags() == 0
+                && !instruction.returns_from_frame()
+                && !instruction.writes_current_this()
+                && usize::try_from(instruction.jump_target()).is_ok_and(|target| target <= pc))
+            .then_some(pc)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !backedges.is_empty(),
+        "test bytecode should contain a loop latch"
+    );
     let Some(super::program_store::JsTierState::Compiled(native)) = compiled
         .programs
         .js_tier(super::program_store::ProgramId::MAIN, function)
@@ -12434,8 +12460,15 @@ fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
     };
     assert!(native.is_general_dispatch());
     assert!(native.native_entries() > 0);
+    for pc in backedges {
+        assert!(
+            native.general_dispatch_pc_is_native(pc),
+            "loop backedge at bytecode PC {pc} should be native"
+        );
+    }
     let name = compiled.intern_atom("result");
     let result = compiled.own_property(compiled.realm.globals, name).unwrap();
+    assert_eq!(result, expected);
     assert_eq!(result, Value::number(10.0));
 }
 
