@@ -15828,6 +15828,28 @@ fn object_assign_sees_prototype_setters_added_after_a_memoized_copy() {
 }
 
 #[test]
+fn environment_rest_gathers_nothing_from_too_few_values() {
+    // A captured rest parameter lives in the environment; with fewer values than the fixed
+    // parameters, it is empty (v2-web cbaf372c1 fixed an out-of-range slice here).
+    let source = r#"
+      function r(a, b, ...m) { const f = () => m; return f(); }
+      const seen = [];
+      for (let round = 0; round < 3; round++) {
+        seen.push(r(), r(1), r(1, 2), r(1, 2, 3, 4));
+      }
+      print(JSON.stringify(seen.slice(0, 4)) + ' ' + seen.every((rest, index) => rest.length === [0, 0, 0, 2][index % 4]));
+    "#;
+    let program = Engine::specialize(source, "environment-rest-too-few.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["[[],[],[],[3,4]] true"], "{mode:?}");
+    }
+}
+
+#[test]
 fn set_iteration_copies_only_while_the_intrinsics_iterate() {
     let source = r#"
       const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
