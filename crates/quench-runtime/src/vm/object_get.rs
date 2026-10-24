@@ -1113,8 +1113,10 @@ impl<H: Host> Vm<H> {
     }
 
     /// The private brand of `atom` that function `function` of the running program, whose
-    /// frame would capture from `environment`, names, from the home a run of it with a frame
-    /// found (`private_name_home`'s memo) when it has no binding sites. `None` leaves the
+    /// frame would capture from `environment`, names when it has no binding sites: the home a
+    /// run of it with a frame found (`private_name_home`'s memo), else the initialized home
+    /// binding its static name binding reads from `environment` (`direct_capture`'s read), as
+    /// an arrow field's closure of each new instance finds its class's. `None` leaves the
     /// access to the general path, which finds the home.
     fn memoized_private_brand(
         &self,
@@ -1123,11 +1125,20 @@ impl<H: Host> Vm<H> {
         function: u32,
         atom: Atom,
     ) -> Option<PrivateBrand> {
-        if !p.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty()) {
-            return None;
-        }
+        let body = p.function_get(function as usize).filter(|body| body.binding_sites.is_empty())?;
         let key = PrivateHomeKey { environment, program: self.active_program, function, name: atom };
-        Some(PrivateBrand { home: *self.private_homes.get(&key)?, name: atom })
+        if let Some(home) = self.private_homes.get(&key) {
+            return Some(PrivateBrand { home: *home, name: atom });
+        }
+        let binding = body
+            .name_bindings
+            .get(atom)
+            .filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName)?;
+        let crate::bytecode::EvalBindingLocation::Capture { depth, slot } = binding.location else {
+            return None;
+        };
+        let (slots, root) = self.environment_capture_slots(environment, false, depth)?;
+        Some(PrivateBrand { home: self.owned_capture(slots, root, slot)?, name: atom })
     }
 
     /// The private brand of `atom` at lane site `site` of `function`, whose frame captures
@@ -1160,20 +1171,18 @@ impl<H: Host> Vm<H> {
     }
 
     /// The private method or accessor that `object`, which carries `brand`, reads at lane site
-    /// `site`, whose function captures from `environment`: the element the site recorded under
-    /// the brand's home (`PrivateSiteHomes::element`), else the one `[[Get]]`'s walk of the
+    /// `site`: the element the site recorded under the brand's home (`PrivateSiteHomes::element`), else the one `[[Get]]`'s walk of the
     /// object's chain meets, recorded for the next read. `None` leaves the read to the general
     /// path: a missing getter, a proxy on the chain, or a site without a recorded home.
     pub(super) fn site_private_element(
         &self,
         site: usize,
-        environment: Value,
         brand: PrivateBrand,
         object: Value,
     ) -> Option<super::private_site_home::PrivateElement> {
         use super::private_site_home::PrivateElement;
         let epoch = self.heap.collection_epoch();
-        if let Some(element) = self.private_site_homes.element(site, environment, epoch, brand.home) {
+        if let Some(element) = self.private_site_homes.element(site, epoch, brand.home) {
             return Some(element);
         }
         let key = PropertyKey::string(brand.name);
@@ -1194,7 +1203,7 @@ impl<H: Host> Vm<H> {
                 return None;
             }
         };
-        self.private_site_homes.record_element(site, environment, epoch, brand.home, element);
+        self.private_site_homes.record_element(site, epoch, brand.home, element);
         Some(element)
     }
 
