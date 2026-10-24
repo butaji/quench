@@ -50,7 +50,8 @@ use std::rc::{Rc, Weak};
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 pub(super) use osr_loop::{
-    ArrayUse, FieldReceiver, FieldUse, LoopEntry, LoopOutcome, LoopRegion, Observation, RegionRejection, Widening,
+    ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, LoopEntry, LoopOutcome, LoopRegion, Observation,
+    RegionRejection, Widening,
 };
 
 #[derive(Clone, Copy)]
@@ -118,12 +119,19 @@ impl RegionExitBlocks {
 
     /// Sends control to the shared per-PC leave block, carrying the handoff word as an
     /// argument. The tier fills that block with its exact-PC live-state writeback.
-    pub(super) fn leave(&mut self, builder: &mut FunctionBuilder<'_>, outcome: RegionExit) {
+    /// A tier whose region PCs are not its function's hands off `reported`, its own PC of
+    /// the outcome (an inlining loop region); any other reports `outcome` itself.
+    pub(super) fn leave(
+        &mut self,
+        builder: &mut FunctionBuilder<'_>,
+        outcome: RegionExit,
+        reported: RegionExit,
+    ) {
         let pc = match outcome {
             RegionExit::Resume(pc) | RegionExit::Fallback(pc) | RegionExit::Recompile(pc) => pc,
             RegionExit::EntryMiss(_) => unreachable!("entry miss does not write back"),
         };
-        let word = builder.ins().iconst(types::I64, outcome.encode() as i64);
+        let word = builder.ins().iconst(types::I64, reported.encode() as i64);
         let block = match self.leave_blocks.get(&pc) {
             Some(block) => *block,
             None => {
@@ -935,15 +943,7 @@ const JS_GENERAL_RETURN_STATUS_BASE: u32 =
 const _: () = assert!(JS_GENERAL_RETURN_STATUS_BASE > TERMINATED_STATUS as u32);
 
 pub(super) fn js_general_dispatch_candidate(_program: &ResidualProgram, function: &Function) -> bool {
-    !function.code.is_empty()
-        && function.code.len() <= MAX_JS_GENERAL_DISPATCH_BLOCKS
-        && function.code.iter().all(|packed| {
-            let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-            !matches!(
-                instruction.op(),
-                Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-            ) || usize::try_from(instruction.jump_target()).is_ok()
-        })
+    js_general_dispatch_shape(function).is_some()
 }
 
 /// Preserve OSR as the owner of legacy hot-loop promotion. The generic
@@ -951,17 +951,28 @@ pub(super) fn js_general_dispatch_candidate(_program: &ResidualProgram, function
 /// this predicate only selects the earlier fallback for rejected/profiled
 /// legacy candidates.
 pub(super) fn js_general_dispatch_acyclic_candidate(
-    program: &ResidualProgram,
+    _program: &ResidualProgram,
     function: &Function,
 ) -> bool {
-    js_general_dispatch_candidate(program, function)
-        && function.code.iter().enumerate().all(|(pc, packed)| {
-            let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-            !matches!(
-                instruction.op(),
-                Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-            ) || usize::try_from(instruction.jump_target()).is_ok_and(|target| target > pc)
-        })
+    js_general_dispatch_shape(function) == Some(true)
+}
+
+/// Whether the general baseline admits `function` (a bounded body whose jumps all have
+/// targets) and, if so, whether it is acyclic (every jump goes forward): one pass over
+/// the bytecode for both facts.
+pub(super) fn js_general_dispatch_shape(function: &Function) -> Option<bool> {
+    if function.code.is_empty() || function.code.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
+        return None;
+    }
+    let mut acyclic = true;
+    for (pc, packed) in function.code.iter().enumerate() {
+        let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+        if matches!(instruction.op(), Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse) {
+            let target = usize::try_from(instruction.jump_target()).ok()?;
+            acyclic &= target > pc;
+        }
+    }
+    Some(acyclic)
 }
 
 fn read_js_tagged_operand(
@@ -2667,15 +2678,6 @@ const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 /// polymorphic module cannot turn a tier promotion into eager compilation.
 const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
-/// Functions of at most this many bytecodes are compiled eagerly though they hold
-/// `unreachable` (C asserts and aborts, which most Emscripten functions do): their trap
-/// lowers to a return of the trap status. Larger ones stay interpreted: admitting every
-/// function compiled TSF's few very large ones, its max RSS 24 -> 242 MiB and Score down a
-/// fifth. JetStream 3 `--jit` against no admission (Linux x86_64, 2026-10-24): at 4096,
-/// zlib 14.8 -> 24.4, TSF 12.6 -> 16.0, sqlite3 12.8 -> 15.1, gcc-loops 49.6 -> 60.1,
-/// quicksort 76.9 -> 86.8 (3-round medians), RSS flat; at 2048 zlib's hot pair (over 2700
-/// bytecodes each) stayed interpreted.
-const MAX_JIT_UNREACHABLE_BYTECODES: usize = 4_096;
 
 /// An opt-in JIT switch the environment sets ("1" or "true"), read once per process: a
 /// compiled call consults several, and reading the environment on each call cost more than
@@ -2790,29 +2792,31 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     static WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
         const { std::cell::Cell::new(None) };
-    static WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE: std::cell::Cell<Option<usize>> =
-        const { std::cell::Cell::new(None) };
+    static WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
 }
 
-/// `MAX_JIT_UNREACHABLE_BYTECODES`, which a test may lower to keep a function holding
-/// `unreachable` out of the eager artifact.
-fn jit_unreachable_bytecodes_limit() -> usize {
+/// Whether the eager artifact compiles functions holding `unreachable` (C asserts and aborts,
+/// which most Emscripten functions hold): the trap lowers to a return of the trap status. A test
+/// may reject them to keep such a function for the tier.
+fn eager_unreachable_admitted() -> bool {
     #[cfg(test)]
-    if let Some(limit) = WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return limit;
+    if WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST.with(std::cell::Cell::get) {
+        return false;
     }
-    MAX_JIT_UNREACHABLE_BYTECODES
+    true
 }
 
 #[cfg(test)]
-pub(super) fn with_jit_unreachable_bytecodes_limit_for_test<R>(limit: usize, run: impl FnOnce() -> R) -> R {
-    struct Restore(Option<usize>);
+pub(super) fn with_eager_unreachable_rejected_for_test<R>(run: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
     impl Drop for Restore {
         fn drop(&mut self) {
-            WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE.with(|override_limit| override_limit.set(self.0));
+            WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST.with(|rejected| rejected.set(self.0));
         }
     }
-    let previous = WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE.with(|override_limit| override_limit.replace(Some(limit)));
+    let previous =
+        WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST.with(|rejected| rejected.replace(true));
     let _restore = Restore(previous);
     run()
 }
@@ -4842,6 +4846,20 @@ impl CompiledOsrRegion {
     pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
         self.widenings.get(&pc).copied()
     }
+}
+
+/// Analyze a loop candidate whose calls run inlined (`osr_loop::inline_region`), each
+/// callee from `resolve` of the cached field its function is read from.
+pub(super) fn analyze_inlining_osr_region<'a>(
+    function: &Function,
+    decoded: &[WideInstruction],
+    constants: &[crate::value::Value],
+    live: &[crate::compile::liveness::RegisterSet],
+    header: u32,
+    backedge: u32,
+    resolve: &mut dyn FnMut(FieldUse) -> Option<InlineCallee<'a>>,
+) -> Option<LoopRegion> {
+    osr_loop::inline_region(function, decoded, constants, live, header, backedge, resolve)
 }
 
 /// Analyze a loop candidate through the shared region compiler's OSR mode.
@@ -7096,8 +7114,7 @@ impl<H: Host> Analysis<'_, H> {
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
             Op::WasmUnreachable
-                if self.experimental_root_compilation
-                    || function.code.len() <= jit_unreachable_bytecodes_limit() =>
+                if self.experimental_root_compilation || eager_unreachable_admitted() =>
             {
                 Some(())
             }
@@ -7258,7 +7275,11 @@ fn internal_signature(
 }
 
 /// Instructions a threaded copy may repeat between a constant's jump and the
-/// branch table the constant decides; bounds the code each copy adds.
+/// branch table the constant decides; bounds the code each copy adds. A
+/// dispatch copy repeats its table too, which counts as its edges: TSF's
+/// 290-way state table, copied at each of its 503 jumps, compiled one
+/// function to 10.6 MB of edge moves (3.5 s, 220 MiB peak); charged by its
+/// edges it compiles in 0.1 s.
 const THREAD_BUDGET: usize = 16;
 
 /// Where a threaded copy continues once its path is done.
@@ -7601,6 +7622,11 @@ fn dispatch_path(instructions: &[WideInstruction], plan: &Plan, start: usize) ->
             ControlFlowLayout::Fallthrough => pc + 1,
             ControlFlowLayout::Jump => instruction.jump_target() as usize,
             ControlFlowLayout::BranchTable => {
+                // The copy repeats every edge of the table, each a jump with its own moves.
+                let edges = crate::bytecode::branch_table_entries(pc, instruction).count();
+                if path.len() - 1 + edges > THREAD_BUDGET {
+                    return None;
+                }
                 return Some(Thread {
                     selector: instruction.a(),
                     value: 0,
@@ -10373,7 +10399,23 @@ impl<H: Host> Vm<H> {
         // Keep bounded candidates on a frame entry until the shared tier has
         // settled. Lane target caches otherwise preserve a frameless route
         // across the later promotion and no longer consult tiering.
-        facts.candidate || (self.programs.js_jit_general_dispatch_enabled() && facts.general)
+        facts.candidate || self.js_general_tier_takes(program, function, &facts)
+    }
+
+    /// Whether the general baseline may take `function`: a general candidate the tier admits
+    /// (`ProgramStore::general_tier_admits`). Every general-tier path on entry asks this
+    /// first, so a function it may not take costs those paths nothing.
+    fn js_general_tier_takes(
+        &self,
+        program: &ResidualProgram,
+        function: u32,
+        facts: &super::js_compiled::JsEntryFacts,
+    ) -> bool {
+        facts.general
+            && program.function_get(function as usize).is_some_and(|body| {
+                self.programs
+                    .general_tier_admits(body.code.len(), facts.general_acyclic, self.memory_policy())
+            })
     }
 
     /// Whether the general tier holds `function`: pending, due or compiled.
@@ -10411,18 +10453,9 @@ impl<H: Host> Vm<H> {
         function: u32,
         facts: &super::js_compiled::JsEntryFacts,
     ) -> (bool, bool) {
-        if !self.programs.js_jit_general_dispatch_enabled() {
-            return (false, false);
-        }
         let Some(body) = program
             .function_get(function as usize)
-            // A body without backward jumps can pay only through its entries; one with a loop
-            // can also pay through its backedge work (`note_js_general_dispatch_backedge`).
-            .filter(|body| {
-                facts.general
-                    && (!facts.general_acyclic
-                        || self.programs.general_baseline_may_pay(body.code.len()))
-            })
+            .filter(|_| self.js_general_tier_takes(program, function, facts))
         else {
             return (false, false);
         };
@@ -10482,6 +10515,7 @@ impl<H: Host> Vm<H> {
             parameters: parameters.iter().copied().collect(),
             captures: TierCaptures::Environment(env),
             allocates: false,
+            facts: self.programs.js_entry_facts(id, function)?,
         };
         let mut specialized_guard_miss = false;
         let entered = self.js_jit_at_entry(program, &entry, &mut specialized_guard_miss);
@@ -10495,8 +10529,8 @@ impl<H: Host> Vm<H> {
                     function,
                     instructions,
                 );
-            } else if let Some(facts) = self.programs.js_entry_facts(id, function) {
-                self.js_tier_note_general_entry(program, id, function, &facts);
+            } else {
+                self.js_tier_note_general_entry(program, id, function, &entry.facts);
             }
             self.programs.record_js_jit_fallback_entry(id, function);
         }
@@ -10549,16 +10583,13 @@ impl<H: Host> Vm<H> {
         let Some(facts) = self
             .programs
             .js_entry_facts(program_id, function)
-            .filter(|facts| {
-                facts.enters
-                    || (self.programs.js_jit_general_dispatch_enabled() && facts.general)
-                    || self.programs.js_jit_diagnostics_enabled()
-            })
+            .filter(|facts| facts.enters || self.programs.js_jit_diagnostics_enabled() || self.js_general_tier_takes(program, function, facts))
         else {
             return JsTierFrameEntry::Interpreter;
         };
+        let general = self.js_general_tier_takes(program, function, &facts);
         if allow_inline_calls
-            && facts.general
+            && general
             && let Some(outcome) = self.js_jit_general_dispatch_at_entry(
                 program, frame, 0, true, false,
             )
@@ -10577,6 +10608,7 @@ impl<H: Host> Vm<H> {
                 parameters: record.registers.iter().copied().take(usize::from(params)).collect(),
                 captures: TierCaptures::Frame(frame),
                 allocates: true,
+                facts: Rc::clone(&facts),
             })
         });
         let (general_candidate, mut promote_general) =
@@ -10886,7 +10918,7 @@ impl<H: Host> Vm<H> {
         }
         let (program_id, function_id) = (entry.program, entry.function);
         let function = program.function_get(function_id as usize)?;
-        let facts = self.programs.js_entry_facts(program_id, function_id)?;
+        let facts = &*entry.facts;
         // Most entries are of functions no entry path can claim; diagnostics still count them.
         if !facts.enters && !self.programs.js_jit_diagnostics_enabled() {
             return None;
@@ -13024,6 +13056,8 @@ pub(super) struct TierEntry {
     captures: TierCaptures,
     /// Whether a native result may allocate: not in a lane activation, where nothing collects.
     allocates: bool,
+    /// The function's entry facts, looked up once per entry (`ProgramStore::js_entry_facts`).
+    facts: Rc<super::js_compiled::JsEntryFacts>,
 }
 
 /// Where an entry's captures are read.
