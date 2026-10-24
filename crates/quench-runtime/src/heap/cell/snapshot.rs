@@ -132,23 +132,14 @@ fn write_object(writer: &mut Writer, object: &Object) -> SnapshotResult<()> {
     writer.u32(object.meta);
     writer.u32(object.auxiliary);
     match object.extras() {
+        // The payload word: narrow inline values or the storage position.
         None => {
-            // SAFETY: an untagged payload is plain words; an array's second word is its element
-            // backing, which the array writes instead.
-            let words = unsafe { object.payload.words };
             writer.u8(0);
-            writer.u64(words[0]);
-            for word in &words[1..] {
-                writer.u64(if object.is_array() { 0 } else { *word });
-            }
+            writer.u64(object.payload);
         }
+        // The payload word is the extras pointer; the extras are written field by field.
         Some(extras) => {
-            // SAFETY: as above; the first word is the extras pointer, written field by field.
-            let words = unsafe { object.payload.words };
             writer.u8(1);
-            for word in &words[1..] {
-                writer.u64(if object.is_array() { 0 } else { *word });
-            }
             write_extras(writer, extras)?;
         }
     }
@@ -158,22 +149,12 @@ fn write_object(writer: &mut Writer, object: &Object) -> SnapshotResult<()> {
 fn read_object(reader: &mut Reader<'_>) -> SnapshotResult<Object> {
     let meta = reader.u32()?;
     let auxiliary = reader.u32()?;
-    let mut words = [0; INLINE_PROPERTY_COUNT];
-    match reader.u8()? {
-        0 => {
-            for word in &mut words {
-                *word = reader.u64()?;
-            }
-        }
-        1 => {
-            for word in &mut words[1..] {
-                *word = reader.u64()?;
-            }
-            words[0] = Object::tag_extras(Box::new(read_extras(reader)?));
-        }
+    let payload = match reader.u8()? {
+        0 => reader.u64()?,
+        1 => Object::tag_extras(Box::new(read_extras(reader)?)),
         _ => return Err(SnapshotError("invalid snapshot object".into())),
-    }
-    Ok(Object { meta, auxiliary, payload: ObjectPayload { words } })
+    };
+    Ok(Object { meta, auxiliary, payload })
 }
 
 fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()> {
@@ -400,16 +381,7 @@ impl ArrayObject {
             return Err(SnapshotError("snapshot array without its array flag".into()));
         }
         let elements = super::super::ArrayElements::from(reader.values()?);
-        let mut array = Self { object };
-        // SAFETY: `read_object` left the second word zero; this writes the backing there without
-        // reading or dropping it, as `new` does.
-        unsafe {
-            std::ptr::write(
-                std::ptr::addr_of_mut!((*array.object.payload.array).elements),
-                std::mem::ManuallyDrop::new(elements),
-            );
-        }
-        Ok(array)
+        Ok(Self { object, elements })
     }
 }
 
