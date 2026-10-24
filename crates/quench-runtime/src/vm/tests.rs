@@ -11210,6 +11210,97 @@ fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_compiles_numeric_truthiness_branches() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function zero() { return 0; }
+          function whileTruthy(value) {
+            let count = zero();
+            while (value) {
+              count++;
+              if (!(value || 0)) value = 0;
+              value--;
+            }
+            return count;
+          }
+          let total = 0;
+          if (whileTruthy('x') !== 1) throw Error('non-number loop fallback');
+          for (let call = 0; call < 300; call++) {
+            total += whileTruthy(4);
+          }
+          print(total);
+          if (whileTruthy(0) !== 0 || whileTruthy(-0) !== 0 || whileTruthy(NaN) !== 0) {
+            throw Error('false numeric loop truthiness');
+          }
+          print(whileTruthy(2));
+          print('ok');
+        "#,
+        "osr-numeric-truthiness.js",
+    ))
+    .unwrap();
+    let _disassembly = program.disassemble();
+    let function = program
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "whileTruthy")
+        })
+        .expect("truthiness loop function");
+    let function_id = program
+        .functions
+        .iter()
+        .position(|candidate| std::ptr::eq(candidate, function))
+        .expect("truthiness loop function index");
+    let contains = |op| {
+        function
+            .code
+            .iter()
+            .any(|instruction| instruction.as_wide().op() == op)
+    };
+    assert!(
+        contains(crate::bytecode::Op::JumpFalse),
+        "truthiness loop must contain JumpFalse"
+    );
+    assert!(
+        contains(crate::bytecode::Op::JumpTrue),
+        "truthiness loop must contain JumpTrue"
+    );
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
+    interpreter.execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["1200", "2", "ok"]);
+
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    assert_eq!(output.borrow().as_slice(), ["1200", "2", "ok"]);
+    let views = vm
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot truthiness loop lane view");
+    let diagnostics = view.osr_diagnostics();
+    assert_eq!(
+        diagnostics.currently_compiled_sites,
+        1,
+        "truthiness loop did not retain native code"
+    );
+    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+        assert!(diagnostics.compile_successes > 0, "loop OSR compilation did not succeed");
+        assert!(diagnostics.native_region_runs > 0, "loop OSR code never ran");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_float_unary_uses_shared_number_denotation() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -11716,6 +11807,77 @@ fn js_jit_field_reject_resumes_interpreter_on_match_and_accessor() {
             .js_tier(super::program_store::ProgramId::MAIN, function_id),
         Some(super::program_store::JsTierState::Compiled(_))
     ));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_compiles_number_truthiness_branches() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function jumpFalse(value) {
+            if (value) return 1;
+            return 0;
+          }
+          function jumpTrue(value) {
+            if (!value) return 2;
+            return 3;
+          }
+          function conditional(value) {
+            return value ? 4 : 5;
+          }
+          const values = [0, -0, NaN, 1, -1, Infinity, -Infinity, 'x'];
+          for (const value of values) {
+            const truthy = typeof value === 'number'
+              ? value !== 0 && !Number.isNaN(value)
+              : true;
+            if (jumpFalse(value) !== (truthy ? 1 : 0)) throw Error('JumpFalse truthiness');
+            if (jumpTrue(value) !== (truthy ? 3 : 2)) throw Error('JumpTrue truthiness');
+            if (conditional(value) !== (truthy ? 4 : 5)) throw Error('conditional truthiness');
+          }
+          for (let index = 0; index < 40; index++) {
+            jumpFalse(index - 20);
+            jumpTrue(index - 20);
+            conditional(index - 20);
+          }
+        "#,
+        "js-jit-number-truthiness.js",
+    ))
+    .unwrap();
+    let function_id = |name: &str| {
+        program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32
+    };
+    let functions = ["jumpFalse", "jumpTrue", "conditional"].map(function_id);
+    for function_id in functions {
+        assert!(
+            super::js_compiled::compile(&program, function_id).is_some(),
+            "the numeric branch function should have a generic compiled denotation"
+        );
+    }
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).expect("interpreted truthiness");
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).expect("compiled truthiness");
+    for function_id in functions {
+        let Some(super::program_store::JsTierState::Compiled(artifact)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function_id)
+        else {
+            panic!("number truthiness function {function_id} was not compiled");
+        };
+        assert!(artifact.native_entries() > 0);
+    }
 }
 
 #[test]
