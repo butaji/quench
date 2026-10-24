@@ -679,6 +679,9 @@ enum Completion {
     Cross,
     /// A `new` made it: `this` unless it returns an object.
     Constructs,
+    /// A `new` of another program's constructor: `Constructs`, whose return makes the
+    /// caller's program the lane's again as `Cross` does.
+    CrossConstructs,
     /// It runs the method a forwarding constructor's body would have called
     /// (`ScriptCallTarget::forwarded_method`), whose frame `LaneStack::forwarders` keeps the
     /// last entry of: the construction yields `this`, the receiver, whatever it returns.
@@ -686,8 +689,25 @@ enum Completion {
 }
 
 impl Completion {
-    fn of(constructs: bool) -> Self {
-        if constructs { Self::Constructs } else { Self::Plain }
+    /// The completion of an activation a `new` made or not, of the caller's program or not.
+    fn of(constructs: bool, cross: bool) -> Self {
+        match (constructs, cross) {
+            (false, false) => Self::Plain,
+            (false, true) => Self::Cross,
+            (true, false) => Self::Constructs,
+            (true, true) => Self::CrossConstructs,
+        }
+    }
+
+    /// Whether a `new` made the activation, whose completion substitutes its receiver for a
+    /// non-object result.
+    fn constructs(self) -> bool {
+        matches!(self, Self::Constructs | Self::CrossConstructs)
+    }
+
+    /// Whether the activation's return makes the caller's program the lane's again.
+    fn crosses(self) -> bool {
+        matches!(self, Self::Cross | Self::CrossConstructs)
     }
 }
 
@@ -8170,7 +8190,7 @@ impl<H: Host> Vm<H> {
             let window = &registers[activation.window..activation.window + count];
             let construct_this = activation
                 .script()
-                .and_then(|script| (script.completion == Completion::Constructs).then_some(state.this));
+                .and_then(|script| script.completion.constructs().then_some(state.this));
             let call_guard = match activation.kind {
                 ActivationKind::Script(script) => {
                     let argc = usize::from(script.argc);
@@ -8230,7 +8250,7 @@ impl<H: Host> Vm<H> {
                         activation.function,
                         state.env,
                         state.this,
-                        if script.completion == Completion::Constructs {
+                        if script.completion.constructs() {
                             CallContext::user_function(activation.function, script.callee).constructed()
                         } else {
                             CallContext::user_function(activation.function, script.callee)
@@ -8587,8 +8607,11 @@ impl<H: Host> Vm<H> {
                 None => ThisBinding::Sloppy,
             },
             lexical_this: lexical_this.flatten().unwrap_or(Value::UNDEFINED),
-            // A construction activates in place (`lane_activate`), which gathers no rest.
-            constructs: shape.constructs && !environment && !cross && !body.rest,
+            // A construction activates in place (`lane_activate`), which gathers no rest, and
+            // completes across programs as a call does (`Completion::CrossConstructs`); a
+            // forwarding one runs its program's keeping construction
+            // (`lane_construct_keeping_activation`), which another program's caller does not.
+            constructs: shape.constructs && !environment && !body.rest && !(cross && plan.forwards_arguments),
             initializes: shape.initializes && !environment && !cross && !body.rest,
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
@@ -10104,7 +10127,11 @@ script_handler! {
         // The cached target in place, as a call reads it (`Vm::script_call_entry`); an
         // uncached callee resolves (`lane_script_target`), after which the construction
         // retries.
-        let entry = if lane_constructing(vm, callee) { None } else { vm.script_call_entry(callee) };
+        let entry = if lane_constructing(vm, callee) {
+            None
+        } else {
+            vm.script_call_entry(callee).or_else(|| vm.cross_call_entry(callee))
+        };
         let Some(entry) = entry else {
             if lane_script_target(cx, callee).is_some_and(|target| target.constructs) {
                 sibling!(lane_script_construct::<H>, r, ip, Carried::script(cx))
@@ -10935,7 +10962,6 @@ fn lane_push_activation<H: Host, const GENERAL: bool>(
     // Only a plain call activates another program's callee (`Vm::resolve_script_call_target`).
     debug_assert!(GENERAL || !lane_crosses::<H, true>(cx, target));
     let cross = GENERAL && lane_crosses::<H, true>(cx, target);
-    debug_assert!(!(cross && constructs));
     let activation = Activation {
         function: target.function,
         call: ip,
@@ -10950,7 +10976,7 @@ fn lane_push_activation<H: Host, const GENERAL: bool>(
             caller_this: unsafe { (*cx).this },
             caller_env: unsafe { (*cx).env },
             caller_capture: unsafe { (*cx).capture },
-            completion: if cross { Completion::Cross } else { Completion::of(constructs) },
+            completion: Completion::of(constructs, cross),
             forwards: false,
             environment: false,
         }),
@@ -11079,7 +11105,7 @@ fn lane_activate_environment<H: Host>(
             caller_this: unsafe { (*cx).this },
             caller_env: unsafe { (*cx).env },
             caller_capture: unsafe { (*cx).capture },
-            completion: Completion::of(false),
+            completion: Completion::of(false, false),
             forwards: false,
             environment: true,
         }),
@@ -11330,7 +11356,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     // A plain call passed more values than its parameters activates another program's callee
     // here too (`lane_activate`).
     let cross = lane_crosses::<H, MAY_CROSS>(cx, &target);
-    debug_assert!(!(cross && (constructs || forwarder.is_some())));
+    debug_assert!(!(cross && forwarder.is_some()));
     let argc = match arguments {
         ActivationArguments::Window(_) => usize::from(ImmediateLayout::argument_count(i.imm())),
         ActivationArguments::Kept(_, count) => count,
@@ -11413,10 +11439,8 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
             caller_capture: unsafe { (*cx).capture },
             completion: if forwarder.is_some() {
                 Completion::Forwarder
-            } else if cross {
-                Completion::Cross
             } else {
-                Completion::of(constructs)
+                Completion::of(constructs, cross)
             },
             forwards: keeps,
             environment: false,
@@ -11858,18 +11882,15 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Value) 
             // [[Construct]] of an ordinary constructor yields its returned object,
             // otherwise the receiver it allocated. A skipped forwarding constructor returns
             // `undefined` after the method, so its construction yields the receiver.
-            match script.completion {
-                Completion::Plain => {}
-                Completion::Cross => lane_enter_program(cx, activation.caller_program),
-                Completion::Constructs => {
-                    if !vm.is_object_like(value) {
-                        value = this;
-                    }
-                }
-                Completion::Forwarder => {
-                    value = this;
-                    vm.lane_stack.forwarders.pop();
-                }
+            if script.completion.crosses() {
+                lane_enter_program(cx, activation.caller_program);
+            }
+            if script.completion.constructs() && !vm.is_object_like(value) {
+                value = this;
+            }
+            if script.completion == Completion::Forwarder {
+                value = this;
+                vm.lane_stack.forwarders.pop();
             }
         }
         // SAFETY: the call record belongs to the caller's live view.
