@@ -1,3 +1,4 @@
+use super::liveness::{RegisterSet, register_dead};
 use crate::bytecode::{
     Function, Instr, NumericLocalStoreTarget, Op, Operand, REGISTER_MASK, specialized_numeric_op,
 };
@@ -8,12 +9,12 @@ type Rule = fn(&[Instr]) -> Option<NumericLocalStoreTarget>;
 
 struct CompactRule {
     pattern: [Op; 2],
-    replacement: fn(Instr, Instr, u64) -> Option<Instr>,
+    replacement: fn(Instr, Instr, RegisterSet) -> Option<Instr>,
 }
 
 struct TripleCompactRule {
     pattern: [Op; 3],
-    replacement: fn(Instr, Instr, Instr, u64) -> Option<Instr>,
+    replacement: fn(Instr, Instr, Instr, RegisterSet) -> Option<Instr>,
 }
 
 const RULES: &[Rule] = &[local_inc_store];
@@ -30,7 +31,7 @@ const TRIPLE_COMPACT_RULES: &[TripleCompactRule] = &[TripleCompactRule {
     replacement: local_index_sources,
 }];
 
-pub(super) fn apply(function: &mut Function, live: Option<&[u64]>) {
+pub(super) fn apply(function: &mut Function, live: Option<&[RegisterSet]>) {
     if let Some(live) = live {
         compact_binary_stores(function, live, NUMERIC_COMPACT_RULES, TRIPLE_COMPACT_RULES);
     }
@@ -48,7 +49,7 @@ pub(super) fn apply(function: &mut Function, live: Option<&[u64]>) {
     }
 }
 
-pub(super) fn apply_plain_local_stores(function: &mut Function, live: Option<&[u64]>) {
+pub(super) fn apply_plain_local_stores(function: &mut Function, live: Option<&[RegisterSet]>) {
     if let Some(live) = live {
         compact_binary_stores(function, live, PLAIN_LOCAL_COMPACT_RULES, &[]);
     }
@@ -56,7 +57,7 @@ pub(super) fn apply_plain_local_stores(function: &mut Function, live: Option<&[u
 
 fn compact_binary_stores(
     function: &mut Function,
-    live: &[u64],
+    live: &[RegisterSet],
     rules: &[CompactRule],
     triple_rules: &[TripleCompactRule],
 ) {
@@ -77,7 +78,7 @@ fn compact_binary_stores(
             .get(pc..pc + 3)
             .filter(|_| !protected[pc + 1] && !protected[pc + 2])
             .and_then(|window| {
-                let live_after = live.get(pc + 3).copied().unwrap_or(u64::MAX);
+                let live_after = live.get(pc + 3).copied().unwrap_or(RegisterSet::MAX);
                 triple_rules
                     .iter()
                     .filter(|rule| rule.pattern == [window[0].op(), window[1].op(), window[2].op()])
@@ -97,7 +98,7 @@ fn compact_binary_stores(
             .filter(|_| !protected[pc + 1])
             .and_then(|second| {
                 let first = old[pc];
-                let live_after = live.get(pc + 2).copied().unwrap_or(u64::MAX);
+                let live_after = live.get(pc + 2).copied().unwrap_or(RegisterSet::MAX);
                 rules
                     .iter()
                     .filter(|rule| rule.pattern == [first.op(), second.op()])
@@ -130,24 +131,25 @@ fn local_index_sources(
     first: Instr,
     second: Instr,
     mut index: Instr,
-    live_after: u64,
+    live_after: RegisterSet,
 ) -> Option<Instr> {
     (index.operand_b().register_index() == Some(first.result_register())
         && index.operand_c().register_index() == Some(second.result_register())
         && first.local_slot() <= usize::from(REGISTER_MASK)
         && second.local_slot() <= usize::from(REGISTER_MASK)
-        && live_after & ((1 << first.result_register()) | (1 << second.result_register())) == 0)
+        && register_dead(live_after, usize::from(first.result_register()))
+        && register_dead(live_after, usize::from(second.result_register())))
         .then_some(())?;
     index.set_operand_b(Operand::local(first.local_slot() as u16))?;
     index.set_operand_c(Operand::local(second.local_slot() as u16))?;
     Some(index)
 }
 
-fn binary_local_target(mut binary: Instr, store: Instr, live_after: u64) -> Option<Instr> {
+fn binary_local_target(mut binary: Instr, store: Instr, live_after: RegisterSet) -> Option<Instr> {
     (store.register_a() == binary.result_register()
         && store.optional_register_b().is_none()
         && store.local_slot() <= usize::from(REGISTER_MASK)
-        && live_after & (1 << binary.result_register()) == 0)
+        && register_dead(live_after, usize::from(binary.result_register())))
         .then(|| {
             binary.set_result_local_target(store.local_slot() as u16);
             binary
