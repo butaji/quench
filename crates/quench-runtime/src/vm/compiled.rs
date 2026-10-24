@@ -2294,6 +2294,15 @@ const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 /// polymorphic module cannot turn a tier promotion into eager compilation.
 const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
+/// Functions of at most this many bytecodes are compiled eagerly though they hold
+/// `unreachable` (C asserts and aborts, which most Emscripten functions do): their trap
+/// lowers to a return of the trap status. Larger ones stay interpreted: admitting every
+/// function compiled TSF's few very large ones, its max RSS 24 -> 242 MiB and Score down a
+/// fifth. JetStream 3 `--jit` against no admission (Linux x86_64, 2026-10-24): at 4096,
+/// zlib 14.8 -> 24.4, TSF 12.6 -> 16.0, sqlite3 12.8 -> 15.1, gcc-loops 49.6 -> 60.1,
+/// quicksort 76.9 -> 86.8 (3-round medians), RSS flat; at 2048 zlib's hot pair (over 2700
+/// bytecodes each) stayed interpreted.
+const MAX_JIT_UNREACHABLE_BYTECODES: usize = 4_096;
 
 /// An opt-in JIT switch the environment sets ("1" or "true"), read once per process: a
 /// compiled call consults several, and reading the environment on each call cost more than
@@ -2408,6 +2417,31 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     static WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
         const { std::cell::Cell::new(None) };
+    static WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// `MAX_JIT_UNREACHABLE_BYTECODES`, which a test may lower to keep a function holding
+/// `unreachable` out of the eager artifact.
+fn jit_unreachable_bytecodes_limit() -> usize {
+    #[cfg(test)]
+    if let Some(limit) = WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return limit;
+    }
+    MAX_JIT_UNREACHABLE_BYTECODES
+}
+
+#[cfg(test)]
+pub(super) fn with_jit_unreachable_bytecodes_limit_for_test<R>(limit: usize, run: impl FnOnce() -> R) -> R {
+    struct Restore(Option<usize>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE.with(|override_limit| override_limit.set(self.0));
+        }
+    }
+    let previous = WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE.with(|override_limit| override_limit.replace(Some(limit)));
+    let _restore = Restore(previous);
+    run()
 }
 
 #[cfg(test)]
@@ -6677,7 +6711,12 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
-            Op::WasmUnreachable if self.experimental_root_compilation => Some(()),
+            Op::WasmUnreachable
+                if self.experimental_root_compilation
+                    || function.code.len() <= jit_unreachable_bytecodes_limit() =>
+            {
+                Some(())
+            }
             Op::Return => match result {
                 Some(ty) => (value(state, instruction.a())? == Kind::of(ty)?).then_some(()),
                 None => Some(()),
