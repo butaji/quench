@@ -286,9 +286,10 @@ impl LoopRegion {
 }
 
 /// The entry record native code reads: each capture's value, then each array's element
-/// pointer and length.
+/// pointer and length, then each cached field. Only the words pushed are ever read, by
+/// native code and by `captures`, so the rest stay uninitialized.
 pub(crate) struct LoopEntry {
-    words: [u64; ENTRY_WORDS],
+    words: [std::mem::MaybeUninit<u64>; ENTRY_WORDS],
     length: usize,
 }
 
@@ -304,17 +305,17 @@ const ENTRY_WORDS: usize =
 
 impl LoopEntry {
     pub(crate) fn new() -> Self {
-        Self { words: [0; ENTRY_WORDS], length: ENTRY_CAPTURES }
+        Self { words: [std::mem::MaybeUninit::uninit(); ENTRY_WORDS], length: ENTRY_CAPTURES }
     }
 
     /// The record's words, as native code reads them.
     pub(super) fn words(&self) -> *const u64 {
         debug_assert!(self.length <= ENTRY_WORDS);
-        self.words.as_ptr()
+        self.words.as_ptr().cast()
     }
 
     fn push(&mut self, word: u64) {
-        self.words[self.length] = word;
+        self.words[self.length].write(word);
         self.length += 1;
     }
 
@@ -325,7 +326,12 @@ impl LoopEntry {
 
     /// The first `count` capture values, as pushed.
     pub(crate) fn captures(&self, count: usize) -> Vec<Value> {
-        self.words[ENTRY_CAPTURES..ENTRY_CAPTURES + count].iter().map(|bits| Value::from_bits(*bits)).collect()
+        debug_assert!(ENTRY_CAPTURES + count <= self.length);
+        self.words[ENTRY_CAPTURES..ENTRY_CAPTURES + count]
+            .iter()
+            // SAFETY: the first `count` words after the leading ones are the pushed captures.
+            .map(|word| Value::from_bits(unsafe { word.assume_init() }))
+            .collect()
     }
 
     /// Arrays follow the captures, in the region's order. An array longer than
