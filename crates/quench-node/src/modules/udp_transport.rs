@@ -276,6 +276,9 @@ impl<T> Endpoint<T> {
         let socket=self.socket()?;
         #[cfg(unix)] {
             use std::os::fd::AsRawFd;
+            #[cfg(target_os = "macos")]
+            let address=libc::sockaddr{sa_len:std::mem::size_of::<libc::sockaddr>() as u8,sa_family:libc::AF_UNSPEC as libc::sa_family_t,sa_data:[0;14]};
+            #[cfg(not(target_os = "macos"))]
             let address=libc::sockaddr{sa_family:libc::AF_UNSPEC as libc::sa_family_t,sa_data:[0;14]};
             let result=unsafe{libc::connect(socket.as_raw_fd(),&address,std::mem::size_of_val(&address) as libc::socklen_t)};
             if result==0 {Ok(())} else {Err(io::Error::last_os_error())}

@@ -77,17 +77,17 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "availableMemory" (0) => crate::modules::process_memory_shared_vm::available,
         method "constrainedMemory" (0) => crate::modules::process_memory_shared_vm::constrained,
         method "uptime" (0) => crate::modules::process_shared_vm::uptime,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsHrtime" (0) => crate::modules::process_metrics_shared_vm::hrtime,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsHrtimeBigInt" (0) => crate::modules::process_metrics_shared_vm::hrtime_bigint,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsCpu" (0) => crate::modules::process_metrics_shared_vm::process_cpu,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsThreadCpu" (0) => crate::modules::process_metrics_shared_vm::thread_cpu,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsResources" (0) => crate::modules::process_metrics_shared_vm::resources,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsRss" (0) => crate::modules::process_metrics_shared_vm::rss,
         method "processMetricsMemoryUsage" (1) => crate::modules::process_metrics_shared_vm::memory_usage,
         #[cfg(unix)]

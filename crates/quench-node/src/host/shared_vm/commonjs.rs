@@ -715,14 +715,14 @@ pub(super) fn initialize_process_surface(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     crate::modules::process_memory_shared_vm::install(context)?;
     evaluate_polyfill_block(
         context,
         crate::polyfills::post_bootstrap::process_surface_00::LAZY_JS,
         "node:bootstrap/process-surface-lazy.js",
     )?;
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     crate::modules::process_metrics_shared_vm::install(context)?;
     Ok(context.undefined())
 }

@@ -197,6 +197,7 @@ pub(crate) fn statfs_sync(
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let value = super::super::fs_path::validate(context, value, "path")?;
     let bigint = bigint_option(context, args.get(1).copied())?;
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
     let path = super::super::fs_path::resolve(context, value)?;
     #[cfg(target_os = "linux")]
     let result = {

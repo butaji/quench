@@ -23,11 +23,20 @@ if (!workloadName || !["no-jit", "jit"].includes(phase) ||
   process.exit(2);
 }
 
+function bunBinary() {
+  if (process.env.BUN_BIN) return process.env.BUN_BIN;
+  const local = path.join(repo, "work/bun/bun");
+  if (fs.existsSync(local)) return local;
+  const onPath = spawnSync("bun", ["--version"], { encoding: "utf8" });
+  if (onPath.status === 0) return "bun";
+  return local;
+}
+
 const binaries = {
   quench: process.env.QUENCH_NODE_BIN ?? path.join(repo, "target/production/quench-node"),
   quenchControl: process.env.QUENCH_CONTROL_BIN,
   node: process.env.NODE_BIN ?? process.execPath,
-  bun: process.env.BUN_BIN ?? path.join(repo, "work/bun/bun"),
+  bun: bunBinary(),
 };
 
 function median(values) {

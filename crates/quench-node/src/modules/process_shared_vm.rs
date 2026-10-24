@@ -3437,6 +3437,7 @@ fn poll_process_signals(
         let event = runtime.string_rooted(&name);
         let signal = runtime.string_rooted(&name);
         // Listeners receive the signal's name and number (src/signal_wrap.cc).
+        #[allow(unused_mut)]
         let mut args = vec![event, signal];
         #[cfg(target_os = "linux")]
         if let Some(number) = crate::modules::process_signals_state::signal_number(&name) {

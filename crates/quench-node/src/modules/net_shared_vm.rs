@@ -1098,18 +1098,37 @@ pub(crate) fn wait_ready(transport: &Transport, timeout: std::time::Duration) {
         std::thread::sleep(timeout);
         return;
     }
+    let duration = timeout;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     let timeout = libc::timespec {
-        tv_sec: timeout.as_secs() as libc::time_t,
-        tv_nsec: libc::c_long::from(timeout.subsec_nanos() as i32),
+        tv_sec: duration.as_secs() as libc::time_t,
+        tv_nsec: libc::c_long::from(duration.subsec_nanos() as i32),
     };
     // SAFETY: the descriptors are open for the duration of the call, which only writes
     // their `revents`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe {
         libc::ppoll(
             descriptors.as_mut_ptr(),
             descriptors.len() as libc::nfds_t,
             &timeout,
             std::ptr::null(),
+        );
+    }
+    // Darwin has no ppoll; `poll`'s millisecond timeout rounds up so a
+    // sub-millisecond wait never turns into a busy spin.
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    unsafe {
+        let millis = duration.as_millis().min(i32::MAX as u128) as i32;
+        let millis = if duration.subsec_nanos() > 0 && millis == 0 {
+            1
+        } else {
+            millis
+        };
+        libc::poll(
+            descriptors.as_mut_ptr(),
+            descriptors.len() as libc::nfds_t,
+            millis,
         );
     }
     crate::modules::napi::drain_wake();

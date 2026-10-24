@@ -1033,6 +1033,9 @@ impl StartRanges {
         if let Some(found) = haystack[..near].iter().position(admits) {
             return Some(found);
         }
+        // The block scan below is x86-64-only; arm64 uses the tail scan and never
+        // advances this offset.
+        #[allow(unused_mut)]
         let mut offset = near;
         #[cfg(target_arch = "x86_64")]
         // SAFETY: SSE2 is part of the x86-64 baseline, and each load reads a whole block

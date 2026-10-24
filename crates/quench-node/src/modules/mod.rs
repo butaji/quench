@@ -100,7 +100,7 @@ pub(crate) mod process_binding_shared_vm;
 #[cfg(unix)]
 pub(crate) mod process_execve_shared_vm;
 pub(crate) mod process_memory_shared_vm;
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 pub(crate) mod process_metrics_shared_vm;
 pub(crate) mod process_shared_vm;
 pub(crate) mod process_warning_shared_vm;

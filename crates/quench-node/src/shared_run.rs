@@ -96,6 +96,7 @@ fn apply_allocator_policy(policy: MemoryPolicy) {
 static PROCESS_MEMORY_POLICY: std::sync::OnceLock<MemoryPolicy> = std::sync::OnceLock::new();
 
 /// The policy this process selected, once `select_memory_policy` has run.
+#[cfg_attr(not(all(target_os = "linux", target_arch = "x86_64")), allow(dead_code))]
 pub(crate) fn process_memory_policy() -> Option<MemoryPolicy> {
     PROCESS_MEMORY_POLICY.get().copied()
 }
