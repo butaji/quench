@@ -29,6 +29,7 @@ struct JsJitCounters {
     native_entries: u64,
     field_cache_probes: u64,
     field_cache_hits: u64,
+    field_cache_sites: FxHashMap<u16, (u64, u64)>,
     field_store_cache_probes: u64,
     field_store_cache_hits: u64,
     field_return_candidate_entries: u64,
@@ -2245,6 +2246,7 @@ impl ProgramStore {
         &mut self,
         id: ProgramId,
         function: u32,
+        cache_site: u16,
         hit: bool,
     ) {
         if let Some(counters) = self
@@ -2256,6 +2258,9 @@ impl ProgramStore {
             counters.field_cache_hits = counters
                 .field_cache_hits
                 .saturating_add(u64::from(hit));
+            let site = counters.field_cache_sites.entry(cache_site).or_default();
+            site.0 = site.0.saturating_add(1);
+            site.1 = site.1.saturating_add(u64::from(hit));
         }
     }
 
@@ -2719,6 +2724,17 @@ impl ProgramStore {
     }
 }
 
+/// The diagnostics report's ratios are parts per million.
+const PARTS_PER_MILLION: u128 = 1_000_000;
+
+/// `part` of `whole` in parts per million, capped at the whole; zero of nothing is zero.
+fn parts_per_million(part: u64, whole: u64) -> u64 {
+    if whole == 0 {
+        return 0;
+    }
+    (u128::from(part) * PARTS_PER_MILLION / u128::from(whole)).min(PARTS_PER_MILLION) as u64
+}
+
 impl Drop for ProgramStore {
     fn drop(&mut self) {
         let Some(diagnostics) = &self.js_jit_diagnostics else {
@@ -2762,21 +2778,9 @@ impl Drop for ProgramStore {
                 .map(|entry| entry.residual.source_name.as_str())
                 .or_else(|| counters.source_name.as_deref())
                 .unwrap_or("");
-            let native_entry_coverage_ppm = if counters.entries == 0 {
-                0
-            } else {
-                (u128::from(counters.native_entries) * 1_000_000
-                    / u128::from(counters.entries))
-                    .min(1_000_000) as u64
-            };
+            let native_entry_coverage_ppm = parts_per_million(counters.native_entries, counters.entries);
             let total_entries = counters.entries.saturating_add(counters.lane_entries);
-            let all_entry_native_coverage_ppm = if total_entries == 0 {
-                0
-            } else {
-                (u128::from(counters.native_entries) * 1_000_000
-                    / u128::from(total_entries))
-                .min(1_000_000) as u64
-            };
+            let all_entry_native_coverage_ppm = parts_per_million(counters.native_entries, total_entries);
             let osr = entry
                 .and_then(|entry| entry.lane_views.derived(*function))
                 .map(super::dispatch_fast::LaneView::osr_diagnostics)
@@ -2860,6 +2864,19 @@ impl Drop for ProgramStore {
                     let _ = write!(stderr, "\"{}\":{}", outcome.name(), count);
                 }
                 let _ = write!(stderr, "}}}}");
+            }
+            let _ = write!(stderr, "],\"field_cache_sites\":[");
+            let mut field_cache_sites: Vec<_> = counters.field_cache_sites.iter().collect();
+            field_cache_sites.sort_unstable_by_key(|(site, _)| **site);
+            for (index, (site, (probes, hits))) in field_cache_sites.iter().enumerate() {
+                if index != 0 {
+                    let _ = write!(stderr, ",");
+                }
+                let hit_ppm = parts_per_million(*hits, *probes);
+                let _ = write!(
+                    stderr,
+                    "{{\"cache_site\":{site},\"probes\":{probes},\"hits\":{hits},\"hit_rate_ppm\":{hit_ppm}}}"
+                );
             }
             let _ = write!(stderr, "],\"opcodes\":[");
             for (index, (opcode, count)) in counters.opcode_counts.iter().enumerate() {
