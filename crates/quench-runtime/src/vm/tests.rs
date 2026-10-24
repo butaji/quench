@@ -12031,14 +12031,30 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
         try { return left + right; }
         catch (error) { return error instanceof TypeError; }
       }
+      function negate(value) {
+        try { return -value; }
+        catch (error) { return error instanceof TypeError; }
+      }
+      function positive(value) {
+        try { return +value; }
+        catch (error) { return error instanceof TypeError; }
+      }
       for (let index = 0; index < 48; index++) {
         if (combine(index, 0.5) !== index + 0.5) throw Error('number result');
+        if (negate(index) !== -index) throw Error('unary minus');
+        if (positive(index) !== index) throw Error('unary plus');
       }
       if (!Object.is(combine(-0, -0), -0)) throw Error('negative zero');
       if (combine(2147483647, 1) !== 2147483648) throw Error('integer boundary');
       if (combine('left', 'right') !== 'leftright') throw Error('string fallback');
       if (combine(Symbol('value'), 1) !== true) throw Error('throw fallback');
       if (!Number.isNaN(combine(NaN, 1))) throw Error('NaN result');
+      if (!Object.is(negate(0), -0) || !Object.is(negate(-0), 0)) {
+        throw Error('unary zero signs');
+      }
+      if (negate(Symbol('value')) !== true || positive(Symbol('value')) !== true) {
+        throw Error('unary throw fallback');
+      }
     "#;
     let program = Engine::compile(crate::ExecutionRequest::script(
         source,
@@ -12052,25 +12068,27 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
 
-    let function = program
-        .functions
-        .iter()
-        .position(|function| {
-            function
-                .header()
-                .name
-                .or(function.header().inferred_name)
-                .is_some_and(|atom| &program.atoms[atom as usize] == "combine")
-        })
-        .unwrap() as u32;
-    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
-        .programs
-        .js_tier(super::program_store::ProgramId::MAIN, function)
-    else {
-        panic!("combine should use the general JavaScript dispatch compiler");
-    };
-    assert!(native.is_general_dispatch());
-    assert!(native.native_entries() > 0);
+    for name in ["combine", "negate", "positive"] {
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should use the general JavaScript dispatch compiler");
+        };
+        assert!(native.is_general_dispatch());
+        assert!(native.native_entries() > 0);
+    }
 }
 
 #[test]
