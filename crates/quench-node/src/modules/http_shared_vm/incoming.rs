@@ -12,7 +12,17 @@ fn set(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result
         .borrow()
         .event_targets_api
         .ok_or_else(|| RootedError::host("HTTP assignment configuration missing"))?;
-    crate::modules::event_constructor_shared_vm::named_set(c, api, object, name, value)
+    crate::modules::event_constructor_shared_vm::named_set(c, api, object, name, value).map_err(
+        |error| {
+            if error.to_string() == "shared HTTP object rejected a required property" {
+                RootedError::host(format!(
+                    "shared HTTP object rejected required property '{name}'"
+                ))
+            } else {
+                error
+            }
+        },
+    )
 }
 fn call(
     c: &mut Context<'_>,
@@ -59,8 +69,12 @@ fn initialize_accepted_socket(
         ("destroyed", false),
         ("connecting", false),
     ] {
+        let key = c.string_rooted(name);
         let value = c.boolean(value);
-        set(c, socket, name, value)?;
+        // Socket/stream prototypes expose some of these as getter-only
+        // properties. A fresh facade has no initialized native stream state,
+        // so install the visible initial value as an own data property.
+        c.define_data_property_rooted(socket, key, value, true, true, true)?;
     }
 
     let install_parser = c.evaluate_script_rooted(

@@ -2919,7 +2919,13 @@ fn request_object(
     // keep-alive socket does.
     set_bool(runtime, socket, "readable", true)?;
     set_bool(runtime, socket, "writable", true)?;
-    set_number(
+    define_number(
+        runtime,
+        socket,
+        "readableHighWaterMark",
+        DEFAULT_HTTP_SOCKET_HIGH_WATER_MARK,
+    )?;
+    define_number(
         runtime,
         socket,
         "writableHighWaterMark",
@@ -3074,6 +3080,40 @@ fn set_text(
     set_named(runtime, object, name, value)
 }
 
+fn define_number(
+    runtime: &mut Runtime<NodeHost>,
+    object: RootId,
+    name: &str,
+    value: f64,
+) -> Result<(), String> {
+    let global = runtime.global_root().map_err(|error| error.to_string())?;
+    let object_key = runtime.string_rooted("Object");
+    let object_constructor = runtime
+        .get_property_rooted(global, object_key)
+        .map_err(|error| error.to_string())?;
+    let define_key = runtime.string_rooted("defineProperty");
+    let define = runtime
+        .get_property_rooted(object_constructor, define_key)
+        .map_err(|error| error.to_string())?;
+    let descriptor = runtime.object_rooted().map_err(|error| error.to_string())?;
+    set_number(runtime, descriptor, "value", value)?;
+    set_bool(runtime, descriptor, "writable", true)?;
+    set_bool(runtime, descriptor, "enumerable", true)?;
+    set_bool(runtime, descriptor, "configurable", true)?;
+    let name = runtime.string_rooted(name);
+    let result = runtime.call_rooted(define, object_constructor, &[object, name, descriptor]);
+    runtime.release_root(name);
+    runtime.release_root(descriptor);
+    runtime.release_root(define);
+    runtime.release_root(define_key);
+    runtime.release_root(object_constructor);
+    runtime.release_root(object_key);
+    runtime.release_root(global);
+    result
+        .map(|result| { runtime.release_root(result); })
+        .map_err(|error| error.to_string())
+}
+
 fn set_number(
     runtime: &mut Runtime<NodeHost>,
     object: RootId,
@@ -3101,7 +3141,7 @@ fn set_named(
     value: RootId,
 ) -> Result<(), String> {
     let key = runtime.string_rooted(name);
-    set(runtime, object, key, value)
+    set(runtime, object, key, value).map_err(|error| format!("HTTP property {name}: {error}"))
 }
 
 fn set(
