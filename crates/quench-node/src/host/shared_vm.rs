@@ -1066,6 +1066,8 @@ const BESIDE_ACTIVATIONS: &[&str] = &[
     "httpResponseWriteHead",
     "httpResponseFinish",
     "httpResponseInitialize",
+    "httpIncomingDestroy",
+    "asyncResourceInit",
     "stringDecoderDecode",
     "markAsUncloneable",
 ];
