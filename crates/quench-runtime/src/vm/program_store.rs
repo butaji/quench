@@ -373,8 +373,55 @@ impl JitTierManager {
     }
 }
 
+/// A program's residual: decoded, or a restored snapshot's encoding that its first use
+/// decodes. A snapshot holds every builtin a preload loaded, and a process runs few of
+/// them, so a restore decodes none: their checksums held when the snapshot was read.
+struct Residual {
+    /// The program's cache site counts, known before it is decoded.
+    sites: crate::bytecode::CacheSiteCounts,
+    decoded: std::cell::OnceCell<Rc<ResidualProgram>>,
+    encoded: std::cell::Cell<Option<Box<EncodedResidual>>>,
+}
+
+/// What decoding a restored program needs (`ResidualProgram::decode_snapshot`).
+struct EncodedResidual {
+    bytes: crate::KeptBytes,
+    text: Option<crate::bytecode::SourceText>,
+    atoms: Rc<crate::bytecode::AtomSequence>,
+}
+
+impl Residual {
+    fn decoded(program: Rc<ResidualProgram>) -> Self {
+        Self {
+            sites: program.cache_site_counts(),
+            decoded: std::cell::OnceCell::from(program),
+            encoded: std::cell::Cell::new(None),
+        }
+    }
+
+    fn encoded(sites: crate::bytecode::CacheSiteCounts, encoded: EncodedResidual) -> Self {
+        Self { sites, decoded: std::cell::OnceCell::new(), encoded: std::cell::Cell::new(Some(Box::new(encoded))) }
+    }
+}
+
+impl std::ops::Deref for Residual {
+    type Target = Rc<ResidualProgram>;
+
+    fn deref(&self) -> &Rc<ResidualProgram> {
+        self.decoded.get_or_init(|| {
+            let EncodedResidual { bytes, text, atoms } =
+                *self.encoded.take().expect("a residual is decoded or holds its encoding");
+            let program = ResidualProgram::decode_snapshot(bytes, text, &atoms)
+                .expect("a snapshot program whose checksum held decodes");
+            debug_assert_eq!(program.cache_site_counts(), self.sites);
+            program.prime_loop_decoding();
+            Rc::new(program)
+        })
+    }
+}
+
 struct ProgramEntry {
-    residual: Rc<ResidualProgram>,
+    residual: Residual,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
     constants: Vec<Value>,
     const_arrays: Vec<Option<crate::heap::ArrayElements>>,
@@ -883,7 +930,7 @@ impl ProgramStore {
         let lane_deferred = vec![std::cell::Cell::new(0); program.functions.len()];
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.programs.push(Some(ProgramEntry {
-            residual: program,
+            residual: Residual::decoded(program),
             wasm_signatures: None,
             constants: Vec::new(),
             const_arrays: Vec::new(),
@@ -1115,7 +1162,7 @@ impl ProgramStore {
     /// Every live program's compiled form.
     #[cfg(feature = "profile-memory")]
     pub(crate) fn residuals(&self) -> impl Iterator<Item = &ResidualProgram> {
-        self.programs.iter().flatten().map(|entry| &*entry.residual)
+        self.programs.iter().flatten().map(|entry| &**entry.residual)
     }
 
     pub(crate) fn module_environment(&self, id: ProgramId) -> Option<Value> {
@@ -1158,9 +1205,14 @@ impl ProgramStore {
         })
     }
 
+    /// The cache site counts of program `id`, which a restored program knows undecoded.
+    pub(crate) fn cache_site_counts(&self, id: ProgramId) -> Option<crate::bytecode::CacheSiteCounts> {
+        Some(self.entry(id)?.residual.sites)
+    }
+
     /// Borrows the residual without the reference-count traffic of `get`.
     pub(crate) fn residual(&self, id: ProgramId) -> Option<&ResidualProgram> {
-        self.entry(id).map(|entry| &*entry.residual)
+        self.entry(id).map(|entry| &**entry.residual)
     }
 
     pub(crate) fn get(&self, id: ProgramId) -> Option<Rc<ResidualProgram>> {
