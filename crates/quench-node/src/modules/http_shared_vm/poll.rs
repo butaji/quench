@@ -1477,12 +1477,17 @@ pub(crate) fn poll(
                             result?;
                         }
                         Err(_) => {
+                            let message = if client.response_root.is_some() {
+                                "aborted"
+                            } else {
+                                "socket hang up"
+                            };
                             fail_client_exchange(
                                 runtime,
                                 program,
                                 shared_state,
                                 client,
-                                "socket hang up",
+                                message,
                             )?;
                         }
                     }

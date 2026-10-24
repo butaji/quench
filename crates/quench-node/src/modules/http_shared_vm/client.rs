@@ -1712,7 +1712,14 @@ fn abort_exchange_stream(
     context: &mut Context<'_>,
     client: &super::state::Client,
 ) -> Result<(), RootedError> {
-    let error = context.error_rooted("socket hang up")?;
+    // Once response headers have been delivered, an early transport close is
+    // an aborted IncomingMessage. Before headers, it remains a ClientRequest
+    // socket hang-up error.
+    let error = context.error_rooted(if client.response_root.is_some() {
+        "aborted"
+    } else {
+        "socket hang up"
+    })?;
     if let Err(failure) = set_text(context, error, "code", "ECONNRESET") {
         context.release_root(error);
         return Err(failure);
