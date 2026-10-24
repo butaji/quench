@@ -41,6 +41,7 @@ pub(crate) struct ServerConnection {
     pub(crate) request_timeout_sent: bool,
     pub(crate) upgraded: bool,
     pub(crate) socket_root: Option<RootId>,
+    pub(crate) request_root: Option<RootId>,
 }
 
 pub(crate) struct Response {

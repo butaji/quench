@@ -312,6 +312,41 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
     const customWrites = [];
     let customResponseBuffer = Buffer.alloc(0);
     let customResponseStarted = false;
+    let customResponse;
+    let customResponseBodyBuffer = Buffer.alloc(0);
+    let customResponseExpectedLength;
+    let customResponseChunked = false;
+    let customResponseComplete = false;
+    const abortCustomResponse = () => {
+      if (!customResponse || customResponseComplete || customResponse.destroyed) return;
+      customResponse.aborted = true;
+      customResponse.emit('aborted');
+      const error = new Error('aborted');
+      error.code = 'ECONNRESET';
+      if (customResponse.listenerCount('error') === 0) customResponse.on('error', () => {});
+      customResponse.destroy(error);
+    };
+    const finishCustomResponse = () => {
+      if (!customResponse || customResponseComplete) return;
+      customResponseComplete = true;
+      customResponse.complete = true;
+      customResponse.push(null);
+    };
+    const pushCustomResponseBody = (chunk) => {
+      if (!customResponse || customResponseComplete) return;
+      const bytes = Buffer.from(chunk);
+      customResponse.push(bytes);
+      if (customResponseExpectedLength !== undefined) {
+        customResponseBodyBuffer = Buffer.concat([customResponseBodyBuffer, bytes]);
+        if (customResponseBodyBuffer.length >= customResponseExpectedLength) finishCustomResponse();
+      } else if (customResponseChunked) {
+        customResponseBodyBuffer = Buffer.concat([customResponseBodyBuffer, bytes]);
+        if (customResponseBodyBuffer.includes(Buffer.from('\r\n0\r\n\r\n')) ||
+            customResponseBodyBuffer.subarray(0, 5).equals(Buffer.from('0\r\n\r\n'))) {
+          finishCustomResponse();
+        }
+      }
+    };
     let pendingExplicitWrites = 0;
     let pendingSocketBodyBytes = 0;
     const request = new Writable({
@@ -455,6 +490,19 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
     };
     request.destroy = (error) => {
       request.destroyed = true;
+      // `abort()` is synchronous and Node marks the response aborted before
+      // the socket's close event reaches the HTTP parser.
+      if (request.aborted && request.res && request.res.complete !== true &&
+          !request.res.readableEnded) {
+        if (customResponse) {
+          if (!customResponseComplete) abortCustomResponse();
+        } else if (!request.res.destroyed) {
+          const responseError = new Error('aborted');
+          responseError.code = 'ECONNRESET';
+          if (request.res.listenerCount('error') === 0) request.res.on('error', () => {});
+          request.res.destroy(responseError);
+        }
+      }
       // Explicit errors (socket failures and parser failures) are terminal;
       // they must not wait for an HTTP response end that can never arrive.
       if (error) request.__quenchCloseReady = true;
@@ -494,6 +542,10 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
       if (!customSocket || customResponseStarted) return;
       customResponseStarted = true;
       const onData = (chunk) => {
+        if (customResponse) {
+          pushCustomResponseBody(chunk);
+          return;
+        }
         customResponseBuffer = Buffer.concat([customResponseBuffer, Buffer.from(chunk)]);
         while (true) {
           const headerEnd = customResponseBuffer.indexOf('\r\n\r\n');
@@ -559,8 +611,8 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
             });
             continue;
           }
-          customSocket.removeListener('data', onData);
           const response = new Readable({ read() {} });
+          customResponse = response;
           response.statusCode = statusCode;
           response.statusMessage = status[4] || '';
           response.httpVersion = `${status[1]}.${status[2]}`;
@@ -568,6 +620,15 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
           response.httpVersionMinor = Number(status[2]);
           response.headers = headers;
           response.rawHeaders = rawHeaders;
+          response.aborted = false;
+          response.complete = false;
+          const contentLength = headers['content-length'];
+          if (contentLength !== undefined && /^\d+$/.test(String(contentLength))) {
+            customResponseExpectedLength = Number(contentLength);
+          }
+          customResponseChunked = /(?:^|,)\s*chunked\s*(?:,|$)/i.test(
+            String(headers['transfer-encoding'] || ''),
+          );
           // The native parser normally reports this flag on its response
           // callback. Keep the public ClientRequest field in sync with the
           // response protocol and Connection tokens so callers and Agent
@@ -580,9 +641,26 @@ const REQUEST_FUNCTION: &str = r#"((Writable, Readable, create, write, setHeader
             ((response.httpVersionMajor > 1 ||
               (response.httpVersionMajor === 1 && response.httpVersionMinor >= 1)) &&
               !connectionTokens.includes('close'));
+          request.res = response;
+          customSocket.once('end', () => {
+            if (customResponseExpectedLength !== undefined &&
+                customResponseBodyBuffer.length < customResponseExpectedLength) {
+              abortCustomResponse();
+            } else if (customResponseChunked &&
+                       !customResponseBodyBuffer.includes(Buffer.from('\r\n0\r\n\r\n')) &&
+                       !customResponseBodyBuffer.subarray(0, 5).equals(Buffer.from('0\r\n\r\n'))) {
+              abortCustomResponse();
+            } else {
+              finishCustomResponse();
+            }
+          });
+          customSocket.once('close', () => {
+            if (!customResponseComplete) abortCustomResponse();
+          });
           request.emit('response', response);
-          if (customResponseBuffer.length) response.push(customResponseBuffer);
-          response.push(null);
+          if (customResponseBuffer.length) pushCustomResponseBody(customResponseBuffer);
+          if (customResponseExpectedLength === 0 || statusCode === 204 || statusCode === 304 ||
+              request.method === 'HEAD') finishCustomResponse();
           return;
         }
       };
