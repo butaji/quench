@@ -1183,6 +1183,19 @@ fn emit_js_step_fallback(
     );
 }
 
+/// Read the VM's atomic cancellation flag at a JS loop backedge. The caller
+/// sends a set flag to the exact-PC `Vm::step` callout, which reports the same
+/// interruption as the interpreter before consuming the branch.
+fn emit_js_interrupt_requested(builder: &mut FunctionBuilder<'_>, context: ir::Value) -> ir::Value {
+    let interrupt = builder
+        .ins()
+        .load(types::I64, invariant(), context, CONTEXT_INTERRUPT);
+    let requested = builder
+        .ins()
+        .atomic_load(types::I8, MemFlagsData::trusted(), interrupt);
+    builder.ins().icmp_imm_u(IntCC::NotEqual, requested, 0)
+}
+
 enum JsGeneralBranch {
     ToBoolean {
         source: u16,
@@ -1288,9 +1301,29 @@ pub(super) fn compile_js_general_dispatch(
                         && !instruction.writes_current_this() =>
                 {
                     let target = usize::try_from(instruction.jump_target()).ok();
-                    if let Some(target) = target.filter(|target| *target > pc)
+                    if let Some(target) = target.filter(|target| *target < instruction_count)
                         && let Some(target) = blocks.get(target).copied()
                     {
+                        if usize::try_from(instruction.jump_target())
+                            .is_ok_and(|target| target <= pc)
+                        {
+                            let fallback = builder.create_block();
+                            let resume = builder.create_block();
+                            let interrupted = emit_js_interrupt_requested(&mut builder, context);
+                            builder.ins().brif(interrupted, fallback, &[], resume, &[]);
+                            builder.switch_to_block(fallback);
+                            emit_js_step_fallback(
+                                &mut builder,
+                                context,
+                                callout,
+                                callout_signature,
+                                result_pointer,
+                                stopped_block,
+                                continue_block,
+                                pc,
+                            );
+                            builder.switch_to_block(resume);
+                        }
                         builder.ins().jump(target, &[]);
                         true
                     } else {
@@ -1513,7 +1546,7 @@ pub(super) fn compile_js_general_dispatch(
         // Only a recognized branch has a jump target to read.
         if let (Some(next), Some(direct_branch)) = (next, direct_branch)
             && let Ok(target) = usize::try_from(instruction.jump_target())
-            && target > pc
+            && target < instruction_count
             && let Some(target_block) = blocks.get(target).copied()
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
@@ -1573,6 +1606,12 @@ pub(super) fn compile_js_general_dispatch(
                     builder.ins().icmp_imm_u(IntCC::Equal, holds, 0)
                 }
             };
+            if target <= pc {
+                let resume = builder.create_block();
+                let interrupted = emit_js_interrupt_requested(&mut builder, context);
+                builder.ins().brif(interrupted, fallback, &[], resume, &[]);
+                builder.switch_to_block(resume);
+            }
             builder.ins().brif(branch, target_block, &[], next, &[]);
             builder.switch_to_block(fallback);
             emit_js_step_fallback(
@@ -4882,6 +4921,11 @@ impl CompiledJsFunction {
     #[cfg(test)]
     pub(super) fn general_dispatch_island_steps(&self) -> u64 {
         self.general_dispatch_island_steps.get()
+    }
+
+    #[cfg(test)]
+    pub(super) fn general_dispatch_pc_is_native(&self, pc: usize) -> bool {
+        self.general_dispatch_native_pcs.get(pc) == Some(&1)
     }
 
     pub(super) fn requires_signed_int32_arguments(&self) -> bool {
