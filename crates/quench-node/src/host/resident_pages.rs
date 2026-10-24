@@ -69,21 +69,94 @@ pub fn release_read_only_pages_after_load() {
     }
 }
 
+/// Whether a release point returns resident pages now: once the process's memory policy is
+/// selected, when its `MemoryPolicy::resident_release_interval` has passed since the last
+/// return. The pace starts at the first release point after the selection.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn release_due(policy: quench_runtime::MemoryPolicy) -> bool {
+    let interval = policy.resident_release_interval();
+    let Ok(mut last) = LAST_RELEASE.lock() else {
+        return false;
+    };
+    match *last {
+        Some(at) => at.elapsed() >= interval,
+        None => {
+            *last = Some(std::time::Instant::now());
+            interval.is_zero()
+        }
+    }
+}
+
+/// `release_due` under the process's memory policy, if one is selected.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn process_release_due() -> bool {
+    crate::shared_run::process_memory_policy().is_some_and(release_due)
+}
+
+/// Unmaps the read-only pages above from the resident set when a release is due
+/// (`process_release_due`); the next touch of each refaults it from its file. Between due
+/// releases it still unmaps the tracked mappings: the snapshot's and compile cache's records
+/// a run has decoded, which it reads again only for a function's first call, unlike the code
+/// a release refaults. Against keeping them until the next due release (plain x86_64 build,
+/// snapshot on, 9 runs, 2026-10-23), npm scenario peak RSS jsdom 82.8 -> 80.1 MB, lodash
+/// 19.1 -> 17.7, path-parse 16.8 -> 15.6, undici 32.0 -> 31.6, with as many page faults and
+/// wall time within noise.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_read_only_pages() {
+    if process_release_due() {
+        discard_read_only_pages();
+    } else {
+        discard_tracked_mappings();
+    }
+}
+
+/// A collection boundary's release under the runtime's `policy`: the read-only pages and the
+/// allocator's free pages, which the collection's sweep just freed, when a release is due
+/// (`release_due`). Every policy counts the collection for the release before output.
+pub fn release_at_collection(policy: quench_runtime::MemoryPolicy) {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    if release_due(policy) {
+        discard_read_only_pages();
+        release_free_heap_pages();
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    let _ = policy;
+    note_collection();
+}
+
+/// Releases the read-only pages around a native compilation under every policy: the code
+/// generator's pages are not the run's, which it does not touch again, so the release
+/// refaults none of the run's code, and a native compilation is a short numeric program's
+/// peak (V8-v7 `--jit` max RSS, TOD-185: Crypto 11.6-13.2 -> 9.2-9.7 MB, NavierStokes
+/// 11.1 -> 9.1).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_at_native_compilation() {
+    discard_read_only_pages();
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_at_native_compilation() {}
+
 /// Unmaps the read-only pages above from the resident set; the next touch of each refaults it
 /// from its file.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub fn release_read_only_pages() {
+fn discard_read_only_pages() {
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
-    let segments = loaded_segments(ReleasedSegment::Clean);
-    for &(start, end) in segments.iter().chain(unwritten_relro_pages()) {
-        // SAFETY: each range is a private file mapping that is never written, so discarding
+    for (start, end) in loaded_segments(ReleasedSegment::Clean) {
+        // SAFETY: each segment is a private file mapping that is never written, so discarding
         // its pages loses nothing.
         unsafe {
             libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
         }
     }
+    discard_tracked_mappings();
+}
+
+/// Unmaps the tracked mappings' pages (`TRACKED_MAPPINGS`) from the resident set.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn discard_tracked_mappings() {
     // Held while releasing, so no tracked mapping is unmapped meanwhile.
     if let Ok(mut mappings) = TRACKED_MAPPINGS.lock() {
         // Every tracked mapping is released below, deferred ranges with it.
@@ -308,7 +381,10 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
 /// it can drop or swap.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_code_and_data() {
-    release_read_only_pages();
+    if !process_release_due() {
+        return;
+    }
+    discard_read_only_pages();
     for (start, end) in loaded_segments(ReleasedSegment::LibraryData) {
         // SAFETY: paging out never changes a mapping's contents.
         unsafe {
@@ -356,10 +432,9 @@ impl CompileRelease {
 impl CompileRelease {
     /// How far apart this release's runs are kept.
     fn interval(self) -> std::time::Duration {
-        let returns_pages = crate::shared_run::process_memory_policy()
-            .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
+        let memory_first = crate::shared_run::process_memory_policy() == Some(quench_runtime::MemoryPolicy::MemoryFirst);
         match self {
-            Self::FirstCall if returns_pages => MEMORY_FIRST_FIRST_CALL_INTERVAL,
+            Self::FirstCall if memory_first => MEMORY_FIRST_FIRST_CALL_INTERVAL,
             Self::FirstCall | Self::CodeGeneration => LOAD_RELEASE_INTERVAL,
         }
     }
@@ -472,106 +547,6 @@ fn loaded_segments(kind: ReleasedSegment) -> Vec<(usize, usize)> {
     found.1
 }
 
-/// The page ranges of the executable's RELRO data its loader never wrote. The loader writes
-/// relocations into that range and then makes it read-only, so it lies in a writable segment
-/// that `ReleasedSegment::Clean` leaves out. A static executable's relocations fill only its
-/// `.got.plt` (IFUNC targets), and the rest of the range stays clean file pages, which
-/// start-up's reads fault in with their neighbours before `map_touched_pages_only` turns that
-/// off: 196 KiB resident for an empty script, 16 KiB of them written (bolted static x86_64,
-/// 2026-10-24). The kernel's page map tells written pages, now private, from file pages. Once
-/// the range is read-only no page can become private, so the ranges found at the first
-/// release hold for the process's life. Only the executable is read: its loader finished
-/// before `main`, while a library loading on another thread may not have written its
-/// relocations yet.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn unwritten_relro_pages() -> &'static [(usize, usize)] {
-    static PAGES: std::sync::OnceLock<Vec<(usize, usize)>> = std::sync::OnceLock::new();
-    PAGES.get_or_init(|| executable_relro().map_or_else(Vec::new, |(start, end)| file_page_runs(start, end)))
-}
-
-/// The process's own page map: one little-endian entry per virtual page.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const PAGEMAP_PATH: &str = "/proc/self/pagemap";
-
-/// The bytes of a `PAGEMAP_PATH` entry.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const PAGEMAP_ENTRY_BYTES: usize = std::mem::size_of::<u64>();
-
-/// A `PAGEMAP_PATH` entry's bits (Documentation/admin-guide/mm/pagemap.rst): the page is
-/// resident, swapped out, or a file page (or shared anonymous).
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const PAGEMAP_PRESENT: u64 = 1 << 63;
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const PAGEMAP_SWAPPED: u64 = 1 << 62;
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const PAGEMAP_FILE: u64 = 1 << 61;
-
-/// The runs of pages from `start` to `end` (page-aligned) that hold their file's contents:
-/// resident file pages and pages never faulted in, not private copies; none when the page map
-/// cannot be read.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn file_page_runs(start: usize, end: usize) -> Vec<(usize, usize)> {
-    use std::os::unix::fs::FileExt;
-    let page = page_size();
-    let mut entries = vec![0; (end - start) / page * PAGEMAP_ENTRY_BYTES];
-    let offset = (start / page * PAGEMAP_ENTRY_BYTES) as u64;
-    let read = std::fs::File::open(PAGEMAP_PATH).and_then(|map| map.read_exact_at(&mut entries, offset));
-    if read.is_err() {
-        return Vec::new();
-    }
-    let mut runs: Vec<(usize, usize)> = Vec::new();
-    for (index, entry) in entries.chunks_exact(PAGEMAP_ENTRY_BYTES).enumerate() {
-        let entry = u64::from_le_bytes(entry.try_into().expect("a page map entry"));
-        let private = entry & PAGEMAP_SWAPPED != 0
-            || entry & (PAGEMAP_PRESENT | PAGEMAP_FILE) == PAGEMAP_PRESENT;
-        if private {
-            continue;
-        }
-        let address = start + index * page;
-        match runs.last_mut() {
-            Some(run) if run.1 == address => run.1 += page,
-            _ => runs.push((address, address + page)),
-        }
-    }
-    runs
-}
-
-/// The whole pages of the executable's RELRO range (`PT_GNU_RELRO`), whose partial first and
-/// last pages it shares with its segment's other data.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn executable_relro() -> Option<(usize, usize)> {
-    unsafe extern "C" fn visit(
-        info: *mut libc::dl_phdr_info,
-        _size: libc::size_t,
-        found: *mut libc::c_void,
-    ) -> libc::c_int {
-        // SAFETY: the loader passes a valid record for each object, and `found` is the option
-        // below for the duration of the call.
-        let (info, found) = unsafe { (&*info, &mut *found.cast::<Option<(usize, usize)>>()) };
-        // SAFETY: a non-null name is a NUL-terminated string the loader owns.
-        let executable = !info.dlpi_name.is_null() && unsafe { *info.dlpi_name } == 0;
-        if !executable || info.dlpi_phdr.is_null() {
-            return 0;
-        }
-        // SAFETY: `dlpi_phdr` points at `dlpi_phnum` program headers.
-        let headers = unsafe { std::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum.into()) };
-        let page = page_size();
-        *found = headers.iter().find(|header| header.p_type == libc::PT_GNU_RELRO).map(|header| {
-            let start = info.dlpi_addr as usize + header.p_vaddr as usize;
-            let end = start + header.p_memsz as usize;
-            (start.next_multiple_of(page), end - end % page)
-        });
-        // The executable is the first object; the walk stops at it.
-        1
-    }
-    let mut found = None;
-    // SAFETY: `visit` only reads the records and writes the option.
-    unsafe {
-        libc::dl_iterate_phdr(Some(visit), (&raw mut found).cast());
-    }
-    found.filter(|(start, end)| start < end)
-}
-
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn page_size() -> usize {
     // SAFETY: `sysconf` reads a constant of the system.
@@ -584,7 +559,7 @@ static COLLECTIONS_AT_OUTPUT_RELEASE: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(u64::MAX);
 
 /// Records a collection boundary, after which the next output releases the read-only pages.
-pub fn note_collection() {
+fn note_collection() {
     COLLECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -787,43 +762,5 @@ mod tests {
             [(0x55d0c8a00000, 0x55d0c8a3f000), (0x7f00ac000000, 0x7f00ac001000)]
         );
         assert_eq!(super::parse_file_mappings(maps, &["r-xp"]), [(0x7f00ab000000, 0x7f00ab200000)]);
-    }
-
-    /// A private file mapping's written page is a private copy, left out of the runs; a page
-    /// read and a page never touched both still hold the file's contents.
-    #[test]
-    fn file_page_runs_leave_out_written_pages() {
-        use std::io::Write;
-        let page = super::page_size();
-        let pages = 3;
-        let path = std::env::temp_dir().join(format!("quench-file-page-runs-{}", std::process::id()));
-        std::fs::File::create(&path).and_then(|mut file| file.write_all(&vec![1; page * pages])).unwrap();
-        let file = std::fs::File::open(&path).unwrap();
-        // SAFETY: a fresh private mapping of the file, unmapped below.
-        let start = unsafe {
-            use std::os::fd::AsRawFd;
-            libc::mmap(
-                std::ptr::null_mut(),
-                page * pages,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE,
-                file.as_raw_fd(),
-                0,
-            )
-        };
-        assert_ne!(start, libc::MAP_FAILED);
-        let start = start as usize;
-        // SAFETY: both pages lie in the mapping above.
-        unsafe {
-            std::ptr::write_volatile((start + page) as *mut u8, 2);
-            std::ptr::read_volatile((start + 2 * page) as *const u8);
-        }
-        let runs = super::file_page_runs(start, start + page * pages);
-        // SAFETY: the mapping above, no longer used.
-        unsafe {
-            libc::munmap(start as *mut libc::c_void, page * pages);
-        }
-        std::fs::remove_file(&path).unwrap();
-        assert_eq!(runs, [(start, start + page), (start + 2 * page, start + 3 * page)]);
     }
 }
