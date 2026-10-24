@@ -1,0 +1,28 @@
+== qcg
+navier-stokes        cold med 4708 max 4936  warm med 4212 max 4212  d +496
+navier-stokes --jit  cold med 4528 max 4596  warm med 4496 max 4564  d +32
+crypto               cold med 3480 max 3652  warm med 3276 max 3364  d +204
+crypto        --jit  cold med 5752 max 5932  warm med 5624 max 5692  d +128
+raytrace             cold med 3332 max 3488  warm med 2968 max 3060  d +364
+raytrace      --jit  cold med 3252 max 3252  warm med 3240 max 3328  d +12
+deltablue            cold med 3100 max 3112  warm med 3016 max 3144  d +84
+deltablue     --jit  cold med 3480 max 3612  warm med 3284 max 3436  d +196
+richards             cold med 2968 max 3056  warm med 2696 max 2696  d +272
+richards      --jit  cold med 3104 max 3108  warm med 3016 max 3152  d +88
+regexp               cold med 6228 max 6268  warm med 6072 max 6328  d +156
+regexp        --jit  cold med 6452 max 6476  warm med 6188 max 6312  d +264
+== qkc
+navier-stokes        cold med 4172 max 4196  warm med 4188 max 4188  d -16
+navier-stokes --jit  cold med 4480 max 4480  warm med 4480 max 4496  d +0
+crypto               cold med 3292 max 3348  warm med 3208 max 3352  d +84
+crypto        --jit  cold med 5608 max 5756  warm med 5548 max 5808  d +60
+raytrace             cold med 3016 max 3108  warm med 2960 max 3024  d +56
+raytrace      --jit  cold med 3300 max 3388  warm med 3216 max 3252  d +84
+deltablue            cold med 3080 max 3104  warm med 3028 max 3216  d +52
+deltablue     --jit  cold med 3264 max 3412  warm med 3264 max 3264  d +0
+richards             cold med 3092 max 3208  warm med 2736 max 2904  d +356
+richards      --jit  cold med 2992 max 3204  warm med 2992 max 2992  d +0
+regexp               cold med 6028 max 6080  warm med 6016 max 6088  d +12
+regexp        --jit  cold med 6104 max 6200  warm med 6180 max 6300  d -76
+
+[exited with code 0]

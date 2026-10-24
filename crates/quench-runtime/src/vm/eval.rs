@@ -526,9 +526,10 @@ impl<H: Host> Vm<H> {
             drop(bytes);
             // The program then runs from its kept form, as every later run of the text does:
             // its records decode on first call from the host's mapped entry, which the host
-            // can page out, instead of staying compiled in memory for the whole run. A cold
-            // entry had held them (V8-v7 max RSS, MemoryFirst, cold against warm cache:
-            // NavierStokes +492 KiB, Crypto +156, RayTrace +224).
+            // can page out, instead of staying compiled in memory for the whole run (V8-v7
+            // MemoryFirst max RSS of a cold entry, static x86_64, 5 pairs, 2026-10-24:
+            // NavierStokes 4708 -> 4172 KiB, RayTrace 3332 -> 3016, Crypto 3480 -> 3292,
+            // RegExp 6228 -> 6028; a whole cold typescript-eslint run's CPU unchanged).
             if let Some(kept) = self.kept_script(source, name, goal, origin) {
                 return Ok(kept);
             }
