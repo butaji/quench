@@ -96,7 +96,7 @@ pub(crate) fn entry_path(path: &Path) -> Result<PathBuf, String> {
         cwd.join(path)
     };
     if let Some(path) = exact_file_path(&cwd, &path.to_string_lossy()) {
-        return std::fs::canonicalize(path).map_err(|error| error.to_string());
+        return crate::host::real_path::real_path(&path).map_err(|error| error.to_string());
     }
     with_commonjs_resolver(|resolver| resolve_kept(resolver, |resolver| resolver.resolve(&cwd, &path.to_string_lossy())))
         .map(|resolution| resolution.full_path())
@@ -122,7 +122,7 @@ fn inline_directory(context: &mut Context<'_>) -> Result<PathBuf, RootedError> {
 pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     // Only a `.js` or extensionless file asks its package scope, which is its real path's.
     if matches!(path.extension().and_then(|extension| extension.to_str()), Some("js") | None) {
-        let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
+        let path = crate::host::real_path::real_path(path).map_err(|error| error.to_string())?;
         return source_kind_of_real(&path);
     }
     source_kind_of_real(path)
@@ -2236,7 +2236,7 @@ fn resolve_filename_in(
     });
     let outcome = match outcome {
         Ok(Err(exact)) => {
-            return std::fs::canonicalize(exact).map_err(|error| RootedError::host(error.to_string()));
+            return crate::host::real_path::real_path(&exact).map_err(|error| RootedError::host(error.to_string()));
         }
         Ok(Ok(resolution)) => Ok(resolution),
         Err(error) => Err(error),
