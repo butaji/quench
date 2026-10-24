@@ -2336,28 +2336,54 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
         return exit(ip);
     }
     let [a, b] = super::dispatch::value_step_operands(instruction).map(|register| register.map(|register| r.get(register)));
-    vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc });
-    let result = vm.value_step(code, instruction, a, b);
-    // The step may allocate, which can make a collection due.
+    let Some(value) = lane_in_place(cx, ip, |vm, code| vm.value_step(code, instruction, a, b)) else {
+        return exit(ip);
+    };
+    // Guest code the step ran made the activations frames, whose registers these are.
+    let r = unsafe { (*cx).registers };
+    if let Some(value) = value {
+        r.set(instruction.result_register(), value);
+    }
+    next!(cx, r, following(ip), Carried::script(cx))
+}
+
+/// Make `operation` of the record at `ip` from the lane, as its general step would: in a
+/// frame's own run with the frame's PC published (`lane_general_step`), or beside frameless
+/// activations as a native beside them runs (`DeferredLaneCall`), so guest code it reaches
+/// makes them frames first. A throw is stashed in `Vm::lane_raised`, raised from those
+/// frames, and `None` is returned for the general path to raise it. The running function's
+/// registers are `(*cx).registers` afterwards.
+#[inline(always)]
+fn lane_in_place<H: Host, T>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    operation: impl FnOnce(&mut Vm<H>, &ResidualProgram) -> Result<T, JsError>,
+) -> Option<T> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
+    // running function's view.
+    let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+    let beside = !vm.lane_stack.activations.is_empty();
+    if beside {
+        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc });
+    } else {
+        let frame = unsafe { (*cx).frame };
+        vm.frames[frame].pc = pc;
+        vm.frames[frame].pc_is_resume = false;
+    }
+    let result = operation(vm, code);
+    // The operation may allocate, which can make a collection due.
     note_allocation(vm);
-    let unobserved = vm.lane_deferred.take().is_some();
+    let unobserved = beside && vm.lane_deferred.take().is_some();
     match result {
-        Ok(value) => {
-            // Guest code the step ran made the activations frames, whose registers these are.
-            let r = unsafe { (*cx).registers };
-            if let Some(value) = value {
-                r.set(instruction.result_register(), value);
-            }
-            next!(cx, r, following(ip), Carried::script(cx))
-        }
+        Ok(value) => Some(value),
         Err(error) => {
-            // The general path raises it from the frames its activations become.
             if unobserved {
                 vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc });
                 vm.materialize_deferred_lane();
             }
             vm.lane_raised = Some(error);
-            exit(ip)
+            None
         }
     }
 }
@@ -2470,7 +2496,7 @@ script_handler! {
     /// records the execution exactly as the general path does.
     fn lane_binary<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { lane_binary_value(cx, r, i) }) else {
-            return exit(ip);
+            sibling!(lane_binary_general::<H>, r, ip, Carried::script(cx))
         };
         if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 {
             let local = usize::from(i.a & crate::bytecode::REGISTER_MASK);
@@ -2480,6 +2506,31 @@ script_handler! {
         } else {
             r.set(i.a, value);
         }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_binary` of `in` or `instanceof` its value declines: the general operation made in
+    /// place (`lane_in_place`), which may reach guest code (a proxy's `has`, a
+    /// `Symbol.hasInstance`) or throw. Any other operator, and a numeric local target, takes the
+    /// general path.
+    #[inline(never)]
+    fn lane_binary_general<>(cx, r, ip, i, view) {
+        let operator = i.imm();
+        if !matches!(operator, IN_OPERATOR | INSTANCEOF_OPERATOR) || i.a & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 {
+            return exit(ip);
+        }
+        let (Some(left), Some(right)) = (lane_operand_value(cx, r, i.b), lane_operand_value(cx, r, i.c))
+        else {
+            return exit(ip);
+        };
+        let Some(value) = lane_in_place(cx, ip, |vm, code| vm.binary(code, operator, left, right)) else {
+            return exit(ip);
+        };
+        // Guest code the operator ran made the activations frames, whose registers these are.
+        let r = unsafe { (*cx).registers };
+        r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -5122,6 +5173,7 @@ script_handler! {
 
 /// The `instanceof` operator as a `Binary` immediate or a test's operator field.
 const INSTANCEOF_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::Instanceof as u32;
+const IN_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::In as u32;
 
 script_handler! {
     /// `Binary` `instanceof` of two registers, decoded when the view was derived
@@ -15521,7 +15573,7 @@ impl<H: Host> Vm<H> {
                     if let Some(body) = code.function_get(activation.function as usize) {
                         super::lane_exits::record_detail(format!(
                             "exit in activation {:?} {} @{:?} pc={pc}",
-                            body.instructions().nth(pc).map(|instruction| instruction.op()),
+                            body.instructions().nth(pc),
                             body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
                             body.source_span.map(|span| span.start),
                         ));
