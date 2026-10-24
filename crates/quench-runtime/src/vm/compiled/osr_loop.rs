@@ -48,9 +48,6 @@ pub(super) const MAX_CODE_BYTES: usize = 64 * 1024;
 
 /// What native code writes to its result word: the outcome in the high word, a bytecode PC
 /// in the low one.
-const OUTCOME_SHIFT: u32 = u32::BITS;
-const PC_MASK: u64 = u32::MAX as u64;
-
 /// The outcome of one native run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LoopOutcome {
@@ -84,25 +81,21 @@ pub(crate) enum Widening {
     Unit(Register),
 }
 
-const OUTCOME_NOT_ENTERED: u64 = 0;
-const OUTCOME_RESUME: u64 = 1;
-const OUTCOME_EXIT: u64 = 2;
-const OUTCOME_WIDEN: u64 = 3;
 /// A not-entered outcome's low word: zero, or a widening's kind bit over its payload.
 const WIDEN_REGISTER: u64 = 1 << u16::BITS;
 const WIDEN_CAPTURE: u64 = WIDEN_REGISTER << 1;
 const WIDEN_UNIT: u64 = WIDEN_CAPTURE << 1;
-const _: () = assert!(WIDEN_UNIT <= PC_MASK);
+const _: () = assert!(WIDEN_UNIT <= u32::MAX as u64);
 const WIDEN_PAYLOAD: u64 = WIDEN_REGISTER - 1;
 
 impl Widening {
     /// The not-entered word of an entry guard's widening; element reads are guarded where
     /// they run, so an entry never names them.
-    fn code(self) -> u64 {
+    fn code(self) -> u32 {
         match self {
-            Self::Register(register) => WIDEN_REGISTER | u64::from(register),
-            Self::Capture(index) => WIDEN_CAPTURE | u64::from(index),
-            Self::Unit(register) => WIDEN_UNIT | u64::from(register),
+            Self::Register(register) => (WIDEN_REGISTER | u64::from(register)) as u32,
+            Self::Capture(index) => (WIDEN_CAPTURE | u64::from(index)) as u32,
+            Self::Unit(register) => (WIDEN_UNIT | u64::from(register)) as u32,
             Self::Elements(_) => 0,
         }
     }
@@ -123,12 +116,11 @@ impl Widening {
 
 impl LoopOutcome {
     pub(super) fn decode(word: u64) -> Self {
-        let low = word & PC_MASK;
-        match word >> OUTCOME_SHIFT {
-            OUTCOME_RESUME => Self::Resume(low as u32),
-            OUTCOME_EXIT => Self::Exit(low as u32),
-            OUTCOME_WIDEN => Self::Widen(low as u32),
-            _ => Self::NotEntered(Widening::decode(low)),
+        match super::RegionExit::decode(word) {
+            super::RegionExit::EntryMiss(payload) => Self::NotEntered(Widening::decode(u64::from(payload))),
+            super::RegionExit::Resume(pc) => Self::Resume(pc),
+            super::RegionExit::Fallback(pc) => Self::Exit(pc),
+            super::RegionExit::Recompile(pc) => Self::Widen(pc),
         }
     }
 }
@@ -1304,7 +1296,7 @@ struct Lowering<'a, 'b> {
     /// there and returns its parameter, the outcome word.
     leaves: std::collections::BTreeMap<u32, ir::Block>,
     /// The cold blocks that end the run with a fixed outcome (`outcome_block`).
-    outcomes: Vec<(ir::Block, u64, u64)>,
+    outcomes: Vec<(ir::Block, super::RegionExit)>,
     registers: ir::Value,
     entry: ir::Value,
     /// The result word the outcome is written to.
@@ -1641,10 +1633,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.ins().return_(&[status]);
     }
 
-    fn outcome(&mut self, outcome: u64, low: u64) -> ir::Value {
-        self.body.builder
-            .ins()
-            .iconst(types::I64, ((outcome << OUTCOME_SHIFT) | low) as i64)
+    fn outcome(&mut self, outcome: super::RegionExit) -> ir::Value {
+        self.body.builder.ins().iconst(types::I64, outcome.encode() as i64)
     }
 
     fn word(&mut self, index: usize) -> ir::Value {
@@ -1663,27 +1653,27 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// A block that returns not entered, naming `widening`.
     fn not_entered(&mut self, widening: Option<Widening>) -> ir::Block {
-        self.outcome_block(OUTCOME_NOT_ENTERED, widening.map_or(0, Widening::code))
+        self.outcome_block(super::RegionExit::EntryMiss(widening.map_or(0, Widening::code)))
     }
 
-    /// A cold block that ends the run with `outcome` over `low`, filled once the body is
+    /// A cold block that ends the run with `outcome`, filled once the body is
     /// lowered (`fill_outcomes`): the builder leaves a block only once it is filled.
-    fn outcome_block(&mut self, outcome: u64, low: u64) -> ir::Block {
+    fn outcome_block(&mut self, outcome: super::RegionExit) -> ir::Block {
         let block = self.cold_block();
-        self.outcomes.push((block, outcome, low));
+        self.outcomes.push((block, outcome));
         block
     }
 
     /// Fills each `outcome_block`: not entered returns at once, and every other outcome
     /// leaves at its PC through the write-back.
     fn fill_outcomes(&mut self) {
-        for (block, outcome, low) in std::mem::take(&mut self.outcomes) {
+        for (block, outcome) in std::mem::take(&mut self.outcomes) {
             self.body.builder.switch_to_block(block);
-            if outcome == OUTCOME_NOT_ENTERED {
-                let word = self.outcome(outcome, low);
+            if matches!(outcome, super::RegionExit::EntryMiss(_)) {
+                let word = self.outcome(outcome);
                 self.finish(word);
             } else {
-                self.leave(outcome, low as u32);
+                self.leave(outcome);
             }
         }
     }
@@ -1904,8 +1894,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     /// Leaves with `outcome` at `pc`.
-    fn leave(&mut self, outcome: u64, pc: u32) {
-        let word = self.outcome(outcome, u64::from(pc));
+    fn leave(&mut self, outcome: super::RegionExit) {
+        let pc = match outcome {
+            super::RegionExit::Resume(pc)
+            | super::RegionExit::Fallback(pc)
+            | super::RegionExit::Recompile(pc) => pc,
+            super::RegionExit::EntryMiss(_) => unreachable!("entry miss does not write back"),
+        };
+        let word = self.outcome(outcome);
         let block = match self.leaves.get(&pc) {
             Some(block) => *block,
             None => {
@@ -1920,7 +1916,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// A block that exits at `pc` for the general path.
     fn exit_block(&mut self, pc: u32) -> ir::Block {
-        self.outcome_block(OUTCOME_EXIT, u64::from(pc))
+        self.outcome_block(super::RegionExit::Fallback(pc))
     }
 
     /// Continues past a guard that `failed` decides, exiting at `pc` when it holds.
@@ -1954,7 +1950,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// compilation.
     fn widen_block(&mut self, pc: u32, widening: Widening) -> ir::Block {
         self.widenings.insert(pc, widening);
-        self.outcome_block(OUTCOME_WIDEN, u64::from(pc))
+        self.outcome_block(super::RegionExit::Recompile(pc))
     }
 
     /// `guard` of an `i32` assumption: `widening` was no `i32` when it fails.
@@ -2041,7 +2037,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Some(block) => {
                 self.body.builder.ins().jump(block, &[]);
             }
-            None => self.leave(OUTCOME_RESUME, target),
+            None => self.leave(super::RegionExit::Resume(target)),
         }
         Some(())
     }
@@ -2051,7 +2047,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Some(block) => {
                 self.body.builder.ins().jump(block, &[]);
             }
-            None => self.leave(OUTCOME_RESUME, pc + 1),
+            None => self.leave(super::RegionExit::Resume(pc + 1)),
         }
         Some(())
     }
