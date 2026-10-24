@@ -12121,6 +12121,56 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_lowers_tagged_plain_local_accesses() {
+    let source = r#"
+      function transfer() { return this.invoke.apply(this, arguments); }
+      const values = [{marker: 1}, undefined, NaN, 'tagged', true];
+      const receiver = {invoke(value) { return value; }};
+      let result;
+      for (let index = 0; index < 64; index++) {
+        result = transfer.call(receiver, values[index % values.length]);
+      }
+      if (result !== values[3]) throw Error('plain local tagged value changed');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-locals.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|body| {
+            body.header()
+                .name
+                .or(body.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "transfer")
+        })
+        .unwrap();
+    let body = program.function_get(function).unwrap();
+    assert!(body
+        .code
+        .iter()
+        .map(|packed| packed.as_wide().op().js_denotation())
+        .any(|denotation| denotation == crate::bytecode::JsDenotation::PlainLocalLoad));
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function as u32)
+    else {
+        panic!("transfer should use the shared general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly() {
     let source = r#"
       function combine(left, right) {
