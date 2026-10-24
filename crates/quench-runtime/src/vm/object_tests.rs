@@ -222,7 +222,7 @@ fn spread_sources_stay_rooted_through_the_loop_that_reuses_them() {
         .unwrap();
     for pc in head..=back_edge {
         let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
-        assert_ne!(root_map & (1u64 << register), 0, "pc {pc} drops register {register}");
+        assert_ne!(root_map & (1 << register), 0, "pc {pc} drops register {register}");
     }
 }
 
@@ -267,7 +267,7 @@ fn static_three_field_object_literals_share_the_shape_site() {
         let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
         for register in window.base..window.base + window.count {
             assert_ne!(
-                root_map & (1u64 << register),
+                root_map & (1 << register),
                 0,
                 "{mode}: register {register}"
             );
