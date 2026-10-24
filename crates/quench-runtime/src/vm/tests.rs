@@ -12168,7 +12168,22 @@ fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
     vm.programs
         .reject_js_function(id, 1, "unsupported-shape");
     assert!(vm.programs.js_tier_declined(id, 1));
-    assert!(!vm.js_tier_may_claim(&program, id, 1));
+    for _ in 0..30 {
+        assert!(!vm.js_tier_may_claim(&program, id, 1));
+    }
+    assert!(
+        vm.js_tier_may_claim(&program, id, 1),
+        "a rejected bounded legacy candidate should promote to general dispatch"
+    );
+    assert!(matches!(
+        vm.programs.js_tier(id, 1),
+        Some(super::program_store::JsTierState::PromotionPending)
+    ));
+    vm.programs.install_js_tier(id, 1, None);
+    assert!(
+        !vm.js_tier_may_claim(&program, id, 1),
+        "code-cache or codegen exhaustion remains terminal"
+    );
 }
 
 #[test]
