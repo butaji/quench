@@ -1,0 +1,16 @@
+raytrace           grow med 3004 max 3080 s 1933 | hyb med 2988 max 3088 s 1823
+raytrace      jit  grow med 2900 max 3064 s 2059 | hyb med 2904 max 3048 s 2094
+crypto             grow med 3188 max 3304 s 2465 | hyb med 3172 max 3300 s 2442
+crypto        jit  grow med 3208 max 3516 s 2326 | hyb med 3192 max 3356 s 2349
+regexp             grow med 6092 max 6096 s 2435 | hyb med 5988 max 6228 s 2479
+regexp        jit  grow med 6000 max 6132 s 2381 | hyb med 6000 max 6188 s 2411
+richards           grow med 2540 max 2624 s 1308 | hyb med 2420 max 2592 s 1455
+richards      jit  grow med 2552 max 2640 s 1353 | hyb med 2528 max 2724 s 1481
+deltablue          grow med 3016 max 3696 s 1210 | hyb med 3016 max 3016 s 1057
+deltablue     jit  grow med 3036 max 3232 s 1183 | hyb med 3036 max 3240 s 1161
+navier-stokes      grow med 4036 max 4096 s 2879 | hyb med 4036 max 4164 s 2774
+navier-stokes jit  grow med 4192 max 4316 s 2803 | hyb med 4188 max 4292 s 2862
+typescript         grow med 43052 max 43280 s 418 | hyb med 42936 max 43560 s 437
+eslint             grow med 30412 max 30920 s 405 | hyb med 30536 max 31068 s 362
+acorn              grow med 14240 max 14656 s 154 | hyb med 14324 max 14736 s 149
+ajv                grow med 20112 max 20184 s 331 | hyb med 20104 max 20108 s 348
