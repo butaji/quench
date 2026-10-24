@@ -7616,10 +7616,10 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether the JavaScript tier may still claim `function` of `program`: it runs, the
-    /// function passes its candidate filter, and the tier has not declined it. The tier
-    /// observes and enters functions at frame entry (`js_tier_frame_entry`), so such calls
-    /// keep their frames rather than running frameless in the lane. A permanently declined
-    /// function stays frameless unless diagnostics need its rejected-entry counters.
+    /// function passes its candidate filter, and the tier has not declined it. The tier enters
+    /// frames (`js_tier_frame_entry`) and frameless lane activations (`lane_tier_entry`)
+    /// alike, so a claim never changes how the function is called. A permanently declined
+    /// function stays claimable only while diagnostics need its rejected-entry counters.
     pub(super) fn js_tier_may_claim(&self, program: &ResidualProgram, id: ProgramId, function: u32) -> bool {
         self.js_tier_runs()
             && program.kind != crate::bytecode::ProgramKind::Wasm
@@ -7628,6 +7628,68 @@ impl<H: Host> Vm<H> {
                 .is_some_and(|body| super::js_compiled::function_candidate(body, program))
             && (!self.programs.js_tier_declined(id, function)
                 || self.programs.js_jit_diagnostics_enabled())
+    }
+
+    /// The JavaScript tier at the entry of a frameless lane activation of `function`, as
+    /// `js_tier_frame_entry` is at a frame's: with the native result, the PC of the
+    /// instruction the activation continues at, its register and the value to write there;
+    /// else `None`, and the activation runs from its entry. `parameters` are the
+    /// activation's parameter registers, `this` its receiver where the function binds its
+    /// own, and `env` the closure's environment, which its captures walk.
+    pub(super) fn js_tier_activation_entry(
+        &mut self,
+        program: &ResidualProgram,
+        id: ProgramId,
+        function: u32,
+        parameters: &[Value],
+        this: Option<Value>,
+        env: Value,
+    ) -> Option<(usize, crate::bytecode::Register, Value)> {
+        // A compiled body that reads only its parameters runs as a direct call does
+        // (`js_jit_compiled_call`); the activation completes at its `Return` with the result.
+        if let Some(value) = self.js_jit_compiled_call(program, (id, function), false, parameters) {
+            let body = program.function_get(function as usize)?;
+            let last_pc = body.code.len().checked_sub(1)?;
+            let terminal = body.code.get(last_pc)?.as_wide();
+            if terminal.op() == Op::Return {
+                return Some((last_pc, terminal.register_a(), value));
+            }
+        }
+        let entry = TierEntry {
+            program: id,
+            function,
+            this,
+            parameters: parameters.iter().copied().collect(),
+            captures: TierCaptures::Environment(env),
+            allocates: false,
+        };
+        let entered = self.js_jit_at_entry(program, &entry);
+        if entered.is_none() {
+            self.programs.record_js_jit_fallback_entry(id, function);
+        }
+        entered
+    }
+
+    /// The capture at `depth` and `slot` of the activation an entry reads.
+    fn tier_capture(&mut self, captures: TierCaptures, depth: u16, slot: u16) -> Option<Value> {
+        match captures {
+            TierCaptures::Frame(frame) => self.cached_direct_capture(frame, depth, slot),
+            TierCaptures::Environment(env) => {
+                // A frameless activation's function has no environment of its own
+                // (`lane_load_capture_walk`).
+                let (slots, root) = self.walked_capture_slots(env, false, depth)?;
+                // SAFETY: as `Vm::walked_capture_slots`; nothing collects before the read.
+                self.owned_capture(unsafe { &*slots }, root, slot)
+            }
+        }
+    }
+
+    /// `tier_capture`, and for a frame the root bindings `jit_owned_capture` also reads.
+    fn tier_owned_capture(&mut self, captures: TierCaptures, depth: u16, slot: u16) -> Option<Value> {
+        match captures {
+            TierCaptures::Frame(frame) => self.jit_owned_capture(frame, depth, slot),
+            TierCaptures::Environment(_) => self.tier_capture(captures, depth, slot),
+        }
     }
 
     /// The JavaScript tier at the entry of `frame`, an initialized frame at PC zero, made
@@ -7643,7 +7705,17 @@ impl<H: Host> Vm<H> {
         if self.execution_mode != ExecutionMode::Compiled {
             return None;
         }
-        if let Some((return_pc, return_register, value)) = self.js_jit_at_entry(program, frame) {
+        let record = self.frames.get(frame).filter(|record| record.pc == 0)?;
+        let params = program.function_get(record.function as usize)?.params;
+        let entry = TierEntry {
+            program: record.program,
+            function: record.function,
+            this: record.fixed_this.then_some(record.this),
+            parameters: record.registers.iter().copied().take(usize::from(params)).collect(),
+            captures: TierCaptures::Frame(frame),
+            allocates: true,
+        };
+        if let Some((return_pc, return_register, value)) = self.js_jit_at_entry(program, &entry) {
             // The frame's own register file: a lane frame call reaches here before
             // `active_registers` names the frame (`lane_enter_script_frame`).
             self.frames[frame].registers[usize::from(return_register)] = value;
@@ -7667,17 +7739,14 @@ impl<H: Host> Vm<H> {
     fn js_jit_numeric_find_at_entry(
         &mut self,
         program: &ResidualProgram,
-        frame: usize,
+        activation: &TierEntry,
         candidate: super::js_compiled::JsJitNumericFind,
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
         const MAX_STEPS: usize = 256;
-        let program_id = self.frames.get(frame)?.program;
-        let function_id = self.frames.get(frame)?.function;
-        if !self.frames[frame].fixed_this {
-            return None;
-        }
+        let (program_id, function_id) = (activation.program, activation.function);
+        let receiver = activation.this?;
         let (key_value, index_value, hash_value) = {
-            let arguments = self.frames[frame].registers.get(..3)?;
+            let arguments = activation.parameters.get(..3)?;
             (arguments[0], arguments[1], arguments[2])
         };
         if key_value.as_number().is_none() || index_value.as_int().is_none() {
@@ -7686,7 +7755,6 @@ impl<H: Host> Vm<H> {
         let Some(key_hash) = hash_value.as_number() else {
             return None;
         };
-        let receiver = self.frames[frame].this;
         let array = match self.cached_field_hit(program, receiver, candidate.list_cache) {
             super::object::FieldCacheProbe::Hit(value) => value,
             super::object::FieldCacheProbe::Ineligible => {
@@ -7742,8 +7810,8 @@ impl<H: Host> Vm<H> {
                 let equals_function = if let Some(equals_function) = cached_equals_function {
                     equals_function
                 } else {
-                    let equals = self.jit_owned_capture(
-                        frame,
+                    let equals = self.tier_owned_capture(
+                        activation.captures,
                         candidate.equals_depth,
                         candidate.equals_slot,
                     )?;
@@ -7805,15 +7873,12 @@ impl<H: Host> Vm<H> {
     pub(super) fn js_jit_at_entry(
         &mut self,
         program: &ResidualProgram,
-        frame: usize,
+        entry: &TierEntry,
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
-        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm
-            || self.frames.get(frame)?.pc != 0
-        {
+        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm {
             return None;
         }
-        let program_id = self.frames[frame].program;
-        let function_id = self.frames[frame].function;
+        let (program_id, function_id) = (entry.program, entry.function);
         let function = program.function_get(function_id as usize)?;
         let facts = self.programs.js_entry_facts(program_id, function_id)?;
         // Most entries are of functions no entry path can claim; diagnostics still count them.
@@ -7822,14 +7887,14 @@ impl<H: Host> Vm<H> {
         }
         let numeric_find_candidate = facts.numeric_find.filter(|_| jit_numeric_find_enabled());
         if let Some(candidate) = numeric_find_candidate
-            && let Some(result) = self.js_jit_numeric_find_at_entry(program, frame, candidate)
+            && let Some(result) = self.js_jit_numeric_find_at_entry(program, entry, candidate)
         {
             return Some(result);
         }
         let field_increment_candidate = facts.field_increment;
         let mut field_increment_diagnostic_entry_recorded = false;
         if let Some(candidate) = field_increment_candidate {
-            let fixed_this = self.frames[frame].fixed_this;
+            let fixed_this = entry.this.is_some();
             if self.programs.js_jit_diagnostics_enabled() {
                 self.programs.record_js_jit_entry(
                     program_id,
@@ -7844,10 +7909,10 @@ impl<H: Host> Vm<H> {
                 );
                 field_increment_diagnostic_entry_recorded = true;
             }
-            if fixed_this
+            if let Some(receiver) = entry.this
                 && self.cached_field_increment_hit(
                     program,
-                    self.frames[frame].this,
+                    receiver,
                     candidate.atom,
                     candidate.read_cache_site,
                     candidate.write_cache_site,
@@ -7869,7 +7934,7 @@ impl<H: Host> Vm<H> {
             facts.field_return;
         let mut field_return_diagnostic_entry_recorded = field_increment_diagnostic_entry_recorded;
         if let Some(candidate) = field_return_candidate {
-            let fixed_this = self.frames[frame].fixed_this;
+            let fixed_this = entry.this.is_some();
             if self.programs.js_jit_diagnostics_enabled() {
                 self.programs.record_js_jit_entry(
                     program_id,
@@ -7884,8 +7949,7 @@ impl<H: Host> Vm<H> {
                 );
                 field_return_diagnostic_entry_recorded = true;
             }
-            if fixed_this {
-                let receiver = self.frames[frame].this;
+            if let Some(receiver) = entry.this {
                 if let super::object::FieldCacheProbe::Hit(value) =
                     self.cached_field_hit(program, receiver, candidate.cache_site)
                 {
@@ -7944,12 +8008,12 @@ impl<H: Host> Vm<H> {
             capture_arguments.extend(candidate);
         }
         let capture_number = capture_argument.and_then(|capture| {
-            self.cached_direct_capture(frame, capture.depth, capture.slot)
+            self.tier_capture(entry.captures, capture.depth, capture.slot)
                 .and_then(Value::as_number)
         });
 
         let params = usize::from(function.params);
-        let registers = self.frames[frame].registers.get(..params)?.to_vec();
+        let registers = entry.parameters.get(..params)?.to_vec();
         let first_argument = registers.first().copied();
         let mut numeric_field_inputs: smallvec::SmallVec<
             [super::js_compiled::JsJitNumericFieldInput; 4],
@@ -7997,7 +8061,7 @@ impl<H: Host> Vm<H> {
         }
         let mut capture_values: smallvec::SmallVec<[f64; 4]> = smallvec::SmallVec::new();
         let captures_numeric = capture_arguments.iter().all(|capture| {
-            self.cached_direct_capture(frame, capture.depth, capture.slot)
+            self.tier_capture(entry.captures, capture.depth, capture.slot)
                 .and_then(Value::as_number)
                 .is_some_and(|value| {
                     capture_values.push(value);
@@ -8013,11 +8077,11 @@ impl<H: Host> Vm<H> {
             for input in numeric_field_inputs.iter().copied() {
                 let receiver = match input.receiver {
                     super::js_compiled::JsJitFieldReceiver::This => {
-                        if !self.frames[frame].fixed_this {
+                        let Some(receiver) = entry.this else {
                             numeric = false;
                             break;
-                        }
-                        self.frames[frame].this
+                        };
+                        receiver
                     }
                     super::js_compiled::JsJitFieldReceiver::Parameter(parameter) => {
                         let Some(receiver) = registers.get(usize::from(parameter)).copied() else {
@@ -8028,7 +8092,7 @@ impl<H: Host> Vm<H> {
                     }
                     super::js_compiled::JsJitFieldReceiver::Capture { capture, .. } => {
                         let Some(receiver) =
-                            self.cached_direct_capture(frame, capture.depth, capture.slot)
+                            self.tier_capture(entry.captures, capture.depth, capture.slot)
                         else {
                             numeric = false;
                             break;
@@ -8129,7 +8193,9 @@ impl<H: Host> Vm<H> {
             Some(compiled) => compiled.string_transform_kind(),
             None => facts.string_transform,
         };
+        // Its result allocates a string, which no lane activation may (`TierEntry::allocates`).
         let string_transform = string_transform_kind
+            .filter(|_| entry.allocates)
             .filter(|kind| self.js_jit_string_transform_guard(*kind))
             .filter(|_| {
                 first_argument.is_some_and(|value| self.heap.is_string(value))
@@ -9857,6 +9923,31 @@ const INTEGER_TAG: u64 = crate::value::INTEGER_TAG_BITS;
 
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
+
+/// What the JavaScript tier reads of an activation it enters at PC zero: a VM frame's
+/// (`Vm::js_tier_frame_entry`) or a frameless lane activation's
+/// (`Vm::js_tier_activation_entry`). Either way a native result continues the same
+/// activation, so the tier never decides how a function is called.
+pub(super) struct TierEntry {
+    program: ProgramId,
+    function: u32,
+    /// The receiver, where the function binds its own (`Frame::fixed_this`).
+    this: Option<Value>,
+    /// The activation's parameter registers.
+    parameters: smallvec::SmallVec<[Value; 8]>,
+    captures: TierCaptures,
+    /// Whether a native result may allocate: not in a lane activation, where nothing collects.
+    allocates: bool,
+}
+
+/// Where an entry's captures are read.
+#[derive(Clone, Copy)]
+pub(super) enum TierCaptures {
+    /// Through the frame's environment and capture cache.
+    Frame(usize),
+    /// Through the closure's environment.
+    Environment(Value),
+}
 
 #[cfg(test)]
 mod tests {

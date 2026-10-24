@@ -10610,6 +10610,53 @@ fn js_jit_compiles_straight_line_plain_local_temporaries() {
     ));
 }
 
+/// A function the tier claims stays a frameless lane target: its activations start at the
+/// tier prologue (`lane_tier_prologue`), which enters the compiled body and completes the
+/// activation at its `Return`.
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_enters_compiled_callees_from_frameless_lane_activations() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function add(left, right) { return left + right; }
+          function drive(count) {
+            let sum = 0;
+            for (let index = 0; index < count; index++) sum = add(sum, index);
+            return sum;
+          }
+          for (let round = 0; round < 4; round++) {
+            if (drive(200) !== 19900) throw Error('frameless tier result');
+          }
+        "#,
+        "js-jit-frameless-entry.js",
+    ))
+    .unwrap();
+    let add = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|atom| &program.atoms[atom as usize] == "add")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, add)
+    else {
+        panic!("the numeric callee should be compiled");
+    };
+    assert!(
+        compiled.native_entries() >= 500,
+        "the lane's frameless calls should enter native code, got {}",
+        compiled.native_entries()
+    );
+}
+
 #[test]
 #[cfg(not(quench_profiled))]
 fn js_jit_enters_compiled_known_callees_without_pushing_a_frame() {

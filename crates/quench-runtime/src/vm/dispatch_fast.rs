@@ -165,6 +165,12 @@ pub(super) struct LaneView {
     /// The loops whose backward jumps run `lane_loop_jump`. The view owns them for the
     /// records that point into them, which are their only readers.
     loops: Box<[LoopSite]>,
+    /// The record an activation starts at (`LaneView::start`): its first, or `prologue`
+    /// while the JavaScript tier may claim the function (`LaneView::claim_for_tier`).
+    start: std::cell::Cell<Ip>,
+    /// The tier prologue (`lane_tier_prologue`), outside the records so the function's PCs
+    /// stay its records'; written when the tier may claim the function.
+    prologue: std::cell::UnsafeCell<LaneInstruction>,
     plain_backward_jump_sites: usize,
     osr_rejections: Option<Box<[(super::compiled::RegionRejection, usize)]>>,
 }
@@ -356,6 +362,38 @@ impl LaneView {
 
     pub(super) fn records(&self) -> Ip {
         std::cell::UnsafeCell::raw_get(self.records.as_ptr()).cast_const()
+    }
+
+    /// The record a frameless activation starts at: the first, or the tier prologue.
+    #[inline(always)]
+    fn start(&self) -> Ip {
+        self.start.get()
+    }
+
+    /// Starts the function's frameless activations at the tier prologue, which enters the
+    /// JavaScript tier with its `params` parameters and, where it `binds_this`, its receiver
+    /// (`lane_tier_prologue`). The prologue's fields hold those: `imm` the function, `a` its
+    /// parameter count, `b` whether it binds its own `this`.
+    fn claim_for_tier(&self, handler: Handler, function: u32, params: u16, binds_this: bool) {
+        let prologue = self.prologue.get();
+        // SAFETY: the lane runs on the view's thread, and nothing reads the prologue while
+        // the start does not name it.
+        unsafe {
+            *prologue = LaneInstruction {
+                handler: handler as *const (),
+                operand: LaneOperand { imm: function },
+                a: params,
+                b: u16::from(binds_this),
+                c: 0,
+                call_link: std::cell::Cell::new(NO_CALL_LINK),
+            };
+        }
+        self.start.set(prologue.cast_const());
+    }
+
+    /// Starts activations at the first record again, once the tier declines the function.
+    fn release_from_tier(&self) {
+        self.start.set(self.records());
     }
 }
 
@@ -8282,9 +8320,9 @@ impl<H: Host> Vm<H> {
         } else {
             code
         };
-        // A function the JavaScript tier may still claim keeps its frame, where the tier
-        // counts and enters it; uncached, so the lane takes it once the tier declines it.
-        if function == super::ROOT_FUNCTION_ID || self.js_tier_may_claim(code, program, function) {
+        // The JavaScript tier enters a frameless activation at its prologue as it enters a
+        // frame (`lane_tier_prologue`), so a function it may claim is cached like any other.
+        if function == super::ROOT_FUNCTION_ID {
             return None;
         }
         // A numeric body's target differs from its plain closures' (below), so only plain
@@ -8405,6 +8443,16 @@ impl<H: Host> Vm<H> {
                 initializes: constructs && body.only_initializes_this_fields(&code.constants),
             }
         });
+        if !environment
+            && !cross
+            && !body.rest
+            && !plan.forwards_arguments
+            && shape.entry == CallEntry::Activates
+            && self.js_tier_may_claim(code, program, function)
+        {
+            // SAFETY: the program store keeps a derived view alive with its program.
+            unsafe { &*view }.claim_for_tier(lane_tier_prologue::<H>, function, body.params, !body.is_arrow);
+        }
         let capture = self.target_capture(code, program, env);
         let target = ScriptCallTarget {
             callee,
@@ -10576,6 +10624,41 @@ fn lane_activation_room<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget) -> bool 
         && vm.lane_stack.values.capacity() - vm.lane_stack.values.len() >= usize::from(target.room)
 }
 
+script_handler! {
+    /// The tier prologue a frameless activation of a function the JavaScript tier may claim
+    /// starts at (`LaneView::claim_for_tier`): the tier runs the body natively where it can
+    /// (`Vm::js_tier_activation_entry`), and the activation continues at the record the
+    /// native result completes, with the result in its register; else at its first record.
+    /// The tier enters the activation as it would a frame, so claiming a function never
+    /// changes how it is called. Once the tier declines the function, its activations start
+    /// at the first record again.
+    #[inline(never)]
+    fn lane_tier_prologue<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let (function, params, binds_this) = (i.imm(), i.a, i.b != 0);
+        // SAFETY: the activation just set the context to its own function's.
+        let (code, program, base, this, env) =
+            unsafe { (&*(*cx).code, (*cx).program, (*cx).base, (*cx).this, (*cx).env) };
+        let receiver = (binds_this && !this.is_deleted()).then_some(this);
+        // SAFETY: the activation's registers hold its parameters from its first.
+        let parameters = unsafe { std::slice::from_raw_parts(r.0, usize::from(params)) };
+        if let Some((pc, register, value)) =
+            vm.js_tier_activation_entry(code, program, function, parameters, receiver, env)
+        {
+            r.set(register, value);
+            // SAFETY: the tier returns a PC of the function, whose records are contiguous.
+            next!(cx, r, unsafe { base.add(pc) }, Carried::script(cx))
+        }
+        if !vm.js_tier_may_claim(code, program, function)
+            // SAFETY: the program's views outlive the lane run.
+            && let Some(own) = unsafe { &*(*cx).views }.get(function as usize).and_then(std::cell::OnceCell::get)
+        {
+            own.release_from_tier();
+        }
+        next!(cx, r, base, Carried::script(cx))
+    }
+}
+
 /// Whether activating `target` leaves the running program. Every activation tests it, so an
 /// instantiation whose callers route only same-program targets to it (`MAY_CROSS` false)
 /// still activates a cross-program target exactly, on its cold branch: a routing mistake
@@ -10659,7 +10742,9 @@ fn lane_push_activation<H: Host, const GENERAL: bool>(
     if cross {
         lane_enter_program(cx, target.program);
     }
-    (callee_registers, base)
+    // A construction runs its body from the first record; the tier enters plain calls.
+    let start = if constructs { base } else { unsafe { (*target.view).start() } };
+    (callee_registers, start)
 }
 
 /// `lane_activate` of an environment target (`CallEntry::Environment`): its window holds
@@ -11130,7 +11215,8 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     if vm.programs.js_jit_diagnostics_enabled() {
         vm.programs.record_js_jit_lane_entry(target.program, target.function);
     }
-    Ok((callee_registers, base))
+    let start = if constructs { base } else { unsafe { (*target.view).start() } };
+    Ok((callee_registers, start))
 }
 
 /// Place kept values in a frameless activation's parameter registers.
@@ -14131,17 +14217,26 @@ fn derive_lane_view<H: Host>(
             params: function.params,
             initial: function.initial_register.value(),
         });
+    let records: Box<[std::cell::UnsafeCell<LaneInstruction>]> =
+        records.into_iter().map(std::cell::UnsafeCell::new).collect();
+    let first = std::cell::UnsafeCell::raw_get(records.as_ptr()).cast_const();
     LaneView {
-        records: records
-            .into_iter()
-            .map(std::cell::UnsafeCell::new)
-            .collect(),
+        records,
         entries,
         memory_register,
         activation,
         target_body: std::cell::OnceCell::new(),
         environment_window,
         loops,
+        start: std::cell::Cell::new(first),
+        prologue: std::cell::UnsafeCell::new(LaneInstruction {
+            handler: std::ptr::null(),
+            operand: LaneOperand { imm: 0 },
+            a: 0,
+            b: 0,
+            c: 0,
+            call_link: std::cell::Cell::new(NO_CALL_LINK),
+        }),
         plain_backward_jump_sites: decoded
             .iter()
             .enumerate()
