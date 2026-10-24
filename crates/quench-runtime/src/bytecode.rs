@@ -2188,7 +2188,6 @@ impl Function {
                 && !self.inherited_with_scope
                 && self.local_registers.is_empty()
                 && self.arguments_slot.is_none()
-                && self.handlers.is_empty()
                 && self.binding_sites.is_empty()
                 && self.selective_capture_slots.is_some()
                 && self.initial_register == InitialRegister::Undefined
