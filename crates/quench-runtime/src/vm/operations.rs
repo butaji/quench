@@ -35,6 +35,7 @@ macro_rules! number_relations {
         pub(super) enum NumberRelation { $($relation),+ }
 
         impl NumberRelation {
+            #[inline(always)]
             pub(super) fn from_operator(op: u32) -> Option<Self> {
                 $(
                     if $(op == BinaryOperator::$operator as u32)||+ {
@@ -85,6 +86,7 @@ macro_rules! number_arithmetic {
         pub(super) enum NumberArithmetic { $($operation),+ }
 
         impl NumberArithmetic {
+            #[inline(always)]
             pub(super) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == BinaryOperator::$operator as u32 {
@@ -163,6 +165,7 @@ macro_rules! number_unary {
         pub(super) enum NumberUnary { $($operation),+ }
 
         impl NumberUnary {
+            #[inline(always)]
             pub(super) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == UnaryOperator::$operator as u32 {
