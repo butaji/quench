@@ -176,7 +176,9 @@ const NO_RESULT_FLAGS: Register = 0;
 #[derive(Clone, Debug)]
 pub enum Constant {
     Number(f64),
-    String(String),
+    /// Shared with the heap strings materialized from it (`JsString::from_shared_text`), so a
+    /// long literal's text is held once.
+    String(std::rc::Rc<str>),
     StringUnits(Vec<u16>),
     BigInt(num_bigint::BigInt),
     WasmBits64(u64),
@@ -1308,6 +1310,8 @@ pub struct Function {
     pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
     /// Lazily derived `names_resolve_statically`; never serialized.
     pub(crate) static_name_scope: std::cell::OnceCell<bool>,
+    /// Lazily derived `has_dynamic_scope_access`; never serialized.
+    pub(crate) dynamic_scope_access: std::cell::OnceCell<bool>,
     /// Whether the JavaScript tier's candidate filter admits the function
     /// (`js_compiled::function_candidate`), derived on its first entry; never serialized.
     pub(crate) js_tier_candidate: std::cell::OnceCell<bool>,
@@ -2433,10 +2437,14 @@ impl Function {
     /// Whether the function itself can reach bindings by name at run time: it was created
     /// inside a `with` scope, records by-name lexical sites, resolves names dynamically, or
     /// calls direct eval (also from a parameter scope).
+    /// Derived once per function: lane views, capture layouts and name resolution each ask,
+    /// and the instruction scan had cost 1.3% of the axios npm scenario's instructions.
     pub(crate) fn has_dynamic_scope_access(&self) -> bool {
-        self.inherited_with_scope
-            || !self.binding_sites.is_empty()
-            || self.instructions().any(WideInstruction::resolves_dynamic_scope)
+        *self.dynamic_scope_access.get_or_init(|| {
+            self.inherited_with_scope
+                || !self.binding_sites.is_empty()
+                || self.instructions().any(WideInstruction::resolves_dynamic_scope)
+        })
     }
 
     /// Whether the body enters a `with` statement, whose by-name loads may denote
