@@ -11179,6 +11179,181 @@ fn js_jit_interrupt_exits_through_the_shared_native_entry() {
 
     assert!(result.is_none(), "interrupted native execution must not return a guest result");
     assert_eq!(compiled.native_entries(), 1, "the shared adapter must enter once");
+    assert_eq!(compiled.specialized_guard_misses(), 0, "interrupts are native exits, not entry guard misses");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_repeated_specialized_guard_misses_release_cache_for_general_tier() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "function add(left, right) { return left + right; }",
+        "js-jit-specialized-guard-promotion.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "add")
+        })
+        .unwrap() as u32;
+    let artifact = super::js_compiled::compile(&program, function).expect("numeric add artifact");
+    let compiled = Rc::new(
+        super::compiled::CompiledJsFunction::from_artifact(artifact)
+            .expect("executable specialized artifact"),
+    );
+    let bytes = compiled.mapped_bytes();
+    let mut programs = super::program_store::ProgramStore::default();
+    programs.enable_js_general_dispatch();
+    programs.compile_general_baseline_when_hot();
+    let id = programs.insert(program).unwrap();
+    assert!(programs.install_js_tier(id, function, Some(compiled), false));
+    assert_eq!(programs.jit_mapped_bytes(), bytes);
+
+    for _ in 0..super::program_store::JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD {
+        let due = programs.note_js_specialized_guard_miss(id, function, 5);
+        assert_eq!(
+            due,
+            programs.js_tier(id, function).is_some_and(|state| matches!(state, super::program_store::JsTierState::GeneralCompileDue)),
+            "the tier should become due exactly when the miss threshold is reached"
+        );
+    }
+    assert!(matches!(
+        programs.js_tier(id, function),
+        Some(super::program_store::JsTierState::GeneralCompileDue)
+    ));
+    assert_eq!(
+        programs.jit_mapped_bytes(),
+        0,
+        "the specialized mapping must stop consuming shared JIT cache budget at demotion"
+    );
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_counts_only_tagged_guard_misses_after_falsy_native_success() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function add(left, right) { return left + right; }
+          function read(scale, node) { return node.value * scale; }
+          for (let index = 0; index < 40; index++) {
+            add(index, 0);
+            read(2, { value: index });
+          }
+          if (add(0, 0) !== 0) throw Error('falsy numeric result');
+          if (add('tag', 1) !== 'tag1') throw Error('tagged fallback');
+          new add('frame', 1);
+          let gets = 0;
+          const accessor = { get value() { gets++; return 3; } };
+          if (read(2, accessor) !== 6 || gets !== 1) throw Error('shape fallback');
+        "#,
+        "js-jit-specialized-guard-miss-count.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "add")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(TestHost::default());
+    vm.programs.enable_js_general_dispatch();
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("one confirmed miss should not yet replace the specialized tier");
+    };
+    assert!(!compiled.is_general_dispatch());
+    assert_eq!(
+        compiled.specialized_guard_misses(),
+        2,
+        "numeric zero must not count, and each frameless/frame miss must count once"
+    );
+    let read = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "read")
+        })
+        .unwrap() as u32;
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, read)
+    else {
+        panic!("the numeric field reader should retain its specialized tier after one miss");
+    };
+    assert!(!compiled.is_general_dispatch());
+    assert_eq!(compiled.specialized_guard_misses(), 1, "shape guard miss count");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_specialized_guard_misses_handoff_to_general_dispatch() {
+    let source = format!(
+        r#"
+          function add(left, right) {{ return left + right; }}
+          for (let index = 0; index < 40; index++) add(index, 1);
+          for (let index = 0; index < {misses}; index++) {{
+            const expected = 'tag' + index;
+            if (add('tag', index) !== expected) throw Error('tagged interpreter fallback');
+          }}
+          const result = add('last', 1);
+          if (result !== 'last1') throw Error('general tier result');
+          print(result);
+        "#,
+        misses = super::program_store::JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD,
+    );
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        &source,
+        "js-jit-specialized-guard-general-dispatch.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "add")
+        })
+        .unwrap() as u32;
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
+    interpreter.execute(&program).unwrap();
+
+    let compiled_output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(compiled_output.clone()));
+    vm.programs.enable_js_general_dispatch();
+    vm.programs.compile_general_baseline_when_hot();
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("repeated tagged guard misses should promote the function");
+    };
+    assert!(compiled.is_general_dispatch());
+    assert!(compiled.native_entries() > 0, "the follow-up call should run natively");
 }
 
 #[test]
