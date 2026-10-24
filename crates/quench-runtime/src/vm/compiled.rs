@@ -456,10 +456,33 @@ pub(super) fn emit_number_bitwise_operation(
 
 /// Emit JavaScript ToBoolean for a Number after the caller has proved its value is numeric.
 fn emit_number_truthiness(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
-    let zero = builder.ins().f64const(Ieee64::with_bits(0.0_f64.to_bits()));
-    let nonzero = builder.ins().fcmp(FloatCC::NotEqual, number, zero);
-    let not_nan = builder.ins().fcmp(FloatCC::Equal, number, number);
-    builder.ins().band(nonzero, not_nan)
+    struct Emit<'a, 'f> {
+        builder: &'a mut FunctionBuilder<'f>,
+    }
+
+    impl crate::vm::operations::NumberTruthinessStage<ir::Value> for Emit<'_, '_> {
+        type Predicate = ir::Value;
+
+        fn zero(&mut self) -> ir::Value {
+            self.builder
+                .ins()
+                .f64const(Ieee64::with_bits(0.0_f64.to_bits()))
+        }
+
+        fn equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Predicate {
+            self.builder.ins().fcmp(FloatCC::Equal, left, right)
+        }
+
+        fn not_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Predicate {
+            self.builder.ins().fcmp(FloatCC::NotEqual, left, right)
+        }
+
+        fn and(&mut self, left: Self::Predicate, right: Self::Predicate) -> Self::Predicate {
+            self.builder.ins().band(left, right)
+        }
+    }
+
+    crate::vm::operations::number_truthiness(&mut Emit { builder }, number)
 }
 
 /// Compile a JS numeric function-entry region with the same register views used by Wasm and
