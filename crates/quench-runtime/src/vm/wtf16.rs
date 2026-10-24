@@ -16,6 +16,26 @@ fn charge_materialized(bytes: usize) {
     MATERIALIZED_BYTES.with(|total| total.set(total.get().saturating_add(bytes)));
 }
 
+/// Decoded text at least this many bytes long keeps its UTF-8 until its units are read
+/// (`JsString::decoded`): file-sized text, which a reader either hands on whole (a source to
+/// compile, data kept for later) or reads once to the end. A shorter string is more likely
+/// read unit by unit soon, which would keep both forms.
+const DEFERRED_DECODE_MIN_BYTES: usize = 64 << 10;
+
+/// The `length` UTF-16 units of `text`, written straight into their shared allocation.
+fn wide_units(text: &str, length: usize) -> Rc<[u16]> {
+    let mut storage = Rc::<[u16]>::new_uninit_slice(length);
+    let output = Rc::get_mut(&mut storage).expect("a new allocation is unshared");
+    let mut written = 0;
+    for (slot, unit) in output.iter_mut().zip(text.encode_utf16()) {
+        slot.write(unit);
+        written += 1;
+    }
+    assert_eq!(written, length, "the text has the units counted for it");
+    // SAFETY: every unit was written.
+    unsafe { storage.assume_init() }
+}
+
 /// Text bytes made on demand and not yet charged, which the caller now charges.
 #[inline(always)]
 pub(crate) fn take_materialized_bytes() -> usize {
@@ -472,9 +492,9 @@ struct JsStringInner {
 }
 
 /// A string's rarely present parts, which never coexist: the concatenated halves, present
-/// exactly while `flat` is unset, and a `Wide` string's host text, made after flattening (an
-/// ASCII string's units are its host text). Sharing one word keeps a flat string's
-/// allocation small.
+/// exactly while a rope's `flat` is unset, and a `Wide` string's host text, made after
+/// flattening or, for decoded text (`JsStringInner::decoded`), before it (an ASCII string's
+/// units are its host text). Sharing one word keeps a flat string's allocation small.
 enum Aside {
     Rope(Rc<JsStringInner>, Rc<JsStringInner>),
     Host(Rc<str>),
@@ -494,6 +514,27 @@ impl JsStringInner {
             flat: OnceCell::from(units),
             aside: UnsafeCell::new(None),
         }
+    }
+
+    /// Non-ASCII text of `length` units held as the UTF-8 `host` it was decoded from: its
+    /// units are made from it when first read (`JsString::flattened`), and its host text
+    /// needs no transcoding. UTF-8 text holds no lone surrogate, so the host text gives back
+    /// exactly the units `host_string` would make from them.
+    fn decoded(host: Rc<str>, length: usize) -> Self {
+        Self {
+            length: stored_length(length),
+            ascii: false,
+            flat: OnceCell::new(),
+            aside: UnsafeCell::new(Some(Rc::new(Aside::Host(host)))),
+        }
+    }
+
+    /// The host text of decoded text whose units are not made yet (`decoded`).
+    fn unflattened_host(&self) -> Option<&str> {
+        if self.flat.get().is_some() {
+            return None;
+        }
+        self.cached_host()
     }
 
     fn concat(left: Rc<Self>, right: Rc<Self>) -> Self {
@@ -573,7 +614,11 @@ impl JsStringInner {
                 visit(units.view());
                 continue;
             }
-            let (left, right) = part.halves().expect("an unflattened string is a rope");
+            if let Some(host) = part.unflattened_host() {
+                visit(Units::Wide(&wide_units(host, part.length as usize)));
+                continue;
+            }
+            let (left, right) = part.halves().expect("an unflattened string is a rope or decoded text");
             pending.push(right);
             pending.push(left);
         }
@@ -805,9 +850,29 @@ impl JsString {
         if text.is_ascii() {
             return Self::from_flat(FlatUnits::ascii(text));
         }
-        Self::from_flat(FlatUnits::Wide(Rc::from(
-            text.encode_utf16().collect::<Vec<_>>(),
-        )))
+        Self::from_flat(FlatUnits::Wide(wide_units(text, text.encode_utf16().count())))
+    }
+
+    /// Text decoded out of data (a file's or a buffer's bytes). Long non-ASCII text keeps the
+    /// UTF-8 it came from and makes its units only when a reader needs them
+    /// (`JsStringInner::decoded`): such text is mostly a source handed to a compiler, which
+    /// reads host text, or data kept for later, and its units would take twice the bytes of
+    /// mostly-ASCII text.
+    pub(crate) fn decoded(text: &str) -> Self {
+        if text.is_ascii() || text.len() < DEFERRED_DECODE_MIN_BYTES {
+            return Self::from_str(text);
+        }
+        charge_materialized(text.len());
+        Self::shared(JsStringInner::decoded(Rc::from(text), text.encode_utf16().count()))
+    }
+
+    /// The host text of decoded text whose units are not made yet (`JsString::decoded`): a
+    /// reader that can take UTF-8 reads it without making them.
+    pub(crate) fn unflattened_host(&self) -> Option<&str> {
+        match &self.repr {
+            Repr::Flat(_) => None,
+            Repr::Shared(inner) => inner.unflattened_host(),
+        }
     }
 
     /// `text` as a string, sharing its allocation when it is stored that way: ASCII text too
@@ -871,6 +936,9 @@ impl JsString {
             Repr::Flat(units) => std::borrow::Cow::Borrowed(units),
             Repr::Shared(inner) => match inner.flat.get() {
                 Some(units) => std::borrow::Cow::Borrowed(units),
+                // Decoded text shares no storage a copy could leave in place: its units are
+                // made once and kept, so each reader does not decode them again.
+                None if inner.unflattened_host().is_some() => std::borrow::Cow::Borrowed(self.flat()),
                 None => std::borrow::Cow::Owned(Self::flattened(inner)),
             },
         }
@@ -887,9 +955,12 @@ impl JsString {
         }
     }
 
-    /// The units of a rope's runs, in one canonical allocation.
+    /// The units of a rope's runs, or of decoded text, in one canonical allocation.
     fn flattened(inner: &Rc<JsStringInner>) -> FlatUnits {
         let length = inner.length as usize;
+        if let Some(host) = inner.unflattened_host() {
+            return FlatUnits::Wide(wide_units(host, length));
+        }
         if inner.ascii {
             return FlatUnits::ascii_with(length, |output| {
                 let mut written = 0;
@@ -918,6 +989,9 @@ impl JsString {
     /// transcoded straight into the copy, so a one-off conversion (a script source handed
     /// to the compiler) leaves no second copy on the string.
     pub(crate) fn to_host_owned(&self) -> String {
+        if let Some(host) = self.unflattened_host() {
+            return host.to_owned();
+        }
         match (self.flat(), &self.repr) {
             (wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_)), Repr::Shared(inner)) => {
                 inner.cached_host().map_or_else(
@@ -934,6 +1008,9 @@ impl JsString {
 
     /// The string as host text: its own units when ASCII, lossy UTF-8 made once otherwise.
     pub(crate) fn host_string(&self) -> &str {
+        if let Some(host) = self.unflattened_host() {
+            return host;
+        }
         match self.flat() {
             FlatUnits::Short(text) => text.as_str(),
             FlatUnits::Ascii(text) => text,
@@ -974,6 +1051,9 @@ impl JsString {
     }
 
     pub(crate) fn capacity(&self) -> usize {
+        if let Some(host) = self.unflattened_host() {
+            return host.len();
+        }
         match self.flat() {
             FlatUnits::Short(_) => 0,
             FlatUnits::Ascii(text) => text.len(),
@@ -1004,7 +1084,10 @@ impl JsString {
                 Rc::as_ptr(inner) as usize,
                 RC_HEADER_BYTES + std::mem::size_of::<JsStringInner>(),
             );
-            return (node, None);
+            let host = self.existing_host().map(|host| {
+                (Rc::as_ptr(host) as *const u8 as usize, RC_HEADER_BYTES + host.len())
+            });
+            return (node, host);
         };
         let unit_storage = match flat {
             // Inline units live in the string's own allocation.

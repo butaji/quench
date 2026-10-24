@@ -64,8 +64,19 @@ const UNARY_TYPEOF_TESTS: u32 = 2 * TYPEOF_NAMES.len() as u32;
 /// The `UNARY_TYPEOF_IS` operator testing `typeof x` against `name`, negated for an
 /// inequality; `None` when no value's `typeof` is `name`.
 pub(crate) fn typeof_test_operator(name: &str, negated: bool) -> Option<u32> {
-    let index = TYPEOF_NAMES.iter().position(|candidate| *candidate == name)? as u32;
+    let index = typeof_name_index(name)? as u32;
     Some(UNARY_TYPEOF_IS + index + if negated { TYPEOF_NAMES.len() as u32 } else { 0 })
+}
+
+/// The `Unary` operator giving the index in `TYPEOF_NAMES` of the name `typeof` yields for
+/// its operand, as an integer: `switch (typeof x)` with string cases compares it with each
+/// case's index (`FunctionCompiler::switch_statement`), as `typeof x === "name"` would
+/// compare the two strings, and like that comparison it needs neither string.
+pub(crate) const UNARY_TYPEOF_INDEX: u32 = UNARY_TYPEOF_IS + UNARY_TYPEOF_TESTS;
+
+/// The index in `TYPEOF_NAMES` of `name`, if some value's `typeof` is `name`.
+pub(crate) fn typeof_name_index(name: &str) -> Option<usize> {
+    TYPEOF_NAMES.iter().position(|candidate| *candidate == name)
 }
 
 /// The name index and negation a `UNARY_TYPEOF_IS` operator tests.
@@ -1001,7 +1012,7 @@ opcodes!(
     SetFunctionDebugName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
     // `arguments.length` and `arguments[key]` of the `arguments` binding in the local slot:
     // an unmaterialized binding answers from the values its activation kept
-    // (`Function::forwards_arguments_only`); any other value is read as `GetField` and
+    // (`Function::kept_arguments`); any other value is read as `GetField` and
     // `GetIndex` read it.
     ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
     ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Register, Unused),
@@ -1249,11 +1260,12 @@ pub struct Function {
     pub prototype_unobservable: bool,
     pub class_initializer: bool,
     pub parameter_eval_arguments_error: bool,
-    /// A mapped `arguments` binding whose mapping nothing can observe: the body only reads
-    /// `arguments.length` and `arguments[key]`, and nothing in it rebinds a parameter
-    /// (`compile::early::ArgumentsUse`). Neither side of the mapping is ever written, so
-    /// the object keeps the mapped layout without parameter links
-    /// (`arguments_alias_parameters`).
+    /// A mapped `arguments` binding whose mapping nothing can observe: nothing in the body
+    /// rebinds a parameter, and it only reads `arguments.length` and `arguments[key]` or
+    /// passes the object on after its last parameter reference
+    /// (`compile::early::FixedRegisterLocalFacts::arguments_mapping_unobserved`). No
+    /// parameter is written, and none is read after an element could be, so the object
+    /// keeps the mapped layout without parameter links (`arguments_alias_parameters`).
     pub unaliased_arguments: bool,
     pub arguments_slot: Option<u16>,
     pub simple_parameters: bool,
@@ -1298,6 +1310,8 @@ pub struct Function {
     pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
     /// Lazily derived `names_resolve_statically`; never serialized.
     pub(crate) static_name_scope: std::cell::OnceCell<bool>,
+    /// Lazily derived `has_dynamic_scope_access`; never serialized.
+    pub(crate) dynamic_scope_access: std::cell::OnceCell<bool>,
     /// Whether the JavaScript tier's candidate filter admits the function
     /// (`js_compiled::function_candidate`), derived on its first entry; never serialized.
     pub(crate) js_tier_candidate: std::cell::OnceCell<bool>,
@@ -1427,6 +1441,16 @@ impl From<Function> for FunctionSlot {
 
 /// Call-setup facts derived once per function from its static layout, so an activation reads
 /// one cached word instead of re-testing each flag.
+/// How an activation keeps its `arguments` binding as the values it was passed
+/// (`Function::kept_arguments`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KeptArguments {
+    /// Every read answers from the values or forwards them, as an unmaterialized binding.
+    Forwards,
+    /// Such reads, then a read that makes the object, which no read of the binding follows.
+    Passes,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CallPlan {
     /// `plain_activation`.
@@ -1451,8 +1475,12 @@ pub(crate) struct CallPlan {
     pub(crate) addresses_locals: bool,
     /// The activation passes its `arguments` binding only straight into
     /// `CallForwardingArguments` calls, so it keeps the argument values instead of an
-    /// `arguments` object until a call needs one (`Function::forwards_arguments_only`).
+    /// `arguments` object until a call needs one (`Function::kept_arguments`).
     pub(crate) forwards_arguments: bool,
+    /// `forwards_arguments`, or a frameless activation answers the binding from the values
+    /// it kept and makes the object only at its last read (`KeptArguments::Passes`). Its
+    /// frame makes the object on entry.
+    pub(crate) keeps_arguments: bool,
     /// The activation's whole state is its registers, plus the values it was passed when it
     /// forwards them: it reaches no local but a forwarded `arguments` binding, and legacy
     /// reflection, if any, reads its parameter registers or the forwarded values. A lane
@@ -1554,6 +1582,17 @@ const LEB128_CONTINUATION: u8 = 1 << LEB128_PAYLOAD_BITS;
 impl SourcePositions {
     pub(crate) fn last(&self) -> Option<SourcePosition> {
         self.last
+    }
+
+    /// The coded entries and the final one, as a residual stores them
+    /// (`BinaryWriter::source_positions`).
+    pub(crate) fn encoded(&self) -> (&[u8], Option<SourcePosition>) {
+        (&self.bytes, self.last)
+    }
+
+    /// The table a residual stored (`encoded`); validation judges it against its function.
+    pub(crate) fn from_encoded(bytes: Vec<u8>, last: Option<SourcePosition>) -> Self {
+        Self { bytes, last, checkpoints: std::cell::OnceCell::new() }
     }
 
     /// Appends `position`. Compiled code orders positions by pc; a decoded table keeps any
@@ -1670,7 +1709,9 @@ impl SourcePositionIter<'_> {
         let mut shift = 0;
         while let Some((&byte, rest)) = self.bytes.split_first() {
             self.bytes = rest;
-            value |= u64::from(byte & !LEB128_CONTINUATION) << shift;
+            // A stored table is validated after decoding; an overlong varint decodes to junk
+            // the validation rejects rather than shifting past the value's width.
+            value |= u64::from(byte & !LEB128_CONTINUATION).checked_shl(shift).unwrap_or(0);
             if byte & LEB128_CONTINUATION == 0 {
                 break;
             }
@@ -2157,12 +2198,13 @@ impl Function {
                 && !self.suspends();
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
             let live_parameters = self.reflects_live_parameters(program);
-            let forwards_arguments = self.forwards_arguments_only();
+            let kept_arguments = self.kept_arguments();
+            let forwards_arguments = kept_arguments == Some(KeptArguments::Forwards);
             let addresses_locals = self.instructions().any(|instruction| {
                 matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv)
                     || instruction.addressed_local_slots().next().is_some()
             });
-            let reaches_only_forwarded_arguments = forwards_arguments
+            let reaches_only_forwarded_arguments = kept_arguments.is_some()
                 && self.instructions().all(|instruction| {
                     instruction
                         .addressed_local_slots()
@@ -2179,7 +2221,6 @@ impl Function {
                 && !self.inherited_with_scope
                 && self.local_registers.is_empty()
                 && self.arguments_slot.is_none()
-                && self.handlers.is_empty()
                 && self.binding_sites.is_empty()
                 && self.selective_capture_slots.is_some()
                 && self.initial_register == InitialRegister::Undefined
@@ -2199,7 +2240,11 @@ impl Function {
                                     | Op::StoreLocalPlain
                                     | Op::StoreEnvLocal
                                     | Op::InitializeTdz
-                            ))
+                            )
+                            // A read whose base is a plain local reads the window's local
+                            // (`lane_plain_local_operand`).
+                            || (op == Op::GetField
+                                && instruction.addressed_local_slots().eq(instruction.local_field_base())))
                 });
             CallPlan {
                 environment_activation,
@@ -2210,6 +2255,7 @@ impl Function {
                 live_parameters,
                 addresses_locals,
                 forwards_arguments,
+                keeps_arguments: kept_arguments.is_some(),
                 registers_only: (ordinary_with_rest && in_loop || constructs_frameless)
                     && self.initial_register == InitialRegister::Undefined
                     && if self.arguments_slot.is_none() {
@@ -2318,17 +2364,16 @@ impl Function {
         })
     }
 
-    /// Whether every read of the `arguments` binding loads it into the last argument of the
-    /// `CallForwardingArguments` right after, or reads its length or an element
-    /// (`ArgumentsLength`, `ArgumentGet`), and nothing else can reach the binding: no
-    /// closure, environment clone, dynamic scope access or promoted register, and no
-    /// suspension. An object it later materializes must equal one made on entry: unmapped,
-    /// or mapped onto no parameters. The activation then keeps the values it was passed, from
-    /// which those reads are answered.
-    pub(crate) fn forwards_arguments_only(&self) -> bool {
-        let Some(slot) = self.arguments_slot else {
-            return false;
-        };
+    /// How an activation answers every read of the `arguments` binding from the values it
+    /// was passed, if it can: each read loads it into the last argument of the
+    /// `CallForwardingArguments` right after, reads its length or an element
+    /// (`ArgumentsLength`, `ArgumentGet`), or, for `Passes`, loads the object as a value
+    /// where no read of the binding follows (`arguments_passed_last`). Nothing else can
+    /// reach the binding: no closure, environment clone, dynamic scope access or promoted
+    /// register, and no suspension. An object it later materializes must equal one made on
+    /// entry: unmapped, or mapped onto no parameters.
+    pub(crate) fn kept_arguments(&self) -> Option<KeptArguments> {
+        let slot = self.arguments_slot?;
         let instructions = self.instructions().collect::<Vec<_>>();
         // A mapped object's elements alias the parameters; its `length` does not, so a body
         // that reads only `arguments.length` cannot observe the mapping.
@@ -2342,12 +2387,13 @@ impl Function {
             || self.local_registers.iter().any(|entry| entry.local == slot)
             || self.has_dynamic_scope_access()
         {
-            return false;
+            return None;
         }
         let mut forwarded = false;
+        let mut passes = SmallVec::<[usize; 2]>::new();
         for (pc, instruction) in instructions.iter().enumerate() {
             if matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv) {
-                return false;
+                return None;
             }
             if !instruction
                 .addressed_local_slots()
@@ -2355,29 +2401,67 @@ impl Function {
             {
                 continue;
             }
-            let feeds_forwarding_call =
-                matches!(instruction.op(), Op::LoadLocal | Op::LoadLocalPlain)
-                    && instructions.get(pc + 1).is_some_and(|next| {
-                        next.op() == Op::CallForwardingArguments
-                            && next.call_window().last() == Some(instruction.result_register())
-                    });
+            let loads = matches!(instruction.op(), Op::LoadLocal | Op::LoadLocalPlain);
+            let feeds_forwarding_call = loads
+                && instructions.get(pc + 1).is_some_and(|next| {
+                    next.op() == Op::CallForwardingArguments
+                        && next.call_window().last() == Some(instruction.result_register())
+                });
             let reads_kept_values =
                 matches!(instruction.op(), Op::ArgumentsLength | Op::ArgumentGet);
-            if !feeds_forwarding_call && !reads_kept_values {
+            if feeds_forwarding_call || reads_kept_values {
+                forwarded = true;
+            } else if loads {
+                passes.push(pc);
+            } else {
+                return None;
+            }
+        }
+        if passes.is_empty() {
+            return forwarded.then_some(KeptArguments::Forwards);
+        }
+        self.arguments_passed_last(&instructions, slot, &passes).then_some(KeptArguments::Passes)
+    }
+
+    /// Whether no read of the `arguments` binding in local `slot`, `passes` among them, can
+    /// follow any of `passes`: the object a pass makes is the binding's last read, so no
+    /// later read needs it. A handler's edges are not traced, so a body with one answers
+    /// `false`.
+    fn arguments_passed_last(&self, instructions: &[WideInstruction], slot: u16, passes: &[usize]) -> bool {
+        if !self.handlers.is_empty() {
+            return false;
+        }
+        let mut reached = vec![false; instructions.len()];
+        let mut work = Vec::new();
+        for &pass in passes {
+            crate::bytecode::for_each_instruction_successor(pass, instructions[pass], |next| work.push(next));
+        }
+        while let Some(pc) = work.pop() {
+            let Some(instruction) = instructions.get(pc) else {
+                continue;
+            };
+            if std::mem::replace(&mut reached[pc], true) {
+                continue;
+            }
+            if instruction.addressed_local_slots().any(|addressed| addressed == slot) {
                 return false;
             }
-            forwarded = true;
+            crate::bytecode::for_each_instruction_successor(pc, *instruction, |next| work.push(next));
         }
-        forwarded
+        true
     }
 
     /// Whether the function itself can reach bindings by name at run time: it was created
     /// inside a `with` scope, records by-name lexical sites, resolves names dynamically, or
     /// calls direct eval (also from a parameter scope).
+    /// Derived once per function: lane views, capture layouts and name resolution each ask,
+    /// and the instruction scan had cost 1.3% of the axios npm scenario's instructions.
     pub(crate) fn has_dynamic_scope_access(&self) -> bool {
-        self.inherited_with_scope
-            || !self.binding_sites.is_empty()
-            || self.instructions().any(WideInstruction::resolves_dynamic_scope)
+        *self.dynamic_scope_access.get_or_init(|| {
+            self.inherited_with_scope
+                || !self.binding_sites.is_empty()
+                || self.instructions().any(WideInstruction::resolves_dynamic_scope)
+        })
     }
 
     /// Whether the body enters a `with` statement, whose by-name loads may denote
@@ -3406,7 +3490,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 106;
+    pub const FORMAT_VERSION: u8 = 107;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

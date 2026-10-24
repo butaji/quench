@@ -50,6 +50,20 @@ mod cell_layout_tests {
     fn cells_stay_compact() {
         assert_eq!(std::mem::size_of::<Option<Cell>>(), MAX_CELL_BYTES);
     }
+
+    #[test]
+    fn native_array_layout_is_derived_from_the_current_storage_types() {
+        assert_eq!(NATIVE_ARRAY_RECORD_SIZE, std::mem::size_of::<ArrayObject>());
+        assert_eq!(NATIVE_ARRAY_RECORD_ALIGN, std::mem::align_of::<ArrayObject>());
+        assert_eq!(
+            NATIVE_ARRAY_ELEMENTS_OFFSET,
+            std::mem::offset_of!(ArrayObject, elements)
+        );
+        let layout = super::super::NATIVE_ARRAY_LAYOUT;
+        assert_eq!(layout.record_size, std::mem::size_of::<ArrayObject>());
+        assert_eq!(layout.record_align, std::mem::align_of::<ArrayObject>());
+        assert_eq!(layout.elements_offset, NATIVE_ARRAY_ELEMENTS_OFFSET);
+    }
 }
 
 impl WeakMapEntries {
@@ -882,7 +896,7 @@ impl Native {
     /// error's stack or making a collection due (`Host::host_function_runs_beside_activations`
     /// for a host's), so a lane calls it with its activations frameless. Each of these reads
     /// its arguments and the heap, and reaches guest code only through getters, coercions,
-    /// proxy traps or species constructors, whose calls make the activations frames first
+    /// proxy traps, species constructors or a `JSON.parse` reviver, whose calls make the activations frames first
     /// (`Vm::materialize_deferred_lane`): `assert.deepEqual` calls `Object.prototype.toString`
     /// on every value it compares (10,210 materializations in the color-convert npm scenario).
     pub(crate) fn runs_beside_activations(self) -> bool {
@@ -904,6 +918,7 @@ impl Native {
                 | Self::StringSplit
                 | Self::StringMatch
                 | Self::RegExpTest
+                | Self::JsonParse
                 | Self::JsonStringify
                 | Self::ParseInt
                 | Self::ArrayShift
@@ -1465,10 +1480,22 @@ impl Drop for Object {
 /// An array: its object, which keeps named properties in the arena, and its dense element
 /// backing.
 #[derive(Clone)]
+#[repr(C)]
 pub(crate) struct ArrayObject {
     object: Object,
     elements: super::ArrayElements,
 }
+
+/// Native read-only layout facts for `ArrayObject`, kept beside its field declarations.
+pub(super) const NATIVE_ARRAY_RECORD_SIZE: usize = std::mem::size_of::<ArrayObject>();
+pub(super) const NATIVE_ARRAY_RECORD_ALIGN: usize = std::mem::align_of::<ArrayObject>();
+pub(super) const NATIVE_ARRAY_ELEMENTS_OFFSET: usize =
+    std::mem::offset_of!(ArrayObject, elements);
+
+const _: () = assert!(
+    NATIVE_ARRAY_ELEMENTS_OFFSET + std::mem::size_of::<super::ArrayElements>()
+        <= NATIVE_ARRAY_RECORD_SIZE
+);
 
 impl ArrayObject {
     pub(crate) fn new(mut object: Object, elements: impl Into<super::ArrayElements>) -> Self {
