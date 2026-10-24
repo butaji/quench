@@ -295,7 +295,10 @@ pub(crate) struct LoopEntry {
 /// The longest array a region indexes: a negative `i32` index zero-extends past it, so one
 /// unsigned comparison bounds every `i32` index.
 const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
-const ENTRY_CAPTURES: usize = 0;
+/// The first record word counts executions of the region's own backward edge when shared
+/// GeneralDispatch pricing is enabled.
+const ENTRY_BACKEDGE_COUNT: usize = 0;
+const ENTRY_CAPTURES: usize = 1;
 const WORD_BYTES: i32 = 8;
 /// An array's two entry words: its element pointer, then its length.
 const ARRAY_WORDS: usize = 2;
@@ -307,10 +310,15 @@ impl LoopEntry {
         Self { words: [0; ENTRY_WORDS], length: ENTRY_CAPTURES }
     }
 
-    /// The record's words, as native code reads them.
-    pub(super) fn words(&self) -> *const u64 {
+    /// Number of taken executions of this region's backward edge in the most recent run.
+    pub(crate) fn backedge_count(&self) -> u64 {
+        self.words[ENTRY_BACKEDGE_COUNT]
+    }
+
+    /// The record's words. Native OSR may also update the private first counter word.
+    pub(super) fn words_mut(&mut self) -> *mut u64 {
         debug_assert!(self.length <= ENTRY_WORDS);
-        self.words.as_ptr()
+        self.words.as_mut_ptr()
     }
 
     fn push(&mut self, word: u64) {
@@ -1422,6 +1430,7 @@ pub(super) fn lower(
     observation: &Observation<'_>,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     poll: Option<i64>,
+    track_backedges: bool,
 ) -> Option<(ir::Function, std::collections::BTreeMap<u32, Widening>)> {
     let pointer = isa.pointer_type();
     let signature = super::native_entry_signature(pointer, isa.default_call_conv());
@@ -1434,7 +1443,18 @@ pub(super) fn lower(
     let counted = counted_loops(region, &webs, &representations, &captures);
     let mut context = FunctionBuilderContext::new();
     let builder = FunctionBuilder::new(&mut native, &mut context);
-    let widenings = Lowering::new(builder, region, observation, pointer, webs, representations, captures, counted, poll)
+    let widenings = Lowering::new(
+        builder,
+        region,
+        observation,
+        pointer,
+        webs,
+        representations,
+        captures,
+        counted,
+        poll,
+        track_backedges,
+    )
         .lower(isa.frontend_config())?;
     Some((native, widenings))
 }
@@ -1485,6 +1505,8 @@ struct Lowering<'a, 'b> {
     entry: ir::Value,
     /// The result word the outcome is written to.
     result: ir::Value,
+    /// Count the region's taken backedges only for the opt-in shared-tier admission path.
+    track_backedges: bool,
     /// Each array's element pointer and length, by register.
     arrays: std::collections::BTreeMap<Register, (ir::Value, ir::Value)>,
     widenings: std::collections::BTreeMap<u32, Widening>,
@@ -1554,6 +1576,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         capture_representations: Vec<Representation>,
         counted: Vec<CountedLoop>,
         poll: Option<i64>,
+        track_backedges: bool,
     ) -> Self {
         let start = builder.create_block();
         builder.append_block_params_for_function_params(start);
@@ -1605,6 +1628,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             registers,
             entry,
             result,
+            track_backedges,
             arrays: std::collections::BTreeMap::new(),
             widenings: std::collections::BTreeMap::new(),
         }
@@ -1640,7 +1664,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.body.builder.ins().return_(&[status]);
         }
         self.body.builder.seal_all_blocks();
-        self.body.builder.finalize(frontend);
+        self.body.into_builder().finalize(frontend);
         Some(self.widenings)
     }
 
@@ -2213,6 +2237,20 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn jump(&mut self, pc: u32, target: u32) -> Option<()> {
         if target <= pc {
             self.body.interrupt_safepoint();
+            if self.track_backedges && pc == self.region.backedge && target == self.region.header {
+                let offset = i32::try_from(ENTRY_BACKEDGE_COUNT * std::mem::size_of::<u64>())
+                    .expect("OSR entry counter offset fits i32");
+                let count = self
+                    .body
+                    .builder
+                    .ins()
+                    .load(types::I64, flags(), self.entry, offset);
+                let count = self.body.builder.ins().iadd_imm_s(count, 1);
+                self.body
+                    .builder
+                    .ins()
+                    .store(flags(), count, self.entry, offset);
+            }
         }
         match self.target_block(Some(pc), target) {
             Some(block) => {
