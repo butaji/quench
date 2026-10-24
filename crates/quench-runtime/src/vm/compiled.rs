@@ -927,6 +927,12 @@ pub(super) fn compile_js_numeric_region(
 /// for each operation. This complete-semantics bridge lets us move pure
 /// denotations into Cranelift without creating a second interpreter.
 const MAX_JS_GENERAL_DISPATCH_BLOCKS: usize = 2048;
+/// General-dispatch return statuses encode the terminal bytecode PC without
+/// colliding with the shared entry's small stop, resume, or trap statuses.
+const JS_GENERAL_RETURN_STATUS_BASE: u32 =
+    u32::MAX - MAX_JS_GENERAL_DISPATCH_BLOCKS as u32;
+
+const _: () = assert!(JS_GENERAL_RETURN_STATUS_BASE > TERMINATED_STATUS as u32);
 
 fn js_general_dispatch_candidate(_program: &ResidualProgram, function: &Function) -> bool {
     !function.code.is_empty()
@@ -1367,6 +1373,45 @@ pub(super) fn compile_js_general_dispatch(
         let packed = function.code[pc];
         let instruction = super::dispatch_fast::decoded_instruction(function, packed);
         let next = blocks.get(pc + 1).copied();
+        if instruction.op().js_denotation() == JsDenotation::Return
+            && instruction.result_flags() == 0
+            && !instruction.writes_current_this()
+            && let Some(source) = register_offset(instruction.register_a())
+        {
+            let fallback = builder.create_block();
+            let resume = builder.create_block();
+            let interrupted = emit_js_interrupt_requested(&mut builder, context);
+            builder.ins().brif(interrupted, fallback, &[], resume, &[]);
+            builder.switch_to_block(resume);
+            let value = builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                arguments,
+                source,
+            );
+            builder
+                .ins()
+                .store(MemFlagsData::trusted(), value, result_pointer, 0);
+            let status = builder.ins().iconst(
+                types::I32,
+                i64::from(JS_GENERAL_RETURN_STATUS_BASE)
+                    + i64::try_from(pc).expect("bounded general-dispatch PC"),
+            );
+            builder.ins().return_(&[status]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(
+                &mut builder,
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            );
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
         if static_global_names
             && matches!(instruction.op(), Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof)
             && instruction.result_flags() == 0
@@ -5300,6 +5345,20 @@ impl CompiledJsFunction {
         }
         if let Some(Raised::Error(_)) = context.raised.take() {
             return None;
+        }
+        if let Some(instruction_pc) = status
+            .checked_sub(JS_GENERAL_RETURN_STATUS_BASE)
+            .and_then(|pc| usize::try_from(pc).ok())
+            .filter(|pc| *pc < self.general_dispatch_native_pcs.len())
+        {
+            #[cfg(test)]
+            self.native_entries
+                .set(self.native_entries.get().saturating_add(1));
+            return Some(JsNativeDispatchResult::Step(JsNativeStep {
+                instruction_pc,
+                next_pc: instruction_pc.saturating_add(1),
+                result: Ok(super::StepResult::Return(Value::from_bits(word))),
+            }));
         }
         match status {
             1 => {
