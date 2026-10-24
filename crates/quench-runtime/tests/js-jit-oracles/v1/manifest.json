@@ -77,6 +77,28 @@
       }
     },
     {
+      "id": "field-changing-receiver",
+      "path": "field-changing-receiver.js",
+      "sha256": "0848e12e5507c2559215548cf2187296a06d3c0635fd5af8f419bb8d74d55fc7",
+      "native_functions": [
+        "readValue"
+      ],
+      "denotations": [
+        "current receiver checked at each call",
+        "dynamic values from same-shape objects",
+        "polymorphic receiver shape fallback"
+      ],
+      "guard_misses": [
+        "receiver shapes differ",
+        "mutated field values remain current"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "[101,9,13,34]\n",
+        "stderr": ""
+      }
+    },
+    {
       "id": "call-throw-effects",
       "path": "call-throw-effects.js",
       "sha256": "e11b1ed851b1143b11ce9a6c155ce48df408333be5fc62fde9d8ae7e0070c47c",
