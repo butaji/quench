@@ -1291,6 +1291,51 @@ pub(super) fn compile_js_general_dispatch(
             continue;
         }
 
+        let unary = super::operations::NumberUnary::from_js_instruction(
+            instruction.op(),
+            instruction.unary_operator(),
+        );
+        let unary_source = register_offset(instruction.register_b());
+        let unary_destination = register_offset(instruction.result_register());
+        if instruction.op().js_denotation() == JsDenotation::NumericUnary
+            && let (Some(next), Some(unary), Some(source), Some(destination)) =
+                (next, unary, unary_source, unary_destination)
+            && instruction.numeric_local_target().is_none()
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+        {
+            let fallback = builder.create_block();
+            let bits = builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                arguments,
+                source,
+            );
+            let number = emit_js_tagged_number(&mut builder, bits, fallback);
+            let number = emit_number_unary_operation(&mut builder, unary, number);
+            let encoded = emit_js_box_number(&mut builder, number);
+            builder.ins().store(
+                MemFlagsData::trusted(),
+                encoded,
+                arguments,
+                destination,
+            );
+            builder.ins().jump(next, &[]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(
+                &mut builder,
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            );
+            continue;
+        }
+
         let arithmetic = super::operations::NumberArithmetic::from_js_instruction(
             instruction.op(),
             instruction.binary_operator(),
