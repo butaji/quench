@@ -11836,6 +11836,177 @@ print(total + " " + w.arr.slice(35, 50).join(","));
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_inlines_calls_on_a_receiver_a_field_read_gives() {
+    // `reduce` calls `this.m.am(…)` and reads `this.m.t`, a nested field: its loop runs am3
+    // in place, the receiver the value of `this.m` at entry.
+    // Wrapped in a function, as a CommonJS module is, so `DM` and `DV` are captures.
+    let source = r#"(function () {
+var DM = 0xfffffff, DV = 0x10000000;
+function am3(i,x,w,j,c,n) {
+  var this_array = this.array;
+  var w_array    = w.array;
+  var xl = x&0x3fff, xh = x>>14;
+  while(--n >= 0) {
+    var l = this_array[i]&0x3fff;
+    var h = this_array[i++]>>14;
+    var m = xh*l+h*xl;
+    l = xl*l+((m&0x3fff)<<14)+w_array[j]+c;
+    c = (l>>28)+(m>>14)+xh*h;
+    w_array[j++] = l&0xfffffff;
+  }
+  return c;
+}
+function B(n, seed) { this.array = []; this.t = n; for (var k = 0; k < n; k++) this.array.push(((k + seed) * 2654435761) & 0xfffffff); }
+B.prototype.am = am3;
+function M(m) { this.m = m; this.mpl = 0x1234; this.mph = 0x56; this.um = 0x7fff; }
+M.prototype.reduce = function reduce(x) {
+  var x_array = x.array;
+  for (var i = 0; i < this.m.t; ++i) {
+    var j = x_array[i]&0x7fff;
+    var u0 = (j*this.mpl+(((j*this.mph+(x_array[i]>>15)*this.mpl)&this.um)<<15))&DM;
+    j = i+this.m.t;
+    x_array[j] += this.m.am(0,u0,x,i,0,this.m.t);
+    while(x_array[j] >= DV) { x_array[j] -= DV; x_array[++j]++; }
+  }
+  var s = 0;
+  for (var k = 0; k < x_array.length; k++) s = (s * 31 + x_array[k]) | 0;
+  return s;
+};
+var mod = new M(new B(30, 7)), t = 0;
+for (var q = 0; q < 2000; q++) { var x = new B(61, q); x.array.push(0); t = (t + mod.reduce(x)) | 0; }
+print(t);
+})();
+"#;
+    let program = Engine::specialize(source, "osr-inline-field-receiver.js").unwrap();
+    let function = |wanted: &str| {
+        program
+            .functions
+            .iter()
+            .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == wanted))
+            .unwrap()
+    };
+    let (am3, reduce) = (function("am3"), function("reduce"));
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["-1925714172"]);
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = |function: usize| {
+            views.get(function).and_then(std::cell::OnceCell::get).expect("hot lane view").osr_diagnostics()
+        };
+        let (callee, caller) = (osr(am3), osr(reduce));
+        assert!(caller.native_region_runs > 0, "no native caller run under {policy:?}: {caller:?}");
+        // Out of line, am3's loop would run once per call, 2000 reductions of 30 calls; the
+        // caller enters native code at its first backward jump, so a reduction's first
+        // call still runs out of line.
+        let calls = 2000 * 30;
+        assert!(
+            callee.native_region_runs * 4 < calls,
+            "am3 ran out of line under {policy:?}: {callee:?} against {caller:?}"
+        );
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_widens_an_int32_field_that_holds_a_double() {
+    // `o.k` holds an `i32` while the loop compiles; once it holds 0.5 the entry declines,
+    // naming the field, and the next compilation holds it as an `f64`.
+    let source = r#"
+      function sum(o, a) {
+        var s = 0;
+        for (var i = 0; i < o.n; i++) s += a[i] * o.k;
+        return s;
+      }
+      var a = [], o = { n: 500, k: 3 }, t = 0;
+      for (var i = 0; i < 500; i++) a.push(i);
+      for (var c = 0; c < 400; c++) { if (c == 200) o.k = 0.5; t += sum(o, a); }
+      print(t);
+    "#;
+    let program = Engine::specialize(source, "osr-field-widening.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "sum"))
+        .unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["87325000"]);
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views.get(function_id).and_then(std::cell::OnceCell::get).expect("hot sum loop lane view").osr_diagnostics();
+        assert!(osr.entry_guard_misses > 0 && osr.compile_successes > 1, "the double field widened nothing under {policy:?}: {osr:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_drops_only_the_int32_guards_ranges_and_reads_cover() {
+    // `m`'s products and sums stay in range and are read only by sums and bitwise
+    // operators; `p` is read by a division, which tells -0 from +0, and `big` overflows.
+    let source = r#"
+function mix(a, k, n) {
+  var s = 0, inf = 0, big = 0;
+  for (var i = 0; i < n; i++) {
+    var l = a[i] & 0x3fff, h = a[i] >> 14;
+    var m = k * l + h * (k & 0x3fff);
+    s = (s + ((m & 0x3fff) << 14) + (m >> 14)) | 0;
+    var p = k * l;
+    if (1 / p < 0 && p == 0) inf++;
+    big = big + a[i] * 65536;
+  }
+  return s + " " + inf + " " + big;
+}
+var a = [];
+for (var i = 0; i < 300; i++) a.push(i % 7 == 0 ? 0 : (i * 2654435761) & 0x7fffffff);
+var out = "";
+for (var c = 0; c < 300; c++) out = mix(a, c % 2 ? -5 : 3, 300);
+print(out);
+"#;
+    let program = Engine::specialize(source, "osr-int32-facts.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["-15100555 43 18079553300791296"]);
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
