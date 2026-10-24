@@ -94,6 +94,60 @@ impl RegionExit {
     }
 }
 
+/// Common cold handoff blocks for a compiled region. The tier still supplies its live-state
+/// writeback at each exact PC; this type owns only the shared control-flow continuation.
+#[derive(Default)]
+pub(super) struct RegionExitBlocks {
+    leave_blocks: std::collections::BTreeMap<u32, ir::Block>,
+    outcomes: Vec<(ir::Block, RegionExit)>,
+}
+
+impl RegionExitBlocks {
+    /// Queues a cold outcome block for filling after the hot region has been lowered.
+    pub(super) fn outcome_block(
+        &mut self,
+        builder: &mut FunctionBuilder<'_>,
+        outcome: RegionExit,
+    ) -> ir::Block {
+        let block = builder.create_block();
+        builder.set_cold_block(block);
+        self.outcomes.push((block, outcome));
+        block
+    }
+
+    /// Sends control to the shared per-PC leave block, carrying the handoff word as an
+    /// argument. The tier fills that block with its exact-PC live-state writeback.
+    pub(super) fn leave(&mut self, builder: &mut FunctionBuilder<'_>, outcome: RegionExit) {
+        let pc = match outcome {
+            RegionExit::Resume(pc) | RegionExit::Fallback(pc) | RegionExit::Recompile(pc) => pc,
+            RegionExit::EntryMiss(_) => unreachable!("entry miss does not write back"),
+        };
+        let word = builder.ins().iconst(types::I64, outcome.encode() as i64);
+        let block = match self.leave_blocks.get(&pc) {
+            Some(block) => *block,
+            None => {
+                let block = builder.create_block();
+                builder.set_cold_block(block);
+                builder.append_block_param(block, types::I64);
+                self.leave_blocks.insert(pc, block);
+                block
+            }
+        };
+        builder.ins().jump(block, &[ir::BlockArg::Value(word)]);
+    }
+
+    pub(super) fn take_outcomes(&mut self) -> Vec<(ir::Block, RegionExit)> {
+        std::mem::take(&mut self.outcomes)
+    }
+
+    pub(super) fn leave_blocks(&self) -> Vec<(u32, ir::Block)> {
+        self.leave_blocks
+            .iter()
+            .map(|(pc, block)| (*pc, *block))
+            .collect()
+    }
+}
+
 /// Emit a Number relation using the same relation dispatch as the interpreter.
 /// The domain selects its Cranelift condition codes; the operation mapping is shared.
 pub(super) fn emit_number_relation(
@@ -304,7 +358,12 @@ fn js_numeric_control_flow(function: &Function) -> Option<(Vec<bool>, Vec<Vec<us
         match instruction.op().control_flow_layout() {
             ControlFlowLayout::Jump if instruction.op() == crate::bytecode::Op::Jump => {}
             ControlFlowLayout::ConditionalJump
-                if instruction.op() == crate::bytecode::Op::JumpBinaryFalse => {}
+                if matches!(
+                    instruction.op(),
+                    crate::bytecode::Op::JumpBinaryFalse
+                        | crate::bytecode::Op::JumpFalse
+                        | crate::bytecode::Op::JumpTrue
+                ) => {}
             ControlFlowLayout::Terminal | ControlFlowLayout::Fallthrough => {}
             ControlFlowLayout::Jump
             | ControlFlowLayout::ConditionalJump
@@ -393,6 +452,14 @@ pub(super) fn emit_number_bitwise_operation(
     } else {
         builder.ins().fcvt_from_sint(types::F64, bits)
     }
+}
+
+/// Emit JavaScript ToBoolean for a Number after the caller has proved its value is numeric.
+fn emit_number_truthiness(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+    let zero = builder.ins().f64const(Ieee64::with_bits(0.0_f64.to_bits()));
+    let nonzero = builder.ins().fcmp(FloatCC::NotEqual, number, zero);
+    let not_nan = builder.ins().fcmp(FloatCC::Equal, number, number);
+    builder.ins().band(nonzero, not_nan)
 }
 
 /// Compile a JS numeric function-entry region with the same register views used by Wasm and
@@ -491,29 +558,56 @@ pub(super) fn compile_js_numeric_region(
                 continue;
             }
             ControlFlowLayout::ConditionalJump => {
-                if instruction.op() != crate::bytecode::Op::JumpBinaryFalse
-                    || instruction.result_flags() != 0
-                {
+                if instruction.result_flags() != 0 {
                     return None;
                 }
-                let read_operand = |body: &mut Body<'_>, operand: Operand, registers: &[bool]| {
-                    read_js_numeric_operand(program, body, operand, registers)
+                let (condition, jump_when) = match instruction.op() {
+                    crate::bytecode::Op::JumpBinaryFalse => {
+                        let left = read_js_numeric_operand(
+                            program,
+                            &mut body,
+                            instruction.operand_b(),
+                            &registers,
+                        )?;
+                        let right = read_js_numeric_operand(
+                            program,
+                            &mut body,
+                            instruction.operand_c(),
+                            &registers,
+                        )?;
+                        let relation = emit_number_relation(
+                            &mut body.builder,
+                            instruction.binary_operator_field(),
+                            left,
+                            right,
+                            NumberRelationDomain::Float64,
+                        )?;
+                        (relation, false)
+                    }
+                    crate::bytecode::Op::JumpFalse | crate::bytecode::Op::JumpTrue => {
+                        let register = usize::from(instruction.register_a());
+                        if !*registers.get(register)? {
+                            return None;
+                        }
+                        let value = body.read(register as u16, crate::WasmType::F64);
+                        let truthy = emit_number_truthiness(&mut body.builder, value);
+                        let jump_when = instruction.op() == crate::bytecode::Op::JumpTrue;
+                        (truthy, jump_when)
+                    }
+                    _ => return None,
                 };
-                let left = read_operand(&mut body, instruction.operand_b(), &registers)?;
-                let right = read_operand(&mut body, instruction.operand_c(), &registers)?;
-                let relation = emit_number_relation(
-                    &mut body.builder,
-                    instruction.binary_operator_field(),
-                    left,
-                    right,
-                    NumberRelationDomain::Float64,
-                )?;
                 let target = usize::try_from(instruction.jump_target()).ok()?;
                 let fallthrough = pc.checked_add(1)?;
                 initialized_after[pc] = Some(registers);
-                body.builder
-                    .ins()
-                    .brif(relation, blocks[fallthrough]?, &[], blocks[target]?, &[]);
+                if jump_when {
+                    body.builder
+                        .ins()
+                        .brif(condition, blocks[target]?, &[], blocks[fallthrough]?, &[]);
+                } else {
+                    body.builder
+                        .ins()
+                        .brif(condition, blocks[fallthrough]?, &[], blocks[target]?, &[]);
+                }
                 continue;
             }
             ControlFlowLayout::Terminal | ControlFlowLayout::Fallthrough => {}
