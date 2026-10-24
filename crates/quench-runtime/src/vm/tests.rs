@@ -11137,7 +11137,8 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
         })
         .unwrap();
 
-    // Each policy compiles the loop at its own optimization level (`LOOP_TIER_OPT_LEVELS`).
+    // Each policy compiles the loop at its own optimization level, or not at all
+    // (`LOOP_TIER_OPT_LEVELS`); the result is the same either way.
     for policy in crate::MemoryPolicy::ALL {
         let compiled_output = Rc::new(RefCell::new(Vec::new()));
         let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
@@ -11156,7 +11157,8 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
             .expect("hot sum loop lane view");
         let osr = view.osr_diagnostics();
         assert_eq!(osr.admitted_sites, 1, "OSR analysis rejected the field loop under {policy:?}");
-        assert_eq!(osr.currently_compiled_sites, 1, "field loop did not compile natively under {policy:?}");
+        let compiles = super::compiled::loop_tier_compiles(policy);
+        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field loop native code under {policy:?}");
     }
 }
 
@@ -11296,6 +11298,89 @@ fn shared_osr_compiles_numeric_truthiness_branches() {
     if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
         assert!(diagnostics.compile_successes > 0, "loop OSR compilation did not succeed");
         assert!(diagnostics.native_region_runs > 0, "loop OSR code never ran");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function seed() { return 0; }
+          function countNull(value) {
+            let count = seed();
+            let hits = 0;
+            let current = value;
+            while (count < 4) {
+              if (current === null) {
+                hits++;
+                current = value;
+              } else {
+                current = null;
+              }
+              count++;
+            }
+            return current === null ? hits + 10 : hits;
+          }
+          let result = 0;
+          for (let call = 0; call < 400; call++) {
+            result += countNull(call % 2 ? null : {});
+          }
+          print(result);
+          print(countNull(undefined));
+          print(countNull({}));
+        "#,
+        "osr-strict-null-identity.js",
+    ))
+    .unwrap();
+    let _disassembly = program.disassemble();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "countNull")
+        })
+        .expect("strict null loop function");
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
+    interpreter.execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["3200", "2", "2"]);
+
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["3200", "2", "2"]);
+
+    let views = vm
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot strict null loop lane view");
+    let diagnostics = view.osr_diagnostics();
+    assert_eq!(
+        diagnostics.currently_compiled_sites,
+        1,
+        "OSR diagnostics: plain={}, admitted={}, attempts={}, successes={}, native={}, rejects={:?}",
+        diagnostics.plain_backward_jump_sites,
+        diagnostics.admitted_sites,
+        diagnostics.compile_attempts,
+        diagnostics.compile_successes,
+        diagnostics.native_region_runs,
+        diagnostics.analysis_rejections,
+    );
+    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+        assert!(
+            diagnostics.native_region_runs > 0,
+            "native OSR region never ran; diagnostics: {:?}",
+            diagnostics.analysis_rejections
+        );
     }
 }
 
