@@ -9389,7 +9389,7 @@ impl<H: Host> Vm<H> {
                 )
             );
         // The tier manager prices the baseline against the entries so far.
-        let due = observes && self.programs.note_js_general_dispatch_entry(program_id, function, body.code.len());
+        let due = observes && self.programs.note_js_general_dispatch_entry(program_id, function, body.code.len(), self.memory_policy());
         (true, due)
     }
 
@@ -9536,7 +9536,6 @@ impl<H: Host> Vm<H> {
         promote: bool,
     ) -> Option<JsNativeDispatchResult> {
         if !self.js_tier_runs()
-            || !general_dispatch_compiles(self.memory_policy())
             || program.kind == crate::bytecode::ProgramKind::Wasm
             || self.frames.get(frame)?.pc != 0
         {

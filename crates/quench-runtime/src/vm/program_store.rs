@@ -1562,8 +1562,10 @@ impl ProgramStore {
         id: ProgramId,
         function: u32,
         instructions: usize,
+        policy: crate::MemoryPolicy,
     ) -> bool {
-        if !self.js_jit_general_dispatch_enabled {
+        // Admission: the tier's switch, and the memory policy's (`GENERAL_DISPATCH_TIER`).
+        if !self.js_jit_general_dispatch_enabled || !super::compiled::general_dispatch_compiles(policy) {
             return false;
         }
         let priced = self.general_baseline_priced;
