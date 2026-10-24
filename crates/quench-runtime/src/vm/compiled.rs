@@ -4894,7 +4894,9 @@ unsafe extern "C" fn js_step_callout<H: Host>(
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
-            let step = if dispatch.allow_inline_calls && current_instruction.op() == Op::Call {
+            let step = if dispatch.allow_inline_calls
+                && matches!(current_instruction.op(), Op::Call | Op::CallArray)
+            {
                 match vm.try_inline_user_call(
                     &program,
                     dispatch.frame,
