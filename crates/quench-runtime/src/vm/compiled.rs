@@ -456,10 +456,33 @@ pub(super) fn emit_number_bitwise_operation(
 
 /// Emit JavaScript ToBoolean for a Number after the caller has proved its value is numeric.
 fn emit_number_truthiness(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
-    let zero = builder.ins().f64const(Ieee64::with_bits(0.0_f64.to_bits()));
-    let nonzero = builder.ins().fcmp(FloatCC::NotEqual, number, zero);
-    let not_nan = builder.ins().fcmp(FloatCC::Equal, number, number);
-    builder.ins().band(nonzero, not_nan)
+    struct Emit<'a, 'f> {
+        builder: &'a mut FunctionBuilder<'f>,
+    }
+
+    impl crate::vm::operations::NumberTruthinessStage<ir::Value> for Emit<'_, '_> {
+        type Predicate = ir::Value;
+
+        fn zero(&mut self) -> ir::Value {
+            self.builder
+                .ins()
+                .f64const(Ieee64::with_bits(0.0_f64.to_bits()))
+        }
+
+        fn equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Predicate {
+            self.builder.ins().fcmp(FloatCC::Equal, left, right)
+        }
+
+        fn not_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Predicate {
+            self.builder.ins().fcmp(FloatCC::NotEqual, left, right)
+        }
+
+        fn and(&mut self, left: Self::Predicate, right: Self::Predicate) -> Self::Predicate {
+            self.builder.ins().band(left, right)
+        }
+    }
+
+    crate::vm::operations::number_truthiness(&mut Emit { builder }, number)
 }
 
 /// Compile a JS numeric function-entry region with the same register views used by Wasm and
@@ -3269,23 +3292,33 @@ pub(super) fn analyze_osr_region(
     osr_loop::region(function, decoded, constants, live, header, backedge)
 }
 
-/// Compile one admitted OSR region and publish it through the shared executable-memory path.
-/// The Cranelift optimization level the loop tier compiles under each memory policy
-/// (`MemoryPolicy` order). A loop region's compilation is the largest transient allocation
-/// of a `--jit` run, and under memory-first it set the peak: Cranelift's e-graph pass adds
-/// values that its register allocator then tracks. Without that pass the `--jit` max RSS
-/// fell by 576 KiB on Crypto (-13.5%, score -2.8%) and by 648 KiB on NavierStokes (-8.4%,
-/// score -6.1%); the other V8-v7 rows moved within noise (static x86_64 build, median of 11
-/// runs, 2026-10-24). Throughput keeps the optimizing pass, whose code it ran 2.8-6.1% faster.
-const LOOP_TIER_OPT_LEVELS: [&str; crate::MemoryPolicy::ALL.len()] = ["speed", "none"];
+/// The Cranelift optimization level the loop tier compiles regions at under each memory
+/// policy (`MemoryPolicy` order), or none when it compiles no region. A loop region's
+/// compilation is the largest transient allocation of a `--jit` run: regalloc2's state and
+/// the code pages of the compiler and of the region.
+///
+/// Memory-first compiles no loop region, on the owner's direction of 2026-10-24 (TOD-123:
+/// memory-first may trade Score for memory under `--jit`). The per-function tier, which this
+/// leaves running, kept Richards, RayTrace and EarleyBoyer `--jit` below their interpreted
+/// peaks. NavierStokes `--jit` peaked at 7468 KiB compiled and 3988 interpreted, Crypto at
+/// 4000 and 3128 (static BOLT x86_64, memory-first, median of 5, 2026-10-24). Compiling at
+/// `none`, without the e-graph pass, saved only 576 KiB on Crypto and 648 on NavierStokes
+/// (`tod137-loop-tier-opt-level-…`). Throughput compiles at `speed`.
+const LOOP_TIER_OPT_LEVELS: [Option<&str>; crate::MemoryPolicy::ALL.len()] = [Some("speed"), None];
 
+/// Whether the loop tier compiles regions under `policy` (`LOOP_TIER_OPT_LEVELS`).
+pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
+    LOOP_TIER_OPT_LEVELS[policy as usize].is_some()
+}
+
+/// Compile one admitted OSR region and publish it through the shared executable-memory path.
 pub(super) fn compile_osr_region(
     region: &LoopRegion,
     observation: &Observation<'_>,
     interrupt: &crate::execution_interrupt::ExecutionInterrupt,
     policy: crate::MemoryPolicy,
 ) -> Option<CompiledOsrRegion> {
-    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize], false)?;
+    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?, false)?;
     let (function, widenings) = osr_loop::lower(
         region,
         observation,
@@ -3612,6 +3645,19 @@ impl CompiledJsFunction {
             #[cfg(test)]
             native_entries: std::cell::Cell::new(0),
         })
+    }
+
+    /// Whether a call runs the body on its Number arguments alone, with no receiver,
+    /// captures or field reads to assemble and no string result to build
+    /// (`js_jit_compiled_call`).
+    fn direct_callable(&self) -> bool {
+        self.field_argument().is_none()
+            && self.numeric_field_inputs().is_empty()
+            && !self.is_capture_number()
+            && self.capture_arguments().is_empty()
+            && !self.is_string_transform()
+            && !self.is_string_hash_loop()
+            && !self.is_field_reject()
     }
 
     pub(super) fn params(&self) -> usize {
@@ -8867,59 +8913,11 @@ impl<H: Host> Vm<H> {
                 super::program_store::JsTierState::Compiled(compiled) => compiled.as_ref(),
                 _ => return None,
             };
-            // Direct calls have no callee frame from which to reload lexical
-            // captures. Those artifacts must use the ordinary frame-entry path,
-            // where the capture guards and ABI values are assembled together.
-            if compiled.field_argument().is_some()
-                || !compiled.numeric_field_inputs().is_empty()
-                || compiled.is_capture_number()
-                || !compiled.capture_arguments().is_empty()
-                || compiled.is_string_transform()
-                || compiled.is_string_hash_loop()
-                || compiled.is_field_reject()
-            {
-                return None;
-            }
             let params = usize::from(function.params);
-            if compiled.params() != params || arguments.len() < params {
+            if !compiled.direct_callable() || compiled.params() != params || arguments.len() < params {
                 return None;
             }
-            let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
-            for argument in arguments.iter().take(params) {
-                numeric_arguments.push(argument.as_number()?);
-            }
-            if compiled.requires_signed_int32_arguments()
-                && !numeric_arguments
-                    .iter()
-                    .all(|value| super::js_compiled::is_i32_number(*value))
-            {
-                return None;
-            }
-            if compiled.is_int32_identity()
-                && !numeric_arguments
-                    .first()
-                    .is_some_and(|value| super::js_compiled::is_i32_number(*value))
-            {
-                return None;
-            }
-            compiled
-                .call(&numeric_arguments, interrupt, poll_page)
-                .and_then(|result| match result {
-                    CompiledJsResult::Number(value) => {
-                        Some(CompiledJsCallResult::Value(Value::number(value)))
-                    }
-                    CompiledJsResult::Int32Identity { value, .. } => {
-                        Some(CompiledJsCallResult::Value(Value::number(value)))
-                    }
-                    CompiledJsResult::Boolean(value) => Some(CompiledJsCallResult::Value(
-                        if value { Value::TRUE } else { Value::FALSE },
-                    )),
-                    CompiledJsResult::StringReturnPc(return_pc) => compiled
-                        .string_constant_for_return(return_pc)
-                        .map(CompiledJsCallResult::ReturnConstant),
-                    CompiledJsResult::StringTransform(_, _)
-                    | CompiledJsResult::FieldReject { .. } => None,
-                })
+            direct_call(compiled, &arguments[..params], interrupt, poll_page)
         };
         if diagnostics {
             programs.record_js_jit_entry(program_id, function_id, true, function.params);
@@ -8931,6 +8929,60 @@ impl<H: Host> Vm<H> {
                 programs.constant(program_id, constant as usize)
             }
         }
+    }
+
+    /// The direct run of `function`'s compiled body a frameless activation keeps
+    /// (`LaneView::tier_direct`): where its body reads only its parameters
+    /// (`CompiledJsFunction::direct_callable`) and ends in a `Return`, which its result
+    /// completes. Diagnostics count every entry through `js_jit_compiled_call` instead.
+    pub(super) fn direct_tier_entry(
+        &self,
+        program: &ResidualProgram,
+        id: ProgramId,
+        function: u32,
+    ) -> Option<DirectTierEntry> {
+        if self.programs.js_jit_diagnostics_enabled() {
+            return None;
+        }
+        let super::program_store::JsTierState::Compiled(compiled) = self.programs.js_tier_ref(id, function)? else {
+            return None;
+        };
+        let body = program.function_get(function as usize)?;
+        let params = usize::from(body.params);
+        (compiled.direct_callable() && compiled.params() == params).then_some(())?;
+        let return_pc = body.code.len().checked_sub(1)?;
+        let terminal = body.code.get(return_pc)?.as_wide();
+        (terminal.op() == Op::Return).then_some(())?;
+        Some(DirectTierEntry {
+            compiled: Rc::downgrade(compiled),
+            params,
+            return_pc,
+            return_register: terminal.register_a(),
+        })
+    }
+
+    /// Runs `entry` on a frameless activation's `parameters`, as `js_jit_compiled_call` runs
+    /// the body: the `Return` to continue at, its register and the result; `None` where an
+    /// argument is no Number the body's guards admit, or the tier retired the artifact.
+    pub(super) fn run_direct_tier_entry(
+        &mut self,
+        entry: &DirectTierEntry,
+        id: ProgramId,
+        parameters: &[Value],
+    ) -> Option<(usize, crate::bytecode::Register, Value)> {
+        let compiled = entry.compiled.upgrade()?;
+        let poll_page = self.compiled_poll_page();
+        let result = direct_call(
+            &compiled,
+            parameters.get(..entry.params)?,
+            self.execution_interrupt.atomic_flag(),
+            poll_page,
+        )?;
+        let value = match result {
+            CompiledJsCallResult::Value(value) => value,
+            CompiledJsCallResult::ReturnConstant(constant) => self.programs.constant(id, constant as usize)?,
+        };
+        Some((entry.return_pc, entry.return_register, value))
     }
 
     /// Compile every function of `program` that has a compiled denotation,
@@ -10274,6 +10326,59 @@ const INTEGER_TAG: u64 = crate::value::INTEGER_TAG_BITS;
 
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
+
+/// `compiled`'s body run directly on `arguments`, its parameters, when each is a Number
+/// its guards admit: the call a known callee makes without a frame (`js_jit_compiled_call`).
+fn direct_call(
+    compiled: &CompiledJsFunction,
+    arguments: &[Value],
+    interrupt: &std::sync::atomic::AtomicBool,
+    poll_page: Option<(usize, usize)>,
+) -> Option<CompiledJsCallResult> {
+    let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
+    for argument in arguments {
+        numeric_arguments.push(argument.as_number()?);
+    }
+    if compiled.requires_signed_int32_arguments()
+        && !numeric_arguments.iter().all(|value| super::js_compiled::is_i32_number(*value))
+    {
+        return None;
+    }
+    if compiled.is_int32_identity()
+        && !numeric_arguments.first().is_some_and(|value| super::js_compiled::is_i32_number(*value))
+    {
+        return None;
+    }
+    match compiled.call(&numeric_arguments, interrupt, poll_page)? {
+        CompiledJsResult::Number(value) | CompiledJsResult::Int32Identity { value, .. } => {
+            Some(CompiledJsCallResult::Value(Value::number(value)))
+        }
+        CompiledJsResult::Boolean(value) => {
+            Some(CompiledJsCallResult::Value(if value { Value::TRUE } else { Value::FALSE }))
+        }
+        CompiledJsResult::StringReturnPc(return_pc) => {
+            compiled.string_constant_for_return(return_pc).map(CompiledJsCallResult::ReturnConstant)
+        }
+        CompiledJsResult::StringTransform(_, _) | CompiledJsResult::FieldReject { .. } => None,
+    }
+}
+
+/// A compiled body a frameless activation runs directly (`Vm::direct_tier_entry`): the
+/// artifact, held weakly so that the tier retiring it ends the direct run, its parameter
+/// count, and the `Return` its result completes.
+pub(super) struct DirectTierEntry {
+    compiled: std::rc::Weak<CompiledJsFunction>,
+    params: usize,
+    return_pc: usize,
+    return_register: crate::bytecode::Register,
+}
+
+impl DirectTierEntry {
+    /// Whether the tier retired the artifact.
+    pub(super) fn retired(&self) -> bool {
+        self.compiled.strong_count() == 0
+    }
+}
 
 /// What the JavaScript tier reads of an activation it enters at PC zero: a VM frame's
 /// (`Vm::js_tier_frame_entry`) or a frameless lane activation's
