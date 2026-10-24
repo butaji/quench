@@ -860,7 +860,7 @@ pub(super) fn compile_js_numeric_region(
                 terminal = true;
                 None
             }
-            JsDenotation::Noop | JsDenotation::Unsupported => return None,
+            JsDenotation::Noop | JsDenotation::Jump | JsDenotation::Unsupported => return None,
         };
         if let Some(value) = result {
             let destination = usize::from(instruction.result_register());
@@ -966,6 +966,8 @@ pub(super) fn compile_js_general_dispatch(
     let arguments = parameters[3];
     let result_pointer = parameters[4];
     let stopped_block = builder.create_block();
+    let continue_block = builder.create_block();
+    let continue_pc = builder.append_block_param(continue_block, types::I64);
     let invalid_pc = builder.create_block();
     let invalid_pc_value = builder.append_block_param(invalid_pc, types::I64);
     let callout = builder
@@ -1018,6 +1020,21 @@ pub(super) fn compile_js_general_dispatch(
                 {
                     builder.ins().jump(next, &[]);
                     true
+                }
+                JsDenotation::Jump
+                    if instruction.result_flags() == 0
+                        && !instruction.returns_from_frame()
+                        && !instruction.writes_current_this() =>
+                {
+                    let target = usize::try_from(instruction.jump_target()).ok();
+                    if let Some(target) = target.filter(|target| *target > pc)
+                        && let Some(target) = blocks.get(target).copied()
+                    {
+                        builder.ins().jump(target, &[]);
+                        true
+                    } else {
+                        false
+                    }
                 }
                 JsDenotation::Move
                     if instruction.result_flags() == 0
@@ -1101,28 +1118,32 @@ pub(super) fn compile_js_general_dispatch(
         );
         let status = builder.inst_results(call)[0];
         let failed = builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
-        let continue_block = builder.create_block();
-        builder.ins().brif(failed, stopped_block, &[], continue_block, &[]);
-
-        builder.switch_to_block(continue_block);
         let next_pc = builder
             .ins()
             .load(types::I64, MemFlagsData::trusted(), result_pointer, 0);
-        let selector = builder.ins().ireduce(types::I32, next_pc);
-        let cases: Vec<_> = blocks
-            .iter()
-            .map(|target| builder.func.dfg.block_call(*target, &[]))
-            .collect();
-        let invalid_argument = ir::BlockArg::Value(next_pc);
-        let default = builder
-            .func
-            .dfg
-            .block_call(invalid_pc, &[invalid_argument]);
-        let table = ir::JumpTableData::new(default, &cases);
-        let table = builder.create_jump_table(table);
-        builder.ins().br_table(selector, table);
-        builder.seal_block(continue_block);
+        builder.ins().brif(
+            failed,
+            stopped_block,
+            &[],
+            continue_block,
+            &[ir::BlockArg::Value(next_pc)],
+        );
     }
+    builder.switch_to_block(continue_block);
+    let selector = builder.ins().ireduce(types::I32, continue_pc);
+    let cases: Vec<_> = blocks
+        .iter()
+        .map(|target| builder.func.dfg.block_call(*target, &[]))
+        .collect();
+    let invalid_argument = ir::BlockArg::Value(continue_pc);
+    let default = builder
+        .func
+        .dfg
+        .block_call(invalid_pc, &[invalid_argument]);
+    let table = ir::JumpTableData::new(default, &cases);
+    let table = builder.create_jump_table(table);
+    builder.ins().br_table(selector, table);
+    builder.seal_block(continue_block);
     builder.seal_all_blocks();
     builder.finalize(isa.frontend_config());
     let code = compile_native_function(

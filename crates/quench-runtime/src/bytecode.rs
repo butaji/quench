@@ -697,6 +697,7 @@ macro_rules! opcodes {
 pub(crate) enum JsDenotation {
     Unsupported,
     Noop,
+    Jump,
     LoadConst,
     Move,
     GetField,
@@ -784,7 +785,7 @@ opcodes!(
     CallMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call, @ Returnable, @ fields(ResultRegister, Register, Unused),
     CallThisMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call, @ Returnable, @ fields(ResultRegister, Unused, Unused),
     Construct => CALL_EFFECT; layout ConstructCountAndFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, ConstructArguments),
-    Jump => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow Jump, @ Register, @ fields(Unused, Unused, Unused),
+    Jump => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow Jump; js Jump, @ Register, @ fields(Unused, Unused, Unused),
     JumpFalse => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
     JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(BinaryOperator, Operand, Operand),
     Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal; js Return, @ Register, @ fields(Register, Unused, Unused),
