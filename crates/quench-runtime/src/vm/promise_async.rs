@@ -25,7 +25,7 @@ impl<H: Host> Vm<H> {
             return;
         };
         for (register, value) in frame.registers.iter_mut().enumerate() {
-            if register >= u64::BITS as usize || mask & (1 << register) == 0 {
+            if !crate::compile::liveness::register_in(mask, register) {
                 *value = Value::UNDEFINED;
             }
         }
