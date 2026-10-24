@@ -1779,6 +1779,10 @@ pub(crate) struct Vm<H> {
     /// The active program's materialized constants, kept by `set_active_program` and by
     /// constant installation. A program's constant buffer never moves once installed.
     active_constants: *const [Value],
+    /// The active program's field cache entries (`SiteTable::entries_from` of its
+    /// `field_base`), re-derived by `refresh_active_field_entries` whenever the active program
+    /// changes or the table grows: a site's entry is then one load from it.
+    active_field_entries: *const <FieldCache as site_table::SiteEntry>::Stored,
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
@@ -2842,6 +2846,7 @@ impl<H: Host> Vm<H> {
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
         };
         self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.refresh_active_field_entries();
         self.field_cache_writes = Some(Vec::new());
         Self::prime_loop_decoding(program);
         self.inherited_field_caches.clear();
@@ -2993,6 +2998,7 @@ impl<H: Host> Vm<H> {
         });
         let sites = usize::from(program.cache_sites);
         self.field_caches.extend_empty(sites);
+        self.refresh_active_field_entries();
         self.megamorphic_field_indices.extend_empty(sites);
         self.field_add_indices.extend_empty(sites);
         self.inherited_field_indices.extend_empty(sites);
@@ -3009,6 +3015,13 @@ impl<H: Host> Vm<H> {
         self.active_program = program;
         self.active_layout = self.program_cache_layouts[program.raw() as usize];
         self.active_constants = self.programs.constants(program);
+        self.refresh_active_field_entries();
+    }
+
+    /// Re-derive `active_field_entries` after the active program or the field cache table
+    /// changed.
+    pub(super) fn refresh_active_field_entries(&mut self) {
+        self.active_field_entries = self.field_caches.entries_from(self.active_layout.field_base);
     }
 
     /// Constant `index` of the active program.
