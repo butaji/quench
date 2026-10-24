@@ -327,7 +327,8 @@ pub fn release_read_only_code_and_data() {}
 /// code generator, which a release would only refault, and each release reads the whole
 /// mapping table (7% of the `@testing-library/dom` npm scenario's instructions). A first call
 /// releases the read-only pages, timed apart from the collections' releases, which come far
-/// more often: a run that reports its result once at the end first calls its reporting code
+/// more often, and sooner once their resident pages pass a budget
+/// (`CompileRelease::over_budget`): a run that reports its result once at the end first calls its reporting code
 /// then, at its heap's peak, with the code it ran since the last collection resident (V8-v7
 /// RegExp).
 pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
@@ -365,6 +366,89 @@ impl CompileRelease {
     }
 }
 
+/// Under a policy that returns pages at collections, the resident file pages past which a
+/// first call releases within `MEMORY_FIRST_FIRST_CALL_INTERVAL` of the last release. A
+/// run's warm-up faults in 1.3-1.5 MB of code within one interval, while its heap is at its
+/// peak (V8-v7 RegExp, bolted static x86_64, 2026-10-24: code pages 1.3-1.45 MB beside 4.3 MB
+/// of heap at 50-80 ms).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const MEMORY_FIRST_RESIDENT_FILE_BUDGET: usize = 512 * 1024;
+
+/// The refaults that follow a release (`MEMORY_FIRST_FIRST_CALL_INTERVAL`'s measurement).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const RELEASE_REFAULT_COST: std::time::Duration = std::time::Duration::from_micros(350);
+
+/// Releases over the budget cost at most this fraction of the run's time, at
+/// `RELEASE_REFAULT_COST` each: a program whose code alone passes the budget would otherwise
+/// release at nearly every first call (TypeScript's transpile 262 -> 555 ms, ESLint
+/// 248 -> 536). At a tenth (memory-first, bolted static x86_64, interleaved, 2026-10-24):
+/// V8-v7 RegExp max RSS 5792 -> 5560 KiB (15 runs), with JIT at most 5816 -> 5564, scores
+/// -2 to -4%; npm scenarios TypeScript 297 -> 296 ms, ESLint 241 -> 268, Acorn 346 -> 396
+/// at 13.6 -> 12.3 MB, Ajv 124 -> 132: a larger working set refaults more per release than
+/// the estimate.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const BUDGET_RELEASE_TIME_DIVISOR: u32 = 10;
+
+/// When the first budget check ran, and the releases over the budget since.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static BUDGET_RELEASES: std::sync::Mutex<Option<(std::time::Instant, u32)>> = std::sync::Mutex::new(None);
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+impl CompileRelease {
+    /// Whether a first call releases inside its interval: the resident file pages passed
+    /// `MEMORY_FIRST_RESIDENT_FILE_BUDGET`, and the releases over it so far leave room in
+    /// the run's time (`BUDGET_RELEASE_TIME_DIVISOR`).
+    fn over_budget(self) -> bool {
+        let returns_pages = crate::shared_run::process_memory_policy()
+            .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
+        if !matches!(self, Self::FirstCall) || !returns_pages {
+            return false;
+        }
+        let Ok(mut releases) = BUDGET_RELEASES.lock() else {
+            return false;
+        };
+        let (started, count) = releases.get_or_insert_with(|| (std::time::Instant::now(), 0));
+        let allowed = started.elapsed() / BUDGET_RELEASE_TIME_DIVISOR;
+        if RELEASE_REFAULT_COST * (*count + 1) > allowed
+            || resident_file_bytes().is_none_or(|bytes| bytes <= MEMORY_FIRST_RESIDENT_FILE_BUDGET)
+        {
+            return false;
+        }
+        *count += 1;
+        true
+    }
+}
+
+/// The process's own memory counts in pages, space-separated (proc(5)).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const STATM_PATH: &str = "/proc/self/statm";
+
+/// Room for `STATM_PATH`'s seven decimal counts and their separators.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const STATM_BYTES: usize = 128;
+
+/// The field of `STATM_PATH` that counts resident file-backed (and shared) pages.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const STATM_RESIDENT_SHARED_FIELD: usize = 2;
+
+/// The bytes of resident file-backed pages (`STATM_PATH`), read through one descriptor kept
+/// open: a budget check runs at first calls, hundreds to thousands in a run.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn resident_file_bytes() -> Option<usize> {
+    use std::os::unix::fs::FileExt;
+    static STATM: std::sync::OnceLock<Option<std::fs::File>> = std::sync::OnceLock::new();
+    let file = STATM.get_or_init(|| std::fs::File::open(STATM_PATH).ok()).as_ref()?;
+    let mut text = [0; STATM_BYTES];
+    let length = file.read_at(&mut text, 0).ok()?;
+    let pages = std::str::from_utf8(&text[..length])
+        .ok()?
+        .split_ascii_whitespace()
+        .nth(STATM_RESIDENT_SHARED_FIELD)?
+        .parse::<usize>()
+        .ok()?;
+    pages.checked_mul(page_size())
+}
+
 /// When each compile-phase release last ran, indexed by `CompileRelease`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 static LAST_COMPILE_RELEASES: std::sync::Mutex<[Option<std::time::Instant>; CompileRelease::COUNT]> =
@@ -376,7 +460,7 @@ fn release_once_per_interval(release: CompileRelease, action: fn()) {
         return;
     };
     let last = &mut releases[release as usize];
-    if last.is_some_and(|last| last.elapsed() < release.interval()) {
+    if last.is_some_and(|last| last.elapsed() < release.interval()) && !release.over_budget() {
         return;
     }
     *last = Some(std::time::Instant::now());
