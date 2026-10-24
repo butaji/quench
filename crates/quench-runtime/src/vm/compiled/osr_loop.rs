@@ -25,7 +25,7 @@
 //! element storage and the captures the entry read stay as they are while native code runs.
 
 use crate::bytecode::{
-    FieldBase, FieldLayout, FieldLookup, Function, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
+    FieldBase, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
     OperandKind, Register, WideInstruction,
 };
 use crate::compile::liveness::RegisterSet;
@@ -155,8 +155,14 @@ pub(crate) struct LoopRegion {
     pub(crate) arrays: Vec<ArrayUse>,
     /// The depth-0 capture slots `LoadCapture` reads, in entry-record order.
     pub(crate) captures: Vec<u16>,
-    /// Numeric cached data fields, in entry-record order.
+    /// The cached data fields the region reads, in entry-record order: a field read
+    /// through another's value follows it (`intern_field`).
     pub(crate) fields: Vec<FieldUse>,
+    /// The field each `GetField` of the region reads, by offset from the header.
+    field_reads: std::collections::BTreeMap<u32, usize>,
+    /// The registers that hold a field's value at every read (`held_registers`), with the
+    /// path they hold and that field's index.
+    held: std::collections::BTreeMap<Register, (FieldPath, usize)>,
     /// Strict identity branches against `null` or `undefined` that read an unchanged
     /// tagged register directly from the activation's rooted register file.
     identity_branches: std::collections::BTreeMap<u32, IdentityBranch>,
@@ -188,21 +194,151 @@ pub(crate) enum RegionRejection {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FieldReceiver {
     This,
+    /// A register the region never writes.
     Register(Register),
+    /// The value of the region's field at this index (`LoopRegion::fields`), an earlier one.
+    Field(usize),
 }
 
-/// The cached field a named `GetField` reads, as a region holds it.
-fn field_use(instruction: WideInstruction, tagged: bool) -> Option<FieldUse> {
+/// What a `GetField` reads: named fields one after another from a root receiver (`this` or
+/// a register), each step with the cache site that answers it.
+#[derive(Clone, Debug)]
+struct FieldPath {
+    root: FieldReceiver,
+    steps: Vec<(crate::bytecode::Atom, u16)>,
+}
+
+impl FieldPath {
+    /// Whether the two paths read one value in a region, which writes no field: the same
+    /// root and names, whichever caches answer them.
+    fn reads_as(&self, other: &FieldPath) -> bool {
+        self.root == other.root && self.steps.iter().map(|step| step.0).eq(other.steps.iter().map(|step| step.0))
+    }
+}
+
+/// The base a `GetField` reads its first field from, its own or its nested site's.
+fn field_base(instruction: WideInstruction, sites: &[FieldSite]) -> Option<FieldBase> {
+    match instruction.field_lookup()? {
+        FieldLookup::Atom { base, .. } => Some(base),
+        FieldLookup::Site(index) => Some(sites.get(index)?.base),
+    }
+}
+
+/// The path a `GetField` reads, a register base that `held` names (`held_registers`) read
+/// through the path that gave it its value; a nested site (`FieldLookup::Site`) is its steps.
+fn field_path(
+    instruction: WideInstruction,
+    sites: &[FieldSite],
+    held: &std::collections::BTreeMap<Register, FieldPath>,
+) -> Option<FieldPath> {
     (instruction.op() == Op::GetField && instruction.result_flags() == 0).then_some(())?;
-    let FieldLookup::Atom { atom, base, cache_site } = instruction.field_lookup()? else {
-        return None;
+    let from = |base: FieldBase| -> Option<FieldPath> {
+        if base == FieldBase::THIS {
+            return Some(FieldPath { root: FieldReceiver::This, steps: Vec::new() });
+        }
+        let register = base.register_index()?;
+        Some(held.get(&register).cloned().unwrap_or(FieldPath { root: FieldReceiver::Register(register), steps: Vec::new() }))
     };
-    let receiver = if base == FieldBase::THIS {
-        FieldReceiver::This
-    } else {
-        FieldReceiver::Register(base.register_index()?)
+    match instruction.field_lookup()? {
+        FieldLookup::Atom { atom, base, cache_site } => {
+            let mut path = from(base)?;
+            path.steps.push((atom, cache_site));
+            Some(path)
+        }
+        FieldLookup::Site(index) => {
+            let site = sites.get(index)?;
+            site.sink.is_none().then_some(())?;
+            let mut path = from(site.base)?;
+            path.steps.push(site.first);
+            path.steps.extend(site.second);
+            Some(path)
+        }
+    }
+}
+
+/// The index in `fields` of the field whose value `path` reads, adding each step the
+/// fields lack after the one it reads from: every step but the last is a receiver, so
+/// tagged, and the last is `tagged` as its read's result.
+fn intern_field(fields: &mut Vec<FieldUse>, path: &FieldPath, tagged: bool) -> usize {
+    let mut receiver = path.root;
+    let mut index = usize::MAX;
+    for (step, (atom, cache_site)) in path.steps.iter().copied().enumerate() {
+        let tagged = tagged || step + 1 < path.steps.len();
+        index = match fields
+            .iter()
+            .position(|field| field.receiver == receiver && field.atom == atom && field.tagged == tagged)
+        {
+            Some(index) => index,
+            None => {
+                fields.push(FieldUse { receiver, atom, cache_site, tagged });
+                fields.len() - 1
+            }
+        };
+        receiver = FieldReceiver::Field(index);
+    }
+    index
+}
+
+/// The registers a region reads as objects (`object_reads`, and `objects`) that hold a
+/// field's value at every read: each definition of one in the region is a `GetField` of
+/// one path, and none is live at the header (`header_live`), so every read follows a
+/// definition. As the region writes no field, the value is the one the path reads at
+/// entry. With no liveness, none is.
+fn held_registers(
+    instructions: &[WideInstruction],
+    sites: &[FieldSite],
+    header_live: Option<RegisterSet>,
+    objects: &std::collections::BTreeSet<Register>,
+) -> std::collections::BTreeMap<Register, FieldPath> {
+    let mut held = std::collections::BTreeMap::new();
+    let Some(header_live) = header_live else {
+        return held;
     };
-    Some(FieldUse { receiver, atom, cache_site, tagged })
+    let definitions = |register: Register| {
+        instructions.iter().copied().filter(move |instruction| number_definition(*instruction) == Some(register))
+    };
+    let mut pending: std::collections::BTreeSet<Register> = instructions
+        .iter()
+        .copied()
+        .filter_map(object_reads)
+        .chain(objects.iter().copied())
+        .filter(|register| {
+            !crate::compile::liveness::register_in(header_live, usize::from(*register))
+                && definitions(*register).next().is_some()
+                && definitions(*register).all(|instruction| instruction.op() == Op::GetField)
+        })
+        .collect();
+    // A path through a register still pending waits for it; a register whose definitions
+    // read different paths, or wait on one another, holds no field.
+    loop {
+        let mut decided = Vec::new();
+        for register in pending.iter().copied() {
+            let mut paths = Vec::new();
+            for instruction in definitions(register) {
+                let waits = field_base(instruction, sites).and_then(FieldBase::register_index);
+                if waits.is_some_and(|base| pending.contains(&base)) {
+                    paths.clear();
+                    break;
+                }
+                paths.push(field_path(instruction, sites, &held));
+            }
+            if paths.is_empty() {
+                continue;
+            }
+            let first = paths[0].clone();
+            let one = first.as_ref().filter(|first| paths.iter().all(|path| path.as_ref().is_some_and(|path| path.reads_as(first))));
+            decided.push((register, one.cloned()));
+        }
+        if decided.is_empty() {
+            return held;
+        }
+        for (register, path) in decided {
+            pending.remove(&register);
+            if let Some(path) = path {
+                held.insert(register, path);
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -287,31 +423,6 @@ fn tagged_registers(
             return Some(tagged);
         }
     }
-}
-
-/// The registers the region indexes as arrays that exactly one `GetField` of it defines,
-/// with that read: each holds the array the cached field does, whose element pointer and
-/// length the entry record carries like an entry array's (`ArrayUse::field`).
-fn field_array_registers(instructions: &[WideInstruction]) -> std::collections::BTreeMap<Register, FieldUse> {
-    let bases: std::collections::BTreeSet<Register> = instructions
-        .iter()
-        .filter_map(|instruction| match instruction.op() {
-            Op::GetIndex => instruction.operand_b().register_index(),
-            Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
-            _ => None,
-        })
-        .collect();
-    bases
-        .into_iter()
-        .filter_map(|register| {
-            let mut definitions =
-                instructions.iter().filter(|instruction| number_definition(**instruction) == Some(register));
-            let (Some(read), None) = (definitions.next(), definitions.next()) else {
-                return None;
-            };
-            Some((register, field_use(*read, true)?))
-        })
-        .collect()
 }
 
 /// A call an inlining region runs in place (`inline_region`): the callee's instructions in
@@ -480,6 +591,21 @@ fn reachable(instructions: &[WideInstruction]) -> Vec<bool> {
     reached
 }
 
+/// Whether `instruction` names `register` (a read or a write); an instruction `renamed`
+/// cannot rename names every register.
+fn mentions(instruction: WideInstruction, register: Register, sites: &[FieldSite]) -> bool {
+    if let (Op::GetField, Some(FieldLookup::Site(_))) = (instruction.op(), instruction.field_lookup()) {
+        return instruction.result_register() == register
+            || field_base(instruction, sites).is_none_or(|base| base.register_index() == Some(register));
+    }
+    let named = std::cell::Cell::new(false);
+    let rename = |name: Register| {
+        named.set(named.get() || name == register);
+        name
+    };
+    renamed(instruction, &rename, register, &|target| Some(target)).is_none() || named.get()
+}
+
 /// The ops a call's argument setup may run between reading its callee and the call: none
 /// has an effect a second run could repeat, so leaving among them resumes at the read.
 fn pure_setup(op: Op) -> bool {
@@ -511,14 +637,16 @@ fn pure_setup(op: Op) -> bool {
 /// registers they write, which the setup's function may reuse otherwise, hold nothing for
 /// the region. Leaving at a callee's instruction makes the callee's activation
 /// (`INLINED_EXIT`).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn inline_region<'a>(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[Value],
+    sites: &[FieldSite],
     live: &[RegisterSet],
     header: u32,
     backedge: u32,
-    resolve: &mut dyn FnMut(FieldUse) -> Option<InlineCallee<'a>>,
+    resolve: &mut dyn FnMut(&[FieldUse]) -> Option<InlineCallee<'a>>,
 ) -> Option<LoopRegion> {
     let (start, end) = (header as usize, backedge as usize);
     (start <= end && end < decoded.len()).then_some(())?;
@@ -535,17 +663,18 @@ pub(super) fn inline_region<'a>(
     struct Site<'b> {
         frame: InlineFrame,
         callee: InlineCallee<'b>,
-        /// The callee's read, whose PC the setup resumes at, and its field.
+        /// The callee's read.
         read: u32,
-        field: FieldUse,
         window: Register,
         result: Register,
         reached: Vec<bool>,
     }
-    let mut sites: std::collections::BTreeMap<u32, Site<'a>> = std::collections::BTreeMap::new();
-    // The caller PCs whose instructions drop out, and the setup PCs, by the read they resume at.
+    let mut calls: std::collections::BTreeMap<u32, Site<'a>> = std::collections::BTreeMap::new();
+    // The caller PCs whose instructions drop out, the setup PCs by the PC they resume at, and
+    // the caller instructions the region runs rewritten.
     let mut dropped = std::collections::BTreeSet::new();
     let mut setup: std::collections::BTreeMap<u32, u32> = std::collections::BTreeMap::new();
+    let mut rewritten: std::collections::BTreeMap<u32, WideInstruction> = std::collections::BTreeMap::new();
     for (offset, instruction) in caller.iter().copied().enumerate() {
         if instruction.op() != Op::Call {
             continue;
@@ -554,23 +683,49 @@ pub(super) fn inline_region<'a>(
         (instruction.result_flags() == 0 && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
         let argc = ImmediateLayout::argument_count(instruction.imm());
         let window = ImmediateLayout::call_window_base(instruction.imm());
-        let (function_register, receiver) = (instruction.register_b(), instruction.register_c());
-        (!defines(receiver)).then_some(())?;
+        let (function_register, mut receiver) = (instruction.register_b(), instruction.register_c());
         // The callee's read: the last write of its register before the call, in a straight run.
         let read_offset = (0..offset).rev().find(|index| caller[*index].defined_register() == Some(function_register))?;
         let read = header + read_offset as u32;
-        let field = field_use(caller[read_offset], true)?;
-        let at_read = mask(read)?;
-        let run = &caller[read_offset + 1..offset];
+        let mut callee_path = field_path(caller[read_offset], sites, &std::collections::BTreeMap::new())?;
+        // A receiver the region writes is the call's own: a field read right before the
+        // callee's, which reads the callee from it (`this.m.am(…)`), and nothing else
+        // reads until the call, nor after it. The region gives that read a register of its
+        // own, holding the field's value (`held_registers`), and the setup resumes at it.
+        let mut resume_offset = read_offset;
+        if defines(receiver) {
+            let own = read_offset.checked_sub(1)?;
+            let receiver_path = field_path(caller[own], sites, &std::collections::BTreeMap::new())?;
+            (caller[own].defined_register() == Some(receiver)
+                && receiver_path.root != FieldReceiver::Register(receiver)
+                && callee_path.root == FieldReceiver::Register(receiver)
+                && callee_path.steps.len() == 1
+                && caller[read_offset + 1..offset].iter().all(|instruction| !mentions(*instruction, receiver, sites))
+                && !crate::compile::liveness::register_in(mask(pc + 1)?, usize::from(receiver)))
+            .then_some(())?;
+            let fresh = Register::try_from(total).ok()?;
+            total += 1;
+            rewritten.insert(header + own as u32, WideInstruction::new(Op::GetField, fresh, caller[own].b(), caller[own].c(), caller[own].imm()));
+            callee_path.root = receiver_path.root;
+            callee_path.steps.splice(0..0, receiver_path.steps);
+            receiver = fresh;
+            resume_offset = own;
+        }
+        let resume = header + resume_offset as u32;
+        let at_resume = mask(resume)?;
+        let run = &caller[resume_offset + 1..offset];
         (run.iter().all(|instruction| pure_setup(instruction.op()))
-            && (read + 1..=pc).all(|pc| !targets.contains(&pc))
+            && (resume + 1..=pc).all(|pc| !targets.contains(&pc))
             && run.iter().all(|instruction| {
                 instruction
                     .defined_register()
-                    .is_none_or(|register| !crate::compile::liveness::register_in(at_read, usize::from(register)))
+                    .is_none_or(|register| !crate::compile::liveness::register_in(at_resume, usize::from(register)))
             }))
         .then_some(())?;
-        let callee = resolve(field)?;
+        // The callee as the read finds it now.
+        let mut chain = Vec::new();
+        intern_field(&mut chain, &callee_path, true);
+        let callee = resolve(&chain)?;
         (callee.params == argc && usize::from(argc) <= MAX_INLINE_PARAMS).then_some(())?;
         let reached = reachable(&callee.instructions);
         let body = || callee.instructions.iter().copied().zip(reached.iter()).filter(|(_, reached)| **reached).map(|(instruction, _)| instruction);
@@ -591,13 +746,13 @@ pub(super) fn inline_region<'a>(
             dropped.insert(header + moved as u32);
         }
         dropped.insert(read);
-        for setup_pc in read..pc {
-            setup.insert(setup_pc, read);
+        for setup_pc in resume..pc {
+            setup.insert(setup_pc, resume);
         }
         let base = Register::try_from(total).ok()?;
         total += u32::from(callee.registers);
         (total <= RegisterSet::BITS).then_some(())?;
-        sites.insert(
+        calls.insert(
             pc,
             Site {
                 frame: InlineFrame {
@@ -610,7 +765,6 @@ pub(super) fn inline_region<'a>(
                     bound,
                 },
                 read,
-                field,
                 window,
                 result: instruction.result_register(),
                 reached,
@@ -618,7 +772,7 @@ pub(super) fn inline_region<'a>(
             },
         );
     }
-    (!sites.is_empty()).then_some(())?;
+    (!calls.is_empty()).then_some(())?;
     // Region PCs: each kept caller instruction takes one, a call its numeric parameters'
     // moves and its callee's reached instructions, each `Return` two (the result's move and
     // the jump past the call). A dropped instruction's PC is the next instruction's.
@@ -631,7 +785,7 @@ pub(super) fn inline_region<'a>(
         if dropped.contains(&pc) {
             continue;
         }
-        let Some(site) = sites.get(&pc) else {
+        let Some(site) = calls.get(&pc) else {
             length += 1;
             continue;
         };
@@ -665,9 +819,10 @@ pub(super) fn inline_region<'a>(
         if dropped.contains(&pc) {
             continue;
         }
-        // A setup instruction leaves as its call's read does.
+        // A setup instruction leaves as the first of its run does.
         let resumes = setup.get(&pc).copied().unwrap_or(pc);
-        let Some(site) = sites.get(&pc) else {
+        let instruction = rewritten.get(&pc).copied().unwrap_or(instruction);
+        let Some(site) = calls.get(&pc) else {
             // A caller instruction keeps its registers; a jump takes the region PC of its target.
             let renamed = if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
                 let target = caller_target(instruction.imm(), &mut leaves);
@@ -681,7 +836,7 @@ pub(super) fn inline_region<'a>(
             continue;
         };
         let frame = site.frame;
-        let index = sites.keys().position(|key| *key == pc)? as u16;
+        let index = calls.keys().position(|key| *key == pc)? as u16;
         let flat = &callee_flat[&pc];
         let register = |register: Register| match frame.bound.get(usize::from(register)).copied().flatten() {
             Some(source) => source,
@@ -732,20 +887,30 @@ pub(super) fn inline_region<'a>(
         origins.push(Origin::Leave(*target));
         masks.push(mask(*target)?);
     }
-    let held = std::collections::BTreeSet::new();
-    let mut region =
-        admit_region(instructions, total as usize, constants, Some(masks.into_boxed_slice()), header, &held).ok()?;
-    // Each callee's field, which the entry reads and guards still holds it.
-    let mut frames = Vec::with_capacity(sites.len());
-    for site in sites.into_values() {
+    let receivers = calls.values().map(|site| site.frame.receiver).collect();
+    let header_live = masks.first().copied();
+    let mut region = admit_region(
+        instructions,
+        total as usize,
+        constants,
+        sites,
+        Some(masks.into_boxed_slice()),
+        header_live,
+        header,
+        &receivers,
+    )
+    .ok()?;
+    // Each callee's field, which the entry reads and guards still holds it, read through
+    // the region's held registers.
+    let held: std::collections::BTreeMap<Register, FieldPath> =
+        region.held.iter().map(|(register, (path, _))| (*register, path.clone())).collect();
+    let mut frames = Vec::with_capacity(calls.len());
+    for site in calls.into_values() {
         let mut frame = site.frame;
-        frame.field = match region.fields.iter().position(|use_| *use_ == site.field) {
-            Some(index) => index,
-            None => {
-                region.fields.push(site.field);
-                region.fields.len() - 1
-            }
-        };
+        let written = frame.receiver >= caller_registers || defines(frame.receiver);
+        (!written || held.contains_key(&frame.receiver)).then_some(())?;
+        let path = field_path(caller[(site.read - header) as usize], sites, &held)?;
+        frame.field = intern_field(&mut region.fields, &path, true);
         frames.push(frame);
     }
     (region.fields.len() <= MAX_REGION_FIELDS).then_some(())?;
@@ -793,6 +958,12 @@ impl LoopRegion {
         }
     }
 
+    /// The field whose value `register` holds at every read, when it is one the region
+    /// writes only with that field's reads (`held_registers`).
+    pub(crate) fn held_field(&self, register: Register) -> Option<usize> {
+        self.held.get(&register).map(|(_, index)| *index)
+    }
+
     /// Whether native code leaving at the `INLINED_EXIT` PC `pc` wrote back `register`.
     pub(crate) fn wrote_back(&self, pc: u32, register: Register) -> bool {
         self.is_live(pc & !INLINED_EXIT, register)
@@ -809,9 +980,10 @@ impl LoopRegion {
     }
 }
 
-/// The entry record native code reads: each capture's value, then each array's element
-/// pointer and length, then each cached field. Only the words pushed are ever read, by
-/// native code and by `captures`, so the rest stay uninitialized.
+/// The entry record native code reads: each capture's value, then each cached field's,
+/// then each array's element pointer, length and capacity. Only the words pushed are ever
+/// read, by native code and by `captures` and `field_value`, so the rest stay
+/// uninitialized.
 pub(crate) struct LoopEntry {
     words: [std::mem::MaybeUninit<u64>; ENTRY_WORDS],
     length: usize,
@@ -876,7 +1048,7 @@ impl LoopEntry {
             .collect()
     }
 
-    /// Arrays follow the captures, in the region's order. An array longer than
+    /// Arrays follow the fields, in the region's order. An array longer than
     /// `MAX_INDEXED_LENGTH` declines the entry.
     pub(crate) fn push_array(&mut self, elements: *mut Value, length: usize, capacity: usize) -> Option<()> {
         (length <= MAX_INDEXED_LENGTH).then_some(())?;
@@ -887,11 +1059,11 @@ impl LoopEntry {
     }
 
     /// The value of the region's `index`th field as pushed: its word follows the captures
-    /// and arrays. A Number field reads back as its double's Number.
+    /// and the fields before it. A Number field reads back as its double's Number.
     pub(crate) fn field_value(&self, region: &LoopRegion, index: usize) -> Value {
-        let word = ENTRY_CAPTURES + region.captures.len() + ARRAY_WORDS * region.arrays.len() + index;
+        let word = ENTRY_CAPTURES + region.captures.len() + index;
         debug_assert!(word < self.length);
-        // SAFETY: every field of the region was pushed after its captures and arrays.
+        // SAFETY: the caller pushed the field, after the captures and the fields before it.
         let bits = unsafe { self.words[word].assume_init() };
         if region.fields[index].tagged { Value::from_bits(bits) } else { Value::number(f64::from_bits(bits)) }
     }
@@ -972,8 +1144,8 @@ struct Admission<'a> {
     pub(crate) fields: Vec<FieldUse>,
     numbers: std::collections::BTreeMap<u16, f64>,
     values: std::collections::BTreeMap<u16, Value>,
-    /// The registers holding an array a field read gives (`field_array_registers`), each
-    /// with whether the region stores into it.
+    /// The arrays registers hold that hold a field's value (`held_registers`), each with
+    /// whether the region stores into it.
     field_arrays: std::collections::BTreeMap<Register, bool>,
 }
 
@@ -1051,6 +1223,7 @@ pub(super) fn region(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[Value],
+    sites: &[FieldSite],
     live: Option<&[crate::compile::liveness::RegisterSet]>,
     header: u32,
     backedge: u32,
@@ -1059,32 +1232,39 @@ pub(super) fn region(
     if start > end || end >= decoded.len() || end - start >= MAX_REGION_INSTRUCTIONS {
         return Err(RegionRejection::RegionTooLarge);
     }
+    let header_live = live.and_then(|live| live.get(start).copied());
     admit_region(
         decoded[start..=end].to_vec(),
         usize::from(function.registers),
         constants,
+        sites,
         live.map(Box::from),
+        header_live,
         header,
         &std::collections::BTreeSet::new(),
     )
 }
 
 /// The region of `instructions`, at PCs from `header`, of a function with `registers`
-/// registers whose liveness by PC is `live`; `held` are registers that hold tagged values
-/// beyond those the instructions show (`tagged_registers`).
+/// registers whose liveness by PC is `live` (`header_live` at the header); `objects` are
+/// registers read as objects beyond those the instructions show, so tagged
+/// (`tagged_registers`) and holding a field's value where they can (`held_registers`).
+#[allow(clippy::too_many_arguments)]
 fn admit_region(
     instructions: Vec<WideInstruction>,
     registers: usize,
     constants: &[Value],
+    sites: &[FieldSite],
     live: Option<Box<[crate::compile::liveness::RegisterSet]>>,
+    header_live: Option<RegisterSet>,
     header: u32,
-    held: &std::collections::BTreeSet<Register>,
+    objects: &std::collections::BTreeSet<Register>,
 ) -> Result<LoopRegion, RegionRejection> {
     let backedge = header + instructions.len() as u32 - 1;
-    let mut tagged = tagged_registers(&instructions, constants, held)
+    let paths = held_registers(&instructions, sites, header_live, objects);
+    let mut tagged = tagged_registers(&instructions, constants, &objects.iter().chain(paths.keys()).copied().collect())
         .ok_or(RegionRejection::UnsupportedInstruction(Op::JumpBinaryFalse))?;
-    let field_arrays = field_array_registers(&instructions);
-    tagged.extend(field_arrays.keys().copied());
+    tagged.extend(paths.keys().copied());
     let mut admission = Admission {
         constants,
         roles: std::collections::BTreeMap::new(),
@@ -1092,12 +1272,28 @@ fn admit_region(
         fields: Vec::new(),
         numbers: std::collections::BTreeMap::new(),
         values: std::collections::BTreeMap::new(),
-        field_arrays: field_arrays.keys().map(|register| (*register, false)).collect(),
+        field_arrays: std::collections::BTreeMap::new(),
     };
-    for instruction in &instructions {
-        admit(&mut admission, *instruction, constants, &tagged)
+    let mut field_reads = std::collections::BTreeMap::new();
+    for (offset, instruction) in instructions.iter().copied().enumerate() {
+        if instruction.op() == Op::GetField {
+            let path = field_path(instruction, sites, &paths).ok_or(RegionRejection::UnsupportedInstruction(Op::GetField))?;
+            let index = intern_field(&mut admission.fields, &path, tagged.contains(&instruction.result_register()));
+            field_reads.insert(offset as u32, index);
+        }
+        if let Some(register) = object_reads(instruction).filter(|register| paths.contains_key(register)) {
+            admission.field_arrays.entry(register).or_insert(false);
+        }
+        admit(&mut admission, instruction, constants, &tagged)
             .ok_or(RegionRejection::UnsupportedInstruction(instruction.op()))?;
     }
+    let held: std::collections::BTreeMap<Register, (FieldPath, usize)> = paths
+        .into_iter()
+        .map(|(register, path)| {
+            let index = intern_field(&mut admission.fields, &path, true);
+            (register, (path, index))
+        })
+        .collect();
     let mut identity_branches = std::collections::BTreeMap::new();
     for (offset, instruction) in instructions.iter().copied().enumerate() {
         let Some(branch) = identity_branch(instruction, constants) else {
@@ -1114,7 +1310,7 @@ fn admit_region(
     // removes or redefines no property a field cache holds (an array's `length` is no
     // shape slot).
     if admission.fields.iter().any(|field| match field.receiver {
-        FieldReceiver::This => false,
+        FieldReceiver::This | FieldReceiver::Field(_) => false,
         FieldReceiver::Register(register) => instructions
             .iter()
             .any(|instruction| number_definition(*instruction) == Some(register)),
@@ -1150,13 +1346,14 @@ fn admit_region(
         })
         .collect();
     for (register, written) in &admission.field_arrays {
-        let field = field_arrays[register];
-        let index = admission
-            .fields
-            .iter()
-            .position(|use_| *use_ == field)
-            .ok_or(RegionRejection::UnsupportedInstruction(Op::GetField))?;
-        arrays.push(ArrayUse { register: *register, written: *written, field: Some(index) });
+        // A held register read as an object only by field reads indexes nothing.
+        if !instructions.iter().any(|instruction| {
+            matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible)
+                && object_reads(*instruction) == Some(*register)
+        }) {
+            continue;
+        }
+        arrays.push(ArrayUse { register: *register, written: *written, field: Some(held[register].1) });
     }
     if arrays.len() > MAX_REGION_ARRAYS {
         return Err(RegionRejection::ArrayLimit);
@@ -1169,6 +1366,8 @@ fn admit_region(
         arrays,
         captures: admission.captures,
         fields: admission.fields,
+        field_reads,
+        held,
         identity_branches,
         instructions,
         constants: admission.numbers,
@@ -1242,12 +1441,9 @@ fn admit(
             admission.array(base, false)?;
             admission.source(instruction.operand_c())?;
         }
+        // Its field is the region's (`LoopRegion::field_reads`).
         Op::GetField => {
-            let field = field_use(instruction, tagged.contains(&instruction.result_register()))?;
-            if !admission.fields.contains(&field) {
-                admission.fields.push(field);
-            }
-            if field.tagged {
+            if tagged.contains(&instruction.result_register()) {
                 admission.tagged(instruction.result_register())?;
             } else {
                 admission.result(instruction)?;
@@ -2504,8 +2700,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// Unboxes every Number register and capture in its representation, entering only when
     /// all hold such values.
     fn enter(&mut self) -> Option<()> {
+        let fields_start = ENTRY_CAPTURES + self.region.captures.len();
+        let arrays_start = fields_start + self.region.fields.len();
         for (index, array) in self.region.arrays.iter().enumerate() {
-            let base = ENTRY_CAPTURES + self.region.captures.len() + ARRAY_WORDS * index;
+            let base = arrays_start + ARRAY_WORDS * index;
             let elements = self.word(base);
             let access = if array.written {
                 ArrayAccess::Written { capacity: self.word(base + 2) }
@@ -2521,9 +2719,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let value = self.unbox(bits, representation, otherwise);
             self.captures.push(Typed { value, representation });
         }
-        let fields_start = ENTRY_CAPTURES
-            + self.region.captures.len()
-            + ARRAY_WORDS * self.region.arrays.len();
         for index in 0..self.region.fields.len() {
             let bits = self.word(fields_start + index);
             let value = if self.region.fields[index].tagged {
@@ -2537,9 +2732,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.fields.push(value);
         }
         if let Some(inlining) = &self.region.inlining {
-            // The scratch registers' address follows the fields; each inlined callee is still
+            // The scratch registers' address follows the arrays; each inlined callee is still
             // the function its field held when the region was made.
-            self.scratch = Some(self.word(fields_start + self.region.fields.len()));
+            self.scratch = Some(self.word(arrays_start + ARRAY_WORDS * self.region.arrays.len()));
             for frame in inlining.frames.clone() {
                 let held = self.fields[frame.field].value;
                 let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, held, frame.callee.to_bits() as i64);
@@ -3392,10 +3587,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             Op::RequireObjectCoercible => self.fall_through(pc),
             Op::GetField => {
-                let read = field_use(instruction, false)?;
-                let field = self.region.fields.iter().position(|field| {
-                    field.receiver == read.receiver && field.atom == read.atom && field.cache_site == read.cache_site
-                })?;
+                let field = *self.region.field_reads.get(&(pc - self.region.header))?;
                 let value = self.fields[field];
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
