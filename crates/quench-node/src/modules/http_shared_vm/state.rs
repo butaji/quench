@@ -1,5 +1,7 @@
 use quench_runtime::RootId;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque;
+use std::time::Instant;
 
 pub(crate) struct State {
     next_server: u64,
@@ -22,6 +24,11 @@ pub(crate) struct State {
     pub(crate) requests: FxHashMap<u64, OutgoingRequest>,
     pub(crate) clients: FxHashMap<u64, Client>,
     pub(crate) agents: FxHashMap<u64, FxHashSet<u64>>,
+    /// Free keep-alive sockets keyed by agent and origin. The native pool still owns
+    /// the socket; an idle entry only records that the next request may reuse it.
+    pub(crate) idle: FxHashMap<(u64, String, u16), Vec<IdleSocket>>,
+    /// Requests waiting for an agent to fall below `maxSockets`.
+    pub(crate) pending: VecDeque<PendingRequest>,
 }
 
 impl State {
@@ -143,6 +150,11 @@ pub(crate) struct OutgoingRequest {
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) body: Body,
     pub(crate) agent: Option<u64>,
+    /// The agent's keep-alive setting; a request `Connection: close` clears it.
+    pub(crate) keep_alive: bool,
+    pub(crate) keep_alive_msecs: u64,
+    pub(crate) max_sockets: usize,
+    pub(crate) max_free_sockets: usize,
 }
 
 #[derive(Default)]
@@ -190,6 +202,73 @@ pub(crate) struct Client {
     pub(crate) request: Vec<u8>,
     pub(crate) response_parser: super::protocol::ResponseParser,
     pub(crate) response_root: Option<RootId>,
+    pub(crate) agent: Option<u64>,
+    pub(crate) host: String,
+    pub(crate) port: u16,
+    /// The exchange may leave its socket idle after a complete response.
+    pub(crate) keep_alive: bool,
+    pub(crate) keep_alive_msecs: u64,
+    pub(crate) max_sockets: usize,
+    pub(crate) max_free_sockets: usize,
+    /// This exchange runs on a socket taken from the idle pool, so a connection
+    /// that fails before any response byte is retried once on a fresh socket.
+    pub(crate) reused: bool,
+}
+
+/// A keep-alive socket with no exchange on it, kept until `expires_at`.
+pub(crate) struct IdleSocket {
+    pub(crate) socket: u64,
+    pub(crate) expires_at: Instant,
+}
+
+/// A request whose agent is at `maxSockets`, waiting for a socket to free.
+pub(crate) struct PendingRequest {
+    pub(crate) agent: u64,
+    pub(crate) host: String,
+    pub(crate) port: u16,
+    pub(crate) client: Client,
+}
+
+impl State {
+    /// The idle list for one agent origin.
+    pub(crate) fn idle_sockets_mut(
+        &mut self,
+        agent: u64,
+        host: &str,
+        port: u16,
+    ) -> &mut Vec<IdleSocket> {
+        self.idle.entry((agent, host.to_owned(), port)).or_default()
+    }
+
+    /// The most recently freed socket for this agent origin, if any.
+    pub(crate) fn take_idle_socket(
+        &mut self,
+        agent: u64,
+        host: &str,
+        port: u16,
+    ) -> Option<IdleSocket> {
+        self.idle
+            .get_mut(&(agent, host.to_owned(), port))
+            .and_then(Vec::pop)
+    }
+
+    /// Forget `socket` in every idle list; true when it was idle somewhere.
+    pub(crate) fn remove_idle_socket(&mut self, socket: u64) -> bool {
+        let mut removed = false;
+        for sockets in self.idle.values_mut() {
+            let before = sockets.len();
+            sockets.retain(|idle| idle.socket != socket);
+            removed |= sockets.len() != before;
+        }
+        removed
+    }
+
+    /// Whether `agent` may open another socket without exceeding `max_sockets`.
+    pub(crate) fn agent_has_capacity(&self, agent: u64, max_sockets: usize) -> bool {
+        self.agents
+            .get(&agent)
+            .is_none_or(|sockets| sockets.len() < max_sockets)
+    }
 }
 
 impl State {
@@ -211,6 +290,8 @@ impl State {
             requests: FxHashMap::default(),
             clients: FxHashMap::default(),
             agents: FxHashMap::default(),
+            idle: FxHashMap::default(),
+            pending: VecDeque::new(),
         }
     }
 
@@ -275,6 +356,8 @@ impl State {
             requests,
             clients,
             agents,
+            idle,
+            pending,
         } = self;
         require_quiescent(
             servers.is_empty()
@@ -283,6 +366,8 @@ impl State {
                 && drain_waiters.is_empty()
                 && requests.is_empty()
                 && clients.is_empty()
+                && idle.is_empty()
+                && pending.is_empty()
                 && agents.values().all(|sockets| sockets.is_empty()),
             "an HTTP connection",
         )?;
@@ -316,8 +401,11 @@ impl State {
         self.response_tracking = HostSnap::read(reader)?;
         self.agents.clear();
         for _ in 0..reader.len()? {
-            self.agents.insert(HostSnap::read(reader)?, FxHashSet::default());
+            self.agents
+                .insert(HostSnap::read(reader)?, FxHashSet::default());
         }
+        self.idle.clear();
+        self.pending.clear();
         Ok(())
     }
 }

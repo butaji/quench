@@ -986,10 +986,23 @@ pub(crate) fn agent_destroy(
     let aborted_clients = {
         let host = context.host_mut().shared_state();
         let mut guard = host.borrow_mut();
+        // A destroyed agent drops its free sockets too: they are owned, not in an
+        // exchange, so the loop below has no client record to abort for them.
+        guard.http.idle.retain(|(owner, _, _), _| *owner != agent);
+        let mut aborted_clients = Vec::new();
+        while let Some(index) = guard
+            .http
+            .pending
+            .iter()
+            .position(|pending| pending.agent == agent)
+        {
+            if let Some(pending) = guard.http.pending.remove(index) {
+                aborted_clients.push(pending.client);
+            }
+        }
         let Some(sockets) = guard.http.agents.remove(&agent) else {
             return Ok(context.undefined());
         };
-        let mut aborted_clients = Vec::new();
         for socket in sockets {
             let response_is_complete = guard
                 .http

@@ -127,7 +127,15 @@ pub(crate) fn poll(
         let mut host = shared_state.borrow_mut();
         net_shared_vm::poll(&mut host.tcp)
     };
-    let mut progressed = false;
+    let (pending_failures, started) = {
+        let mut host = shared_state.borrow_mut();
+        super::client::expire_idle_sockets(&mut host);
+        super::client::drain_pending(&mut host)
+    };
+    for (client, message) in pending_failures {
+        fail_client_exchange(runtime, program, client, &message)?;
+    }
+    let mut progressed = started;
     progressed |= emit_listening(runtime, program, shared_state)?;
     progressed |= emit_net_server_events(runtime, shared_state)?;
     progressed |= emit_response_drains(runtime, shared_state)?;
@@ -584,6 +592,20 @@ pub(crate) fn poll(
                         progressed = true;
                         continue;
                     }
+                    if let Some(head) = progress.head.as_ref() {
+                        let reusable =
+                            super::protocol::response_keep_alive(&head.version, &head.headers);
+                        if !reusable {
+                            if let Some(client) = shared_state
+                                .borrow_mut()
+                                .http
+                                .clients
+                                .get_mut(&socket)
+                            {
+                                client.keep_alive = false;
+                            }
+                        }
+                    }
                     let progressed_response =
                         progress.head.is_some() || !progress.body_chunks.is_empty();
                     let response_root = match (response_root, progress.head) {
@@ -636,18 +658,11 @@ pub(crate) fn poll(
                                 Ok(())
                             };
                             runtime.release_root(client.request_root);
-                            let agent_owns_socket = shared_state
-                                .borrow()
-                                .http
-                                .agents
-                                .values()
-                                .any(|sockets| sockets.contains(&socket));
-                            if !agent_owns_socket {
-                                net_shared_vm::close_socket(
-                                    &mut shared_state.borrow_mut().tcp,
-                                    socket,
-                                );
-                            }
+                            super::client::release_agent_socket(
+                                &mut shared_state.borrow_mut(),
+                                socket,
+                                &client,
+                            );
                             finish_result?;
                         }
                         progressed = true;
@@ -674,6 +689,33 @@ pub(crate) fn poll(
                 }
                 let client = shared_state.borrow_mut().http.clients.remove(&socket);
                 if let Some(mut client) = client {
+                    if client.reused && !client.response_parser.has_seen_data() {
+                        // The free socket was closed by the peer before it answered.
+                        // Node retries a reused socket once instead of surfacing a
+                        // stale ECONNRESET to the guest.
+                        if let Some(agent) = client.agent {
+                            if let Some(sockets) =
+                                shared_state.borrow_mut().http.agents.get_mut(&agent)
+                            {
+                                sockets.remove(&socket);
+                            }
+                        }
+                        shared_state.borrow_mut().http.remove_idle_socket(socket);
+                        net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
+                        client.reused = false;
+                        let retry = {
+                            let mut host = shared_state.borrow_mut();
+                            super::client::retry_client(&mut host, client)
+                        };
+                        match retry {
+                            Ok(()) => progressed = true,
+                            Err((client, message)) => {
+                                fail_client_exchange(runtime, program, client, &message)?;
+                                progressed = true;
+                            }
+                        }
+                        continue;
+                    }
                     match client.response_parser.finish() {
                         Ok(progress) => {
                             let mut response_root = client.response_root;
@@ -713,6 +755,10 @@ pub(crate) fn poll(
                             fail_client_exchange(runtime, program, client, "socket hang up")?;
                         }
                     }
+                    net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
+                    progressed = true;
+                }
+                if shared_state.borrow_mut().http.remove_idle_socket(socket) {
                     net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
                     progressed = true;
                 }
@@ -760,6 +806,7 @@ pub(crate) fn poll(
                         .remove(&socket)
                         .map(|connection| connection.server);
                     let contexts = host.http.take_socket_responses(socket);
+                    host.http.remove_idle_socket(socket);
                     if let Some(server_id) = server_id {
                         if let Some(server) = host.http.servers.get_mut(&server_id) {
                             server.connections.remove(&socket);
@@ -869,9 +916,29 @@ pub(crate) fn poll(
                     (client, server_id, contexts)
                 };
                 let client_was_present = client.is_some();
-                if let Some(client) = client {
-                    fail_client_exchange(runtime, program, client, &message)?;
+                if let Some(mut client) = client {
+                    if client.reused && !client.response_parser.has_seen_data() {
+                        if let Some(agent) = client.agent {
+                            if let Some(sockets) =
+                                shared_state.borrow_mut().http.agents.get_mut(&agent)
+                            {
+                                sockets.remove(&socket);
+                            }
+                        }
+                        net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
+                        client.reused = false;
+                        let retry = {
+                            let mut host = shared_state.borrow_mut();
+                            super::client::retry_client(&mut host, client)
+                        };
+                        if let Err((client, message)) = retry {
+                            fail_client_exchange(runtime, program, client, &message)?;
+                        }
+                    } else {
+                        fail_client_exchange(runtime, program, client, &message)?;
+                    }
                 }
+                shared_state.borrow_mut().http.remove_idle_socket(socket);
                 for response in contexts {
                     retire_response(runtime, shared_state, response);
                 }
@@ -1155,6 +1222,7 @@ fn dispatch_client_upgrade(
     let upgraded = {
         let mut host = shared_state.borrow_mut();
         let client = host.http.clients.remove(&socket_id);
+        host.http.remove_idle_socket(socket_id);
         for sockets in host.http.agents.values_mut() {
             sockets.remove(&socket_id);
         }

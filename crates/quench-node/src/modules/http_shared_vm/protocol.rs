@@ -18,8 +18,39 @@ pub(crate) enum RequestFramingError {
 pub(crate) struct ResponseMessage {
     pub(crate) status: u16,
     pub(crate) message: String,
+    pub(crate) version: String,
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) raw_headers: Vec<(String, String)>,
+}
+
+/// Whether a response leaves its connection reusable: HTTP/1.1 persists unless
+/// the response says `Connection: close`; HTTP/1.0 persists only on an explicit
+/// `Connection: keep-alive`.
+pub(crate) fn response_keep_alive(version: &str, headers: &[(String, String)]) -> bool {
+    let connection = headers
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case("connection"))
+        .flat_map(|(_, value)| value.split(','))
+        .map(str::trim);
+    let mut keep_alive = !version.starts_with("1.0");
+    for token in connection {
+        if token.eq_ignore_ascii_case("close") {
+            return false;
+        }
+        if token.eq_ignore_ascii_case("keep-alive") {
+            keep_alive = true;
+        }
+    }
+    keep_alive
+}
+
+/// Whether a request header list asks the server to close the connection.
+pub(crate) fn request_wants_close(headers: &[(String, String)]) -> bool {
+    headers
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case("connection"))
+        .flat_map(|(_, value)| value.split(','))
+        .any(|token| token.trim().eq_ignore_ascii_case("close"))
 }
 
 pub(crate) fn request(bytes: &[u8]) -> Option<RequestMessage> {
@@ -97,6 +128,12 @@ impl ResponseParser {
         matches!(self.state, ResponseState::Complete)
     }
 
+    /// No response byte has been parsed, so a failed reused socket can be retried
+    /// without losing an observed response.
+    pub(crate) fn has_seen_data(&self) -> bool {
+        !self.pending.is_empty() || !matches!(self.state, ResponseState::Head)
+    }
+
     pub(crate) fn pending_head_len(&self) -> usize {
         matches!(self.state, ResponseState::Head)
             .then_some(self.pending.len())
@@ -142,6 +179,12 @@ impl ResponseParser {
                     progress.head = Some(ResponseMessage {
                         status,
                         message: head.first.get(2..).unwrap_or_default().join(" "),
+                        version: head
+                            .first
+                            .first()
+                            .and_then(|line| line.strip_prefix("HTTP/"))
+                            .unwrap_or("1.1")
+                            .to_owned(),
                         headers: head.headers.clone(),
                         raw_headers: head.raw_headers,
                     });
@@ -406,7 +449,59 @@ fn decode_chunked(bytes: &[u8]) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ResponseParser, request};
+    use super::{request, request_wants_close, response_keep_alive, ResponseParser};
+
+    #[test]
+    fn http_1_1_persists_unless_the_response_closes() {
+        assert!(response_keep_alive("1.1", &[]));
+        assert!(response_keep_alive(
+            "1.1",
+            &[("Connection".to_owned(), "keep-alive".to_owned())]
+        ));
+        assert!(!response_keep_alive(
+            "1.1",
+            &[("connection".to_owned(), "close".to_owned())]
+        ));
+        // A comma-separated list keeps the last decisive token.
+        assert!(!response_keep_alive(
+            "1.1",
+            &[("Connection".to_owned(), "keep-alive, close".to_owned())]
+        ));
+    }
+
+    #[test]
+    fn http_1_0_persists_only_on_an_explicit_keep_alive() {
+        assert!(!response_keep_alive("1.0", &[]));
+        assert!(response_keep_alive(
+            "1.0",
+            &[("Connection".to_owned(), "keep-alive".to_owned())]
+        ));
+        assert!(!response_keep_alive(
+            "1.0",
+            &[("Connection".to_owned(), "close".to_owned())]
+        ));
+    }
+
+    #[test]
+    fn request_close_header_is_detected() {
+        assert!(!request_wants_close(&[]));
+        assert!(request_wants_close(&[(
+            "Connection".to_owned(),
+            "close".to_owned()
+        )]));
+        assert!(request_wants_close(&[(
+            "connection".to_owned(),
+            "keep-alive, close".to_owned()
+        )]));
+    }
+
+    #[test]
+    fn a_parser_without_response_bytes_has_seen_no_data() {
+        let mut parser = ResponseParser::default();
+        assert!(!parser.has_seen_data());
+        parser.push(b"HTTP/1.1 ").unwrap();
+        assert!(parser.has_seen_data());
+    }
 
     #[test]
     fn upgrade_request_preserves_bytes_after_the_head() {
