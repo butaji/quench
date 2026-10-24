@@ -11968,6 +11968,62 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
 }
 
 #[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
+    let source = r#"
+      function read(target, key) {
+        try { return target[key]; } catch (error) { return error; }
+      }
+      function write(target, key, value) {
+        try { target[key] = value; return target[key]; } catch (error) { return error; }
+      }
+      let getterCalls = 0;
+      const marker = {};
+      const target = {
+        get value() { getterCalls++; return getterCalls; },
+        get throwing() { throw marker; },
+        fallback: 0
+      };
+      for (let index = 1; index <= 48; index++) {
+        if (read(target, 'value') !== index) throw Error('getter result');
+        if (write(target, 'fallback', index) !== index) throw Error('dynamic write result');
+      }
+      if (getterCalls !== 48 || target.fallback !== 48) throw Error('dynamic property effects');
+      if (read(target, 'throwing') !== marker) throw Error('caught getter throw');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-general.js"))
+        .unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    for name in ["read", "write"] {
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should use the general JavaScript dispatch compiler");
+        };
+        assert!(native.is_general_dispatch(), "{name} should not need a source shape");
+        assert!(native.native_entries() > 0, "{name} should enter its native CFG");
+    }
+}
+
+#[test]
 fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         "function add(a, b) { return a + b; } add(1, 2);",

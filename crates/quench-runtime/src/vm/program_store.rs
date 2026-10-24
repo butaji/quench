@@ -48,6 +48,10 @@ struct JsJitCounters {
 /// under a stationary Bernoulli model; it is not a VM-wide multiple-test bound.
 pub(super) const JS_JIT_PROMOTION_LOOKS: [(u8, u8); 4] =
     [(32, 31), (64, 59), (128, 113), (255, 219)];
+/// The general tagged-dispatch baseline compiles after a fixed number of
+/// function entries; unlike the optimizing tier, it does not require numeric
+/// arguments or a bytecode-shape candidate.
+const JS_JIT_GENERAL_PROMOTION_ENTRIES: u8 = 32;
 const JS_JIT_MAX_FUNCTIONS: usize = 64;
 const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 256;
 const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
@@ -1440,6 +1444,64 @@ impl ProgramStore {
             self.record_js_jit_promotion(id, function);
         }
         decision.compile
+    }
+
+    /// Promote any ordinary JS function to the complete-semantics native
+    /// dispatch baseline after it is hot. The existing tier record and shared
+    /// code-cache budget remain the single owners for both baseline and
+    /// specialized artifacts.
+    pub(super) fn note_js_general_dispatch_entry(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+    ) -> bool {
+        let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
+        let Some(entry) = self.entry_mut(id) else {
+            return false;
+        };
+        if entry.jit_tiers.is_wasm() {
+            return false;
+        }
+        let mut promoted = false;
+        let Some(state) = entry.jit_tiers.js_mut(function) else {
+            if !can_track {
+                return false;
+            }
+            let tracked = entry.jit_tiers.js_insert(
+                function,
+                JsTierState::Hot {
+                    observations: 1,
+                    numeric: 0,
+                },
+            );
+            debug_assert!(tracked);
+            if tracked {
+                self.js_jit_tracked_functions += 1;
+            }
+            return false;
+        };
+        match state {
+            JsTierState::Hot { observations, .. } => {
+                *observations = observations.saturating_add(1);
+                if *observations >= JS_JIT_GENERAL_PROMOTION_ENTRIES {
+                    *state = JsTierState::PromotionPending;
+                    promoted = true;
+                }
+            }
+            JsTierState::PromotionPending => return true,
+            JsTierState::Rejected { entries, .. } => {
+                *entries = entries.saturating_add(1);
+                if *entries >= u64::from(JS_JIT_GENERAL_PROMOTION_ENTRIES) {
+                    *state = JsTierState::PromotionPending;
+                    promoted = true;
+                }
+            }
+            JsTierState::Compiled(_) | JsTierState::Unsupported => return false,
+        }
+        if promoted {
+            self.record_js_jit_promotion(id, function);
+        }
+        promoted
     }
 
     /// Memoize an unsupported bytecode shape separately from tier candidates.
