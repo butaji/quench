@@ -565,10 +565,38 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
+    /// The operand of `switch (typeof x)` whose every case is a string literal or `default`:
+    /// each case then tests the index of its name among `TYPEOF_NAMES` against the index of
+    /// `typeof x` (`UNARY_TYPEOF_INDEX`), which selects the same clause as comparing the two
+    /// strings, and a literal no `typeof` yields matches nothing.
+    fn typeof_switch_operand<'s, 'a>(item: &'s SwitchStatement<'a>) -> Option<&'s Expression<'a>> {
+        let mut discriminant = &item.discriminant;
+        while let Expression::ParenthesizedExpression(parenthesized) = discriminant {
+            discriminant = &parenthesized.expression;
+        }
+        let Expression::UnaryExpression(unary) = discriminant else {
+            return None;
+        };
+        let literal_cases = item
+            .cases
+            .iter()
+            .all(|case| matches!(&case.test, None | Some(Expression::StringLiteral(_))));
+        (unary.operator == UnaryOperator::Typeof && literal_cases).then_some(&unary.argument)
+    }
+
     fn switch_statement(&mut self, item: &SwitchStatement<'_>) {
         self.clear_statement_completion();
         let discriminant_binding = self.hidden_local("\0quench:switch-discriminant");
-        let discriminant = self.expression(&item.discriminant);
+        let typeof_operand = Self::typeof_switch_operand(item);
+        let discriminant = match typeof_operand {
+            Some(argument) => {
+                let input = self.typeof_operand(argument);
+                let index = self.reg();
+                self.emit(Op::Unary, index, input, 0, crate::bytecode::UNARY_TYPEOF_INDEX);
+                index
+            }
+            None => self.expression(&item.discriminant),
+        };
         self.store_atom(discriminant_binding, discriminant);
         self.push_switch_lexical_scope(&item.cases);
         for case in &item.cases {
@@ -585,20 +613,26 @@ impl FunctionCompiler<'_, '_> {
             .any(|case| case.test.is_some())
             .then(|| self.load_atom(discriminant_binding));
         for case in &item.cases {
-            case_edges.push(case.test.as_ref().map(|test| {
-                let test = match binding_time::expression(test).static_value() {
-                    Some(constant) => self.constant_operand(constant),
-                    None => Operand::register(self.expression(test)),
+            case_edges.push(case.test.as_ref().and_then(|test| {
+                let test = match (typeof_operand, test) {
+                    (Some(_), Expression::StringLiteral(name)) => {
+                        let index = crate::bytecode::typeof_name_index(name.value.as_str())?;
+                        self.constant_operand(Constant::Number(index as f64))
+                    }
+                    _ => match binding_time::expression(test).static_value() {
+                        Some(constant) => self.constant_operand(constant),
+                        None => Operand::register(self.expression(test)),
+                    },
                 };
                 let discriminant = discriminant.expect("a case with a test loaded the discriminant");
                 // `!(d !== t)` is exactly `d === t`: one fused test selects the clause.
-                self.emit(
+                Some(self.emit(
                     Op::JumpBinaryFalse,
                     BinaryOperator::StrictInequality as u16,
                     Operand::register(discriminant).0,
                     test.0,
                     0,
-                )
+                ))
             }));
         }
         let no_match = self.emit(Op::Jump, 0, 0, 0, 0);
