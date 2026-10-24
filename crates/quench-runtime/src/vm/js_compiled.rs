@@ -251,6 +251,9 @@ pub(super) fn int32_identity_return_candidate(
 enum NumberDispatchValue {
     TypeNumber,
     String(String),
+    /// A Number: a constant, or the index of `"number"` a `UNARY_TYPEOF_INDEX` of the
+    /// argument yields (`switch (typeof arg)` over string cases).
+    Number(f64),
     Boolean(bool),
     Other,
 }
@@ -263,6 +266,9 @@ fn number_dispatch_equal(left: NumberDispatchValue, right: NumberDispatchValue) 
         | (NumberDispatchValue::String(value), NumberDispatchValue::TypeNumber) => value == "number",
         (NumberDispatchValue::String(left), NumberDispatchValue::String(right)) => left == right,
         (NumberDispatchValue::Boolean(left), NumberDispatchValue::Boolean(right)) => left == right,
+        (NumberDispatchValue::Number(left), NumberDispatchValue::Number(right)) => left == right,
+        // `==` converts the other side to a Number, which the interpretation does not model.
+        (NumberDispatchValue::Number(_), _) | (_, NumberDispatchValue::Number(_)) => return None,
         (NumberDispatchValue::Other, NumberDispatchValue::Other) => return None,
         _ => false,
     })
@@ -300,6 +306,7 @@ fn number_type_dispatch_reaches(
                 OperandKind::Constant => {
                     match program.constants.get(usize::from(operand.payload()))? {
                         Constant::String(value) => Some(NumberDispatchValue::String(value.clone())),
+                        Constant::Number(value) => Some(NumberDispatchValue::Number(*value)),
                         _ => Some(NumberDispatchValue::Other),
                     }
                 }
@@ -317,9 +324,19 @@ fn number_type_dispatch_reaches(
                     .get_mut(usize::from(instruction.result_register()))
                     .unwrap() = Some(NumberDispatchValue::TypeNumber);
             }
+            Op::Unary
+                if pc == 0
+                    && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
+                    && instruction.register_b() == 0 =>
+            {
+                let number = crate::bytecode::typeof_name_index("number").expect("a typeof name") as f64;
+                *registers.get_mut(usize::from(instruction.result_register()))? =
+                    Some(NumberDispatchValue::Number(number));
+            }
             Op::LoadConst => {
                 let value = match program.constants.get(instruction.constant_index())? {
                     Constant::String(value) => NumberDispatchValue::String(value.clone()),
+                    Constant::Number(value) => NumberDispatchValue::Number(*value),
                     _ => NumberDispatchValue::Other,
                 };
                 *registers.get_mut(usize::from(instruction.result_register()))? = Some(value);
