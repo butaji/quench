@@ -24,6 +24,9 @@ struct JsJitCounters {
     promotions: u64,
     compile_attempts: u64,
     compile_successes: u64,
+    general_compile_attempts: u64,
+    general_compile_successes: u64,
+    general_compile_rejection_reason: Option<&'static str>,
     rejection_reason: Option<&'static str>,
     compile_ns: u64,
     native_entries: u64,
@@ -2219,6 +2222,31 @@ impl ProgramStore {
         }
     }
 
+    pub(super) fn record_js_jit_general_compile(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        elapsed_ns: u64,
+        code_bytes: usize,
+        installed: bool,
+        rejection: Option<&'static str>,
+    ) {
+        self.record_js_jit_compile(id, function, elapsed_ns, code_bytes, installed, rejection);
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.general_compile_attempts = counters.general_compile_attempts.saturating_add(1);
+            counters.general_compile_successes = counters
+                .general_compile_successes
+                .saturating_add(u64::from(installed));
+            if rejection.is_some() {
+                counters.general_compile_rejection_reason = rejection;
+            }
+        }
+    }
+
     pub(super) fn record_js_jit_rejection(
         &mut self,
         id: ProgramId,
@@ -2813,9 +2841,15 @@ impl Drop for ProgramStore {
             } else {
                 let _ = write!(stderr, "null");
             }
+            let _ = write!(stderr, ",\"general_dispatch_rejection_reason\":");
+            if let Some(reason) = counters.general_compile_rejection_reason {
+                let _ = write_json_string(&mut stderr, reason);
+            } else {
+                let _ = write!(stderr, "null");
+            }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"call_sites\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"call_sites\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -2824,6 +2858,8 @@ impl Drop for ProgramStore {
                 counters.promotions,
                 counters.compile_attempts,
                 counters.compile_successes,
+                counters.general_compile_attempts,
+                counters.general_compile_successes,
                 counters.compile_ns,
                 counters.native_entries,
                 native_entry_coverage_ppm,
