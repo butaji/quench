@@ -121,7 +121,6 @@ pub(crate) enum Native {
     LazyDataProperty, TemporalInitialize,
     JsonParse,
     JsonStringify,
-    JsonStringifyUtf8,
     JsonRawJson,
     JsonIsRawJson,
     Array, TypedArray, TypedArrayFrom, TypedArrayOf, TypedArrayAt, TypedArrayLastIndexOf, TypedArraySort, TypedArrayToReversed, TypedArrayToSorted, TypedArrayWith, TypedArrayToLocaleString, TypedArrayBufferGetter, TypedArrayByteLengthGetter, TypedArrayByteOffsetGetter, TypedArrayLengthGetter, TypedArrayToStringTag, ArrayToLocaleString, ArraySpecies, ArrayFromAsync,
@@ -1379,9 +1378,17 @@ impl ProtoLink {
     /// The object record this link names, if it names one.
     #[inline(always)]
     pub(crate) fn object_record_id(self) -> Option<u32> {
+        // The object range starts at a power of two above its own power-of-two span, so a
+        // link in it holds the record id in its low bits: a mask, which addresses the record
+        // without the subtracted base as a 64-bit displacement.
+        const _: () = assert!(
+            PROTO_OBJECT_RECORD_BASE.is_power_of_two()
+                && RECORD_SPACE_CAPACITY.is_power_of_two()
+                && RECORD_SPACE_CAPACITY as u32 <= PROTO_OBJECT_RECORD_BASE
+        );
         (PROTO_OBJECT_RECORD_BASE..PROTO_ARRAY_RECORD_BASE)
             .contains(&self.0)
-            .then(|| self.0 - PROTO_OBJECT_RECORD_BASE)
+            .then(|| self.0 & (RECORD_SPACE_CAPACITY as u32 - 1))
     }
 
     /// The prototype this link names, decoded (`Object::encode_proto`'s inverse).
@@ -1693,6 +1700,7 @@ impl std::ops::DerefMut for FinalizationEntries {
     }
 }
 impl Object {
+    #[inline(always)]
     pub(crate) fn new(proto: Value) -> Self {
         Self::with_property_storage(
             proto,
@@ -1906,6 +1914,9 @@ impl Object {
         }
     }
 
+    /// Inlined: most callers pass constant inline values (`Object::new`), which then pack
+    /// to a constant payload word.
+    #[inline(always)]
     pub(crate) fn with_property_storage(
         proto: Value,
         properties: ValueVec,
@@ -1917,8 +1928,12 @@ impl Object {
             payload: 0,
         };
         object.set_properties(properties);
+        // A new object has no extras: its payload word holds the values when each is narrow.
         if properties.has_inline_property_storage() {
-            object.store_inline_values(inline_properties);
+            match Self::pack_inline(inline_properties) {
+                Some(word) => object.payload = word,
+                None => object.extras_mut().inline_properties.0 = inline_properties,
+            }
         }
         object
     }
@@ -2387,6 +2402,17 @@ pub(crate) enum ProxyKind {
 #[repr(transparent)]
 pub(crate) struct EnvironmentSlot(Value);
 
+/// What the code that can still run reads of an environment slot (`EnvironmentSlots::clear_unread`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SlotUse {
+    /// Its value.
+    Value,
+    /// Only whether it is initialized: a projection, whose reads go through it.
+    Initialization,
+    /// Nothing.
+    Unread,
+}
+
 /// What an `EnvironmentSlot` holds.
 pub(crate) enum EnvironmentSlotState {
     Owned(Value),
@@ -2704,6 +2730,42 @@ impl EnvironmentSlots {
             .map(|slot| match slot.state() {
                 EnvironmentSlotState::Owned(value) | EnvironmentSlotState::Shared(value) => value,
             })
+    }
+
+    /// The owner a sparse storage's unlisted slots share.
+    pub(crate) fn default_owner(&self) -> Option<Value> {
+        self.sparse().map(|(_, owner)| owner)
+    }
+
+    /// Clears every slot whose value no code reads, as `use_of` tells: an unread slot becomes
+    /// an uninitialized binding (`Value::DELETED`) this environment owns, and the value it owned
+    /// or owner it shared may be swept. A slot read only for whether it is initialized keeps
+    /// that state: an initialized value it owns becomes `undefined`, and a shared slot stays
+    /// shared with its owner, which the caller keeps. A sparse storage's unlisted slots stay
+    /// shared with its default owner, which the caller keeps too.
+    pub(crate) fn clear_unread(&mut self, use_of: impl Fn(usize) -> SlotUse) {
+        let clear = |slot: &mut EnvironmentSlot, index: usize| match use_of(index) {
+            SlotUse::Value => {}
+            SlotUse::Unread => *slot = EnvironmentSlot::owned(Value::DELETED),
+            SlotUse::Initialization => {
+                if matches!(slot.state(), EnvironmentSlotState::Owned(value) if !value.is_deleted()) {
+                    *slot = EnvironmentSlot::owned(Value::UNDEFINED);
+                }
+            }
+        };
+        if self.0.marked() {
+            let entries = self.0.len().saturating_sub(SPARSE_ENTRIES_START) / SPARSE_ENTRY_WORDS;
+            for entry in 0..entries {
+                let position = SPARSE_ENTRIES_START + entry * SPARSE_ENTRY_WORDS;
+                if let Some(index) = self.0[position].0.as_environment_index() {
+                    clear(&mut self.0[position + 1], index as usize);
+                }
+            }
+        } else {
+            for (index, slot) in self.0.iter_mut().enumerate() {
+                clear(slot, index);
+            }
+        }
     }
 
     /// The indexes a sparse storage lists, ascending.

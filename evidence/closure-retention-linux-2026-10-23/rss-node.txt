@@ -1,0 +1,21 @@
+# run 1
+{"label":"baseline","rssKiB":40936,"hwmKiB":40936,"heapUsed":3538216}
+{"label":"new Array(N) held","rssKiB":50980,"hwmKiB":50980,"heapUsed":11729848}
+{"label":"closure held","rssKiB":59068,"hwmKiB":59068,"heapUsed":19730576}
+{"holeyHeapBytesPerElement":"8.19","filledHeapBytesPerElement":"8.00","filledRssBytesPerElement":"8.28","heavyTaskMs":"7.2"}
+{"label":"closure dropped","rssKiB":43440,"hwmKiB":58656,"heapUsed":3731072}
+{"residualHeapBytes":-7998776,"residualRssKiB":-7540}
+# run 2
+{"label":"baseline","rssKiB":40928,"hwmKiB":40928,"heapUsed":3538216}
+{"label":"new Array(N) held","rssKiB":50976,"hwmKiB":50976,"heapUsed":11729848}
+{"label":"closure held","rssKiB":59004,"hwmKiB":59004,"heapUsed":19730576}
+{"holeyHeapBytesPerElement":"8.19","filledHeapBytesPerElement":"8.00","filledRssBytesPerElement":"8.22","heavyTaskMs":"6.5"}
+{"label":"closure dropped","rssKiB":43380,"hwmKiB":58748,"heapUsed":3731072}
+{"residualHeapBytes":-7998776,"residualRssKiB":-7596}
+# run 3
+{"label":"baseline","rssKiB":40924,"hwmKiB":40924,"heapUsed":3538216}
+{"label":"new Array(N) held","rssKiB":50960,"hwmKiB":50960,"heapUsed":11729848}
+{"label":"closure held","rssKiB":58972,"hwmKiB":58972,"heapUsed":19730576}
+{"holeyHeapBytesPerElement":"8.19","filledHeapBytesPerElement":"8.00","filledRssBytesPerElement":"8.20","heavyTaskMs":"6.8"}
+{"label":"closure dropped","rssKiB":43348,"hwmKiB":58624,"heapUsed":3731072}
+{"residualHeapBytes":-7998776,"residualRssKiB":-7612}

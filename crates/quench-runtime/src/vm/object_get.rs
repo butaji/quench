@@ -126,7 +126,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match property {
             PropertyKey::String(atom) if !self.is_private_name(atom) => {
-                Ok(self.heap.alloc_string(self.atom_value(atom)))
+                Ok(self.atom_string(atom))
             }
             PropertyKey::Symbol(key) => Ok(key),
             PropertyKey::String(_) | PropertyKey::Private(_) => {
@@ -1295,7 +1295,7 @@ impl<H: Host> Vm<H> {
                     .function_get(*function as usize)
                     .into_iter()
                     .flat_map(|metadata| metadata.local_atoms.iter().copied())
-                    .filter(|atom| self.atom_name(*atom).starts_with("\0quench:home:"))
+                    .filter(|atom| self.atom_name(*atom).starts_with(crate::bytecode::HOME_BINDING_PREFIX))
                     .collect::<Vec<_>>();
                 for atom in home_atoms.iter().chain(&visible_homes) {
                     if homes.iter().any(|(candidate, _)| candidate == atom) {

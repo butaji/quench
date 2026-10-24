@@ -1,0 +1,48 @@
+held user_example.massiveData alive=true want=true
+held sibling_capture.big alive=true want=false MISMATCH
+held uncaptured_local.big alive=false want=false
+held uncaptured_parameter.big alive=false want=false
+held arguments_sibling.big alive=true want=false MISMATCH
+held arguments_used.big alive=true want=true
+held this_unused.this alive=true want=false MISMATCH
+held this_sibling_arrow.this alive=true want=false MISMATCH
+held this_used.this alive=true want=true
+held block_sibling.big alive=true want=false MISMATCH
+held loop_sibling.big0 alive=true want=false MISMATCH
+held loop_sibling.big1 alive=false want=false
+held loop_sibling.big2 alive=true want=false MISMATCH
+held loop_kept.big0 alive=true want=false MISMATCH
+held loop_kept.big1 alive=true want=true
+held loop_kept.big2 alive=false want=false
+held catch_sibling.big alive=true want=false MISMATCH
+held generator_closure.big alive=true want=false MISMATCH
+held generator_done_closure.big alive=true want=false MISMATCH
+held async_closure.big alive=true want=false MISMATCH
+held class_constructor.big alive=true want=false MISMATCH
+held class_method.big alive=false want=false
+held eval_retains.big alive=true want=true
+held with_retains.big alive=true want=true
+dropped user_example.massiveData alive=false want=false
+dropped sibling_capture.big alive=false want=false
+dropped uncaptured_local.big alive=false want=false
+dropped uncaptured_parameter.big alive=false want=false
+dropped arguments_sibling.big alive=false want=false
+dropped arguments_used.big alive=false want=false
+dropped this_unused.this alive=false want=false
+dropped this_sibling_arrow.this alive=false want=false
+dropped this_used.this alive=false want=false
+dropped block_sibling.big alive=false want=false
+dropped loop_sibling.big0 alive=false want=false
+dropped loop_sibling.big1 alive=false want=false
+dropped loop_sibling.big2 alive=false want=false
+dropped loop_kept.big0 alive=false want=false
+dropped loop_kept.big1 alive=false want=false
+dropped loop_kept.big2 alive=false want=false
+dropped catch_sibling.big alive=false want=false
+dropped generator_closure.big alive=false want=false
+dropped generator_done_closure.big alive=false want=false
+dropped async_closure.big alive=false want=false
+dropped class_constructor.big alive=false want=false
+dropped class_method.big alive=false want=false
+dropped eval_retains.big alive=false want=false
+dropped with_retains.big alive=false want=false

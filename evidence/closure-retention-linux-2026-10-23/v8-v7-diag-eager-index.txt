@@ -1,0 +1,8 @@
+richards | before score 683 rss 12.6 MiB | after score 721 rss 12.6 MiB
+deltablue | before score 689 rss 12.6 MiB | after score 650 rss 12.6 MiB
+crypto | before score 1420 rss 12.6 MiB | after score 1383 rss 12.6 MiB
+raytrace | before score 1610 rss 12.6 MiB | after score 1674 rss 12.6 MiB
+earley-boyer | before score 2954 rss 13.0 MiB | after score 3008 rss 13.0 MiB
+regexp | before score 1851 rss 13.1 MiB | after score 1759 rss 13.1 MiB
+splay | before score 2824 rss 33.4 MiB | after score 2767 rss 33.3 MiB
+navier-stokes | before score 1978 rss 13.0 MiB | after score 2058 rss 13.0 MiB
