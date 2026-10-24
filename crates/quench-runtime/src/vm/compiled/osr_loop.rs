@@ -600,7 +600,8 @@ fn reachable(instructions: &[WideInstruction]) -> Vec<bool> {
 /// Whether `instruction` names `register` (a read or a write); an instruction `renamed`
 /// cannot rename names every register.
 fn mentions(instruction: WideInstruction, register: Register, sites: &[FieldSite]) -> bool {
-    if let (Op::GetField, Some(FieldLookup::Site(_))) = (instruction.op(), instruction.field_lookup()) {
+    // Only a GetField carries a field lookup immediate, so the op is checked first.
+    if instruction.op() == Op::GetField && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) {
         return instruction.result_register() == register
             || field_base(instruction, sites).is_none_or(|base| base.register_index() == Some(register));
     }
