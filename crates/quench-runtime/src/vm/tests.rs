@@ -11144,6 +11144,97 @@ fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_compiles_numeric_truthiness_branches() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function zero() { return 0; }
+          function whileTruthy(value) {
+            let count = zero();
+            while (value) {
+              count++;
+              if (!(value || 0)) value = 0;
+              value--;
+            }
+            return count;
+          }
+          let total = 0;
+          if (whileTruthy('x') !== 1) throw Error('non-number loop fallback');
+          for (let call = 0; call < 300; call++) {
+            total += whileTruthy(4);
+          }
+          print(total);
+          if (whileTruthy(0) !== 0 || whileTruthy(-0) !== 0 || whileTruthy(NaN) !== 0) {
+            throw Error('false numeric loop truthiness');
+          }
+          print(whileTruthy(2));
+          print('ok');
+        "#,
+        "osr-numeric-truthiness.js",
+    ))
+    .unwrap();
+    let _disassembly = program.disassemble();
+    let function = program
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "whileTruthy")
+        })
+        .expect("truthiness loop function");
+    let function_id = program
+        .functions
+        .iter()
+        .position(|candidate| std::ptr::eq(candidate, function))
+        .expect("truthiness loop function index");
+    let contains = |op| {
+        function
+            .code
+            .iter()
+            .any(|instruction| instruction.as_wide().op() == op)
+    };
+    assert!(
+        contains(crate::bytecode::Op::JumpFalse),
+        "truthiness loop must contain JumpFalse"
+    );
+    assert!(
+        contains(crate::bytecode::Op::JumpTrue),
+        "truthiness loop must contain JumpTrue"
+    );
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
+    interpreter.execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["1200", "2", "ok"]);
+
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    assert_eq!(output.borrow().as_slice(), ["1200", "2", "ok"]);
+    let views = vm
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot truthiness loop lane view");
+    let diagnostics = view.osr_diagnostics();
+    assert_eq!(
+        diagnostics.currently_compiled_sites,
+        1,
+        "truthiness loop did not retain native code"
+    );
+    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+        assert!(diagnostics.compile_successes > 0, "loop OSR compilation did not succeed");
+        assert!(diagnostics.native_region_runs > 0, "loop OSR code never ran");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_float_unary_uses_shared_number_denotation() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
