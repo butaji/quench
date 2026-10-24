@@ -19,6 +19,9 @@ Raw reports:
 
 - `gendispatch-off.json`
 - `gendispatch-on.json`
+- `callsite-diagnostics.json` — one-round diagnostic run; its instrumented timings are not score evidence.
+
+The diagnostics run used commit `c2b9dd38c15f301ba8fbce3f17637cb25cb976ac`, `--jit --jit-js-general-dispatch --jit-diagnostics`, and one round each of `hash-map` and `web-ssr`. Hash-map had 195 function rows, one compiled function, 2,129 native entries, and no observed native call-site rows: its hot `run` function remained `general-promotion-pending` after 120 entries, with four admitted loop sites and no OSR compile attempts. Its five-instruction `runIteration` wrapper also had 120 entries but no native entries; its one specialized compile attempt was rejected. Web-SSR had 2,142 function rows, four compiled functions, and 216,564 native entries; seven dynamic eval call sites were seen once each. The interpreter timers are inclusive and overlap, so the large `run`/`runIteration` totals are not exclusive CPU attribution.
 
 Commands, from the repository root:
 
@@ -43,4 +46,12 @@ target/production/quench-bench \
   --node /workspace/node-v26.12.0-linux-x64/bin/node \
   --bun /workspace/bun-cache-1.4.4/bun-linux-x64/bun --qjs /bin/true \
   --out target/jit-tier-admission-call-stats-screen-2026-10-24/gendispatch-on.json
+
+target/production/quench-bench \
+  --fixtures web-ssr,hash-map --suite jetstream3 --jit \
+  --jit-js-general-dispatch --jit-diagnostics --runs 1 --timeout-ms 600000 \
+  --quench target/production/quench-node \
+  --node /workspace/node-v26.12.0-linux-x64/bin/node \
+  --bun /workspace/bun-cache-1.4.4/bun-linux-x64/bun --qjs /bin/true \
+  --out target/jit-tier-admission-call-stats-screen-2026-10-24/callsite-diagnostics.json
 ```
