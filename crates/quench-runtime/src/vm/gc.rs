@@ -332,6 +332,7 @@ fn rebuild_shape(
 impl<H: Host> Vm<H> {
     pub(crate) fn set_memory_policy(&mut self, policy: crate::MemoryPolicy) {
         self.heap.set_memory_policy(policy);
+        self.apply_execution_mode();
     }
 
     pub(crate) fn memory_policy(&self) -> crate::MemoryPolicy {

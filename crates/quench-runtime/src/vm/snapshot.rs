@@ -295,6 +295,7 @@ impl<H: Host> Vm<H> {
             frame_pool: _,
             pending_call_stacks: _,
             lane_stack: _,
+            requested_execution_mode: _,
             execution_mode: _,
             execution_interrupt: _,
             wasm_reference_epoch: _,
