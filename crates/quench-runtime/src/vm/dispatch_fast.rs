@@ -12418,6 +12418,35 @@ script_handler! {
     }
 }
 
+/// The facts that keep function `function` of `program` out of a frameless activation, for
+/// the census of frame calls and constructions.
+#[cfg(feature = "profile-lane-exits")]
+fn frame_entry_census<H: Host>(vm: &Vm<H>, program: ProgramId, function: u32) -> Option<String> {
+    vm.programs.residual(program).and_then(|callee_code| {
+        let body = callee_code.function_get(function as usize)?;
+        let plan = body.call_plan(callee_code);
+        let closures = body.code.iter().any(|packed| decoded_instruction(body, *packed).op() == Op::MakeClosure);
+        Some(format!(
+            "{} @{:?} registers_only={} env_activation={} arrow={} rest={} closures={} arguments={} handlers={} class_ctor={} async={} generator={} promoted={}/{} simple_params={} selective={} self={} plain={} in_loop={} legacy={} live={} addresses={} initial={:?} name_ops={:?} unpromoted={:?}",
+            body.name.map(|atom| callee_code.atoms[atom as usize].to_string()).unwrap_or_default(),
+            body.source_span.map(|span| span.start), plan.registers_only, plan.environment_activation, body.is_arrow, body.rest,
+            closures, body.arguments_slot.is_some(), !body.handlers.is_empty(), body.is_class_constructor, body.is_async,
+            body.is_generator, body.local_registers.len(), body.locals, body.simple_parameters, body.selective_capture_slots.is_some(),
+            body.self_binding_slot.is_some(), plan.plain, plan.in_loop, plan.legacy_reflection, plan.live_parameters,
+            plan.addresses_locals, body.initial_register,
+            body.code.iter().map(|packed| decoded_instruction(body, *packed)).filter(|instruction| matches!(instruction.op(),
+                Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName | Op::DeleteName
+                | Op::StoreName | Op::StoreResolvedName | Op::StoreVarBinding | Op::CloneEnv | Op::InitializeThis | Op::SuperCallCheck))
+                .map(|instruction| format!("{:?}:{}", instruction.op(), { let atom = instruction.atom_index() as usize; if atom < callee_code.atoms.len() { callee_code.atoms[atom].replace('\0', "~") } else { "?".into() } }))
+                .collect::<Vec<_>>(),
+            body.local_atoms.iter().enumerate()
+                .filter(|(slot, _)| !body.local_registers.iter().any(|entry| usize::from(entry.local) == *slot))
+                .map(|(_, atom)| callee_code.atoms[*atom as usize].replace('\0', "~"))
+                .collect::<Vec<_>>(),
+        ))
+    })
+}
+
 /// `lane_frame_call`'s call of `callee`, resolved to the in-loop `target`, with receiver
 /// `this` and the call window's values past its first `skip` (a forwarded call's own
 /// arguments, `Vm::forwarded_call`): entered directly when the JavaScript tier promoted it,
@@ -12445,29 +12474,7 @@ fn lane_push_frame_call<H: Host>(
         return exit(ip);
     }
     #[cfg(feature = "profile-lane-exits")]
-    if let Some(body) = vm.programs.residual(target.0).and_then(|callee_code| {
-        let body = callee_code.function_get(target.1 as usize)?;
-        let plan = body.call_plan(callee_code);
-        let closures = body.code.iter().any(|packed| decoded_instruction(body, *packed).op() == Op::MakeClosure);
-        Some(format!(
-            "{} @{:?} registers_only={} env_activation={} arrow={} rest={} closures={} arguments={} handlers={} class_ctor={} async={} generator={} promoted={}/{} simple_params={} selective={} self={} plain={} in_loop={} legacy={} live={} addresses={} initial={:?} name_ops={:?} unpromoted={:?}",
-            body.name.map(|atom| callee_code.atoms[atom as usize].to_string()).unwrap_or_default(),
-            body.source_span.map(|span| span.start), plan.registers_only, plan.environment_activation, body.is_arrow, body.rest,
-            closures, body.arguments_slot.is_some(), !body.handlers.is_empty(), body.is_class_constructor, body.is_async,
-            body.is_generator, body.local_registers.len(), body.locals, body.simple_parameters, body.selective_capture_slots.is_some(),
-            body.self_binding_slot.is_some(), plan.plain, plan.in_loop, plan.legacy_reflection, plan.live_parameters,
-            plan.addresses_locals, body.initial_register,
-            body.code.iter().map(|packed| decoded_instruction(body, *packed)).filter(|instruction| matches!(instruction.op(),
-                Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName | Op::DeleteName
-                | Op::StoreName | Op::StoreResolvedName | Op::StoreVarBinding | Op::CloneEnv | Op::InitializeThis | Op::SuperCallCheck))
-                .map(|instruction| format!("{:?}:{}", instruction.op(), { let atom = instruction.atom_index() as usize; if atom < callee_code.atoms.len() { callee_code.atoms[atom].replace('\0', "~") } else { "?".into() } }))
-                .collect::<Vec<_>>(),
-            body.local_atoms.iter().enumerate()
-                .filter(|(slot, _)| !body.local_registers.iter().any(|entry| usize::from(entry.local) == *slot))
-                .map(|(_, atom)| callee_code.atoms[*atom as usize].replace('\0', "~"))
-                .collect::<Vec<_>>(),
-        ))
-    }) {
+    if let Some(body) = frame_entry_census(vm, target.0, target.1) {
         super::lane_exits::record_detail(format!("frame call {body}"));
     }
     let window = ImmediateLayout::call_window_base(i.imm());
@@ -12609,6 +12616,10 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
     let Some((program, id, env, this)) = vm.inline_construct_target(code, frame, callee) else {
         return exit(ip);
     };
+    #[cfg(feature = "profile-lane-exits")]
+    if let Some(body) = frame_entry_census(vm, program, id) {
+        super::lane_exits::record_detail(format!("frame construct {body}"));
+    }
     // Allocating the receiver can make a collection due.
     note_allocation(vm);
     // SAFETY: the call record lies in the running view.
