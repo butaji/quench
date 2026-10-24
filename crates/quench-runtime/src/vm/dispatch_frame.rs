@@ -146,6 +146,37 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Feed real loop work to the shared JS baseline tier. The loop length is
+    /// an upper bound for the bytecodes executed on this iteration, so pricing
+    /// stays conservative when a loop body contains VM callouts.
+    #[inline(always)]
+    fn note_js_general_dispatch_backedge(
+        &mut self,
+        program: &ResidualProgram,
+        frame: usize,
+        source_pc: usize,
+        target_pc: usize,
+    ) {
+        if !self.js_tier_runs()
+            || !self.programs.js_jit_general_dispatch_enabled()
+            || program.kind == crate::bytecode::ProgramKind::Wasm
+        {
+            return;
+        }
+        let program_id = self.frames[frame].program;
+        let function = self.frames[frame].function;
+        let instructions = program
+            .function_get(function as usize)
+            .map_or(0, |body| body.code.len());
+        let work = source_pc.saturating_sub(target_pc).saturating_add(1);
+        self.programs.note_js_general_dispatch_backedge(
+            program_id,
+            function,
+            work,
+            instructions,
+        );
+    }
+
     pub(super) fn call_this_value(&mut self, this: Value, strict: bool) -> Result<Value, JsError> {
         if strict {
             Ok(this)
@@ -1453,6 +1484,43 @@ impl<H: Host> Vm<H> {
                         native_step = Some(step);
                     }
                 }
+            } else {
+                // A compiled caller resumes at the bytecode after a callout or
+                // at a hot loop header. Re-enter its shared CFG from that exact
+                // PC instead of sending the rest of the activation through the
+                // interpreter until the next function entry.
+                let program_id = self.frames[frame].program;
+                let function_id = self.frames[frame].function;
+                let should_try_general = match self.programs.js_tier(program_id, function_id) {
+                    Some(super::program_store::JsTierState::Compiled(compiled)) => {
+                        compiled.is_general_dispatch()
+                    }
+                    Some(super::program_store::JsTierState::GeneralCompileDue) => true,
+                    _ => false,
+                };
+                if should_try_general
+                    && let Some(outcome) = self.js_jit_general_dispatch_at_entry(
+                        p,
+                        frame,
+                        pc,
+                        allow_inline_calls,
+                        matches!(
+                            self.programs.js_tier(program_id, function_id),
+                            Some(super::program_store::JsTierState::GeneralCompileDue)
+                        ),
+                    )
+                {
+                    match outcome {
+                        super::compiled::JsNativeDispatchResult::Step(step) => {
+                            pc = step.next_pc;
+                            native_step = Some(step);
+                        }
+                        super::compiled::JsNativeDispatchResult::Resume(resume_pc) => {
+                            pc = resume_pc;
+                            continue;
+                        }
+                    }
+                }
             }
             if native_step.is_none() && Self::lane_runs(cursor.lane, pc) {
                 let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
@@ -1466,6 +1534,18 @@ impl<H: Host> Vm<H> {
                     &mut executing,
                     allow_inline_calls,
                 );
+                if self.js_tier_runs()
+                    && self.js_tier_needs_general_entry(
+                        self.frames[frame].program,
+                        self.frames[frame].function,
+                    )
+                {
+                    // A lane loop reported enough backward-edge work for the
+                    // shared baseline. Re-enter at that loop header without
+                    // restarting the same lane before compilation.
+                    cursor.lane = std::ptr::null();
+                    cursor.back_edges = None;
+                }
                 // The lane may leave in a frame of another program, its activations' calls
                 // having set the loop's executing program aside as the loop's pushes do.
                 executing_program = executing.id;
@@ -1780,6 +1860,12 @@ impl<H: Host> Vm<H> {
                         pc = ins.jump_target() as usize;
                         if pc <= instruction_pc {
                             self.note_back_edge(&mut cursor);
+                            self.note_js_general_dispatch_backedge(
+                                p,
+                                frame,
+                                instruction_pc,
+                                pc,
+                            );
                         }
                     }
                     continue;
@@ -1803,6 +1889,12 @@ impl<H: Host> Vm<H> {
                             pc = ins.jump_target() as usize;
                             if pc <= instruction_pc {
                                 self.note_back_edge(&mut cursor);
+                                self.note_js_general_dispatch_backedge(
+                                    p,
+                                    frame,
+                                    instruction_pc,
+                                    pc,
+                                );
                             }
                         }
                         continue;
@@ -1961,6 +2053,12 @@ impl<H: Host> Vm<H> {
                     pc = ins.jump_target() as usize;
                     if pc <= instruction_pc {
                         self.note_back_edge(&mut cursor);
+                        self.note_js_general_dispatch_backedge(
+                            p,
+                            frame,
+                            instruction_pc,
+                            pc,
+                        );
                     }
                     continue;
                 }

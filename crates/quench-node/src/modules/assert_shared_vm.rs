@@ -22,9 +22,17 @@ fn get(
     context.get_named_property_rooted(object, name)
 }
 
-/// The successful strict scalar path has no message coercion or option reads.
-/// SameValue belongs to Core; all failed and missing-argument cases retain
-/// the configured library's error, custom-message and stack policy.
+/// The guarded assertions and the host operation each one's wrapper runs.
+const GUARDS: [(&str, &str); 4] = [
+    ("strictEqual", "assertStrictEqual"),
+    ("notStrictEqual", "assertNotStrictEqual"),
+    ("deepStrictEqual", "assertDeepEqual"),
+    ("deepEqual", "assertDeepEqual"),
+];
+
+/// The successful scalar and plain-data paths have no message coercion or option reads.
+/// SameValue and plain-data equality belong to Core; all failed and missing-argument cases
+/// retain the configured library's error, custom-message and stack policy.
 fn install_scalar_guards(
     context: &mut NativeContext<'_, NodeHost>,
     module: RootId,
@@ -47,16 +55,11 @@ fn install_scalar_guards(
     if context.is_callable_rooted(constructor)? {
         holders.push(get(context, constructor, "prototype")?);
     }
-    for (name, equal) in [("strictEqual", true), ("notStrictEqual", false)] {
+    for (name, operation) in GUARDS {
         let original = get(context, module, name)?;
         if !context.is_callable_rooted(original)? {
             continue;
         }
-        let operation = if equal {
-            "assertStrictEqual"
-        } else {
-            "assertNotStrictEqual"
-        };
         let wrapper = context
             .host_constructor_with_data(crate::host::shared_vm::operation(operation), original)?;
         for property in ["name", "length"] {
@@ -108,6 +111,23 @@ fn scalar_guard<const EQUAL: bool>(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     if args.len() >= 2 && context.same_value_rooted(args[0], args[1])? == EQUAL {
+        return Ok(context.undefined());
+    }
+    let original = context.host_function_data()?;
+    context.call_rooted(original, receiver, args)
+}
+
+/// `deepStrictEqual` and the legacy `deepEqual`: plain data that Core proves the same
+/// (`plain_data_equal_rooted`) passes both, since Node's comparison of such data branches only
+/// on what that proof fixed (`lib/internal/util/comparisons.js`: the intrinsic constructor and
+/// tag, the enumerable string keys and, per member, SameValue or the same comparison), and
+/// the legacy one relaxes it further. Everything else runs the library's assertion.
+pub(crate) fn deep_equal(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    if args.len() >= 2 && context.plain_data_equal_rooted(args[0], args[1])? {
         return Ok(context.undefined());
     }
     let original = context.host_function_data()?;
