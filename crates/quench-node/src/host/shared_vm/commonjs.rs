@@ -4932,6 +4932,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       return Object.assign({}, native, { DOMException: globalThis.DOMException });
     }
     case "performance": return __nativeInternalBinding("performance");
+    case "cjs_lexer": return __nativeInternalBinding(name);
     case "uv": return __nativeInternalBinding("uv");
     case "async_wrap": {
       // Node's internal/async_hooks.js expects this engine-owned binding even
