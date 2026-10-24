@@ -147,15 +147,19 @@ fn general_promotion_due(entries: u32, instructions: usize) -> bool {
 /// baseline. An unpriced experiment still waits for 32 whole-function work
 /// units, matching the established general-tier entry floor.
 fn general_dispatch_work_due(work: u64, instructions: u64, priced: bool) -> bool {
+    work >= general_dispatch_work_required(instructions, priced)
+}
+
+fn general_dispatch_work_required(instructions: u64, priced: bool) -> u64 {
     let instructions = instructions.max(1);
     if !priced {
-        return work >= instructions.saturating_mul(u64::from(JS_JIT_GENERAL_PROMOTION_ENTRIES));
+        return instructions.saturating_mul(u64::from(JS_JIT_GENERAL_PROMOTION_ENTRIES));
     }
     let (saved, of) = JS_JIT_GENERAL_SAVED_SHARE;
-    work.saturating_mul(saved)
-        >= JS_JIT_GENERAL_COMPILE_FIXED_COST
-            .saturating_add(JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION.saturating_mul(instructions))
-            .saturating_mul(of)
+    JS_JIT_GENERAL_COMPILE_FIXED_COST
+        .saturating_add(JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION.saturating_mul(instructions))
+        .saturating_mul(of)
+        .div_ceil(saved.max(1))
 }
 
 fn accumulate_general_dispatch_work(accumulated_work: &mut u64, work: usize) {
@@ -2777,6 +2781,17 @@ impl Drop for ProgramStore {
                     / u128::from(total_entries))
                 .min(1_000_000) as u64
             };
+            let general_dispatch_work = self
+                .js_general_dispatch_work
+                .as_ref()
+                .and_then(|work| work.get(program))
+                .and_then(|work| work.get(function))
+                .copied()
+                .unwrap_or(0);
+            let general_dispatch_work_required = general_dispatch_work_required(
+                u64::from(counters.instruction_count),
+                self.general_baseline_priced,
+            );
             let osr = entry
                 .and_then(|entry| entry.lane_views.derived(*function))
                 .map(super::dispatch_fast::LaneView::osr_diagnostics)
@@ -2796,7 +2811,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"call_sites\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"call_sites\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -2823,6 +2838,8 @@ impl Drop for ProgramStore {
                 counters.fallback_entries,
                 counters.interpreter_completions,
                 counters.interpreter_inclusive_ns,
+                general_dispatch_work,
+                general_dispatch_work_required,
                 counters.guard_conditional_branches,
                 counters.guard_typeof_ops,
                 counters.guard_strict_comparisons,
@@ -3041,10 +3058,11 @@ mod jit_code_cache_tests {
     fn general_dispatch_backedge_unpriced_mode_waits_for_work_floor() {
         let mut state = JsTierState::Hot { observations: 1, numeric: 0 };
         let mut work = 0;
-        super::accumulate_general_dispatch_work(&mut work, 31 * 64);
+        let required = super::general_dispatch_work_required(64, false);
+        super::accumulate_general_dispatch_work(&mut work, usize::try_from(required - 1).unwrap());
         assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 64, false));
         assert!(matches!(state, JsTierState::Hot { .. }));
-        super::accumulate_general_dispatch_work(&mut work, 64);
+        super::accumulate_general_dispatch_work(&mut work, 1);
         assert!(super::promote_general_dispatch_if_paid(&mut state, work, 64, false));
         assert!(matches!(state, JsTierState::GeneralCompileDue));
     }
@@ -3055,9 +3073,7 @@ mod jit_code_cache_tests {
         let mut work = 0;
         // 100 instructions cost the fixed and per-instruction compile cost, which the
         // saved share of observed bytecode work must cover.
-        let (saved, of) = super::JS_JIT_GENERAL_SAVED_SHARE;
-        let cost = super::JS_JIT_GENERAL_COMPILE_FIXED_COST + super::JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION * 100;
-        let paid = usize::try_from(cost * of / saved).unwrap();
+        let paid = usize::try_from(super::general_dispatch_work_required(100, true)).unwrap();
         super::accumulate_general_dispatch_work(&mut work, paid - 1);
         assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 100, true));
         super::accumulate_general_dispatch_work(&mut work, 1);
