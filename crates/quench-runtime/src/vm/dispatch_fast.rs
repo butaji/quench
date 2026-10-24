@@ -3431,6 +3431,9 @@ unsafe fn lane_unary_value<H: Host>(
     if let Some((index, negated)) = crate::bytecode::typeof_test(operator) {
         return Some(vm.typeof_test_value(operand, index, negated));
     }
+    if operator == crate::bytecode::UNARY_TYPEOF_INDEX {
+        return Some(vm.typeof_index_value(operand));
+    }
     if operator == super::coercion::TYPEOF {
         let name = vm.typeof_value(operand);
         // Interning the type's name can allocate.
@@ -8515,7 +8518,7 @@ impl<H: Host> Vm<H> {
                 .lane_view_any(program, function)
                 .is_some_and(|view| unsafe { &*view }.environment_window.is_some());
         // Across programs only a plain or keeping activation runs frameless: an environment
-        // activation, or a construction, leaves its calls a frame.
+        // activation or a construction leaves its calls a frame.
         let view = if !(plan.registers_only || environment)
             || cross && environment
             || numeric
