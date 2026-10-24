@@ -50,7 +50,7 @@ use std::rc::{Rc, Weak};
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 pub(super) use osr_loop::{
-    FieldReceiver, LoopEntry, LoopOutcome, LoopRegion, Observation, RegionRejection, Widening,
+    ArrayUse, FieldReceiver, FieldUse, LoopEntry, LoopOutcome, LoopRegion, Observation, RegionRejection, Widening,
 };
 
 #[derive(Clone, Copy)]
@@ -500,7 +500,7 @@ pub(super) fn compile_js_numeric_region(
     let function = program.function_get(function_id as usize)?;
     let (reachable, predecessors) = js_numeric_control_flow(function)?;
     let params = usize::from(function.params);
-    let isa = super::jit_backend::target_isa("speed", true)?;
+    let isa = super::jit_backend::target_isa("speed")?;
 
     let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
     let name = UserFuncName::user(0x5155_454e, function_id);
@@ -1467,7 +1467,7 @@ pub(super) fn compile_js_general_dispatch(
         return Err("bytecode-candidate-rejected");
     }
 
-    let isa = super::jit_backend::target_isa("speed", true)
+    let isa = super::jit_backend::target_isa("speed")
         .ok_or("target-isa-unavailable")?;
     let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
     let name = UserFuncName::user(0x5155_454e, function_id);
@@ -2667,6 +2667,15 @@ const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 /// polymorphic module cannot turn a tier promotion into eager compilation.
 const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
+/// Functions of at most this many bytecodes are compiled eagerly though they hold
+/// `unreachable` (C asserts and aborts, which most Emscripten functions do): their trap
+/// lowers to a return of the trap status. Larger ones stay interpreted: admitting every
+/// function compiled TSF's few very large ones, its max RSS 24 -> 242 MiB and Score down a
+/// fifth. JetStream 3 `--jit` against no admission (Linux x86_64, 2026-10-24): at 4096,
+/// zlib 14.8 -> 24.4, TSF 12.6 -> 16.0, sqlite3 12.8 -> 15.1, gcc-loops 49.6 -> 60.1,
+/// quicksort 76.9 -> 86.8 (3-round medians), RSS flat; at 2048 zlib's hot pair (over 2700
+/// bytecodes each) stayed interpreted.
+const MAX_JIT_UNREACHABLE_BYTECODES: usize = 4_096;
 
 /// An opt-in JIT switch the environment sets ("1" or "true"), read once per process: a
 /// compiled call consults several, and reading the environment on each call cost more than
@@ -2781,6 +2790,31 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     static WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
         const { std::cell::Cell::new(None) };
+    static WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// `MAX_JIT_UNREACHABLE_BYTECODES`, which a test may lower to keep a function holding
+/// `unreachable` out of the eager artifact.
+fn jit_unreachable_bytecodes_limit() -> usize {
+    #[cfg(test)]
+    if let Some(limit) = WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return limit;
+    }
+    MAX_JIT_UNREACHABLE_BYTECODES
+}
+
+#[cfg(test)]
+pub(super) fn with_jit_unreachable_bytecodes_limit_for_test<R>(limit: usize, run: impl FnOnce() -> R) -> R {
+    struct Restore(Option<usize>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE.with(|override_limit| override_limit.set(self.0));
+        }
+    }
+    let previous = WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE.with(|override_limit| override_limit.replace(Some(limit)));
+    let _restore = Restore(previous);
+    run()
 }
 
 #[cfg(test)]
@@ -4865,7 +4899,7 @@ pub(super) fn compile_osr_region(
     policy: crate::MemoryPolicy,
     track_backedges: bool,
 ) -> Option<CompiledOsrRegion> {
-    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?, false)?;
+    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?)?;
     let (function, widenings) = osr_loop::lower(
         region,
         observation,
@@ -7061,7 +7095,12 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
-            Op::WasmUnreachable if self.experimental_root_compilation => Some(()),
+            Op::WasmUnreachable
+                if self.experimental_root_compilation
+                    || function.code.len() <= jit_unreachable_bytecodes_limit() =>
+            {
+                Some(())
+            }
             Op::Return => match result {
                 Some(ty) => (value(state, instruction.a())? == Kind::of(ty)?).then_some(()),
                 None => Some(()),
@@ -10375,7 +10414,16 @@ impl<H: Host> Vm<H> {
         if !self.programs.js_jit_general_dispatch_enabled() {
             return (false, false);
         }
-        let Some(body) = program.function_get(function as usize).filter(|_| facts.general) else {
+        let Some(body) = program
+            .function_get(function as usize)
+            // A body without backward jumps can pay only through its entries; one with a loop
+            // can also pay through its backedge work (`note_js_general_dispatch_backedge`).
+            .filter(|body| {
+                facts.general
+                    && (!facts.general_acyclic
+                        || self.programs.general_baseline_may_pay(body.code.len()))
+            })
+        else {
             return (false, false);
         };
         let state = self.programs.js_tier(program_id, function);
@@ -11794,7 +11842,7 @@ impl<H: Host> Vm<H> {
         if diagnostics_enabled {
             eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
         }
-        let isa = super::jit_backend::target_isa(opt_level, false)?;
+        let isa = super::jit_backend::target_isa(opt_level)?;
         // The full plan of a callable function, derived again where needed.
         let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
         let mut reference_site_ids = vec![Vec::new(); count];
