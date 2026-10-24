@@ -758,7 +758,8 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     let mut heap = Heap::new();
     let object = heap.alloc(Cell::Object(plain_object()));
     let before = heap.memory_stats().3;
-    let data = heap.get_mut(object).unwrap().object_mut().unwrap();
+    // An object lives in its record family or a legacy cell; `Heap::object_mut` finds either.
+    let data = heap.object_mut(object).unwrap();
     data.set_arguments_object();
     data.set_arguments_map(vec![0; 32]);
     data.set_module_namespace();
