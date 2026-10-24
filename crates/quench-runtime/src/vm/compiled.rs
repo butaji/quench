@@ -1891,6 +1891,14 @@ pub(super) fn compile_js_general_dispatch(
             })
             .flatten();
         let operands = numeric_binary.then(|| (instruction.operand_b(), instruction.operand_c()));
+        let bitwise = numeric_binary
+            .then(|| {
+                super::operations::NumberBitwise::from_js_instruction(
+                    instruction.op(),
+                    instruction.binary_operator(),
+                )
+            })
+            .flatten();
         let numeric_result = numeric_binary
             && arithmetic.is_some()
             && instruction.numeric_local_target().is_none()
@@ -1947,6 +1955,96 @@ pub(super) fn compile_js_general_dispatch(
             let right = emit_js_tagged_number(&mut builder, right_bits, fallback);
             let number = emit_number_arithmetic_operation(&mut builder, arithmetic, left, right);
             let encoded = emit_js_box_number(&mut builder, number);
+            builder.ins().store(
+                MemFlagsData::trusted(),
+                encoded,
+                arguments,
+                destination,
+            );
+            builder.ins().jump(next, &[]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(
+                &mut builder,
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            );
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+
+        // Bitwise Number operators have an exact native domain when both
+        // operands already carry Quench's signed-int32 Number tag. Any value
+        // requiring ToPrimitive/ToNumeric or a BigInt operation takes the
+        // existing exact-PC VM fallback before either operand is coerced.
+        let bitwise_result = numeric_binary
+            && bitwise.is_some()
+            && instruction.numeric_local_target().is_none()
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && register_offset(instruction.result_register()).is_some()
+            && operands.is_some_and(|(left, right)| {
+                js_tagged_operand_supported(program, left, &register_offset)
+                    && js_tagged_operand_supported(program, right, &register_offset)
+            });
+        if let (true, Some(next), Some(operation), Some((left_operand, right_operand))) =
+            (bitwise_result, next, bitwise, operands)
+        {
+            let fallback = builder.create_block();
+            let native = builder.create_block();
+            let destination = register_offset(instruction.result_register())
+                .expect("prevalidated JS bitwise destination");
+            let left_bits = read_js_tagged_operand(
+                &mut builder,
+                program,
+                left_operand,
+                arguments,
+                &register_offset,
+            )
+            .expect("prevalidated JS bitwise operand");
+            let right_bits = read_js_tagged_operand(
+                &mut builder,
+                program,
+                right_operand,
+                arguments,
+                &register_offset,
+            )
+            .expect("prevalidated JS bitwise operand");
+            let shift = i64::from(crate::value::ValueLayout::TAG_SHIFT);
+            let int_tag = (crate::value::ValueLayout::INT_TAG >> shift) as i64;
+            let left_tag = builder.ins().ushr_imm_u(left_bits, shift);
+            let right_tag = builder.ins().ushr_imm_u(right_bits, shift);
+            let left_integer = builder
+                .ins()
+                .icmp_imm_u(IntCC::Equal, left_tag, int_tag);
+            let right_integer = builder
+                .ins()
+                .icmp_imm_u(IntCC::Equal, right_tag, int_tag);
+            let both_integer = builder.ins().band(left_integer, right_integer);
+            builder
+                .ins()
+                .brif(both_integer, native, &[], fallback, &[]);
+
+            builder.switch_to_block(native);
+            let left = builder.ins().ireduce(types::I32, left_bits);
+            let right = builder.ins().ireduce(types::I32, right_bits);
+            let encoded = if operation
+                == super::operations::NumberBitwise::ShiftRightUnsigned
+            {
+                let number = emit_number_bitwise_operation(&mut builder, operation, left, right);
+                emit_js_box_number(&mut builder, number)
+            } else {
+                let result = emit_number_bitwise_bits(&mut builder, operation, left, right);
+                let payload = builder.ins().uextend(types::I64, result);
+                builder
+                    .ins()
+                    .bor_imm_u(payload, crate::value::ValueLayout::INT_TAG as i64)
+            };
             builder.ins().store(
                 MemFlagsData::trusted(),
                 encoded,
