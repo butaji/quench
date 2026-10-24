@@ -1093,11 +1093,15 @@ impl quench_runtime::Host for NodeHost {
     /// Splay 39800 -> 38988 KiB with the release before full collections).
     /// The allocator's free pages, which the collection's sweep just freed, leave with them
     /// (V8-v7 max RSS, static x86_64 unbolted, 2026-10-19: RegExp 6772-7044 -> 6664-6772 KiB,
-    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged). At most once per the policy's
-    /// `MemoryPolicy::resident_release_interval`; every policy counts the collection for the
-    /// release before output (`resident_pages::release_at_collection`).
+    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged). Only under a policy that
+    /// returns pages at collections (memory-first); every policy counts the collection for
+    /// the release before output (`resident_pages::note_collection`).
     fn at_collection_boundary(&mut self, policy: quench_runtime::MemoryPolicy) {
-        crate::host::resident_pages::release_at_collection(policy);
+        if policy.returns_pages_at_collections() {
+            crate::host::resident_pages::release_read_only_pages();
+            crate::host::resident_pages::release_free_heap_pages();
+        }
+        crate::host::resident_pages::note_collection();
     }
 
     /// The pages the program touched leave the resident set before the code generator's join
@@ -1107,14 +1111,14 @@ impl quench_runtime::Host for NodeHost {
     /// NavierStokes `--jit` under MemoryFirst, plain x86_64 build, 2026-10-22: max RSS
     /// 10.84-10.94 -> 8.80-8.89 MB, Score within noise).
     fn before_native_compilation(&mut self) {
-        crate::host::resident_pages::release_at_native_compilation();
+        crate::host::resident_pages::release_read_only_pages();
     }
 
     /// The code generator's pages, and the allocator's pages its scratch memory freed, leave
     /// the resident set before the program runs on (V8-v7 Crypto `--jit` under MemoryFirst,
     /// plain x86_64 build, 2026-10-22: max RSS 6.82-6.84 -> 5.91 MB with the release before).
     fn after_native_compilation(&mut self) {
-        crate::host::resident_pages::release_at_native_compilation();
+        crate::host::resident_pages::release_read_only_pages();
         crate::host::resident_pages::release_free_heap_pages();
     }
 
