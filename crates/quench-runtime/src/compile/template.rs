@@ -134,7 +134,7 @@ impl FunctionCompiler<'_, '_> {
         template: &oxc_ast::ast::TemplateLiteral<'_>,
     ) -> Register {
         let Some(first) = template.quasis.first() else {
-            return self.literal(Constant::String(String::new()));
+            return self.literal(Constant::String("".into()));
         };
         let Some(_) = first.value.cooked.as_ref() else {
             self.owner
