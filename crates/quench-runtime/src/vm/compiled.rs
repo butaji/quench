@@ -1297,19 +1297,22 @@ pub(super) fn compile_js_general_dispatch(
     program: &ResidualProgram,
     function_id: u32,
     unresolved_names_are_global: bool,
-) -> Option<super::js_compiled::JsJitArtifact> {
+) -> Result<super::js_compiled::JsJitArtifact, &'static str> {
     if program.kind == crate::bytecode::ProgramKind::Wasm || function_id == 0 {
-        return None;
+        return Err("ineligible-program-or-root-function");
     }
-    let function = program.function_get(function_id as usize)?;
+    let function = program
+        .function_get(function_id as usize)
+        .ok_or("missing-function")?;
     let static_global_names = unresolved_names_are_global
         && function.names_resolve_statically(program);
     let instruction_count = function.code.len();
     if !js_general_dispatch_candidate(program, function) {
-        return None;
+        return Err("bytecode-candidate-rejected");
     }
 
-    let isa = super::jit_backend::target_isa("speed", true)?;
+    let isa = super::jit_backend::target_isa("speed", true)
+        .ok_or("target-isa-unavailable")?;
     let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
     let name = UserFuncName::user(0x5155_454e, function_id);
     let mut native = ir::Function::with_name_signature(name, signature);
@@ -1981,8 +1984,9 @@ pub(super) fn compile_js_general_dispatch(
         &*isa,
         super::js_compiled::MAX_CODE_BYTES,
         |code| Some(code.to_vec()),
-    )?;
-    Some(super::js_compiled::JsJitArtifact {
+    )
+    .map_err(NativeCompileRejection::reason)?;
+    Ok(super::js_compiled::JsJitArtifact {
         code,
         params: usize::from(function.params),
         requires_signed_int32_arguments: false,
@@ -4454,6 +4458,28 @@ fn compile_and_publish_entry(
         let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
         Some((memory, entry))
     })
+    .ok()
+}
+
+#[derive(Clone, Copy, Debug)]
+enum NativeCompileRejection {
+    Cranelift,
+    Relocations,
+    EmptyCode,
+    CodeSizeBudget,
+    Publish,
+}
+
+impl NativeCompileRejection {
+    const fn reason(self) -> &'static str {
+        match self {
+            Self::Cranelift => "cranelift-compile-error",
+            Self::Relocations => "unresolved-relocations",
+            Self::EmptyCode => "empty-code",
+            Self::CodeSizeBudget => "code-size-budget",
+            Self::Publish => "code-publication-failed",
+        }
+    }
 }
 
 /// Compile a relocation-free native function under the shared code-size policy, then
@@ -4463,23 +4489,30 @@ fn compile_native_function<T>(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     max_code_bytes: usize,
     publish: impl FnOnce(&[u8]) -> Option<T>,
-) -> Option<T> {
+) -> Result<T, NativeCompileRejection> {
     let mut context = cranelift_codegen::Context::for_function(function);
     let compiled = match context.compile(
         isa,
         &mut cranelift_codegen::control::ControlPlane::default(),
     ) {
         Ok(compiled) => compiled,
-        Err(_) => return None,
+        Err(_error) => {
+            #[cfg(test)]
+            eprintln!("shared native compile rejected by Cranelift: {_error:?}");
+            return Err(NativeCompileRejection::Cranelift);
+        }
     };
     if !compiled.buffer.relocs().is_empty() {
-        return None;
+        return Err(NativeCompileRejection::Relocations);
     }
     let code = compiled.code_buffer();
-    if code.is_empty() || code.len() > max_code_bytes {
-        return None;
+    if code.is_empty() {
+        return Err(NativeCompileRejection::EmptyCode);
     }
-    publish(code)
+    if code.len() > max_code_bytes {
+        return Err(NativeCompileRejection::CodeSizeBudget);
+    }
+    publish(code).ok_or(NativeCompileRejection::Publish)
 }
 
 /// A guarded JavaScript numeric function compiled from a narrow residual
@@ -10021,17 +10054,24 @@ impl<H: Host> Vm<H> {
                 let unresolved_names_are_global = self
                     .programs
                     .unresolved_names_are_global(program_id, function_id);
-                let artifact = compile_js_general_dispatch(
+                let (artifact, compile_rejection) = match compile_js_general_dispatch(
                     program,
                     function_id,
                     unresolved_names_are_global,
-                );
+                ) {
+                    Ok(artifact) => (Some(artifact), None),
+                    Err(rejection) => (None, Some(rejection)),
+                };
                 self.host.after_native_compilation();
                 let code_bytes = artifact.as_ref().map_or(0, |artifact| artifact.code.len());
-                let rejection = artifact.is_none().then_some("general-dispatch-codegen-rejected");
+                let artifact_was_created = artifact.is_some();
                 let compiled = artifact
                     .and_then(CompiledJsFunction::from_artifact)
                     .map(Rc::new);
+                let rejection = compile_rejection.or_else(|| {
+                    (artifact_was_created && compiled.is_none())
+                        .then_some("native-code-mapping-failed")
+                });
                 let installed = self
                     .programs
                     .install_js_tier(program_id, function_id, compiled.clone(), false);
