@@ -156,7 +156,9 @@ function parseArgs(argv) {
 }
 
 function resolveExecutable(explicit, candidates) {
-  if (explicit) return explicit;
+  if (explicit) {
+    return explicit.includes("/") ? path.resolve(explicit) : explicit;
+  }
   for (const candidate of candidates) {
     if (candidate.includes("/")) {
       if (fs.existsSync(candidate)) return candidate;
@@ -483,10 +485,6 @@ function main() {
   const outDir = path.resolve(
     options.out ?? path.join(root, "evidence", `npm-10-m4-${stamp}`),
   );
-  if (fs.existsSync(outDir)) {
-    fail(`evidence directory already exists: ${outDir}`);
-  }
-  fs.mkdirSync(outDir, { recursive: true });
   if (fs.existsSync(outDir)) {
     fail(`evidence directory already exists: ${outDir}`);
   }
