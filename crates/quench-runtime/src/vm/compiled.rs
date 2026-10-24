@@ -937,6 +937,187 @@ fn js_general_dispatch_candidate(program: &ResidualProgram, function: &Function)
         })
 }
 
+fn read_js_tagged_operand(
+    builder: &mut FunctionBuilder<'_>,
+    program: &ResidualProgram,
+    operand: Operand,
+    arguments: ir::Value,
+    register_offset: &impl Fn(u16) -> Option<i32>,
+) -> Option<ir::Value> {
+    match operand.kind()? {
+        OperandKind::Register => {
+            let offset = register_offset(operand.register_index()?)?;
+            Some(builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                arguments,
+                offset,
+            ))
+        }
+        OperandKind::Constant => {
+            let value = match program.constants.get(usize::from(operand.payload()))? {
+                crate::bytecode::Constant::Number(number) => Value::number(*number),
+                crate::bytecode::Constant::Boolean(boolean) => Value::boolean(*boolean),
+                crate::bytecode::Constant::Null => Value::NULL,
+                crate::bytecode::Constant::Undefined => Value::UNDEFINED,
+                crate::bytecode::Constant::String(_)
+                | crate::bytecode::Constant::StringUnits(_)
+                | crate::bytecode::Constant::BigInt(_)
+                | crate::bytecode::Constant::WasmBits64(_)
+                | crate::bytecode::Constant::WasmV128(_) => return None,
+            };
+            Some(builder.ins().iconst(types::I64, value.to_bits() as i64))
+        }
+        OperandKind::Field | OperandKind::Local => None,
+    }
+}
+
+fn js_tagged_operand_supported(
+    program: &ResidualProgram,
+    operand: Operand,
+    register_offset: &impl Fn(u16) -> Option<i32>,
+) -> bool {
+    match operand.kind() {
+        Some(OperandKind::Register) => operand
+            .register_index()
+            .is_some_and(|register| register_offset(register).is_some()),
+        Some(OperandKind::Constant) => matches!(
+            program.constants.get(usize::from(operand.payload())),
+            Some(crate::bytecode::Constant::Number(_))
+        ),
+        Some(OperandKind::Field | OperandKind::Local) | None => false,
+    }
+}
+
+/// Unbox a tagged JavaScript Number, branching to the current instruction's
+/// VM fallback for every other value. The representation keeps all tags in
+/// NaN space, with integer Numbers identified by `INT_TAG`.
+fn emit_js_tagged_number(
+    builder: &mut FunctionBuilder<'_>,
+    bits: ir::Value,
+    fallback: ir::Block,
+) -> ir::Value {
+    let number = builder
+        .ins()
+        .bitcast(types::F64, ir::MemFlagsData::new(), bits);
+    let unordered = builder.ins().fcmp(FloatCC::Unordered, number, number);
+    let nan = builder.create_block();
+    let tagged = builder.create_block();
+    let integer_block = builder.create_block();
+    let join = builder.create_block();
+    builder.append_block_param(join, types::F64);
+    builder.ins().brif(
+        unordered,
+        nan,
+        &[],
+        join,
+        &[ir::BlockArg::Value(number)],
+    );
+
+    builder.switch_to_block(nan);
+    let field = builder
+        .ins()
+        .ushr_imm_u(bits, i64::from(crate::value::ValueLayout::TAG_SHIFT));
+    let offset = builder.ins().iadd_imm_s(
+        field,
+        -(crate::value::ValueLayout::FIRST_TAG_FIELD as i64),
+    );
+    let is_tagged = builder.ins().icmp_imm_u(
+        IntCC::UnsignedLessThanOrEqual,
+        offset,
+        crate::value::ValueLayout::TAG_FIELD_SPAN as i64,
+    );
+    builder.ins().brif(
+        is_tagged,
+        tagged,
+        &[],
+        join,
+        &[ir::BlockArg::Value(number)],
+    );
+
+    builder.switch_to_block(tagged);
+    let int_field = (crate::value::ValueLayout::INT_TAG
+        >> crate::value::ValueLayout::TAG_SHIFT) as i64;
+    let is_integer_tag = builder
+        .ins()
+        .icmp_imm_u(IntCC::Equal, field, int_field);
+    builder
+        .ins()
+        .brif(is_integer_tag, integer_block, &[], fallback, &[]);
+
+    builder.switch_to_block(integer_block);
+    let integer = builder.ins().ireduce(types::I32, bits);
+    let integer = builder.ins().fcvt_from_sint(types::F64, integer);
+    builder
+        .ins()
+        .jump(join, &[ir::BlockArg::Value(integer)]);
+    builder.seal_block(nan);
+    builder.seal_block(tagged);
+    builder.seal_block(integer_block);
+    builder.seal_block(join);
+    builder.switch_to_block(join);
+    builder.block_params(join)[0]
+}
+
+/// Encode a Number result with `Value::number`'s integer, double and NaN
+/// representations.
+fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+    let truncated = builder.ins().fcvt_to_sint_sat(types::I32, number);
+    let round_trip = builder.ins().fcvt_from_sint(types::F64, truncated);
+    let result_bits = builder
+        .ins()
+        .bitcast(types::I64, ir::MemFlagsData::new(), number);
+    let round_trip_bits = builder
+        .ins()
+        .bitcast(types::I64, ir::MemFlagsData::new(), round_trip);
+    let is_integer = builder
+        .ins()
+        .icmp(IntCC::Equal, result_bits, round_trip_bits);
+    let integer_bits = builder.ins().uextend(types::I64, truncated);
+    let integer_bits = builder
+        .ins()
+        .bor_imm_u(integer_bits, crate::value::ValueLayout::INT_TAG as i64);
+    let encoded = builder
+        .ins()
+        .select(is_integer, integer_bits, result_bits);
+    let is_nan = builder.ins().fcmp(FloatCC::Unordered, number, number);
+    let canonical_nan = builder.ins().iconst(
+        types::I64,
+        crate::value::ValueLayout::CANONICAL_NAN as i64,
+    );
+    builder.ins().select(is_nan, canonical_nan, encoded)
+}
+
+fn emit_js_step_fallback(
+    builder: &mut FunctionBuilder<'_>,
+    context: ir::Value,
+    callout: ir::Value,
+    callout_signature: ir::SigRef,
+    result_pointer: ir::Value,
+    stopped_block: ir::Block,
+    continue_block: ir::Block,
+    pc: usize,
+) {
+    let pc_value = builder.ins().iconst(types::I64, pc as i64);
+    let call = builder.ins().call_indirect(
+        callout_signature,
+        callout,
+        &[context, pc_value, result_pointer, result_pointer],
+    );
+    let status = builder.inst_results(call)[0];
+    let failed = builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
+    let next_pc = builder
+        .ins()
+        .load(types::I64, MemFlagsData::trusted(), result_pointer, 0);
+    builder.ins().brif(
+        failed,
+        stopped_block,
+        &[],
+        continue_block,
+        &[ir::BlockArg::Value(next_pc)],
+    );
+}
+
 pub(super) fn compile_js_general_dispatch(
     program: &ResidualProgram,
     function_id: u32,
@@ -1110,23 +1291,75 @@ pub(super) fn compile_js_general_dispatch(
             continue;
         }
 
-        let pc_value = builder.ins().iconst(types::I64, pc as i64);
-        let call = builder.ins().call_indirect(
-            callout_signature,
-            callout,
-            &[context, pc_value, result_pointer, result_pointer],
+        let arithmetic = super::operations::NumberArithmetic::from_js_instruction(
+            instruction.op(),
+            instruction.binary_operator(),
         );
-        let status = builder.inst_results(call)[0];
-        let failed = builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
-        let next_pc = builder
-            .ins()
-            .load(types::I64, MemFlagsData::trusted(), result_pointer, 0);
-        builder.ins().brif(
-            failed,
+        let left_operand = instruction.operand_b();
+        let right_operand = instruction.operand_c();
+        let numeric_result = instruction.op().js_denotation() == JsDenotation::NumericBinary
+            && arithmetic.is_some()
+            && instruction.numeric_local_target().is_none()
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && register_offset(instruction.result_register()).is_some()
+            && js_tagged_operand_supported(program, left_operand, &register_offset)
+            && js_tagged_operand_supported(program, right_operand, &register_offset);
+        if let (true, Some(next), Some(arithmetic)) = (numeric_result, next, arithmetic) {
+            let fallback = builder.create_block();
+            let left_bits = read_js_tagged_operand(
+                &mut builder,
+                program,
+                left_operand,
+                arguments,
+                &register_offset,
+            )
+            .expect("prevalidated JS numeric operand");
+            let left = emit_js_tagged_number(&mut builder, left_bits, fallback);
+            let right_bits = read_js_tagged_operand(
+                &mut builder,
+                program,
+                right_operand,
+                arguments,
+                &register_offset,
+            )
+            .expect("prevalidated JS numeric operand");
+            let right = emit_js_tagged_number(&mut builder, right_bits, fallback);
+            let number = emit_number_arithmetic_operation(&mut builder, arithmetic, left, right);
+            let encoded = emit_js_box_number(&mut builder, number);
+            let destination = register_offset(instruction.result_register())
+                .expect("prevalidated JS numeric destination");
+            builder.ins().store(
+                MemFlagsData::trusted(),
+                encoded,
+                arguments,
+                destination,
+            );
+            builder.ins().jump(next, &[]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(
+                &mut builder,
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            );
+            continue;
+        }
+
+        emit_js_step_fallback(
+            &mut builder,
+            context,
+            callout,
+            callout_signature,
+            result_pointer,
             stopped_block,
-            &[],
             continue_block,
-            &[ir::BlockArg::Value(next_pc)],
+            pc,
         );
     }
     builder.switch_to_block(continue_block);

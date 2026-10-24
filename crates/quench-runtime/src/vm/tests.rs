@@ -12024,6 +12024,56 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
 }
 
 #[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly() {
+    let source = r#"
+      function combine(left, right) {
+        try { return left + right; }
+        catch (error) { return error instanceof TypeError; }
+      }
+      for (let index = 0; index < 48; index++) {
+        if (combine(index, 0.5) !== index + 0.5) throw Error('number result');
+      }
+      if (!Object.is(combine(-0, -0), -0)) throw Error('negative zero');
+      if (combine(2147483647, 1) !== 2147483648) throw Error('integer boundary');
+      if (combine('left', 'right') !== 'leftright') throw Error('string fallback');
+      if (combine(Symbol('value'), 1) !== true) throw Error('throw fallback');
+      if (!Number.isNaN(combine(NaN, 1))) throw Error('NaN result');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-arithmetic.js",
+    ))
+    .unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "combine")
+        })
+        .unwrap() as u32;
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("combine should use the general JavaScript dispatch compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+}
+
+#[test]
 fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         "function add(a, b) { return a + b; } add(1, 2);",
