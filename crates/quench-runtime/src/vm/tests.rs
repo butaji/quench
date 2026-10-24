@@ -10612,6 +10612,110 @@ fn js_jit_compiles_straight_line_plain_local_temporaries() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_compiles_forward_numeric_decision_trees() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function magnitude(value) {
+            if (value < 0) return -value;
+            return value;
+          }
+          function magnitudeJoined(value) {
+            return value < 0 ? -value : value;
+          }
+          for (let index = 0; index < 40; index++) {
+            if (magnitude(index - 20) !== Math.abs(index - 20)) throw Error('decision tree');
+            if (magnitudeJoined(index - 20) !== Math.abs(index - 20)) throw Error('decision join');
+          }
+          if (!Object.is(magnitude(-0), -0)) throw Error('signed zero');
+          if (!Number.isNaN(magnitude(NaN))) throw Error('NaN relation');
+          if (magnitude('3') !== '3') throw Error('coercive fallback');
+          let coercions = 0;
+          const boxed = { valueOf() { coercions++; return -4; } };
+          if (magnitude(boxed) !== 4 || coercions !== 2) throw Error('effectful fallback');
+        "#,
+        "js-jit-forward-decision-tree.js",
+    ))
+    .unwrap();
+    let magnitude = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "magnitude")
+        })
+        .unwrap() as u32;
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter
+        .execute(&program)
+        .expect("interpreted decision tree should preserve JS results");
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    let compiled = match vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, magnitude)
+    {
+        Some(super::program_store::JsTierState::Compiled(compiled)) => compiled,
+        Some(super::program_store::JsTierState::Rejected { reason, .. }) => {
+            panic!("the Number decision tree was rejected: {reason}");
+        }
+        Some(super::program_store::JsTierState::Hot {
+            observations,
+            numeric,
+        }) => panic!("the Number decision tree remained hot: {observations} observations, {numeric} numeric"),
+        Some(super::program_store::JsTierState::PromotionPending) => {
+            panic!("the Number decision tree remained promotion-pending");
+        }
+        Some(super::program_store::JsTierState::Unsupported) => {
+            panic!("the Number decision tree was marked unsupported");
+        }
+        None => panic!("the Number decision tree was not tier-tracked"),
+    };
+    assert!(compiled.uses_shared_entry());
+    assert!(compiled.native_entries() > 0);
+
+    let joined = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "magnitudeJoined")
+        })
+        .unwrap() as u32;
+    match vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, joined)
+    {
+        Some(super::program_store::JsTierState::Compiled(compiled)) => {
+            assert!(compiled.uses_shared_entry());
+            assert!(compiled.native_entries() > 0);
+        }
+        Some(super::program_store::JsTierState::Rejected { reason, .. }) => {
+            panic!("the Number join was rejected: {reason}");
+        }
+        Some(super::program_store::JsTierState::Hot {
+            observations,
+            numeric,
+        }) => panic!("the Number join remained hot: {observations} observations, {numeric} numeric"),
+        Some(super::program_store::JsTierState::PromotionPending) => {
+            panic!("the Number join remained promotion-pending");
+        }
+        Some(super::program_store::JsTierState::Unsupported) => {
+            panic!("the Number join was marked unsupported");
+        }
+        None => panic!("the Number join was not tier-tracked"),
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_enters_compiled_known_callees_without_pushing_a_frame() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -11003,6 +11107,113 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
     let osr = view.osr_diagnostics();
     assert_eq!(osr.admitted_sites, 1, "OSR analysis rejected the field loop");
     assert_eq!(osr.currently_compiled_sites, 1, "field loop did not compile natively");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function countNegative() {
+            let index = -40;
+            let count = 0;
+            while (index < 0) {
+              count++;
+              index++;
+            }
+            return count;
+          }
+          let result = 0;
+          for (let call = 0; call < 100; call++) result += countNegative();
+          print(result);
+        "#,
+        "osr-signed-int32-relation.js",
+    ))
+    .unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    assert_eq!(output.borrow().as_slice(), ["4000"]);
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "countNegative")
+        })
+        .unwrap();
+    let views = vm
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot countNegative loop lane view");
+    assert_eq!(view.osr_diagnostics().currently_compiled_sites, 1);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_float_unary_uses_shared_number_denotation() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function negate(value) {
+            let index = 0;
+            while (index < 9999) {
+              value = -value;
+              index++;
+            }
+            return value;
+          }
+          for (let call = 0; call < 100; call++) negate(0.5);
+          if (negate(0.5) !== -0.5) throw Error('float negation');
+          if (!Object.is(negate(0), -0)) throw Error('negative zero');
+          if (negate(-2147483648) !== 2147483648) throw Error('int32 minimum');
+          print('ok');
+        "#,
+        "osr-shared-number-unary.js",
+    ))
+    .unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    assert_eq!(output.borrow().as_slice(), ["ok"]);
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "negate")
+        })
+        .unwrap();
+    let views = vm
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot negate loop lane view");
+    let osr = view.osr_diagnostics();
+    assert_eq!(
+        osr.admitted_sites, 1,
+        "OSR analysis rejected the unary loop ({} rejection sites)",
+        osr.analysis_rejections.len()
+    );
+    assert_eq!(
+        osr.currently_compiled_sites, 1,
+        "unary loop did not compile natively (admitted: {})",
+        osr.admitted_sites
+    );
 }
 
 #[test]
@@ -11526,6 +11737,7 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
     assert_eq!(programs.js_jit_tracked_function_count(), 256);
 }
 
+#[cfg(not(quench_profiled))]
 #[test]
 fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
     let program = Engine::compile(crate::ExecutionRequest::script(
@@ -12948,6 +13160,44 @@ fn object_assign_sees_prototype_setters_added_after_a_memoized_copy() {
       delete Object.prototype.a;
     "#;
     for program in [Engine::compile(crate::ExecutionRequest { source, name: "assign-memo.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "assign-memo.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn set_iteration_copies_only_while_the_intrinsics_iterate() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      const show = (values) => values.map(String).join(',');
+      const set = new Set([1, 2, 3]);
+      set.delete(2);
+      check(show([...set]), '1,3', 'spread skips deleted entries');
+      check(show(Array.from(set)), '1,3', 'Array.from');
+      const live = new Set([1, 2, 3]);
+      check(show(Array.from(live, (v) => { if (v === 1) { live.delete(2); live.add(9); } return v; })), '1,3,9', 'live map');
+      class Sub extends Set { *[Symbol.iterator]() { yield 'sub'; } }
+      check(show([...new Sub([1])]), 'sub', 'subclass iterator');
+      const own = new Set([1]);
+      own[Symbol.iterator] = function* () { yield 'own'; };
+      check(show(Array.from(own)), 'own', 'own iterator');
+      class Arr extends Array {}
+      const made = Arr.from(new Set([5, 6]));
+      check(made instanceof Arr && show(made), '5,6', 'subclass target');
+      const proto = Object.getPrototypeOf(new Set()[Symbol.iterator]());
+      const next = proto.next;
+      proto.next = function () { const step = next.call(this); if (!step.done) step.value = 'p' + step.value; return step; };
+      check(show([...new Set([1, 2])]), 'p1,p2', 'patched next spread');
+      check(show(Array.from(new Set([1, 2]))), 'p1,p2', 'patched next Array.from');
+      check(show(Array.from(new Set([1, 2]), (v) => v)), 'p1,p2', 'patched next mapped');
+      check(show([...new Set(new Set([1]))]), 'pp1', 'patched next in Set constructor');
+      proto.next = next;
+      const method = Set.prototype[Symbol.iterator];
+      Set.prototype[Symbol.iterator] = function* () { yield 'proto'; };
+      check(show(Array.from(new Set([1]))), 'proto', 'patched @@iterator');
+      Set.prototype[Symbol.iterator] = method;
+      check(Math.max(...new Set([4, 7])), 7, 'spread call');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "set-iteration.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "set-iteration.js").unwrap()] {
         Vm::new(TestHost::default()).execute(&program).unwrap();
     }
 }

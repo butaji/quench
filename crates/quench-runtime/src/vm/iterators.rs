@@ -48,7 +48,7 @@ impl<H: Host> Vm<H> {
         array: Value,
         source: Value,
     ) -> Result<(), JsError> {
-        if let Some(values) = self.array_iteration_values(source) {
+        if let Some(values) = self.intact_iteration_values(source) {
             if self.append_literal_elements(array, &values) {
                 return Ok(());
             }
@@ -75,7 +75,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         source: Value,
     ) -> Result<Vec<RootId>, JsError> {
-        if let Some(values) = self.array_iteration_values(source) {
+        if let Some(values) = self.intact_iteration_values(source) {
             return Ok(values.into_iter().map(|value| self.heap.root(value)).collect());
         }
         let iterator = self.get_iterator(p, source)?;
@@ -92,6 +92,46 @@ impl<H: Host> Vm<H> {
         }
         let length = self.heap.array(source)?.elements().len();
         self.present_dense_elements(source, 0..length).map(<[Value]>::to_vec)
+    }
+
+    /// The values iterating `source` yields where no step can run guest code, so copying them
+    /// creates no iterator or result object and is observably the same: an intact array
+    /// (`array_iteration_values`) or Set (`set_iteration_values`).
+    pub(super) fn intact_iteration_values(&mut self, source: Value) -> Option<Vec<Value>> {
+        self.array_iteration_values(source).or_else(|| self.set_iteration_values(source))
+    }
+
+    /// The live values of a Set whose iteration runs the intrinsics: no own `@@iterator`,
+    /// the realm's `Set.prototype` holding `Set.prototype.values` as its `@@iterator` data
+    /// property, and `%SetIteratorPrototype%` holding the intrinsic `next`, so the protocol
+    /// reads each value in insertion order. Copying them first holds only while no step runs
+    /// guest code that could change the Set.
+    fn set_iteration_values(&mut self, source: Value) -> Option<Vec<Value>> {
+        let Some(Cell::Set { object, entries }) = self.heap.get(source) else {
+            return None;
+        };
+        if object.proto() != self.set_proto || object.has_side_descriptors() {
+            return None;
+        }
+        let method = PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::Iterator)?);
+        if self.property_shape_slot(object.shape(), method).is_some() {
+            return None;
+        }
+        let intrinsic = |vm: &Self, holder: Value, key: PropertyKey, native: Native| {
+            let Some(data) = vm.object_data(holder) else {
+                return false;
+            };
+            let Some(slot) = vm.property_shape_slot(data.shape(), key) else {
+                return false;
+            };
+            vm.slot_attributes(data, slot).is_some_and(|attributes| !attributes.accessor)
+                && vm.heap.property_get(data, slot).is_some_and(|value| vm.is_current_realm_native(value, native))
+        };
+        let next = PropertyKey::string(self.runtime_atoms.next);
+        let values = entries.to_vec();
+        (intrinsic(self, self.set_proto, method, Native::SetValues)
+            && intrinsic(self, self.set_iterator_proto, next, Native::IteratorNext))
+        .then_some(values)
     }
 
     /// Whether neither `iterator` nor any prototype in its chain has `key`, which the shapes
