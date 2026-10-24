@@ -11455,6 +11455,56 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_indexes_arrays_that_field_reads_give() {
+    // Each iteration reads the arrays from fields of `this` and of an argument, then reads
+    // and stores their elements: the arrays are those the fields held at entry.
+    let source = r#"
+      function B(n) { this.arr = []; for (var k = 0; k < n; k++) this.arr.push(k & 255); }
+      B.prototype.mix = function mix(w, n) {
+        var s = 0;
+        for (var i = 0; i < n; i++) {
+          var a = this.arr;
+          var b = w.arr;
+          s = (s + a[i] * 3 + b[i]) | 0;
+          b[i] = (a[i] + i) & 1023;
+        }
+        return s;
+      };
+      var x = new B(3000), y = new B(3000), t = 0;
+      for (var r = 0; r < 300; r++) t = (t + x.mix(y, 3000)) | 0;
+      print(t + " " + y.arr[17] + " " + y.arr[2999]);
+    "#;
+    let program = Engine::specialize(source, "osr-field-arrays.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "mix"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+
+        assert_eq!(compiled_output.borrow().as_slice(), ["804092460 34 110"], "{policy:?}");
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(std::cell::OnceCell::get)
+            .expect("hot mix loop lane view")
+            .osr_diagnostics();
+        assert_eq!(osr.admitted_sites, 1, "OSR analysis rejected the field-array loop under {policy:?}");
+        let compiles = super::compiled::loop_tier_compiles(policy);
+        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field-array loop native code under {policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
