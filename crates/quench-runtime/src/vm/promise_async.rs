@@ -30,9 +30,12 @@ impl<H: Host> Vm<H> {
         let (low, high) = frame.registers.split_at_mut(covered);
         high.fill(Value::UNDEFINED);
         let mut dead = !mask & RegisterSet::MAX.checked_shr(RegisterSet::BITS - covered as u32).unwrap_or(0);
+        // Dead registers come in runs (a statement's temporaries), each cleared as one span.
         while dead != 0 {
-            low[dead.trailing_zeros() as usize] = Value::UNDEFINED;
-            dead &= dead - 1;
+            let start = dead.trailing_zeros();
+            let end = start + (dead >> start).trailing_ones();
+            low[start as usize..end as usize].fill(Value::UNDEFINED);
+            dead &= RegisterSet::MAX.checked_shl(end).unwrap_or(0);
         }
     }
 
