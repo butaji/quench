@@ -564,6 +564,11 @@ pub(crate) struct ProgramStore {
     jit_code_cache: JitCodeCacheBudget,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
+    /// Whether ordinary JS functions promote to the general native dispatch tier
+    /// (`note_js_general_dispatch_entry`). Off unless `QUENCH_JS_JIT_GENERAL_DISPATCH=1`:
+    /// a fixed entry count promoted short runs into compile cost (npm p51, TOD-138) until
+    /// promotion weighs size and compile cost.
+    js_jit_general_dispatch_enabled: bool,
     js_jit_dataview_float64_enabled: bool,
     js_jit_dataview_float64_get_entries: u64,
     js_jit_dataview_float64_set_entries: u64,
@@ -583,6 +588,8 @@ impl Default for ProgramStore {
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
+            js_jit_general_dispatch_enabled: std::env::var_os("QUENCH_JS_JIT_GENERAL_DISPATCH")
+                .is_some_and(|value| value == "1"),
             js_jit_dataview_float64_enabled:
                 std::env::var_os("QUENCH_JS_JIT_DATAVIEW_FLOAT64")
                     .is_none_or(|value| value != "0"),
@@ -1453,6 +1460,11 @@ impl ProgramStore {
         self.entry(id)?.jit_tiers.js(function)
     }
 
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn enable_js_general_dispatch(&mut self) {
+        self.js_jit_general_dispatch_enabled = true;
+    }
+
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {
         self.js_jit_diagnostics.is_some()
     }
@@ -1513,6 +1525,9 @@ impl ProgramStore {
         id: ProgramId,
         function: u32,
     ) -> bool {
+        if !self.js_jit_general_dispatch_enabled {
+            return false;
+        }
         let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
         let Some(entry) = self.entry_mut(id) else {
             return false;
