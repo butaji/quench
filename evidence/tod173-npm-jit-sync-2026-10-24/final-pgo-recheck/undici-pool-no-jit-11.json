@@ -1,0 +1,674 @@
+{
+  "schema": 1,
+  "workload": "undici-pool",
+  "phase": "no-jit",
+  "runs": 11,
+  "qualificationReady": false,
+  "omittedEngines": {
+    "node-jitless": "Skipped by QUENCH_NPM_PERF_SKIP_NODE_NO_JIT."
+  },
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 5
+  },
+  "rssMeasurement": "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)",
+  "inputs": {
+    "workloadSha256": "0230eb24453952ca360371bfe3810bcb932ea4467241a39770f6e0c4d7a64d78",
+    "packageLockSha256": "92dbfcb2312b42ddf55a8f0b06c40368544ca4b5e861782ead6770268da3c1b0",
+    "quenchBinarySha256": "0fd1ddc4dee59d52040f8abeaf4c14bb337c663bdffd72be265da28349348616",
+    "nodeBinary": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "bunBinary": "/tmp/quench-bun/bun-linux-x64/bun"
+  },
+  "nodeVersion": "v24.19.0",
+  "bunVersion": "1.4.4",
+  "summary": {
+    "quench-interpreter": {
+      "medianOperationsPerSecond": 4226.542688081149,
+      "medianElapsedMs": 1183,
+      "medianMaximumRssBytes": 51515392
+    },
+    "bun-no-jit": {
+      "medianOperationsPerSecond": 4950.495049504951,
+      "medianElapsedMs": 1010,
+      "medianMaximumRssBytes": 49037312
+    }
+  },
+  "output": {
+    "workload": "undici-pool",
+    "package": "undici@7.30.1",
+    "warmups": 250,
+    "concurrency": 4,
+    "bytes": 297800,
+    "checksum": 407166
+  },
+  "samples": [
+    {
+      "engine": "quench-interpreter",
+      "round": 1,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1207,
+        "operationsPerSecond": 4142.502071251036
+      },
+      "maxRssBytes": 51515392,
+      "wallTimeMs": 1353.627964,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1060,
+        "operationsPerSecond": 4716.981132075472
+      },
+      "maxRssBytes": 48955392,
+      "wallTimeMs": 1172.696581,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1047,
+        "operationsPerSecond": 4775.549188156638
+      },
+      "maxRssBytes": 49676288,
+      "wallTimeMs": 1176.42356,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 2,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1167,
+        "operationsPerSecond": 4284.490145672665
+      },
+      "maxRssBytes": 50552832,
+      "wallTimeMs": 1305.255153,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 3,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1187,
+        "operationsPerSecond": 4212.299915754002
+      },
+      "maxRssBytes": 45260800,
+      "wallTimeMs": 1350.192019,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1006,
+        "operationsPerSecond": 4970.178926441352
+      },
+      "maxRssBytes": 49037312,
+      "wallTimeMs": 1118.379105,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1010,
+        "operationsPerSecond": 4950.495049504951
+      },
+      "maxRssBytes": 48971776,
+      "wallTimeMs": 1126.99448,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 4,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1182,
+        "operationsPerSecond": 4230.118443316413
+      },
+      "maxRssBytes": 52596736,
+      "wallTimeMs": 1311.548298,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 5,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1190,
+        "operationsPerSecond": 4201.680672268908
+      },
+      "maxRssBytes": 44990464,
+      "wallTimeMs": 1358.669677,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1062,
+        "operationsPerSecond": 4708.097928436911
+      },
+      "maxRssBytes": 49250304,
+      "wallTimeMs": 1179.452545,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 6,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1032,
+        "operationsPerSecond": 4844.961240310077
+      },
+      "maxRssBytes": 48963584,
+      "wallTimeMs": 1150.602466,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 6,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1186,
+        "operationsPerSecond": 4215.851602023608
+      },
+      "maxRssBytes": 49770496,
+      "wallTimeMs": 1321.379743,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 7,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1192,
+        "operationsPerSecond": 4194.6308724832215
+      },
+      "maxRssBytes": 44847104,
+      "wallTimeMs": 1348.050668,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 7,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1001,
+        "operationsPerSecond": 4995.004995004995
+      },
+      "maxRssBytes": 49172480,
+      "wallTimeMs": 1110.269609,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 8,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 993,
+        "operationsPerSecond": 5035.246727089628
+      },
+      "maxRssBytes": 49213440,
+      "wallTimeMs": 1105.091793,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 8,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1155,
+        "operationsPerSecond": 4329.004329004329
+      },
+      "maxRssBytes": 52551680,
+      "wallTimeMs": 1289.810923,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 9,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1142,
+        "operationsPerSecond": 4378.283712784589
+      },
+      "maxRssBytes": 52826112,
+      "wallTimeMs": 1272.038451,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 9,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 981,
+        "operationsPerSecond": 5096.83995922528
+      },
+      "maxRssBytes": 49016832,
+      "wallTimeMs": 1093.102689,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 10,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 983,
+        "operationsPerSecond": 5086.46998982706
+      },
+      "maxRssBytes": 49000448,
+      "wallTimeMs": 1094.171968,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 10,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1170,
+        "operationsPerSecond": 4273.504273504273
+      },
+      "maxRssBytes": 53080064,
+      "wallTimeMs": 1299.770777,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 11,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1183,
+        "operationsPerSecond": 4226.542688081149
+      },
+      "maxRssBytes": 53039104,
+      "wallTimeMs": 1313.695394,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 11,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1034,
+        "operationsPerSecond": 4835.58994197292
+      },
+      "maxRssBytes": 49049600,
+      "wallTimeMs": 1149.88773,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250",
+        "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT": "1"
+      }
+    }
+  ]
+}

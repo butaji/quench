@@ -176,7 +176,9 @@ const NO_RESULT_FLAGS: Register = 0;
 #[derive(Clone, Debug)]
 pub enum Constant {
     Number(f64),
-    String(String),
+    /// Shared with the heap strings materialized from it (`JsString::from_shared_text`), so a
+    /// long literal's text is held once.
+    String(std::rc::Rc<str>),
     StringUnits(Vec<u16>),
     BigInt(num_bigint::BigInt),
     WasmBits64(u64),
@@ -1308,6 +1310,8 @@ pub struct Function {
     pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
     /// Lazily derived `names_resolve_statically`; never serialized.
     pub(crate) static_name_scope: std::cell::OnceCell<bool>,
+    /// Lazily derived `has_dynamic_scope_access`; never serialized.
+    pub(crate) dynamic_scope_access: std::cell::OnceCell<bool>,
     /// Whether the JavaScript tier's candidate filter admits the function
     /// (`js_compiled::function_candidate`), derived on its first entry; never serialized.
     pub(crate) js_tier_candidate: std::cell::OnceCell<bool>,
@@ -1515,7 +1519,7 @@ pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RegisterRoots {
     covered: bool,
-    masks: std::cell::OnceCell<Box<[crate::compile::liveness::RegisterSet]>>,
+    masks: std::cell::OnceCell<crate::compile::liveness::RegisterMasks>,
 }
 
 impl RegisterRoots {
@@ -1530,7 +1534,7 @@ impl RegisterRoots {
     /// The masks a collection derived so far; none until one finds the function running.
     #[cfg(feature = "profile-memory")]
     pub(crate) fn capacity_bytes(&self) -> usize {
-        self.masks.get().map_or(0, |masks| size_of_val::<[crate::compile::liveness::RegisterSet]>(masks))
+        self.masks.get().map_or(0, crate::compile::liveness::RegisterMasks::bytes)
     }
 }
 
@@ -1578,6 +1582,17 @@ const LEB128_CONTINUATION: u8 = 1 << LEB128_PAYLOAD_BITS;
 impl SourcePositions {
     pub(crate) fn last(&self) -> Option<SourcePosition> {
         self.last
+    }
+
+    /// The coded entries and the final one, as a residual stores them
+    /// (`BinaryWriter::source_positions`).
+    pub(crate) fn encoded(&self) -> (&[u8], Option<SourcePosition>) {
+        (&self.bytes, self.last)
+    }
+
+    /// The table a residual stored (`encoded`); validation judges it against its function.
+    pub(crate) fn from_encoded(bytes: Vec<u8>, last: Option<SourcePosition>) -> Self {
+        Self { bytes, last, checkpoints: std::cell::OnceCell::new() }
     }
 
     /// Appends `position`. Compiled code orders positions by pc; a decoded table keeps any
@@ -1694,7 +1709,9 @@ impl SourcePositionIter<'_> {
         let mut shift = 0;
         while let Some((&byte, rest)) = self.bytes.split_first() {
             self.bytes = rest;
-            value |= u64::from(byte & !LEB128_CONTINUATION) << shift;
+            // A stored table is validated after decoding; an overlong varint decodes to junk
+            // the validation rejects rather than shifting past the value's width.
+            value |= u64::from(byte & !LEB128_CONTINUATION).checked_shl(shift).unwrap_or(0);
             if byte & LEB128_CONTINUATION == 0 {
                 break;
             }
@@ -2223,7 +2240,11 @@ impl Function {
                                     | Op::StoreLocalPlain
                                     | Op::StoreEnvLocal
                                     | Op::InitializeTdz
-                            ))
+                            )
+                            // A read whose base is a plain local reads the window's local
+                            // (`lane_plain_local_operand`).
+                            || (op == Op::GetField
+                                && instruction.addressed_local_slots().eq(instruction.local_field_base())))
                 });
             CallPlan {
                 environment_activation,
@@ -2433,10 +2454,14 @@ impl Function {
     /// Whether the function itself can reach bindings by name at run time: it was created
     /// inside a `with` scope, records by-name lexical sites, resolves names dynamically, or
     /// calls direct eval (also from a parameter scope).
+    /// Derived once per function: lane views, capture layouts and name resolution each ask,
+    /// and the instruction scan had cost 1.3% of the axios npm scenario's instructions.
     pub(crate) fn has_dynamic_scope_access(&self) -> bool {
-        self.inherited_with_scope
-            || !self.binding_sites.is_empty()
-            || self.instructions().any(WideInstruction::resolves_dynamic_scope)
+        *self.dynamic_scope_access.get_or_init(|| {
+            self.inherited_with_scope
+                || !self.binding_sites.is_empty()
+                || self.instructions().any(WideInstruction::resolves_dynamic_scope)
+        })
     }
 
     /// Whether the body enters a `with` statement, whose by-name loads may denote
@@ -3006,12 +3031,73 @@ impl ProgramKind {
 }
 
 /// The source text a program retains for diagnostics and `Function.prototype.toString`: its
-/// own copy, or static host text (an embedded library) the compiled source wrapped.
+/// own copy, static host text (an embedded library) the compiled source wrapped, or the text
+/// its compile-cache entry keeps after its encoding (`binary::append_kept_source`), read in
+/// place from the host's mapping.
 #[derive(Clone, Debug)]
 pub(crate) enum SourceText {
     Shared(std::sync::Arc<str>),
     Static(&'static str),
+    Kept(KeptText),
 }
+
+/// Text inside kept bytes: valid UTF-8, checked when made (`KeptText::new`).
+#[derive(Clone)]
+pub(crate) struct KeptText {
+    bytes: KeptBytes,
+    range: std::ops::Range<usize>,
+}
+
+impl KeptText {
+    /// The text `range` of `bytes` holds, if it is UTF-8.
+    pub(crate) fn new(bytes: KeptBytes, range: std::ops::Range<usize>) -> Option<Self> {
+        std::str::from_utf8((*bytes).as_ref().get(range.clone())?).ok()?;
+        Some(Self { bytes, range })
+    }
+}
+
+impl std::ops::Deref for KeptText {
+    type Target = str;
+    fn deref(&self) -> &str {
+        // SAFETY: `new` checked that the range holds UTF-8, and kept bytes never change.
+        unsafe { std::str::from_utf8_unchecked(&(*self.bytes).as_ref()[self.range.clone()]) }
+    }
+}
+
+impl std::fmt::Debug for KeptText {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("KeptText").field("len", &self.range.len()).finish()
+    }
+}
+
+/// The first `len` bytes of kept bytes: a compile-cache entry's encoding, without the source
+/// text after it.
+struct KeptPrefix {
+    bytes: KeptBytes,
+    len: usize,
+}
+
+impl AsRef<[u8]> for KeptPrefix {
+    fn as_ref(&self) -> &[u8] {
+        &(*self.bytes).as_ref()[..self.len]
+    }
+}
+
+/// A compile-cache entry split into its encoding and the source text
+/// `binary::append_kept_source` kept after it, when it keeps `source_len` bytes of text whose
+/// checksum holds; the entry itself otherwise.
+pub(crate) fn split_kept_source(entry: KeptBytes, source_len: usize) -> Result<(KeptBytes, SourceText), KeptBytes> {
+    let Some(range) = binary::kept_source_range((*entry).as_ref()).filter(|range| range.len() == source_len) else {
+        return Err(entry);
+    };
+    let Some(text) = KeptText::new(entry.clone(), range.clone()) else {
+        return Err(entry);
+    };
+    let encoding: KeptBytes = std::rc::Rc::new(KeptPrefix { bytes: entry, len: range.start });
+    Ok((encoding, SourceText::Kept(text)))
+}
+
+pub(crate) use binary::append_kept_source;
 
 impl std::ops::Deref for SourceText {
     type Target = str;
@@ -3019,6 +3105,7 @@ impl std::ops::Deref for SourceText {
         match self {
             Self::Shared(text) => text,
             Self::Static(text) => text,
+            Self::Kept(text) => text,
         }
     }
 }
@@ -3050,9 +3137,10 @@ const SNAPSHOT_TEXT_EDGE: usize = 32;
 impl SourceText {
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         match self {
-            Self::Shared(text) => {
+            // A snapshot outlives the entry's mapping, so it keeps its own copy of kept text.
+            Self::Shared(_) | Self::Kept(_) => {
                 writer.u8(0);
-                writer.str(text);
+                writer.str(self);
             }
             Self::Static(text) => {
                 writer.u8(1);
@@ -3355,12 +3443,12 @@ impl ResidualProgram {
 
     /// The registers live at `pc` in `function`, when liveness covers it.
     pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<crate::compile::liveness::RegisterSet> {
-        self.register_root_masks(function)?.get(pc).copied()
+        self.register_root_masks(function)?.get(pc)
     }
 
     /// `function`'s live register masks by pc, one past its last instruction included, when
     /// liveness covers it.
-    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&[crate::compile::liveness::RegisterSet]> {
+    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&crate::compile::liveness::RegisterMasks> {
         let function = self.function_get(function as usize)?;
         if !function.register_roots.covered {
             return None;
@@ -3375,8 +3463,8 @@ impl ResidualProgram {
                     &self.field_sites,
                     &self.superinstructions,
                 )
+                .map(crate::compile::liveness::RegisterMasks::new)
                 .expect("a covered function's liveness is derivable")
-                .into_boxed_slice()
             });
         Some(masks)
     }
@@ -3402,7 +3490,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 106;
+    pub const FORMAT_VERSION: u8 = 107;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

@@ -347,6 +347,7 @@ measured on the same binary and lost.
 | Young 2^10 with page releases paced to ≥ 2 or 10 ms apart under MemoryFirst | RegExp −224 KiB (−7% Score), but Richards, Crypto, RayTrace and DeltaBlue +50 to +260 KiB: a time-paced release misses the peaks | `tod137-paced-release-young-…` |
 | Bound the collector by pacing alone (most eager pacing, page releases on and off) | With releases off, garbage at the peak is −96 KiB on Crypto, −136 on RayTrace and +84 on DeltaBlue, so the collector is at its floor there; RegExp holds −432 and Richards −256, at Score −45% and −5% | `tod137-eager-collector-bound-…` |
 | Drop regexp matcher-cache entries no live RegExp shares, at full or every collection | RegExp +4 to +228 KiB, other rows flat: the cached matchers are in use, and dropping them recompiles. At RegExp's peak, compiled regexps are ~0.5 MB live (Massif: cache-held `Regex` 185 KiB, lowered programs 179, literal finders 60, match sets and classes 60) | session A/B (7 runs, unbolted static), TOD-137 comment |
+| MemoryFirst first-call release by code growth (256 KiB since the last release) instead of every 5 ms | Unbolted: Crypto worst −72 to −204 KiB, but NavierStokes `--jit` +124 and RayTrace +100; without the time budget npm CPU 1.4–2.2×. Bolted `cdsort`, 15 runs: RayTrace `--jit` worst +228, other rows ±120 both ways | `tod137-growth-release-rejected-…` |
 | Headerless payload space for string buffers | Exact census of RegExp: only 5,659 strings own a buffer; at most about 191 KiB of overhead to remove, under half the gap | `string-payload-linux-2026-10-23` |
 
 ### 8.3 Where the peak is now (MemoryFirst, no JIT)
@@ -420,10 +421,13 @@ What is left on the three missing rows (1–8% over the target) lies outside the
 - **Crypto and RayTrace:** code pages, about 1.2–1.5 MB at the peak, which the code-layout
   lane owns (TOD-171); and start-up state, about 1.5 MB, which the start-up lane owns
   (TOD-21, TOD-104).
-- **RegExp:** about 0.5 MB of compiled regexps, held live by the matcher cache and by live
-  RegExp objects; pruning the cache raised the peak (§8.2). Lowered programs, literal finders
-  and match sets are the regex engine's to shrink. RegExp also holds about 430 KiB of garbage
-  that only the −45% pacing removes.
+- **RegExp:** compiled regexps, held live by the matcher cache and by live RegExp objects;
+  pruning the cache raised the peak (§8.2).
+  - Their 237 patterns held 523 KiB. Match sets as two-word bitmaps, wide literal finders
+    built on demand and a boxed opt-in byte backend bring that to 309 KiB.
+  - Effect on V8-v7 RegExp: median −256 KiB without JIT and −128 with it, worst runs −200 and
+    −212, scores within noise (`tod137-regexp-compact-patterns-…`).
+  - RegExp also holds about 430 KiB of garbage that only the −45% pacing removes.
 
 Run-to-run spread is 100–300 KiB on these rows, with the peaks set by time-paced releases.
 It is of the same order as the remaining gaps.

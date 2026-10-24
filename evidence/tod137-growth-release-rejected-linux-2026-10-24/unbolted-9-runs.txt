@@ -1,0 +1,16 @@
+raytrace           old med 2876 max 3124 s 1862 | grow med 2876 max 3224 s 1908 | grow_nocap med 2876 max 3096 s 1878
+raytrace      jit  old med 2876 max 3164 s 1810 | grow med 2892 max 3028 s 1762 | grow_nocap med 2876 max 3012 s 1986
+crypto             old med 3176 max 3500 s 2303 | grow med 3112 max 3296 s 2393 | grow_nocap med 3108 max 3308 s 2417
+crypto        jit  old med 3228 max 3356 s 2152 | grow med 3160 max 3284 s 2369 | grow_nocap med 3160 max 3228 s 2422
+regexp             old med 5924 max 6080 s 2184 | grow med 5940 max 6124 s 2268 | grow_nocap med 5940 max 6124 s 2232
+regexp        jit  old med 5940 max 6124 s 2184 | grow med 5940 max 6136 s 2125 | grow_nocap med 5940 max 6176 s 2097
+richards           old med 2436 max 2604 s 1389 | grow med 2396 max 2596 s 1435 | grow_nocap med 2376 max 2536 s 1502
+richards      jit  old med 2504 max 2584 s 1469 | grow med 2520 max 2868 s 1639 | grow_nocap med 2504 max 2592 s 1611
+deltablue          old med 2920 max 3100 s 1205 | grow med 2860 max 3016 s 1213 | grow_nocap med 2760 max 2848 s 1272
+deltablue     jit  old med 2988 max 3064 s 1124 | grow med 2988 max 3188 s 1193 | grow_nocap med 2820 max 2944 s 1252
+navier-stokes      old med 4008 max 4108 s 2800 | grow med 4008 max 4080 s 2798 | grow_nocap med 4008 max 4028 s 2839
+navier-stokes jit  old med 4032 max 4032 s 2617 | grow med 4156 max 4332 s 2806 | grow_nocap med 4156 max 4280 s 2680
+typescript         old med 43084 max 43520 s 448 | grow med 43032 max 43432 s 422 | grow_nocap med 42844 max 43452 s 625
+eslint             old med 30592 max 31008 s 379 | grow med 30452 max 31108 s 348 | grow_nocap med 30284 max 30404 s 843
+acorn              old med 14264 max 14752 s 160 | grow med 14380 max 14856 s 140 | grow_nocap med 13292 max 13380 s 240
+ajv                old med 20076 max 20168 s 312 | grow med 20208 max 20292 s 323 | grow_nocap med 20068 max 20132 s 624

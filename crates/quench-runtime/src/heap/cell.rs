@@ -1487,15 +1487,11 @@ pub(crate) struct ArrayObject {
 }
 
 /// Native read-only layout facts for `ArrayObject`, kept beside its field declarations.
-#[cfg(test)]
 pub(super) const NATIVE_ARRAY_RECORD_SIZE: usize = std::mem::size_of::<ArrayObject>();
-#[cfg(test)]
 pub(super) const NATIVE_ARRAY_RECORD_ALIGN: usize = std::mem::align_of::<ArrayObject>();
-#[cfg(test)]
 pub(super) const NATIVE_ARRAY_ELEMENTS_OFFSET: usize =
     std::mem::offset_of!(ArrayObject, elements);
 
-#[cfg(test)]
 const _: () = assert!(
     NATIVE_ARRAY_ELEMENTS_OFFSET + std::mem::size_of::<super::ArrayElements>()
         <= NATIVE_ARRAY_RECORD_SIZE
@@ -2259,6 +2255,7 @@ impl Object {
             .is_some_and(|extras| extras.indexed_descriptors)
     }
     pub(crate) fn mark_indexed_descriptors(&mut self) {
+        self.note_prototype_layout_change();
         self.extras_mut().indexed_descriptors = true;
     }
     pub(crate) fn has_length_descriptor(&self) -> bool {

@@ -1,0 +1,16 @@
+richards           qv2 med 5072 max 5156 min 4688 s 1401 | qsv med 5056 max 5288 min 4944 s 1434
+richards      jit  qv2 med 4784 max 4976 min 4528 s 1433 | qsv med 4784 max 4956 min 4400 s 1404
+deltablue          qv2 med 7240 max 7308 min 6856 s 1360 | qsv med 6972 max 7240 min 6776 s 1354
+deltablue     jit  qv2 med 6880 max 7168 min 6668 s 1376 | qsv med 7008 max 7376 min 6880 s 1392
+crypto             qv2 med 9296 max 9564 min 8784 s 2600 | qsv med 8912 max 9552 min 8528 s 2489
+crypto        jit  qv2 med 8944 max 10476 min 8628 s 5333 | qsv med 9176 max 9768 min 8504 s 5141
+raytrace           qv2 med 7132 max 7132 min 7020 s 2933 | qsv med 7132 max 7388 min 7132 s 2947
+raytrace      jit  qv2 med 6836 max 7000 min 6836 s 2916 | qsv med 6836 max 6836 min 6668 s 2833
+earley-boyer       qv2 med 12140 max 12908 min 11884 s 5453 | qsv med 11884 max 12908 min 11884 s 5284
+earley-boyer  jit  qv2 med 11608 max 12376 min 11476 s 3766 | qsv med 11608 max 12120 min 11340 s 3900
+regexp             qv2 med 11972 max 12100 min 11964 s 3395 | qsv med 11972 max 11972 min 11952 s 3173
+regexp        jit  qv2 med 11352 max 11548 min 11192 s 3190 | qsv med 11352 max 11520 min 11320 s 3086
+splay              qv2 med 33064 max 33140 min 33060 s 4585 | qsv med 33068 max 33068 min 32952 s 4525
+splay         jit  qv2 med 32544 max 32544 min 32544 s 4822 | qsv med 32548 max 32548 min 32512 s 4560
+navier-stokes      qv2 med 4944 max 5072 min 4944 s 2839 | qsv med 4944 max 4944 min 4944 s 2820
+navier-stokes jit  qv2 med 8568 max 8568 min 8520 s 25264 | qsv med 8568 max 8608 min 8412 s 24710

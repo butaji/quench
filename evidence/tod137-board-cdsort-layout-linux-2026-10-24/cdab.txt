@@ -1,0 +1,12 @@
+crypto             qb9 med 3000 max 3084 min 2948 s 2575 | qcd med 2908 max 2960 min 2844 s 2576
+crypto        jit  qb9 med 3100 max 3164 min 2968 s 2585 | qcd med 2932 max 3032 min 2804 s 2490
+raytrace           qb9 med 2720 max 2816 min 2616 s 2137 | qcd med 2680 max 2768 min 2580 s 2152
+raytrace      jit  qb9 med 2720 max 3000 min 2660 s 2025 | qcd med 2652 max 2900 min 2584 s 2116
+regexp             qb9 med 5664 max 5752 min 5548 s 2510 | qcd med 5460 max 5588 min 5360 s 2585
+regexp        jit  qb9 med 5664 max 5752 min 5644 s 2600 | qcd med 5588 max 5644 min 5368 s 2630
+richards           qb9 med 2436 max 2696 min 2328 s 1419 | qcd med 2380 max 2708 min 2244 s 1447
+richards      jit  qb9 med 2456 max 2696 min 2288 s 1527 | qcd med 2604 max 2648 min 2256 s 1542
+deltablue          qb9 med 2820 max 2912 min 2712 s 1223 | qcd med 2652 max 2668 min 2584 s 1282
+deltablue     jit  qb9 med 2944 max 2960 min 2676 s 1235 | qcd med 2668 max 2792 min 2664 s 1306
+navier-stokes      qb9 med 3948 max 3948 min 3944 s 2851 | qcd med 3796 max 3816 min 3760 s 2841
+navier-stokes jit  qb9 med 3964 max 3964 min 3832 s 2853 | qcd med 3792 max 3952 min 3576 s 2818
