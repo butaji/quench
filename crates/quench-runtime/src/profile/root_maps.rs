@@ -45,7 +45,7 @@ pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgr
     eprint!(
         ",\"root_maps\":{{\"full_entries\":{},\"full_bytes\":{},\"distinct_masks\":{},\"mask_runs\":{runs},\"observed_sites\":{},\"observed_masks\":{},\"frame_observations\":{observations},\"active_observations\":{active},\"suspended_observations\":{}}}",
         entries,
-        entries * size_of::<u64>(),
+        entries * size_of::<crate::compile::liveness::RegisterSet>(),
         distinct.len(),
         profile
             .gc_frame_pcs
@@ -57,6 +57,6 @@ pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgr
     );
 }
 
-fn root_mask(program: &ResidualProgram, function: u32, pc: u32) -> Option<u64> {
+fn root_mask(program: &ResidualProgram, function: u32, pc: u32) -> Option<crate::compile::liveness::RegisterSet> {
     program.register_root_mask(function, pc as usize)
 }
