@@ -10655,6 +10655,9 @@ fn js_jit_compiles_forward_numeric_decision_trees() {
         Some(super::program_store::JsTierState::PromotionPending) => {
             panic!("the Number decision tree remained promotion-pending");
         }
+        Some(super::program_store::JsTierState::GeneralPromotionPending) => {
+            panic!("the numeric decision tree was sent to the general baseline");
+        }
         Some(super::program_store::JsTierState::Unsupported) => {
             panic!("the Number decision tree was marked unsupported");
         }
@@ -10691,6 +10694,9 @@ fn js_jit_compiles_forward_numeric_decision_trees() {
         }) => panic!("the Number join remained hot: {observations} observations, {numeric} numeric"),
         Some(super::program_store::JsTierState::PromotionPending) => {
             panic!("the Number join remained promotion-pending");
+        }
+        Some(super::program_store::JsTierState::GeneralPromotionPending) => {
+            panic!("the numeric join was sent to the general baseline");
         }
         Some(super::program_store::JsTierState::Unsupported) => {
             panic!("the Number join was marked unsupported");
@@ -11962,7 +11968,7 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
     let mut programs = super::program_store::ProgramStore::default();
     let id = programs.insert(program).unwrap();
     for function in 0..512 {
-        assert!(!programs.note_js_function_entry(id, function, false, false));
+        assert!(!programs.note_js_function_entry(id, function, false, false, false));
     }
     assert_eq!(programs.js_jit_tracked_function_count(), 256);
 }
@@ -12187,7 +12193,7 @@ fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
     );
     assert!(matches!(
         vm.programs.js_tier(id, 1),
-        Some(super::program_store::JsTierState::PromotionPending)
+        Some(super::program_store::JsTierState::GeneralPromotionPending)
     ));
     vm.programs.install_js_tier(id, 1, None);
     assert!(
@@ -12203,7 +12209,7 @@ fn js_jit_promotion_requires_a_confident_numeric_profile() {
     let mut programs = super::program_store::ProgramStore::default();
     let id = programs.insert(program).unwrap();
     for observation in 0..16 {
-        assert!(!programs.note_js_function_entry(id, 1, observation < 15, false));
+        assert!(!programs.note_js_function_entry(id, 1, observation < 15, false, true));
     }
     assert!(matches!(
         programs.js_tier(id, 1),
@@ -12249,15 +12255,37 @@ fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
     let mut programs = super::program_store::ProgramStore::default();
     let id = programs.insert(program).unwrap();
     for observation in 0..31 {
-        assert!(!programs.note_js_function_entry(id, 1, observation != 0, false));
+        assert!(!programs.note_js_function_entry(id, 1, observation != 0, false, true));
     }
-    assert!(programs.note_js_function_entry(id, 1, true, false));
+    assert!(programs.note_js_function_entry(id, 1, true, false, true));
     assert!(matches!(
         programs.js_tier(id, 1),
         Some(super::program_store::JsTierState::Hot {
             observations: 32,
             numeric: 31
         })
+    ));
+}
+
+#[test]
+fn js_jit_failed_numeric_look_promotes_general_dispatch_at_32_entries() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "void 0",
+        "js-jit-general-profile-gate.js",
+    ))
+    .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+    for observation in 0..31 {
+        assert!(
+            !programs.note_js_function_entry(id, 1, false, false, true),
+            "entry {observation} must not promote before the first profile look"
+        );
+    }
+    assert!(!programs.note_js_function_entry(id, 1, false, false, true));
+    assert!(matches!(
+        programs.js_tier(id, 1),
+        Some(super::program_store::JsTierState::GeneralPromotionPending)
     ));
 }
 
@@ -12271,14 +12299,14 @@ fn js_jit_keeps_promotion_pending_until_a_numeric_entry() {
     let mut programs = super::program_store::ProgramStore::default();
     let id = programs.insert(program).unwrap();
     for _ in 0..31 {
-        assert!(!programs.note_js_function_entry(id, 1, true, false));
+        assert!(!programs.note_js_function_entry(id, 1, true, false, true));
     }
-    assert!(!programs.note_js_function_entry(id, 1, false, false));
+    assert!(!programs.note_js_function_entry(id, 1, false, false, true));
     assert!(matches!(
         programs.js_tier(id, 1),
         Some(super::program_store::JsTierState::PromotionPending)
     ));
-    assert!(programs.note_js_function_entry(id, 1, true, false));
+    assert!(programs.note_js_function_entry(id, 1, true, false, true));
 }
 
 #[cfg(quench_profiled)]
