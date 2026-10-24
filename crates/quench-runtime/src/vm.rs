@@ -231,6 +231,8 @@ pub(crate) use value_serializer::{ReadHooks, WriteHooks};
 use wtf16::JsString;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod closure_retention_tests;
 #[derive(Clone)]
 pub(super) struct Frame {
     // Actual callable identity is distinct from the code ID and captured environment.
@@ -1072,6 +1074,11 @@ const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
 const STRING_CONCAT_CACHE_SIZE: usize = 64;
 /// Slots of `Vm::string_atoms`, a power of two.
 const STRING_ATOM_CACHE_SIZE: usize = 256;
+/// Slots of `Vm::recent_atom_strings`, a power of two: as many as `string_atoms` keeps the
+/// other way.
+const ATOM_STRING_CACHE_SIZE: usize = STRING_ATOM_CACHE_SIZE;
+/// An empty `Vm::recent_atom_strings` slot: no atom has this id.
+const NO_RECENT_ATOM: Atom = Atom::MAX;
 #[derive(Clone, Copy)]
 struct StringConcatCache {
     left: Value,
@@ -1783,6 +1790,7 @@ pub(crate) struct Vm<H> {
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
     plain_copy_shapes: shape_memo::PlainCopyShapeMemo,
+    plain_assign_shapes: shape_memo::PlainAssignShapeMemo,
     /// The final shapes of host records, by their names list (`create_embedding_record`).
     embedding_record_shapes: FxHashMap<usize, u32>,
     /// The geometry accessors typed array reads resolve to (`typed_array_geometry_read`).
@@ -1822,6 +1830,11 @@ pub(crate) struct Vm<H> {
     /// String values recently interned as property keys, and their atoms
     /// (`Vm::string_key_atom`); collection empties it.
     string_atoms: Option<Box<[(Value, Atom); STRING_ATOM_CACHE_SIZE]>>,
+    /// The strings `Vm::atom_string` recently made for atoms whose strings it does not keep
+    /// (`atom_strings`), by atom, direct-mapped; collection empties it, as `string_atoms`.
+    /// A program compiled at run time spells its property names with such atoms, and
+    /// `Object.keys` of its objects had made each key's string again on every call.
+    recent_atom_strings: Option<Box<[(Atom, Value); ATOM_STRING_CACHE_SIZE]>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     field_caches: site_table::SiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
@@ -2764,6 +2777,7 @@ impl<H: Host> Vm<H> {
         self.transitions.clear();
         self.shape_slot_memo.clear();
         self.plain_copy_shapes.clear();
+        self.plain_assign_shapes.clear();
         self.embedding_record_shapes.clear();
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
@@ -2791,6 +2805,7 @@ impl<H: Host> Vm<H> {
         self.well_known_symbols.clear();
         self.string_concats = None;
         self.string_atoms = None;
+        self.recent_atom_strings = None;
         *self.call_targets = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
         self.lane_stack.clear_script_targets();
         let atom_text = self.atom_text.clone();

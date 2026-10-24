@@ -19,16 +19,10 @@ fn patch_node_source(relative: &str, source: &str) -> Option<String> {
     );
     let source = replace_node_source_once(
         &source,
-        "    var textEncoder = new TextEncoder(\"utf-8\");",
-        "    var textEncoder = new TextEncoder(\"utf-8\");\n    var quenchJSONStringifyUtf8 = globalThis.__quenchJSONStringifyUtf8;\n    var originalJSONStringify = JSON.stringify;",
-    );
-    let source = replace_node_source_once(
-        &source,
         "    function extractBody(object, keepalive = false) {\n      let stream = null;\n      let controller = null;",
         r#"    function extractBody(object, keepalive = false, jsonResponse = false) {
       if (jsonResponse && typeof object?.[Symbol.asyncIterator] !== "function") {
-        const source = object;
-        const length = source.byteLength;
+        const source = webidl.util.getCopyOfBytesHeldByBufferSource(object);
         let controller = null;
         const stream = new ReadableStream({
           start(c) {
@@ -38,18 +32,13 @@ fn patch_node_source(relative: &str, source: &str) -> Option<String> {
         });
         assert(webidl.is.ReadableStream(stream));
         if (source.length) {
-          controller.enqueue(source);
+          controller.enqueue(new Uint8Array(source));
         }
         queueMicrotask(() => readableStreamClose(controller));
-        return [{ stream, source, length }, null];
+        return [{ stream, source, length: source.length }, null];
       }
       let stream = null;
       let controller = null;"#,
-    );
-    let source = replace_node_source_once(
-        &source,
-        "        const bytes = textEncoder.encode(\n          serializeJavascriptValueToJSONString(data)\n        );",
-        "        const fastBytes = JSON.stringify === originalJSONStringify && typeof quenchJSONStringifyUtf8 === \"function\" ? quenchJSONStringifyUtf8(data) : null;\n        const bytes = fastBytes === null ? textEncoder.encode(serializeJavascriptValueToJSONString(data)) : fastBytes;",
     );
     let source = replace_node_source_once(
         &source,
@@ -65,25 +54,9 @@ fn patch_node_source(relative: &str, source: &str) -> Option<String> {
               message: `Invalid response status code ${init.status}`
             });
           }
-          const state = {
-            aborted: false,
-            rangeRequested: false,
-            timingAllowPassed: false,
-            requestIncludesCredentials: false,
-            type: "default",
-            status: init.status,
-            timingInfo: null,
-            cacheState: "",
-            statusText: "",
-            headersList: new HeadersList(),
-            urlList: []
-          };
-          const responseObject = new Response(kConstruct);
-          setResponseState(responseObject, state);
-          const headers = new Headers(kConstruct);
-          setResponseHeaders(responseObject, headers);
-          setHeadersList(headers, state.headersList);
-          setHeadersGuard(headers, "response");
+          const responseObject = fromInnerResponse(makeResponse({}), "response");
+          const state = getResponseState(responseObject);
+          state.status = init.status;
           state.headersList.append("content-type", "application/json", true);
           state.body = body[0];
           return responseObject;

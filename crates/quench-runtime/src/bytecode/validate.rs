@@ -1308,6 +1308,7 @@ mod tests {
             replay: None,
             encoded_records: None,
             validated: Default::default(),
+            closure_reads: None,
         }
     }
 

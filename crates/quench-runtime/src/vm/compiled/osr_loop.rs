@@ -21,10 +21,13 @@
 //! Nothing in a region allocates, collects, or runs guest code, so the arrays, their
 //! element storage and the captures the entry read stay as they are while native code runs.
 
-use crate::bytecode::{FieldBase, FieldLookup, Function, Op, Operand, OperandKind, Register, WideInstruction};
+use crate::bytecode::{
+    FieldBase, FieldLookup, Function, Op, Operand, OperandKind, Register, WideInstruction,
+};
 use crate::value::{Value, ValueLayout};
+use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
 use cranelift_codegen::ir::{
-    self, AbiParam, InstBuilder, UserFuncName,
+    self, InstBuilder, UserFuncName,
     condcodes::{FloatCC, IntCC},
     types,
 };
@@ -41,13 +44,10 @@ const MAX_REGION_ARRAYS: usize = 8;
 const MAX_REGION_CAPTURES: usize = 16;
 const MAX_REGION_FIELDS: usize = 16;
 /// The largest native body a region may produce.
-const MAX_CODE_BYTES: usize = 64 * 1024;
+pub(super) const MAX_CODE_BYTES: usize = 64 * 1024;
 
 /// What native code writes to its result word: the outcome in the high word, a bytecode PC
 /// in the low one.
-const OUTCOME_SHIFT: u32 = u32::BITS;
-const PC_MASK: u64 = u32::MAX as u64;
-
 /// The outcome of one native run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LoopOutcome {
@@ -81,25 +81,21 @@ pub(crate) enum Widening {
     Unit(Register),
 }
 
-const OUTCOME_NOT_ENTERED: u64 = 0;
-const OUTCOME_RESUME: u64 = 1;
-const OUTCOME_EXIT: u64 = 2;
-const OUTCOME_WIDEN: u64 = 3;
 /// A not-entered outcome's low word: zero, or a widening's kind bit over its payload.
 const WIDEN_REGISTER: u64 = 1 << u16::BITS;
 const WIDEN_CAPTURE: u64 = WIDEN_REGISTER << 1;
 const WIDEN_UNIT: u64 = WIDEN_CAPTURE << 1;
-const _: () = assert!(WIDEN_UNIT <= PC_MASK);
+const _: () = assert!(WIDEN_UNIT <= u32::MAX as u64);
 const WIDEN_PAYLOAD: u64 = WIDEN_REGISTER - 1;
 
 impl Widening {
     /// The not-entered word of an entry guard's widening; element reads are guarded where
     /// they run, so an entry never names them.
-    fn code(self) -> u64 {
+    fn code(self) -> u32 {
         match self {
-            Self::Register(register) => WIDEN_REGISTER | u64::from(register),
-            Self::Capture(index) => WIDEN_CAPTURE | u64::from(index),
-            Self::Unit(register) => WIDEN_UNIT | u64::from(register),
+            Self::Register(register) => (WIDEN_REGISTER | u64::from(register)) as u32,
+            Self::Capture(index) => (WIDEN_CAPTURE | u64::from(index)) as u32,
+            Self::Unit(register) => (WIDEN_UNIT | u64::from(register)) as u32,
             Self::Elements(_) => 0,
         }
     }
@@ -120,12 +116,11 @@ impl Widening {
 
 impl LoopOutcome {
     pub(super) fn decode(word: u64) -> Self {
-        let low = word & PC_MASK;
-        match word >> OUTCOME_SHIFT {
-            OUTCOME_RESUME => Self::Resume(low as u32),
-            OUTCOME_EXIT => Self::Exit(low as u32),
-            OUTCOME_WIDEN => Self::Widen(low as u32),
-            _ => Self::NotEntered(Widening::decode(low)),
+        match super::RegionExit::decode(word) {
+            super::RegionExit::EntryMiss(payload) => Self::NotEntered(Widening::decode(u64::from(payload))),
+            super::RegionExit::Resume(pc) => Self::Resume(pc),
+            super::RegionExit::Fallback(pc) => Self::Exit(pc),
+            super::RegionExit::Recompile(pc) => Self::Widen(pc),
         }
     }
 }
@@ -262,61 +257,31 @@ enum Source {
 /// The arithmetic and comparison a region lowers, by the operator's tag.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Arithmetic {
-    Float(FloatOperator),
-    Int32(Int32Operator),
+    Float(NumberArithmetic),
+    Int32(super::super::operations::NumberBitwise),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum FloatOperator {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Int32Operator {
-    Or,
-    And,
-    Xor,
-    ShiftLeft,
-    ShiftRight,
-    ShiftRightUnsigned,
-}
-
-fn arithmetic(operator: u32) -> Option<Arithmetic> {
-    use BinaryOperator as B;
-    Some(match operator {
-        op if op == B::Addition as u32 => Arithmetic::Float(FloatOperator::Add),
-        op if op == B::Subtraction as u32 => Arithmetic::Float(FloatOperator::Subtract),
-        op if op == B::Multiplication as u32 => Arithmetic::Float(FloatOperator::Multiply),
-        op if op == B::Division as u32 => Arithmetic::Float(FloatOperator::Divide),
-        op if op == B::BitwiseOR as u32 => Arithmetic::Int32(Int32Operator::Or),
-        op if op == B::BitwiseAnd as u32 => Arithmetic::Int32(Int32Operator::And),
-        op if op == B::BitwiseXOR as u32 => Arithmetic::Int32(Int32Operator::Xor),
-        op if op == B::ShiftLeft as u32 => Arithmetic::Int32(Int32Operator::ShiftLeft),
-        op if op == B::ShiftRight as u32 => Arithmetic::Int32(Int32Operator::ShiftRight),
-        op if op == B::ShiftRightZeroFill as u32 => Arithmetic::Int32(Int32Operator::ShiftRightUnsigned),
-        _ => return None,
-    })
+fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
+    if let Some(operation) = NumberArithmetic::from_js_instruction(instruction, operator) {
+        return Some(Arithmetic::Float(operation));
+    }
+    super::super::operations::NumberBitwise::from_js_instruction(instruction, operator)
+        .map(Arithmetic::Int32)
 }
 
 /// A unary operator a region lowers on a Number.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Unary {
-    Plus,
-    Negate,
+    Number(NumberUnary),
     BitwiseNot,
 }
 
-fn unary(operator: u32) -> Option<Unary> {
-    use UnaryOperator as U;
-    Some(match operator {
-        op if op == U::UnaryPlus as u32 => Unary::Plus,
-        op if op == U::UnaryNegation as u32 => Unary::Negate,
-        op if op == U::BitwiseNot as u32 => Unary::BitwiseNot,
-        _ => return None,
-    })
+fn unary(instruction: Op, operator: u32) -> Option<Unary> {
+    if let Some(operation) = NumberUnary::from_js_instruction(instruction, operator) {
+        return Some(Unary::Number(operation));
+    }
+    (instruction == Op::Unary && operator == UnaryOperator::BitwiseNot as u32)
+        .then_some(Unary::BitwiseNot)
 }
 
 /// What each register of a region holds.
@@ -479,7 +444,7 @@ fn admit(admission: &mut Admission<'_>, instruction: WideInstruction) -> Option<
             }
         }
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-            arithmetic(instruction.binary_operator())?;
+            arithmetic(instruction.op(), instruction.binary_operator())?;
             admission.result(instruction)?;
             admission.source(instruction.operand_b())?;
             admission.source(instruction.operand_c())?;
@@ -494,7 +459,7 @@ fn admit(admission: &mut Admission<'_>, instruction: WideInstruction) -> Option<
             admission.number(instruction.register_b())?;
         }
         Op::Unary => {
-            unary(instruction.unary_operator())?;
+            unary(instruction.op(), instruction.unary_operator())?;
             admission.result(instruction)?;
             admission.number(instruction.register_b())?;
         }
@@ -536,6 +501,9 @@ fn admit(admission: &mut Admission<'_>, instruction: WideInstruction) -> Option<
             )?;
             admission.source(instruction.operand_b())?;
             admission.source(instruction.operand_c())?;
+        }
+        Op::JumpFalse | Op::JumpTrue => {
+            admission.number(instruction.register_a())?;
         }
         _ => return None,
     }
@@ -626,9 +594,14 @@ fn number_reads(instruction: WideInstruction) -> Vec<Register> {
     let register = |operand: Operand| operand.register_index();
     match instruction.op() {
         Op::Move | Op::IncDec | Op::Unary | Op::ToNumeric => vec![instruction.register_b()],
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => {
-            [register(instruction.operand_b()), register(instruction.operand_c())].into_iter().flatten().collect()
-        }
+        Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => [
+            register(instruction.operand_b()),
+            register(instruction.operand_c()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+        Op::JumpFalse | Op::JumpTrue => vec![instruction.register_a()],
         Op::GetIndex => register(instruction.operand_c()).into_iter().collect(),
         Op::SetIndex => vec![instruction.register_a(), instruction.register_c()],
         _ => Vec::new(),
@@ -658,11 +631,11 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
 /// where the lane resumes; as lowered (`Lowering::jump`, `Lowering::fall_through`).
 fn successors(region: &LoopRegion, pc: u32) -> Vec<u32> {
     let instruction = region.instructions[(pc - region.header) as usize];
-    match instruction.op() {
-        Op::Jump => vec![instruction.jump_target()],
-        Op::JumpBinaryFalse => vec![pc + 1, instruction.jump_target()],
-        _ => vec![pc + 1],
-    }
+    let mut successors = Vec::with_capacity(2);
+    crate::bytecode::for_each_instruction_successor(pc as usize, instruction, |successor| {
+        successors.push(successor as u32);
+    });
+    successors
 }
 
 fn webs(region: &LoopRegion) -> Webs {
@@ -844,14 +817,18 @@ fn definition(
             let index = region.captures.iter().position(|capture| *capture == slot)?;
             captures[index]
         }
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply => match arithmetic(instruction.binary_operator())? {
-            Arithmetic::Float(FloatOperator::Divide) => Representation::Float64,
-            Arithmetic::Float(_) => both(source(instruction.operand_b()), source(instruction.operand_c())),
-            Arithmetic::Int32(Int32Operator::ShiftRightUnsigned) => Representation::Float64,
-            Arithmetic::Int32(_) => Representation::Int32,
-        },
-        Op::Unary => match unary(instruction.unary_operator())? {
-            Unary::Plus | Unary::Negate => registers(instruction.register_b()),
+        Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
+            match arithmetic(instruction.op(), instruction.binary_operator())? {
+                Arithmetic::Float(NumberArithmetic::Divide) => Representation::Float64,
+                Arithmetic::Float(_) => {
+                    both(source(instruction.operand_b()), source(instruction.operand_c()))
+                }
+                Arithmetic::Int32(NumberBitwise::ShiftRightUnsigned) => Representation::Float64,
+                Arithmetic::Int32(_) => Representation::Int32,
+            }
+        }
+        Op::Unary => match unary(instruction.op(), instruction.unary_operator())? {
+            Unary::Number(_) => registers(instruction.register_b()),
             Unary::BitwiseNot => Representation::Int32,
         },
         Op::GetIndex => element_representation(instruction, observation),
@@ -1045,6 +1022,7 @@ fn counted_loop(
                 test = Some(pc);
             }
             Op::JumpBinaryFalse => return None,
+            Op::JumpFalse | Op::JumpTrue => return None,
             _ => {}
         }
     }
@@ -1052,8 +1030,10 @@ fn counted_loop(
     // Control enters only at the header.
     let enters_inside = (region.header..=region.backedge).any(|pc| {
         let instruction = at(pc);
-        matches!(instruction.op(), Op::Jump | Op::JumpBinaryFalse)
-            && (header + 1..=backedge).contains(&instruction.jump_target())
+        matches!(
+            instruction.op(),
+            Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
+        ) && (header + 1..=backedge).contains(&instruction.jump_target())
     });
     if enters_inside {
         return None;
@@ -1126,9 +1106,9 @@ fn counted_loop(
                             matches!(base, Base::Term(term) if terms[term].multiply)
                         })
                 };
-                let operator = arithmetic(instruction.binary_operator())?;
+                let operator = arithmetic(instruction.op(), instruction.binary_operator())?;
                 let sum = match (operator, left.1, right.1) {
-                    (Arithmetic::Float(FloatOperator::Add), Some(left), Some(right)) => match (left, right) {
+                    (Arithmetic::Float(NumberArithmetic::Add), Some(left), Some(right)) => match (left, right) {
                         (_, Affine { base: Base::Constant, addend: None, offset }) => left.plus(offset),
                         (Affine { base: Base::Constant, addend: None, offset }, _) => right.plus(offset),
                         // An invariant value folds into the other's addend.
@@ -1140,12 +1120,12 @@ fn counted_loop(
                         }
                         _ => None,
                     },
-                    (Arithmetic::Float(FloatOperator::Subtract), Some(left), Some(right))
+                    (Arithmetic::Float(NumberArithmetic::Subtract), Some(left), Some(right))
                         if right.base == Base::Constant && right.addend.is_none() =>
                     {
                         left.plus(-right.offset)
                     }
-                    (Arithmetic::Float(FloatOperator::Multiply), Some(left), Some(right))
+                    (Arithmetic::Float(NumberArithmetic::Multiply), Some(left), Some(right))
                         if held && factor(&left) && factor(&right) =>
                     {
                         terms.push(Term { multiply: true, left, right });
@@ -1155,7 +1135,7 @@ fn counted_loop(
                     }
                     _ => None,
                 };
-                if operator != Arithmetic::Float(FloatOperator::Multiply)
+                if operator != Arithmetic::Float(NumberArithmetic::Multiply)
                     && let Some(value) = sum.filter(|_| held)
                 {
                     candidates.push(Fact { pc, value, bound: Bound::Int32 });
@@ -1260,43 +1240,15 @@ fn counted_loop(
     })
 }
 
-/// A compiled region: one W^X mapping, its native entry, and what each `LoopOutcome::Widen`
-/// PC found was no `i32`.
-///
-/// The entry has the compiled functions' ABI (`super::Entry`): the call context, the
-/// register file as the base, an unused length, the entry record as the arguments, and the
-/// result word, which receives the outcome; it returns a zero status, or the terminated one
-/// through the trampoline when its poll faults.
-pub(super) struct CompiledLoop {
-    _code: super::CodeMemory,
-    pub(super) entry: super::Entry,
-    widenings: std::collections::BTreeMap<u32, Widening>,
-}
-
-impl CompiledLoop {
-    /// What a `LoopOutcome::Widen` at `pc` found was no `i32`.
-    pub(super) fn widening(&self, pc: u32) -> Option<Widening> {
-        self.widenings.get(&pc).copied()
-    }
-
-}
-
-/// Native code for `region` under `observation`, or `None` when Cranelift declines it. Its
-/// backward jumps read `poll`, the VM's poll page, where every run enters through the
-/// trampoline (`super::poll_address`), and check the call context's interrupt flag
-/// otherwise.
-pub(super) fn compile(
+/// Lower `region` to a shared-entry Cranelift function and return its exact-PC widening map.
+pub(super) fn lower(
     region: &LoopRegion,
     observation: &Observation<'_>,
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
     poll: Option<i64>,
-) -> Option<CompiledLoop> {
-    let isa = super::jit_backend::target_isa("speed", false)?;
+) -> Option<(ir::Function, std::collections::BTreeMap<u32, Widening>)> {
     let pointer = isa.pointer_type();
-    let mut signature = ir::Signature::new(isa.default_call_conv());
-    for parameter in [pointer, types::I64, types::I64, pointer, pointer] {
-        signature.params.push(AbiParam::new(parameter));
-    }
-    signature.returns.push(AbiParam::new(types::I32));
+    let signature = super::native_entry_signature(pointer, isa.default_call_conv());
     let mut native = ir::Function::with_name_signature(
         UserFuncName::user(LOOP_NAMESPACE, region.header),
         signature,
@@ -1308,21 +1260,7 @@ pub(super) fn compile(
     let builder = FunctionBuilder::new(&mut native, &mut context);
     let widenings = Lowering::new(builder, region, observation, pointer, webs, representations, captures, counted, poll)
         .lower(isa.frontend_config())?;
-    let mut context = cranelift_codegen::Context::for_function(native);
-    let compiled = context
-        .compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default())
-        .ok()?;
-    if !compiled.buffer.relocs().is_empty() {
-        return None;
-    }
-    let code = compiled.code_buffer();
-    if code.is_empty() || code.len() > MAX_CODE_BYTES {
-        return None;
-    }
-    let memory = super::CodeMemory::new(code)?;
-    // SAFETY: the lowering emits the `super::Entry` signature.
-    let entry = unsafe { std::mem::transmute::<*mut u8, super::Entry>(memory.pointer()) };
-    Some(CompiledLoop { _code: memory, entry, widenings })
+    Some((native, widenings))
 }
 
 /// The Cranelift user-function namespace of loop regions ("QLOP").
@@ -1365,11 +1303,8 @@ struct Lowering<'a, 'b> {
     proved_blocks: Vec<Vec<ir::Block>>,
     /// The counted loop whose proved copy is being lowered.
     copy: Option<usize>,
-    /// Per PC the code leaves at, the block that writes back the Number registers live
-    /// there and returns its parameter, the outcome word.
-    leaves: std::collections::BTreeMap<u32, ir::Block>,
-    /// The cold blocks that end the run with a fixed outcome (`outcome_block`).
-    outcomes: Vec<(ir::Block, u64, u64)>,
+    /// Shared handoff blocks; this tier fills per-PC leaves with its live-state writeback.
+    exits: super::RegionExitBlocks,
     registers: ir::Value,
     entry: ir::Value,
     /// The result word the outcome is written to.
@@ -1385,7 +1320,10 @@ struct Lowering<'a, 'b> {
     /// The exact `i32` results computed so far, by operator and operands, with the chain
     /// computing them: the same arithmetic later in that chain is that result, its guards
     /// having passed.
-    exact: std::collections::BTreeMap<(FloatOperator, ir::Value, ir::Value), (ir::Value, ir::Block)>,
+    exact: std::collections::BTreeMap<
+        (NumberArithmetic, ir::Value, ir::Value),
+        (ir::Value, ir::Block),
+    >,
     /// The Number each canonical encoding read from memory unboxes to, mapped to the bits as
     /// read: boxing the Number gives those bits back, so a store of it stores them.
     encodings: std::collections::HashMap<ir::Value, ir::Value>,
@@ -1482,8 +1420,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             preheaders,
             proved_blocks,
             copy: None,
-            leaves: std::collections::BTreeMap::new(),
-            outcomes: Vec::new(),
+            exits: super::RegionExitBlocks::default(),
             chains: std::collections::HashMap::new(),
             exact: std::collections::BTreeMap::new(),
             encodings: std::collections::HashMap::new(),
@@ -1703,12 +1640,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.ins().return_(&[status]);
     }
 
-    fn outcome(&mut self, outcome: u64, low: u64) -> ir::Value {
-        self.body.builder
-            .ins()
-            .iconst(types::I64, ((outcome << OUTCOME_SHIFT) | low) as i64)
-    }
-
     fn word(&mut self, index: usize) -> ir::Value {
         self.body.builder
             .ins()
@@ -1725,27 +1656,22 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// A block that returns not entered, naming `widening`.
     fn not_entered(&mut self, widening: Option<Widening>) -> ir::Block {
-        self.outcome_block(OUTCOME_NOT_ENTERED, widening.map_or(0, Widening::code))
-    }
-
-    /// A cold block that ends the run with `outcome` over `low`, filled once the body is
-    /// lowered (`fill_outcomes`): the builder leaves a block only once it is filled.
-    fn outcome_block(&mut self, outcome: u64, low: u64) -> ir::Block {
-        let block = self.cold_block();
-        self.outcomes.push((block, outcome, low));
-        block
+        self.exits.outcome_block(
+            &mut self.body.builder,
+            super::RegionExit::EntryMiss(widening.map_or(0, Widening::code)),
+        )
     }
 
     /// Fills each `outcome_block`: not entered returns at once, and every other outcome
     /// leaves at its PC through the write-back.
     fn fill_outcomes(&mut self) {
-        for (block, outcome, low) in std::mem::take(&mut self.outcomes) {
+        for (block, outcome) in self.exits.take_outcomes() {
             self.body.builder.switch_to_block(block);
-            if outcome == OUTCOME_NOT_ENTERED {
-                let word = self.outcome(outcome, low);
+            if matches!(outcome, super::RegionExit::EntryMiss(_)) {
+                let word = self.body.builder.ins().iconst(types::I64, outcome.encode() as i64);
                 self.finish(word);
             } else {
-                self.leave(outcome, low as u32);
+                self.exits.leave(&mut self.body.builder, outcome);
             }
         }
     }
@@ -1934,7 +1860,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// there (`LoopRegion::live`) take their native values; any other keeps the value it
     /// held, which nothing reads before writing.
     fn write_back(&mut self) {
-        let leaves: Vec<(u32, ir::Block)> = self.leaves.iter().map(|(pc, block)| (*pc, *block)).collect();
+        let leaves = self.exits.leave_blocks();
         for (pc, block) in leaves {
             self.body.builder.switch_to_block(block);
             let word = self.body.builder.block_params(block)[0];
@@ -1965,24 +1891,15 @@ impl<'a, 'b> Lowering<'a, 'b> {
         }
     }
 
-    /// Leaves with `outcome` at `pc`.
-    fn leave(&mut self, outcome: u64, pc: u32) {
-        let word = self.outcome(outcome, u64::from(pc));
-        let block = match self.leaves.get(&pc) {
-            Some(block) => *block,
-            None => {
-                let block = self.cold_block();
-                self.body.builder.append_block_param(block, types::I64);
-                self.leaves.insert(pc, block);
-                block
-            }
-        };
-        self.body.builder.ins().jump(block, &[ir::BlockArg::Value(word)]);
+    /// Leaves with `outcome` at its exact continuation PC.
+    fn leave(&mut self, outcome: super::RegionExit) {
+        self.exits.leave(&mut self.body.builder, outcome);
     }
 
     /// A block that exits at `pc` for the general path.
     fn exit_block(&mut self, pc: u32) -> ir::Block {
-        self.outcome_block(OUTCOME_EXIT, u64::from(pc))
+        self.exits
+            .outcome_block(&mut self.body.builder, super::RegionExit::Fallback(pc))
     }
 
     /// Continues past a guard that `failed` decides, exiting at `pc` when it holds.
@@ -2016,7 +1933,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// compilation.
     fn widen_block(&mut self, pc: u32, widening: Widening) -> ir::Block {
         self.widenings.insert(pc, widening);
-        self.outcome_block(OUTCOME_WIDEN, u64::from(pc))
+        self.exits
+            .outcome_block(&mut self.body.builder, super::RegionExit::Recompile(pc))
     }
 
     /// `guard` of an `i32` assumption: `widening` was no `i32` when it fails.
@@ -2103,9 +2021,44 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Some(block) => {
                 self.body.builder.ins().jump(block, &[]);
             }
-            None => self.leave(OUTCOME_RESUME, target),
+            None => self.leave(super::RegionExit::Resume(target)),
         }
         Some(())
+    }
+
+    /// Branches on the bytecode condition, preserving whether its true or false arm takes
+    /// `target`; a branch arm that leaves the region resumes at that exact PC.
+    fn branch(
+        &mut self,
+        pc: u32,
+        target: u32,
+        condition: ir::Value,
+        jump_when: bool,
+    ) -> Option<()> {
+        let taken = self.body.builder.create_block();
+        let not_taken = self.body.builder.create_block();
+        let tested = self
+            .body
+            .builder
+            .current_block()
+            .expect("lowering inside a block");
+        let (on_true, on_false) = if jump_when {
+            (taken, not_taken)
+        } else {
+            (not_taken, taken)
+        };
+        self.body
+            .builder
+            .ins()
+            .brif(condition, on_true, &[], on_false, &[]);
+        self.body.builder.switch_to_block(taken);
+        self.body.builder.seal_block(taken);
+        self.jump(pc, target)?;
+        let chain = self.chain(tested);
+        self.chains.insert(not_taken, chain);
+        self.body.builder.switch_to_block(not_taken);
+        self.body.builder.seal_block(not_taken);
+        self.fall_through(pc)
     }
 
     fn fall_through(&mut self, pc: u32) -> Option<()> {
@@ -2113,7 +2066,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Some(block) => {
                 self.body.builder.ins().jump(block, &[]);
             }
-            None => self.leave(OUTCOME_RESUME, pc + 1),
+            None => self.leave(super::RegionExit::Resume(pc + 1)),
         }
         Some(())
     }
@@ -2203,7 +2156,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn int32_arithmetic(
         &mut self,
         pc: u32,
-        operator: FloatOperator,
+        operator: NumberArithmetic,
         register: Register,
         left: ir::Value,
         right: ir::Value,
@@ -2228,19 +2181,19 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn int32_offset(
         &mut self,
         pc: u32,
-        operator: FloatOperator,
+        operator: NumberArithmetic,
         register: Register,
         left: ir::Value,
         right: ir::Value,
     ) -> Option<ir::Value> {
         let (value, offset) = match operator {
-            FloatOperator::Add => match (self.int32_constant(left), self.int32_constant(right)) {
+            NumberArithmetic::Add => match (self.int32_constant(left), self.int32_constant(right)) {
                 (_, Some(offset)) => (left, offset),
                 (Some(offset), None) => (right, offset),
                 (None, None) => return None,
             },
-            FloatOperator::Subtract => (left, -self.int32_constant(right)?),
-            FloatOperator::Multiply | FloatOperator::Divide => return None,
+            NumberArithmetic::Subtract => (left, -self.int32_constant(right)?),
+            NumberArithmetic::Multiply | NumberArithmetic::Divide => return None,
         };
         if !self.proved(pc) && offset != 0 {
             let (condition, bound) = if offset > 0 {
@@ -2269,7 +2222,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn int32_arithmetic_guarded(
         &mut self,
         pc: u32,
-        operator: FloatOperator,
+        operator: NumberArithmetic,
         register: Register,
         left: ir::Value,
         right: ir::Value,
@@ -2279,15 +2232,21 @@ impl<'a, 'b> Lowering<'a, 'b> {
         }
         // A proof covers a sum's exactness, so it needs no overflow flag.
         match operator {
-            FloatOperator::Add if self.proved(pc) => return self.body.builder.ins().iadd(left, right),
-            FloatOperator::Subtract if self.proved(pc) => return self.body.builder.ins().isub(left, right),
+            NumberArithmetic::Add if self.proved(pc) => {
+                return self.body.builder.ins().iadd(left, right);
+            }
+            NumberArithmetic::Subtract if self.proved(pc) => {
+                return self.body.builder.ins().isub(left, right);
+            }
             _ => {}
         }
         let (result, overflow) = match operator {
-            FloatOperator::Add => self.body.builder.ins().sadd_overflow(left, right),
-            FloatOperator::Subtract => self.body.builder.ins().ssub_overflow(left, right),
-            FloatOperator::Multiply if self.proved(pc) => return self.body.builder.ins().imul(left, right),
-            FloatOperator::Multiply => {
+            NumberArithmetic::Add => self.body.builder.ins().sadd_overflow(left, right),
+            NumberArithmetic::Subtract => self.body.builder.ins().ssub_overflow(left, right),
+            NumberArithmetic::Multiply if self.proved(pc) => {
+                return self.body.builder.ins().imul(left, right);
+            }
+            NumberArithmetic::Multiply => {
                 let (product, overflow) = self.body.builder.ins().smul_overflow(left, right);
                 self.guard_int32(pc, overflow, Widening::Register(register));
                 // A zero product is -0 when a factor is negative; the signs are tested only
@@ -2311,7 +2270,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.seal_block(done);
                 return product;
             }
-            FloatOperator::Divide => unreachable!("division has a Float64 result"),
+            NumberArithmetic::Divide => unreachable!("division has a Float64 result"),
         };
         if !self.proved(pc) {
             self.guard_int32(pc, overflow, Widening::Register(register));
@@ -2338,32 +2297,28 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             Arithmetic::Float(operator) => {
                 let (left, right) = (self.float(left), self.float(right));
-                let ins = self.body.builder.ins();
-                let value = match operator {
-                    FloatOperator::Add => ins.fadd(left, right),
-                    FloatOperator::Subtract => ins.fsub(left, right),
-                    FloatOperator::Multiply => ins.fmul(left, right),
-                    FloatOperator::Divide => ins.fdiv(left, right),
-                };
+                let value = super::emit_number_arithmetic_operation(
+                    &mut self.body.builder,
+                    operator,
+                    left,
+                    right,
+                );
                 Typed { value, representation: Representation::Float64 }
             }
             Arithmetic::Int32(operator) => {
                 let left = self.int32(pc, left);
                 let right = self.int32(pc, right);
-                let ins = self.body.builder.ins();
-                // Shift counts are taken modulo 32, as Cranelift's shifts take them.
-                let value = match operator {
-                    Int32Operator::Or => ins.bor(left, right),
-                    Int32Operator::And => ins.band(left, right),
-                    Int32Operator::Xor => ins.bxor(left, right),
-                    Int32Operator::ShiftLeft => ins.ishl(left, right),
-                    Int32Operator::ShiftRight => ins.sshr(left, right),
-                    Int32Operator::ShiftRightUnsigned => {
-                        let shifted = ins.ushr(left, right);
-                        let value = self.body.builder.ins().fcvt_from_uint(types::F64, shifted);
-                        return Typed { value, representation: Representation::Float64 };
-                    }
-                };
+                let bits = super::emit_number_bitwise_bits(
+                    &mut self.body.builder,
+                    operator,
+                    left,
+                    right,
+                );
+                if operator == NumberBitwise::ShiftRightUnsigned {
+                    let value = self.body.builder.ins().fcvt_from_uint(types::F64, bits);
+                    return Typed { value, representation: Representation::Float64 };
+                }
+                let value = bits;
                 Typed { value, representation: Representation::Int32 }
             }
         }
@@ -2392,16 +2347,28 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.fall_through(pc)
             }
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-                let operator = arithmetic(instruction.binary_operator())?;
+                let operator = arithmetic(instruction.op(), instruction.binary_operator())?;
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
                 let result = instruction.result_register();
                 let unit = |operand: Operand| operand.register_index().is_some_and(|register| self.units.contains(&register));
                 let value = match operator {
                     // `x * 1`, `1 * x` and `x / 1` are `x` (`Lowering::units`).
-                    Arithmetic::Float(FloatOperator::Multiply) if unit(instruction.operand_c()) => left,
-                    Arithmetic::Float(FloatOperator::Multiply) if unit(instruction.operand_b()) => right,
-                    Arithmetic::Float(FloatOperator::Divide) if unit(instruction.operand_c()) => left,
+                    Arithmetic::Float(NumberArithmetic::Multiply)
+                        if unit(instruction.operand_c()) =>
+                    {
+                        left
+                    }
+                    Arithmetic::Float(NumberArithmetic::Multiply)
+                        if unit(instruction.operand_b()) =>
+                    {
+                        right
+                    }
+                    Arithmetic::Float(NumberArithmetic::Divide)
+                        if unit(instruction.operand_c()) =>
+                    {
+                        left
+                    }
                     _ => self.arithmetic(pc, operator, result, left, right),
                 };
                 self.define(result, value);
@@ -2424,7 +2391,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     let value = self.body.builder.ins().iadd_imm_s(operand.value, step);
                     Typed { value, representation: Representation::Int32 }
                 } else {
-                    let operator = if decrement { FloatOperator::Subtract } else { FloatOperator::Add };
+                    let operator = if decrement {
+                        NumberArithmetic::Subtract
+                    } else {
+                        NumberArithmetic::Add
+                    };
                     let one = self.read(Source::Number(1.0));
                     self.arithmetic(pc, Arithmetic::Float(operator), result, operand, one)
                 };
@@ -2434,9 +2405,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Op::Unary => {
                 let operand = self.register(instruction.register_b());
                 let result = instruction.result_register();
-                let value = match unary(instruction.unary_operator())? {
-                    Unary::Plus => operand,
-                    Unary::Negate
+                let value = match unary(instruction.op(), instruction.unary_operator())? {
+                    Unary::Number(NumberUnary::Plus) => operand,
+                    Unary::Number(NumberUnary::Negate)
                         if operand.representation == Representation::Int32
                             && self.result_representation() == Representation::Int32 =>
                     {
@@ -2449,9 +2420,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
                         let value = self.body.builder.ins().ineg(operand.value);
                         Typed { value, representation: Representation::Int32 }
                     }
-                    Unary::Negate => {
+                    Unary::Number(NumberUnary::Negate) => {
                         let number = self.float(operand);
-                        let value = self.body.builder.ins().fneg(number);
+                        let value = super::emit_number_unary_operation(
+                            &mut self.body.builder,
+                            NumberUnary::Negate,
+                            number,
+                        );
                         Typed { value, representation: Representation::Float64 }
                     }
                     Unary::BitwiseNot => {
@@ -2525,15 +2500,29 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let operator = instruction.binary_operator_field();
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
-                let holds = if left.representation == Representation::Int32
+                let (left, right, domain) = if left.representation == Representation::Int32
                     && right.representation == Representation::Int32
                 {
-                    let condition = integer_comparison(operator)?;
-                    self.body.builder.ins().icmp(condition, left.value, right.value)
+                    (
+                        left.value,
+                        right.value,
+                        super::NumberRelationDomain::Int32,
+                    )
                 } else {
                     let (left, right) = (self.float(left), self.float(right));
-                    super::emit_number_relation(&mut self.body.builder, operator, left, right)?
+                    (
+                        left,
+                        right,
+                        super::NumberRelationDomain::Float64,
+                    )
                 };
+                let holds = super::emit_number_relation(
+                    &mut self.body.builder,
+                    operator,
+                    left,
+                    right,
+                    domain,
+                )?;
                 let taken = self.body.builder.create_block();
                 let not_taken = self.body.builder.create_block();
                 let tested = self.body.builder.current_block().expect("lowering inside a block");
@@ -2548,43 +2537,23 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.seal_block(not_taken);
                 self.fall_through(pc)
             }
+            Op::JumpFalse | Op::JumpTrue => {
+                let value = self.read(Source::Register(instruction.register_a()));
+                let truthy = match value.representation {
+                    Representation::Int32 => {
+                        self.body
+                            .builder
+                            .ins()
+                            .icmp_imm_s(IntCC::NotEqual, value.value, 0)
+                    }
+                    Representation::Float64 => {
+                        super::emit_number_truthiness(&mut self.body.builder, value.value)
+                    }
+                };
+                let jump_when = instruction.op() == Op::JumpTrue;
+                self.branch(pc, instruction.jump_target(), truthy, jump_when)
+            }
             _ => None,
         }
     }
-}
-
-/// `comparison` of two `i32` Numbers.
-fn integer_comparison(operator: u32) -> Option<IntCC> {
-    struct IntegerCondition;
-
-    impl super::super::operations::NumberRelationStage<()> for IntegerCondition {
-        type Output = IntCC;
-
-        fn equal(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::Equal
-        }
-        fn not_equal(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::NotEqual
-        }
-        fn less_than(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::SignedLessThan
-        }
-        fn less_equal(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::SignedLessThanOrEqual
-        }
-        fn greater_than(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::SignedGreaterThan
-        }
-        fn greater_equal(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::SignedGreaterThanOrEqual
-        }
-    }
-
-    Some(
-        super::super::operations::NumberRelation::from_operator(operator)?.apply(
-            &mut IntegerCondition,
-            (),
-            (),
-        ),
-    )
 }
