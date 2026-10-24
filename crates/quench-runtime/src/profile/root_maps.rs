@@ -16,10 +16,10 @@ pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgr
         .filter_map(|function| program.register_root_masks(function))
         .collect::<Vec<_>>();
     let entries = maps.iter().map(|masks| masks.len()).sum::<usize>();
-    let distinct: FxHashSet<_> = maps.iter().flat_map(|masks| masks.iter().copied()).collect();
+    let distinct: FxHashSet<_> = maps.iter().flat_map(|masks| masks.iter()).collect();
     let runs = maps
         .iter()
-        .map(|masks| masks.windows(2).filter(|pair| pair[0] != pair[1]).count() + 1)
+        .map(|masks| masks.iter().zip(masks.iter().skip(1)).filter(|(before, after)| before != after).count() + 1)
         .sum::<usize>();
     let observed_masks: FxHashSet<_> = profile
         .gc_frame_pcs
