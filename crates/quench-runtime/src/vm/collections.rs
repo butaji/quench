@@ -242,8 +242,16 @@ impl<H: Host> Vm<H> {
             }
             vm.with_call_roots([adder], |vm| {
                 let iterator = vm.get_iterator(p, iterable)?;
-                vm.with_call_roots([iterator], |vm| loop {
-                    let Some(entry) = vm.iterator_step_value(p, iterator)? else {
+                let iterator_root = vm.heap.root(iterator);
+                let next = match vm.get_property(p, iterator, vm.runtime_atoms.next) {
+                    Ok(next) => vm.heap.root(next),
+                    Err(error) => {
+                        vm.heap.release_root(iterator_root);
+                        return Err(error);
+                    }
+                };
+                let outcome = (|| loop {
+                    let Some(entry) = vm.rooted_iterator_step_value(p, iterator_root, next)? else {
                         return Ok(collection);
                     };
                     let result = vm.with_call_roots([entry], |vm| match entries {
@@ -273,7 +281,10 @@ impl<H: Host> Vm<H> {
                         });
                         return Err(error);
                     }
-                })
+                })();
+                vm.heap.release_root(next);
+                vm.heap.release_root(iterator_root);
+                outcome
             })
         })
     }

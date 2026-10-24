@@ -78,7 +78,8 @@ impl ModuleSource {
 
 /// An opaque host execution context captured by a Promise reaction or
 /// thenable-assimilation job. The VM carries it through the job lifecycle but
-/// never interprets it.
+/// never interprets it. Hosts number contexts below `u64::MAX`, which a promise
+/// record keeps for "no context" (`heap::StoredHostContext`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct HostExecutionContext(pub u64);
 
