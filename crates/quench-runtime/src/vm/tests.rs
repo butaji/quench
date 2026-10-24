@@ -11449,7 +11449,9 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
             .and_then(std::cell::OnceCell::get)
             .expect("hot fill loop lane view")
             .osr_diagnostics();
-        assert_eq!(osr.admitted_sites, 1, "OSR analysis rejected the field-reading store loop under {policy:?}");
+        // Loop sites are analyzed only where the JavaScript tiers run (`JS_FUNCTION_TIERS`).
+        let analyzes = super::compiled::js_function_tiers_compile(policy);
+        assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-reading store loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
         assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "store loop native code under {policy:?}");
     }
