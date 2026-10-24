@@ -14920,3 +14920,42 @@ fn js_function_tiers_follow_the_memory_policy() {
     assert!(super::compiled::js_function_tiers_compile(crate::MemoryPolicy::Throughput));
     assert!(!super::compiled::js_function_tiers_compile(crate::MemoryPolicy::MemoryFirst));
 }
+
+#[test]
+fn plain_data_equality_proves_only_plain_data() {
+    // Each row: [left, right, proved]. A proof needs plain data on both sides; anything else
+    // stays unproved, even when a structural comparison would call it equal.
+    let source = r#"
+      const sym = Symbol('s');
+      const holey = [1, , 3];
+      const extra = [1]; extra.foo = 1;
+      const hidden = { a: 1 }; Object.defineProperty(hidden, 'h', { value: 1, enumerable: false });
+      const cycle = { a: 1 }; cycle.self = cycle;
+      const cycle2 = { a: 1 }; cycle2.self = cycle2;
+      class K { constructor() { this.a = 1; } }
+      globalThis.rows = [
+        [1, 1, true], [NaN, NaN, true], [0, -0, false], ['a', 'a', true], [10n, 10n, true],
+        [[1, [2, 'x']], [1, [2, 'x']], true], [[1, 2], [1, 3], false], [[1], [1, 2], false],
+        [{ a: 1, b: { c: [1] } }, { b: { c: [1] }, a: 1 }, true], [{ a: 1 }, { a: 2 }, false],
+        [{ a: 1 }, { a: 1, b: undefined }, false], [{ a: undefined }, { b: undefined }, false],
+        [JSON.parse('[{"a":"x"}]'), [{ a: 'x' }], true],
+        [hidden, { a: 1 }, true],
+        [holey, [1, undefined, 3], false], [extra, [1], false],
+        [{ a: 1, [sym]: 1 }, { a: 1, [sym]: 1 }, false], [{ get a() { return 1; } }, { a: 1 }, false],
+        [{ constructor: Object }, { constructor: Object }, false], [new K(), new K(), false],
+        [Object.create(null), Object.create(null), false], [new Date(1), new Date(1), false],
+        [new Error('x'), new Error('x'), false], [new Number(1), new Number(1), false],
+        [cycle, cycle2, false], [[1], { 0: 1 }, false],
+      ];
+    "#;
+    let program = Engine::specialize(source, "plain-equality.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let rows_atom = vm.intern_atom("rows");
+    let rows = vm.plain_named_get(vm.realm.globals, rows_atom).unwrap();
+    let rows = vm.present_dense_elements(rows, 0..vm.heap.array(rows).unwrap().elements().len()).unwrap().to_vec();
+    for (index, row) in rows.into_iter().enumerate() {
+        let row = vm.present_dense_elements(row, 0..3).unwrap().to_vec();
+        assert_eq!(Some(vm.plain_data_equal(row[0], row[1])), row[2].as_bool(), "row {index}");
+    }
+}

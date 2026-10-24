@@ -1052,6 +1052,10 @@ impl<H: Host> Vm<H> {
         Ok(self.same_value(self.embedding_value(left)?, self.embedding_value(right)?))
     }
 
+    pub(crate) fn embedding_plain_data_equal(&self, left: RootId, right: RootId) -> Result<bool, JsError> {
+        Ok(self.plain_data_equal(self.embedding_value(left)?, self.embedding_value(right)?))
+    }
+
     pub(crate) fn embedding_equal(&mut self, left: RootId, right: RootId) -> Result<bool, JsError> {
         let left = self.embedding_value(left)?;
         let right = self.embedding_value(right)?;
