@@ -8,6 +8,10 @@ use super::net_config::{ANY_FAMILY, IPV4_FAMILY, IPV6_FAMILY};
 
 #[cfg(not(quench_node_cares))]
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    context.evaluate_script_rooted(
+        crate::polyfills::bootstrap::dns::JS,
+        "node:dns/bootstrap.js",
+    )?;
     let module = context.object_rooted()?;
     let lookup = context.host_function(crate::host::shared_vm::operation("dnsLookup"))?;
     set(context, module, "lookup", lookup)?;
@@ -48,6 +52,55 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         let custom = context.call_rooted(symbol_for, symbol, &[name])?;
         context.define_data_property_rooted(lookup, custom, promised, false, false, true)
     })?;
+    // The bootstrap DNS adapter owns the Node-shaped resolver methods and
+    // permission checks. Keep the native host-backed lookup above, while
+    // exposing the resolver surface even when c-ares is not linked.
+    let global = context.global_root()?;
+    let adapter_key = context.string_rooted("\0quench:dns_module");
+    let adapter = context.get_property_rooted(global, adapter_key)?;
+    if context.is_object_rooted(adapter)? {
+        for name in [
+            "resolve",
+            "resolveAny",
+            "resolve4",
+            "resolve6",
+            "resolveMx",
+            "resolveNs",
+            "reverse",
+            "Resolver",
+            "getServers",
+            "setServers",
+        ] {
+            let key = context.string_rooted(name);
+            let value = context.get_property_rooted(adapter, key)?;
+            if !context
+                .rooted_value(value)
+                .is_some_and(|value| value.is_undefined())
+            {
+                set(context, module, name, value)?;
+            }
+        }
+        let adapter_promises_key = context.string_rooted("promises");
+        let adapter_promises = context.get_property_rooted(adapter, adapter_promises_key)?;
+        for name in [
+            "resolve",
+            "resolve4",
+            "resolve6",
+            "resolveAny",
+            "resolveNs",
+            "reverse",
+            "Resolver",
+        ] {
+            let key = context.string_rooted(name);
+            let value = context.get_property_rooted(adapter_promises, key)?;
+            if !context
+                .rooted_value(value)
+                .is_some_and(|value| value.is_undefined())
+            {
+                set(context, promises, name, value)?;
+            }
+        }
+    }
     Ok(module)
 }
 
@@ -707,6 +760,31 @@ fn service_impl(
     }
     let port = context.to_number(port)? + 0.0;
     let port = context.number(port);
+    let address_text = context
+        .string_text(address)?
+        .expect("SDK validated address string");
+    if !network_permission_granted(context, &address_text)? {
+        let error =
+            context.error_rooted(&format!("getnameinfo ERR_ACCESS_DENIED {address_text}"))?;
+        set_str(context, error, "code", "ERR_ACCESS_DENIED")?;
+        set_str(context, error, "syscall", "getnameinfo")?;
+        set_str(context, error, "hostname", &address_text)?;
+        if let Some(capability) = capability {
+            let reject_key = context.string_rooted("reject");
+            let reject = context.get_property_rooted(capability, reject_key)?;
+            context.call_rooted(reject, capability, &[error])?;
+        } else {
+            let callback = args[2];
+            let undefined = context.undefined();
+            crate::modules::shared_event_loop::queue_next_tick(
+                context,
+                callback,
+                undefined,
+                &[error],
+            )?;
+        }
+        return Ok(context.undefined());
+    }
     let binding = crate::host::shared_vm::commonjs::cares_binding(context)?;
     let key = context.string_rooted("GetNameInfoReqWrap");
     let constructor = context.get_property_rooted(binding, key)?;

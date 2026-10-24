@@ -1,10 +1,12 @@
 //! Polyfill: `dns`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithDns = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(
+    r#"const __quenchOriginalRequireWithDns =
+  globalThis["\0quench:require"] || globalThis.require;
 // Keep the reverse lookup fact shared by callback, promise, and host probes.
 // The compatibility fixtures rely on the loopback name that Node exposes;
 // unknown addresses remain stable strings until a native resolver is added.
-globalThis.__quench_dns_reverse ||= (address) => {
+const __quenchDnsReverseName = (address) => {
   const value = String(address);
   return value === "127.0.0.1" || value === "::1" ? "localhost" : value;
 };
@@ -389,13 +391,13 @@ const __quenchDnsLookupService = function __quenchDnsLookupService(
     try {
       callback(
         null,
-        globalThis.__quench_dns_reverse(address),
+        __quenchDnsReverseName(address),
         Number(port) === 22 ? "ssh" : "tcp",
       );
       if (typeof globalThis.__nodePerformanceRecord === "function") globalThis.__nodePerformanceRecord("dns", {
         host: address,
         port: Number(port),
-        hostname: globalThis.__quench_dns_reverse(address),
+        hostname: __quenchDnsReverseName(address),
         service: Number(port) === 22 ? "ssh" : "tcp",
       }, "lookupService");
     } catch (error) {
@@ -426,7 +428,7 @@ const __quenchDnsReverse = (address, callback) => {
       return;
     }
     try {
-      callback(null, [globalThis.__quench_dns_reverse(address)]);
+      callback(null, [__quenchDnsReverseName(address)]);
     } catch (error) {
       error.code = "ENOTFOUND";
       error.syscall = "getnameinfo";
@@ -481,6 +483,64 @@ class __quenchResolver {
   lookup(hostname, options, callback) {
     __quenchDnsLookup(hostname, options, callback);
   }
+  resolve(hostname, rrtype, callback) {
+    __quenchDnsResolve(hostname, rrtype, callback);
+  }
+  resolve4(hostname, callback) {
+    __quenchDnsResolve(hostname, "A", callback);
+  }
+  resolve6(hostname, callback) {
+    __quenchDnsResolve(hostname, "AAAA", callback);
+  }
+  resolveAny(hostname, callback) {
+    __quenchDnsResolveAny(hostname, callback);
+  }
+  resolveMx(hostname, callback) {
+    __quenchDnsResolveMx(hostname, callback);
+  }
+  resolveNs(hostname, callback) {
+    __quenchDnsResolveNs(hostname, callback);
+  }
+  reverse(address, callback) {
+    __quenchDnsReverse(address, callback);
+  }
+}
+class __quenchPromiseResolver extends __quenchResolver {
+  resolve(hostname, rrtype = "A") {
+    return new Promise((resolve, reject) =>
+      __quenchDnsResolve(hostname, rrtype, (error, value) =>
+        error ? reject(error) : resolve(value)));
+  }
+  resolve4(hostname) {
+    return new Promise((resolve, reject) =>
+      __quenchDnsResolve(hostname, "A", (error, value) =>
+        error ? reject(error) : resolve(value)));
+  }
+  resolve6(hostname) {
+    return new Promise((resolve, reject) =>
+      __quenchDnsResolve(hostname, "AAAA", (error, value) =>
+        error ? reject(error) : resolve(value)));
+  }
+  resolveAny(hostname) {
+    return new Promise((resolve, reject) =>
+      __quenchDnsResolveAny(hostname, (error, value) =>
+        error ? reject(error) : resolve(value)));
+  }
+  resolveMx(hostname) {
+    return new Promise((resolve, reject) =>
+      __quenchDnsResolveMx(hostname, (error, value) =>
+        error ? reject(error) : resolve(value)));
+  }
+  resolveNs(hostname) {
+    return new Promise((resolve, reject) =>
+      __quenchDnsResolveNs(hostname, (error, value) =>
+        error ? reject(error) : resolve(value)));
+  }
+  reverse(address) {
+    return new Promise((resolve, reject) =>
+      __quenchDnsReverse(address, (error, value) =>
+        error ? reject(error) : resolve(value)));
+  }
 }
 const __quenchDns = {
   getServers: () => [...__quenchDnsServers],
@@ -503,7 +563,7 @@ const __quenchDns = {
   resolveNs: __quenchDnsResolveNs,
   Resolver: __quenchResolver,
   promises: {
-    Resolver: __quenchResolver,
+    Resolver: __quenchPromiseResolver,
     resolve: (hostname, rrtype = "A") => {
       if (typeof hostname !== "string") {
         throw Object.assign(
@@ -590,7 +650,7 @@ const __quenchDns = {
         });
       }
       return Promise.resolve().then(() => ({
-        hostname: globalThis.__quench_dns_reverse(address),
+        hostname: __quenchDnsReverseName(address),
         service: Number(port) === 22 ? "ssh" : "tcp",
       })).catch((error) => {
         error.code = "ENOTFOUND";
@@ -669,11 +729,5 @@ Object.defineProperty(globalThis, "\0quench:dns_module", {
   value: __quenchDns,
   configurable: true,
 });
-globalThis.require = (specifier) => {
-  const name = String(specifier).replace(/^node:/, "");
-  if (name === "dns" || name === "dns/promises") {
-    return name === "dns" ? __quenchDns : __quenchDns.promises;
-  }
-  return __quenchOriginalRequireWithDns(specifier);
-};
-"#);
+"#
+);
