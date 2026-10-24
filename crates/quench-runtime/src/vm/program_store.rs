@@ -145,6 +145,16 @@ const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
 pub(super) const WASM_JIT_PROMOTION_ENTRIES: u8 = 32;
 const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
 const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
+/// The eager artifacts of Wasm modules together. A module's eager artifact is all of its code
+/// at once, compiled before its first call: held to the shared ceiling, a module larger than
+/// it compiled and was then discarded, leaving every function interpreted and promoting hot
+/// roots one by one into a tier budget that filled (sqlite3-wasm, a 5.2 MiB artifact: Score
+/// 0.61 against 12.29 kept, first iteration 17.3 s against 3.3 s; max RSS unchanged at 100
+/// MiB, JetStream 3 `--jit`, Linux x86_64, 2026-10-24). This bounds a VM's eager Wasm code
+/// to a few large modules.
+const WASM_JIT_MAX_BASELINE_MAPPED_BYTES: usize = 32 * 1024 * 1024;
+/// The least an artifact maps: executable mappings are page-rounded.
+const JIT_MIN_ARTIFACT_BYTES: usize = 4096;
 /// One VM-local admission ceiling shared by JS and Wasm artifacts.
 const JIT_MAX_ARTIFACTS: usize = JS_JIT_MAX_FUNCTIONS + WASM_JIT_MAX_TIER_ROOTS;
 const JIT_MAX_MAPPED_BYTES: usize = WASM_JIT_MAX_TIER_MAPPED_BYTES;
@@ -156,13 +166,19 @@ enum JitArtifactKind {
     WasmTierRoot,
 }
 
-/// One VM-local executable-code budget shared by the JavaScript, Wasm and
-/// eager compiled-program tiers. Tier-kind limits and aggregate capacity are
-/// admitted and accounted together here.
+/// One VM-local executable-code budget for the JavaScript, Wasm tier and eager
+/// compiled-program artifacts. Tier-kind limits and the JS and Wasm tiers' aggregate
+/// capacity are admitted and accounted together here; eager module artifacts have their own
+/// ceiling (`WASM_JIT_MAX_BASELINE_MAPPED_BYTES`).
 #[derive(Default)]
 struct JitCodeCacheBudget {
+    /// The JavaScript and Wasm tier artifacts, which share `JIT_MAX_ARTIFACTS` and
+    /// `JIT_MAX_MAPPED_BYTES`.
     artifacts: usize,
     mapped_bytes: usize,
+    /// Eager Wasm module artifacts, bounded apart (`WASM_JIT_MAX_BASELINE_MAPPED_BYTES`).
+    baseline_artifacts: usize,
+    baseline_mapped_bytes: usize,
     js_functions: usize,
     js_mapped_bytes: usize,
     wasm_tier_roots: usize,
@@ -172,7 +188,10 @@ struct JitCodeCacheBudget {
 impl JitCodeCacheBudget {
     fn can_retain(&self, kind: JitArtifactKind, mapped_bytes: usize) -> bool {
         let (count, bytes, max_count, max_bytes) = match kind {
-            JitArtifactKind::BaselineWasm => (0, 0, usize::MAX, usize::MAX),
+            JitArtifactKind::BaselineWasm => {
+                return self.baseline_mapped_bytes.saturating_add(mapped_bytes)
+                    <= WASM_JIT_MAX_BASELINE_MAPPED_BYTES;
+            }
             JitArtifactKind::JsFunction => (
                 self.js_functions,
                 self.js_mapped_bytes,
@@ -196,6 +215,11 @@ impl JitCodeCacheBudget {
         if !self.can_retain(kind, mapped_bytes) {
             return false;
         }
+        if matches!(kind, JitArtifactKind::BaselineWasm) {
+            self.baseline_artifacts += 1;
+            self.baseline_mapped_bytes += mapped_bytes;
+            return true;
+        }
         self.artifacts += 1;
         self.mapped_bytes += mapped_bytes;
         match kind {
@@ -213,6 +237,11 @@ impl JitCodeCacheBudget {
     }
 
     fn release(&mut self, kind: JitArtifactKind, artifacts: usize, mapped_bytes: usize) {
+        if matches!(kind, JitArtifactKind::BaselineWasm) {
+            self.baseline_artifacts = self.baseline_artifacts.saturating_sub(artifacts);
+            self.baseline_mapped_bytes = self.baseline_mapped_bytes.saturating_sub(mapped_bytes);
+            return;
+        }
         self.artifacts = self.artifacts.saturating_sub(artifacts);
         self.mapped_bytes = self.mapped_bytes.saturating_sub(mapped_bytes);
         match kind {
@@ -1492,6 +1521,13 @@ impl ProgramStore {
             .cloned()
     }
 
+    /// Whether the code budget could still retain a Wasm tier artifact: a compile it could not
+    /// keep is work thrown away (sqlite3-wasm `--jit`: hundreds of root compiles after the
+    /// tier budget filled, 15 s of its first iteration).
+    pub(super) fn wasm_tier_has_room(&self) -> bool {
+        self.jit_code_cache.can_retain(JitArtifactKind::WasmTierRoot, JIT_MIN_ARTIFACT_BYTES)
+    }
+
     /// Retain one compiled root closure if the VM-wide tier budget permits
     /// it. Active calls retain their own Rc through native return.
     pub(super) fn install_wasm_tier(
@@ -1639,8 +1675,10 @@ impl ProgramStore {
         id: ProgramId,
         function: u32,
         instructions: usize,
+        policy: crate::MemoryPolicy,
     ) -> bool {
-        if !self.js_jit_general_dispatch_enabled {
+        // Admission: the tier's switch, and the memory policy's (`JS_FUNCTION_TIERS`).
+        if !self.js_jit_general_dispatch_enabled || !super::compiled::js_function_tiers_compile(policy) {
             return false;
         }
         let priced = self.general_baseline_priced;
@@ -2307,7 +2345,7 @@ impl ProgramStore {
 
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn jit_mapped_bytes(&self) -> usize {
-        self.jit_code_cache.mapped_bytes
+        self.jit_code_cache.mapped_bytes + self.jit_code_cache.baseline_mapped_bytes
     }
 
     /// A program's lane views by function, derived on first use.
@@ -2781,7 +2819,7 @@ impl LaneViews {
 #[cfg(test)]
 mod jit_code_cache_tests {
     use super::{
-        JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS,
+        JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS, WASM_JIT_MAX_BASELINE_MAPPED_BYTES,
         JS_JIT_MAX_MAPPED_BYTES, JitArtifactKind, JitCodeCacheBudget,
         JsTierState,
         WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS,
@@ -2847,19 +2885,21 @@ mod jit_code_cache_tests {
         assert_eq!(cache.artifacts, 2);
         assert_eq!(cache.mapped_bytes, 384 * 1024);
 
-        assert!(!cache.can_retain(JitArtifactKind::BaselineWasm, JIT_MAX_MAPPED_BYTES));
         cache.release(JitArtifactKind::WasmTierRoot, 1, 256 * 1024);
         assert_eq!(cache.artifacts, 1);
         assert_eq!(cache.mapped_bytes, 128 * 1024);
-        assert!(cache.can_retain(
-            JitArtifactKind::BaselineWasm,
-            JIT_MAX_MAPPED_BYTES - 128 * 1024
-        ));
 
-        for _ in 1..JIT_MAX_ARTIFACTS {
-            assert!(cache.retain(JitArtifactKind::BaselineWasm, 0));
-        }
-        assert!(!cache.can_retain(JitArtifactKind::BaselineWasm, 0));
+        // An eager module artifact larger than the shared ceiling is admitted against its
+        // own, and leaves the tiers' allowance as it was.
+        assert!(cache.retain(JitArtifactKind::BaselineWasm, JIT_MAX_MAPPED_BYTES + 1));
+        assert_eq!((cache.artifacts, cache.mapped_bytes), (1, 128 * 1024));
+        assert!(cache.can_retain(JitArtifactKind::JsFunction, 128 * 1024));
+        assert!(!cache.can_retain(
+            JitArtifactKind::BaselineWasm,
+            WASM_JIT_MAX_BASELINE_MAPPED_BYTES - JIT_MAX_MAPPED_BYTES
+        ));
+        cache.release(JitArtifactKind::BaselineWasm, 1, JIT_MAX_MAPPED_BYTES + 1);
+        assert!(cache.can_retain(JitArtifactKind::BaselineWasm, WASM_JIT_MAX_BASELINE_MAPPED_BYTES));
     }
 
     #[test]
@@ -2880,7 +2920,8 @@ mod jit_code_cache_tests {
             WASM_JIT_MAX_TIER_MAPPED_BYTES + 1
         ));
         assert_eq!(cache.artifacts, JIT_MAX_ARTIFACTS);
-        assert!(!cache.can_retain(JitArtifactKind::BaselineWasm, 0));
+        // Full tiers do not hold back an eager module artifact.
+        assert!(cache.can_retain(JitArtifactKind::BaselineWasm, 0));
     }
 
     #[test]

@@ -253,6 +253,9 @@ pub(super) fn int32_identity_return_candidate(
 enum NumberDispatchValue {
     TypeNumber,
     String(String),
+    /// A Number: a constant, or the index of `"number"` a `UNARY_TYPEOF_INDEX` of the
+    /// argument yields (`switch (typeof arg)` over string cases).
+    Number(f64),
     Boolean(bool),
     Other,
 }
@@ -265,6 +268,9 @@ fn number_dispatch_equal(left: NumberDispatchValue, right: NumberDispatchValue) 
         | (NumberDispatchValue::String(value), NumberDispatchValue::TypeNumber) => value == "number",
         (NumberDispatchValue::String(left), NumberDispatchValue::String(right)) => left == right,
         (NumberDispatchValue::Boolean(left), NumberDispatchValue::Boolean(right)) => left == right,
+        (NumberDispatchValue::Number(left), NumberDispatchValue::Number(right)) => left == right,
+        // `==` converts the other side to a Number, which the interpretation does not model.
+        (NumberDispatchValue::Number(_), _) | (_, NumberDispatchValue::Number(_)) => return None,
         (NumberDispatchValue::Other, NumberDispatchValue::Other) => return None,
         _ => false,
     })
@@ -302,6 +308,7 @@ fn number_type_dispatch_reaches(
                 OperandKind::Constant => {
                     match program.constants.get(usize::from(operand.payload()))? {
                         Constant::String(value) => Some(NumberDispatchValue::String(value.clone())),
+                        Constant::Number(value) => Some(NumberDispatchValue::Number(*value)),
                         _ => Some(NumberDispatchValue::Other),
                     }
                 }
@@ -319,9 +326,19 @@ fn number_type_dispatch_reaches(
                     .get_mut(usize::from(instruction.result_register()))
                     .unwrap() = Some(NumberDispatchValue::TypeNumber);
             }
+            Op::Unary
+                if pc == 0
+                    && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
+                    && instruction.register_b() == 0 =>
+            {
+                let number = crate::bytecode::typeof_name_index("number").expect("a typeof name") as f64;
+                *registers.get_mut(usize::from(instruction.result_register()))? =
+                    Some(NumberDispatchValue::Number(number));
+            }
             Op::LoadConst => {
                 let value = match program.constants.get(instruction.constant_index())? {
                     Constant::String(value) => NumberDispatchValue::String(value.clone()),
+                    Constant::Number(value) => NumberDispatchValue::Number(*value),
                     _ => NumberDispatchValue::Other,
                 };
                 *registers.get_mut(usize::from(instruction.result_register()))? = Some(value);
@@ -4374,6 +4391,12 @@ pub(super) struct JsEntryFacts {
     /// Whether an entry may run native code (`Vm::js_jit_at_entry`): the function is a tier
     /// candidate, or one of the entry patterns that run without a tier matched it.
     pub(super) enters: bool,
+    /// Whether the function is a specialized tier candidate (`function_candidate`).
+    pub(super) candidate: bool,
+    /// Whether the general baseline admits it (`js_general_dispatch_candidate`), and
+    /// without backward jumps (`js_general_dispatch_acyclic_candidate`).
+    pub(super) general: bool,
+    pub(super) general_acyclic: bool,
 }
 
 impl JsEntryFacts {
@@ -4381,16 +4404,19 @@ impl JsEntryFacts {
         let numeric_find = numeric_find_candidate(function);
         let field_increment = cached_this_field_increment_candidate(program, function);
         let field_return = cached_this_field_return_candidate(function);
-        let enters = function_candidate(function, program)
-            || numeric_find.is_some()
-            || field_increment.is_some()
-            || field_return.is_some();
+        let candidate = function_candidate(function, program);
+        let general = super::compiled::js_general_dispatch_candidate(program, function);
+        let general_acyclic = general && super::compiled::js_general_dispatch_acyclic_candidate(program, function);
+        let enters = candidate || numeric_find.is_some() || field_increment.is_some() || field_return.is_some();
         // The other facts are read only past the candidate check an entering function passes.
         if !enters {
-            return Self::default();
+            return Self { candidate, general, general_acyclic, ..Self::default() };
         }
         Self {
             enters,
+            candidate,
+            general,
+            general_acyclic,
             numeric_find,
             field_increment,
             field_return,

@@ -934,7 +934,7 @@ const JS_GENERAL_RETURN_STATUS_BASE: u32 =
 
 const _: () = assert!(JS_GENERAL_RETURN_STATUS_BASE > TERMINATED_STATUS as u32);
 
-fn js_general_dispatch_candidate(_program: &ResidualProgram, function: &Function) -> bool {
+pub(super) fn js_general_dispatch_candidate(_program: &ResidualProgram, function: &Function) -> bool {
     !function.code.is_empty()
         && function.code.len() <= MAX_JS_GENERAL_DISPATCH_BLOCKS
         && function.code.iter().all(|packed| {
@@ -950,7 +950,7 @@ fn js_general_dispatch_candidate(_program: &ResidualProgram, function: &Function
 /// dispatcher can still compile loops admitted through its ordinary tier path;
 /// this predicate only selects the earlier fallback for rejected/profiled
 /// legacy candidates.
-fn js_general_dispatch_acyclic_candidate(
+pub(super) fn js_general_dispatch_acyclic_candidate(
     program: &ResidualProgram,
     function: &Function,
 ) -> bool {
@@ -2295,23 +2295,54 @@ const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
 
+/// An opt-in JIT switch the environment sets ("1" or "true"), read once per process: a
+/// compiled call consults several, and reading the environment on each call cost more than
+/// the calls (HashSet-wasm `--jit`: `getenv` was 68% of the run's instructions).
+struct EnvSwitch {
+    name: &'static str,
+    enabled: std::sync::OnceLock<bool>,
+}
+
+impl EnvSwitch {
+    const fn new(name: &'static str) -> Self {
+        Self { name, enabled: std::sync::OnceLock::new() }
+    }
+
+    fn enabled(&self) -> bool {
+        *self.enabled.get_or_init(|| {
+            std::env::var(self.name).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+        })
+    }
+}
+
+static JIT_WASM_SELECTIVE: EnvSwitch = EnvSwitch::new(JIT_WASM_SELECTIVE_ENV);
+static JIT_DIRECT_COMPARE_BRANCHES: EnvSwitch = EnvSwitch::new(JIT_DIRECT_COMPARE_BRANCHES_ENV);
+static JIT_AFFINE_PAIR: EnvSwitch = EnvSwitch::new(JIT_AFFINE_PAIR_ENV);
+static JIT_REFERENCE_BODY_CACHE: EnvSwitch = EnvSwitch::new(JIT_REFERENCE_BODY_CACHE_ENV);
+static JIT_EMSCRIPTEN_MEMCPY_LEAF: EnvSwitch = EnvSwitch::new(JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV);
+static JIT_ROOT_ONLY: EnvSwitch = EnvSwitch::new(JIT_ROOT_ONLY_ENV);
+static JIT_ROOT_FIRST: EnvSwitch = EnvSwitch::new(JIT_ROOT_FIRST_ENV);
+
 fn jit_root_override() -> Result<Option<usize>, ()> {
     #[cfg(test)]
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return Ok(mode.root);
     }
-    let Some(root) = std::env::var_os(JIT_ROOT_ENV) else {
-        return Ok(None);
-    };
-    root.to_str()
-        .ok_or(())?
-        .parse::<usize>()
-        .map(Some)
-        .map_err(|_| ())
+    static ROOT: std::sync::OnceLock<Result<Option<usize>, ()>> = std::sync::OnceLock::new();
+    *ROOT.get_or_init(|| {
+        let Some(root) = std::env::var_os(JIT_ROOT_ENV) else {
+            return Ok(None);
+        };
+        root.to_str()
+            .ok_or(())?
+            .parse::<usize>()
+            .map(Some)
+            .map_err(|_| ())
+    })
 }
 
 fn jit_wasm_selective_enabled() -> bool {
-    std::env::var(JIT_WASM_SELECTIVE_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_WASM_SELECTIVE.enabled()
 }
 
 fn jit_direct_compare_branches_enabled() -> bool {
@@ -2320,24 +2351,21 @@ fn jit_direct_compare_branches_enabled() -> bool {
     {
         return enabled;
     }
-    std::env::var(JIT_DIRECT_COMPARE_BRANCHES_ENV)
-        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_DIRECT_COMPARE_BRANCHES.enabled()
 }
 
 /// Keep the screened affine pair loop opt-in; the benchmark harness can still
 /// run a same-binary, same-host comparison arm with it enabled.
 fn jit_affine_pair_enabled() -> bool {
-    std::env::var(JIT_AFFINE_PAIR_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_AFFINE_PAIR.enabled()
 }
 
 fn jit_reference_body_cache_enabled() -> bool {
-    std::env::var(JIT_REFERENCE_BODY_CACHE_ENV)
-        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_REFERENCE_BODY_CACHE.enabled()
 }
 
 fn jit_emscripten_memcpy_leaf_enabled() -> bool {
-    std::env::var(JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV)
-        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_EMSCRIPTEN_MEMCPY_LEAF.enabled()
 }
 
 /// Run the guarded numeric hash-map loop by default. Set the environment
@@ -2355,7 +2383,7 @@ fn jit_wasm_root_only_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_only;
     }
-    std::env::var(JIT_ROOT_ONLY_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_ROOT_ONLY.enabled()
 }
 
 fn jit_wasm_root_first_enabled() -> bool {
@@ -2363,7 +2391,7 @@ fn jit_wasm_root_first_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_first;
     }
-    std::env::var(JIT_ROOT_FIRST_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_ROOT_FIRST.enabled()
 }
 
 #[cfg(test)]
@@ -4002,7 +4030,8 @@ impl Drop for CompiledProgram {
 }
 
 fn jit_diagnostics_enabled() -> bool {
-    std::env::var_os("QUENCH_WASM_JIT_STATS").is_some_and(|value| value == "1")
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("QUENCH_WASM_JIT_STATS").is_some_and(|value| value == "1"))
 }
 
 impl CompiledProgram {
@@ -4437,6 +4466,22 @@ const LOOP_TIER_OPT_LEVELS: [Option<&str>; crate::MemoryPolicy::ALL.len()] = [So
 /// Whether the loop tier compiles regions under `policy` (`LOOP_TIER_OPT_LEVELS`).
 pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
     LOOP_TIER_OPT_LEVELS[policy as usize].is_some()
+}
+
+/// Whether the JavaScript function tiers (the per-function tier and the general-dispatch
+/// tier, and the loop tier's site analysis) compile under each memory policy (`MemoryPolicy`
+/// order). Memory-first compiles
+/// none, on the owner's direction that it may trade Score for memory under `--jit` (TOD-123).
+/// Under memory-first their code and regalloc2 state set the `--jit` peaks: the general-dispatch
+/// tier took V8-v7 Crypto `--jit` from 3220 to 5496 KiB (median, bolted static x86_64). With
+/// both off, every V8-v7 `--jit` row peaked 84-380 KiB lower, at its no-JIT level. Scores moved
+/// both ways: EarleyBoyer +125%, Splay +15%, RayTrace +11%, NavierStokes +8%, but DeltaBlue -9%,
+/// Richards -7%, RegExp -7% (same unbolted static binary, 5 runs, 2026-10-24).
+const JS_FUNCTION_TIERS: [bool; crate::MemoryPolicy::ALL.len()] = [true, false];
+
+/// Whether the JavaScript function tiers compile under `policy` (`JS_FUNCTION_TIERS`).
+pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
+    JS_FUNCTION_TIERS[policy as usize]
 }
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
@@ -5293,22 +5338,22 @@ impl CompiledJsFunction {
         misses
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn specialized_guard_misses(&self) -> u8 {
         self.specialized_guard_misses.get()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn general_dispatch_island_steps(&self) -> u64 {
         self.general_dispatch_island_steps.get()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn general_dispatch_global_name_cache_hits(&self) -> u64 {
         self.general_dispatch_global_name_cache_hits.get()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn general_dispatch_pc_is_native(&self, pc: usize) -> bool {
         self.general_dispatch_native_pcs.get(pc) == Some(&1)
     }
@@ -9820,10 +9865,13 @@ impl<H: Host> Vm<H> {
         native_poll_page(&self.execution_interrupt)
     }
 
-    /// Whether the per-function JavaScript tier runs: compiled execution, in a build whose
-    /// profiles do not count interpreted work exactly.
+    /// Whether the JavaScript function tiers run: compiled execution under a memory policy
+    /// that compiles them (`JS_FUNCTION_TIERS`), in a build whose profiles do not count
+    /// interpreted work exactly.
     pub(super) fn js_tier_runs(&self) -> bool {
-        !cfg!(quench_profiled) && self.execution_mode == ExecutionMode::Compiled
+        !cfg!(quench_profiled)
+            && self.execution_mode == ExecutionMode::Compiled
+            && js_function_tiers_compile(self.memory_policy())
     }
 
     /// Keep usable legacy specialized candidates first. If that tier rejects a
@@ -9838,10 +9886,9 @@ impl<H: Host> Vm<H> {
         if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm {
             return false;
         }
-        let Some(body) = program.function_get(function as usize) else {
+        let Some(facts) = self.programs.js_entry_facts(id, function) else {
             return false;
         };
-        let legacy_candidate = super::js_compiled::function_candidate(body, program);
         let state = self.programs.js_tier(id, function);
         if matches!(state, Some(super::program_store::JsTierState::Unsupported)) {
             return self.programs.js_jit_diagnostics_enabled();
@@ -9849,7 +9896,7 @@ impl<H: Host> Vm<H> {
         // Keep bounded candidates on a frame entry until the shared tier has
         // settled. Lane target caches otherwise preserve a frameless route
         // across the later promotion and no longer consult tiering.
-        legacy_candidate || js_general_dispatch_candidate(program, body)
+        facts.candidate || facts.general
     }
 
     /// Whether the general tier holds `function`: pending, due or compiled.
@@ -9885,43 +9932,32 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         program_id: ProgramId,
         function: u32,
+        facts: &super::js_compiled::JsEntryFacts,
     ) -> (bool, bool) {
-        let general_candidate = program.function_get(function as usize).is_some_and(|body| {
-            if !js_general_dispatch_candidate(program, body) {
-                return false;
-            }
-            if !super::js_compiled::function_candidate(body, program) {
-                return true;
-            }
-            if js_general_dispatch_acyclic_candidate(program, body) {
-                return true;
-            }
-            match self.programs.js_tier(program_id, function) {
-                Some(
-                    super::program_store::JsTierState::GeneralPromotionPending { .. }
-                    | super::program_store::JsTierState::GeneralCompileDue
-                    | super::program_store::JsTierState::Rejected { .. },
-                ) => true,
-                Some(super::program_store::JsTierState::Compiled(compiled)) => {
-                    compiled.is_general_dispatch()
-                }
-                _ => false,
-            }
-        });
-        let Some(body) = program.function_get(function as usize).filter(|_| general_candidate) else {
+        let Some(body) = program.function_get(function as usize).filter(|_| facts.general) else {
             return (false, false);
         };
-        let observes = !super::js_compiled::function_candidate(body, program)
-            || matches!(
-                self.programs.js_tier(program_id, function),
-                Some(
-                    super::program_store::JsTierState::Rejected { .. }
-                        | super::program_store::JsTierState::GeneralPromotionPending { .. }
-                        | super::program_store::JsTierState::GeneralCompileDue
-                )
-            );
+        let state = self.programs.js_tier(program_id, function);
+        let general_state = matches!(
+            state,
+            Some(
+                super::program_store::JsTierState::GeneralPromotionPending { .. }
+                    | super::program_store::JsTierState::GeneralCompileDue
+                    | super::program_store::JsTierState::Rejected { .. }
+            )
+        );
+        let general_candidate = facts.general
+            && (!facts.candidate
+                || facts.general_acyclic
+                || general_state
+                || matches!(state, Some(super::program_store::JsTierState::Compiled(compiled)) if compiled.is_general_dispatch()));
+        if !general_candidate {
+            return (false, false);
+        }
+        // A legacy candidate is observed only once its numeric profile has declined.
+        let observes = !facts.candidate || general_state;
         // The tier manager prices the baseline against the entries so far.
-        let due = observes && self.programs.note_js_general_dispatch_entry(program_id, function, body.code.len());
+        let due = observes && self.programs.note_js_general_dispatch_entry(program_id, function, body.code.len(), self.memory_policy());
         (true, due)
     }
 
@@ -9970,8 +10006,8 @@ impl<H: Host> Vm<H> {
                     function,
                     instructions,
                 );
-            } else {
-                self.js_tier_note_general_entry(program, id, function);
+            } else if let Some(facts) = self.programs.js_entry_facts(id, function) {
+                self.js_tier_note_general_entry(program, id, function, &facts);
             }
             self.programs.record_js_jit_fallback_entry(id, function);
         }
@@ -10018,7 +10054,18 @@ impl<H: Host> Vm<H> {
             self.frames[frame].js_jit_skip_entry_once = false;
             return JsTierFrameEntry::Interpreter;
         }
+        let function = self.frames[frame].function;
+        let program_id = self.frames[frame].program;
+        // Most entries are of functions no tier path can take.
+        let Some(facts) = self
+            .programs
+            .js_entry_facts(program_id, function)
+            .filter(|facts| facts.enters || facts.general || self.programs.js_jit_diagnostics_enabled())
+        else {
+            return JsTierFrameEntry::Interpreter;
+        };
         if allow_inline_calls
+            && facts.general
             && let Some(outcome) = self.js_jit_general_dispatch_at_entry(
                 program, frame, 0, true, false,
             )
@@ -10028,8 +10075,6 @@ impl<H: Host> Vm<H> {
                 JsNativeDispatchResult::Resume(pc) => JsTierFrameEntry::NativeResume(pc),
             };
         }
-        let function = self.frames[frame].function;
-        let program_id = self.frames[frame].program;
         let entry = self.frames.get(frame).filter(|record| record.pc == 0).and_then(|record| {
             let params = program.function_get(record.function as usize)?.params;
             Some(TierEntry {
@@ -10042,7 +10087,7 @@ impl<H: Host> Vm<H> {
             })
         });
         let (general_candidate, mut promote_general) =
-            self.js_tier_note_general_entry(program, program_id, function);
+            self.js_tier_note_general_entry(program, program_id, function, &facts);
         let mut specialized_guard_miss = false;
         let compiled_entry = entry.as_ref().and_then(|entry| {
             self.js_jit_at_entry(program, entry, &mut specialized_guard_miss)
@@ -10108,7 +10153,7 @@ impl<H: Host> Vm<H> {
             | super::program_store::JsTierState::Unsupported) => return None,
             _ => {
                 let function = program.function_get(function_id as usize)?;
-                if !js_general_dispatch_candidate(program, function) || !promote {
+                if !promote || !js_general_dispatch_candidate(program, function) {
                     return None;
                 }
                 let compile_started = self
@@ -10756,7 +10801,7 @@ impl<H: Host> Vm<H> {
                         || (!capture_arguments.is_empty() && captures_numeric)
                         || string_hash_units.is_some()
                         || string_transform_units.is_some(),
-                    js_general_dispatch_acyclic_candidate(program, function),
+                    facts.general_acyclic,
                 ) || (!numeric
                     && !(field_reject_candidate && arguments.len() == 1)
                     && string_hash_units.is_none()
@@ -11783,6 +11828,7 @@ impl<H: Host> Vm<H> {
                         function.code.len() <= MAX_JIT_TIER_BYTECODES_PER_FUNCTION
                     })
             })
+            && self.programs.wasm_tier_has_room()
             && self.programs.note_wasm_tier_entry(program, id)
         {
             let tier = self
