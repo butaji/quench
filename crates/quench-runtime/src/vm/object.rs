@@ -527,9 +527,15 @@ impl<H: Host> Vm<H> {
     /// it: no element there, no index-keyed descriptor and no index name among its shape's
     /// keys.
     fn lacks_own_index(&self, holder: Value, index: usize) -> bool {
-        self.object_data(holder).is_some_and(|data| {
-            !data.has_indexed_descriptors() && !self.shape_has_index_key(data.shape())
-        }) && !self.own_element_present(holder, index)
+        self.object_data(holder).is_some_and(|data| self.object_lacks_own_index(holder, data, index))
+    }
+
+    /// `lacks_own_index` of a holder whose object `data` the caller has read.
+    #[inline(always)]
+    fn object_lacks_own_index(&self, holder: Value, data: &Object, index: usize) -> bool {
+        !data.has_indexed_descriptors()
+            && !self.shape_has_index_key(data.shape())
+            && !self.own_element_present(holder, index)
     }
 
     /// Whether any key of `shape` is an array-index name, memoized on the immutable shape
@@ -571,10 +577,15 @@ impl<H: Host> Vm<H> {
         let mut atom = None;
         let mut current = self.object_data(object).map(|data| data.proto());
         while let Some(holder) = current.filter(|value| !value.is_null()) {
-            if matches!(
-                self.heap.get(holder),
-                Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
-            ) {
+            // A direct object or array record is neither a Proxy nor a typed array, whose
+            // cells only a slot holds.
+            let record = holder.direct_object_index().is_some() || holder.direct_array_index().is_some();
+            if !record
+                && matches!(
+                    self.heap.get(holder),
+                    Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+                )
+            {
                 return false;
             }
             let Some(data) = self.object_data(holder) else {
@@ -583,7 +594,7 @@ impl<H: Host> Vm<H> {
             if data.is_module_namespace() {
                 return false;
             }
-            if !self.lacks_own_index(holder, index) {
+            if !self.object_lacks_own_index(holder, data, index) {
                 let atom = *atom.get_or_insert_with(|| self.lookup_array_index_atom(index));
                 if let Some(attributes) = self.own_index_attributes(holder, index, atom) {
                     return !attributes.accessor && attributes.writable;

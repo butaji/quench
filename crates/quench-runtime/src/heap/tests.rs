@@ -258,11 +258,8 @@ fn scope_slot_owners_survive_collection_and_release() {
 #[test]
 fn ordinary_object_payloads_live_in_compact_records() {
     // The prototype reference packs beside the shape and integrity bits, so a record is a
-    // header the size of a property vector plus two inline values.
-    assert_eq!(
-        size_of::<Object>(),
-        size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
-    );
+    // header the size of a property vector plus one payload word of narrow inline values.
+    assert_eq!(size_of::<Object>(), size_of::<ValueVec>() + size_of::<u64>());
     assert_eq!(size_of::<Slot>(), size_of::<Option<Cell>>());
 }
 
@@ -761,7 +758,8 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     let mut heap = Heap::new();
     let object = heap.alloc(Cell::Object(plain_object()));
     let before = heap.memory_stats().3;
-    let data = heap.get_mut(object).unwrap().object_mut().unwrap();
+    // An object lives in its record family or a legacy cell; `Heap::object_mut` finds either.
+    let data = heap.object_mut(object).unwrap();
     data.set_arguments_object();
     data.set_arguments_map(vec![0; 32]);
     data.set_module_namespace();

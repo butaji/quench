@@ -180,6 +180,7 @@ use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
 mod operations;
+pub(crate) use operations::number_is_truthy;
 mod primitives;
 pub(crate) mod program_store;
 mod promise;
@@ -925,8 +926,8 @@ struct ProgramCacheLayout {
 }
 
 impl ProgramCacheLayout {
-    fn shared_uncached_field(field_base: usize, program: &ResidualProgram) -> Option<usize> {
-        (program.cache_sites > crate::bytecode::SHARED_UNCACHED_SITE)
+    fn shared_uncached_field(field_base: usize, field_sites: u16) -> Option<usize> {
+        (field_sites > crate::bytecode::SHARED_UNCACHED_SITE)
             .then(|| field_base + usize::from(crate::bytecode::SHARED_UNCACHED_SITE))
     }
 }
@@ -2847,7 +2848,7 @@ impl<H: Host> Vm<H> {
         self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.refresh_active_field_entries();
         self.field_cache_writes = Some(Vec::new());
-        Self::prime_loop_decoding(program);
+        program.prime_loop_decoding();
         self.inherited_field_caches.clear();
         self.inherited_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
@@ -2882,7 +2883,7 @@ impl<H: Host> Vm<H> {
         self.set_instanceof_has_instance_holder(Value::NULL);
         self.program_cache_layouts.clear();
         self.program_cache_layouts.push(ProgramCacheLayout {
-            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program),
+            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program.cache_sites),
             ..ProgramCacheLayout::default()
         });
         self.set_active_program(ProgramId::MAIN);
@@ -2976,36 +2977,29 @@ impl<H: Host> Vm<H> {
         Some(id)
     }
     /// Primes every looping function of an installed `program` to expand on first entry.
-    fn prime_loop_decoding(program: &ResidualProgram) {
-        // A released function primes as it compiles again (`ResidualProgram::function`).
-        for function in program.functions.iter().filter_map(crate::bytecode::FunctionSlot::record) {
-            function.decoded.prime_loop(&function.code, &function.wide);
-        }
+    fn append_program_cache_layout(&mut self, id: ProgramId, program: &ResidualProgram) {
+        program.prime_loop_decoding();
+        self.append_cache_layout(id, program.cache_site_counts());
     }
 
-    fn append_program_cache_layout(&mut self, id: ProgramId, program: &ResidualProgram) {
+    /// Lays out the cache tables of program `id`, with `sites` of each kind, after those of
+    /// the programs before it.
+    pub(super) fn append_cache_layout(&mut self, id: ProgramId, sites: crate::bytecode::CacheSiteCounts) {
         debug_assert_eq!(id.raw() as usize, self.program_cache_layouts.len());
-        Self::prime_loop_decoding(program);
         self.program_cache_layouts.push(ProgramCacheLayout {
-            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(
-                self.field_caches.len(),
-                program,
-            ),
+            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(self.field_caches.len(), sites.fields),
             field_base: self.field_caches.len(),
             method_base: self.method_caches.len(),
             object_base: self.object_shapes.len(),
         });
-        let sites = usize::from(program.cache_sites);
-        self.field_caches.extend_empty(sites);
+        let fields = usize::from(sites.fields);
+        self.field_caches.extend_empty(fields);
         self.refresh_active_field_entries();
-        self.megamorphic_field_indices.extend_empty(sites);
-        self.field_add_indices.extend_empty(sites);
-        self.inherited_field_indices.extend_empty(sites);
-        self.method_caches.resize(
-            self.method_caches.len() + program.method_sites.len(),
-            [EMPTY_METHOD_CACHE; 2],
-        );
-        self.object_shapes.extend_empty(program.object_sites.len());
+        self.megamorphic_field_indices.extend_empty(fields);
+        self.field_add_indices.extend_empty(fields);
+        self.inherited_field_indices.extend_empty(fields);
+        self.method_caches.resize(self.method_caches.len() + sites.methods, [EMPTY_METHOD_CACHE; 2]);
+        self.object_shapes.extend_empty(sites.objects);
     }
     /// Makes `program` the executing program and caches its layout, the projection every cache
     /// index reads. A program's layout is appended before the program can run.

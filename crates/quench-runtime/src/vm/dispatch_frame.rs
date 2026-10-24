@@ -860,19 +860,21 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let mapped = function.arguments_are_mapped();
-        let arguments = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
-                Self::empty_object(self.object_proto),
-                args.to_vec(),
-            ),
-        });
-        self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
+        let mut array = crate::heap::ArrayObject::new(
+            Self::empty_object(self.object_proto),
+            crate::heap::ArrayElements::from_slice(args),
+        );
+        array.set_arguments_object();
         if function.arguments_alias_parameters() {
-            let mapping = (0..function.params.min(args.len() as u16)).collect();
-            if let Some(object) = self.object_data_mut(arguments) {
-                object.set_arguments_map(mapping);
-            }
+            array.set_arguments_map((0..function.params.min(args.len() as u16)).collect());
         }
+        // The realm's template gives the whole object at once; the first one of a realm
+        // defines its properties one by one, which records the template.
+        if let Some((shape, properties)) = self.arguments_template_properties(context.callee(), args, mapped)? {
+            return Ok(self.heap.alloc_array_with_properties(array, shape, &properties));
+        }
+        let arguments = self.heap.alloc(Cell::Array { object: array });
+        self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
         Ok(arguments)
     }
 
@@ -904,6 +906,43 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The shape and property values of an arguments object of `args` from the realm's
+    /// template (`cache_arguments_object_template`): `length`, `callee` (the callable when
+    /// `expose_callee`, else the template's thrower slot left undefined) and the iterator.
+    /// `None` before the realm made one.
+    fn arguments_template_properties(
+        &self,
+        callable: Option<Value>,
+        args: &[Value],
+        expose_callee: bool,
+    ) -> Result<Option<(u32, [Value; ARGUMENTS_OBJECT_PROPERTY_COUNT])>, JsError> {
+        let Some(template) = self
+            .realm
+            .intrinsics
+            .arguments_objects
+            .get(&(self.realm.globals, expose_callee))
+            .copied()
+        else {
+            return Ok(None);
+        };
+        let anchor = self
+            .object_data(template.anchor)
+            .expect("arguments template anchor is an object");
+        let iterator = self
+            .heap
+            .property_get(anchor, template.iterator_slot)
+            .expect("arguments template has an iterator method");
+        let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
+        properties[template.length_slot] = Value::number(args.len() as f64);
+        properties[template.callee_slot] = if expose_callee {
+            callable.ok_or_else(|| JsError::validation("arguments object requires callable identity".into()))?
+        } else {
+            Value::UNDEFINED
+        };
+        properties[template.iterator_slot] = iterator;
+        Ok(Some((anchor.shape(), properties)))
+    }
+
     pub(super) fn initialize_arguments_object(
         &mut self,
         arguments: Value,
@@ -912,31 +951,7 @@ impl<H: Host> Vm<H> {
         expose_callee: bool,
     ) -> Result<(), JsError> {
         let template_key = (self.realm.globals, expose_callee);
-        if let Some(template) = self
-            .realm
-            .intrinsics
-            .arguments_objects
-            .get(&template_key)
-            .copied()
-        {
-            let anchor = self
-                .object_data(template.anchor)
-                .expect("arguments template anchor is an object");
-            let shape = anchor.shape();
-            let iterator = self
-                .heap
-                .property_get(anchor, template.iterator_slot)
-                .expect("arguments template has an iterator method");
-            let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
-            properties[template.length_slot] = Value::number(args.len() as f64);
-            properties[template.callee_slot] = if expose_callee {
-                callable.ok_or_else(|| {
-                    JsError::validation("arguments object requires callable identity".into())
-                })?
-            } else {
-                Value::UNDEFINED
-            };
-            properties[template.iterator_slot] = iterator;
+        if let Some((shape, properties)) = self.arguments_template_properties(callable, args, expose_callee)? {
             self.object_data_mut(arguments)
                 .expect("arguments object is an array")
                 .set_arguments_object();
@@ -1424,13 +1439,22 @@ impl<H: Host> Vm<H> {
             // A supported native function still returns through the ordinary
             // Return instruction, preserving the dispatch loop's frame and
             // constructor unwind path. Guard misses leave pc at zero.
-            if pc == 0
-                && let Some(return_pc) = self.js_tier_frame_entry(p, frame)
-            {
-                pc = return_pc;
-                continue;
+            let mut native_step = None;
+            if pc == 0 {
+                match self.js_tier_frame_entry(p, frame, allow_inline_calls) {
+                    super::compiled::JsTierFrameEntry::Interpreter => {}
+                    super::compiled::JsTierFrameEntry::ContinueAt(return_pc)
+                    | super::compiled::JsTierFrameEntry::NativeResume(return_pc) => {
+                        pc = return_pc;
+                        continue;
+                    }
+                    super::compiled::JsTierFrameEntry::NativeStep(step) => {
+                        pc = step.next_pc;
+                        native_step = Some(step);
+                    }
+                }
             }
-            if Self::lane_runs(cursor.lane, pc) {
+            if native_step.is_none() && Self::lane_runs(cursor.lane, pc) {
                 let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
                 pc = self.run_fast_lane(
                     p,
@@ -1654,14 +1678,18 @@ impl<H: Host> Vm<H> {
             }
             debug_assert_eq!(cursor.program, self.frames[frame].program);
             debug_assert_eq!(cursor.function, self.frames[frame].function);
-            let instruction_pc = pc;
+            let native_step = native_step.take();
+            let instruction_pc = native_step.as_ref().map_or(pc, |step| step.instruction_pc);
+            let ins = cursor.instruction(instruction_pc);
+            let step = if let Some(step) = native_step {
+                step.result
+            } else {
             #[cfg(feature = "profile-memory")]
             self.heap.set_memory_allocation_site(
                 cursor.program.raw(),
                 cursor.function,
                 instruction_pc,
             );
-            let ins = cursor.instruction(pc);
             if self.programs.js_jit_diagnostics_enabled() {
                 self.programs.record_js_jit_general_dispatch_opcode(
                     cursor.program,
@@ -1946,7 +1974,7 @@ impl<H: Host> Vm<H> {
             self.frames[frame].pc_is_resume = false;
             // Returns and inline calls produce their step result here rather than through the
             // general `step` dispatch.
-            let step = match ins.op() {
+            match ins.op() {
                 // A call the lane made returned its callee's completion from this frame.
                 _ if let Some(value) = self.lane_returned.take() => Ok(StepResult::Return(value)),
                 Op::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
@@ -1957,6 +1985,7 @@ impl<H: Host> Vm<H> {
                     }
                 }
                 _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+            }
             };
             match step {
                 Ok(StepResult::Return(mut value)) => {
