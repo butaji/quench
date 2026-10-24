@@ -307,7 +307,7 @@ fn number_type_dispatch_reaches(
                     .clone(),
                 OperandKind::Constant => {
                     match program.constants.get(usize::from(operand.payload()))? {
-                        Constant::String(value) => Some(NumberDispatchValue::String(value.clone())),
+                        Constant::String(value) => Some(NumberDispatchValue::String(value.to_string())),
                         Constant::Number(value) => Some(NumberDispatchValue::Number(*value)),
                         _ => Some(NumberDispatchValue::Other),
                     }
@@ -337,7 +337,7 @@ fn number_type_dispatch_reaches(
             }
             Op::LoadConst => {
                 let value = match program.constants.get(instruction.constant_index())? {
-                    Constant::String(value) => NumberDispatchValue::String(value.clone()),
+                    Constant::String(value) => NumberDispatchValue::String(value.to_string()),
                     Constant::Number(value) => NumberDispatchValue::Number(*value),
                     _ => NumberDispatchValue::Other,
                 };
@@ -451,7 +451,7 @@ fn operand_is_number(program: &ResidualProgram, operand: Operand, expected: f64)
 }
 
 fn compile_int32_identity(function_id: u32, return_pc: u32) -> Option<JsJitArtifact> {
-    let isa = super::jit_backend::target_isa("speed", true)?;
+    let isa = super::jit_backend::target_isa("speed")?;
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
     signature.returns.push(AbiParam::new(types::F64));
@@ -684,7 +684,7 @@ fn compile_capture_number(
     function_id: u32,
     capture: JsJitCaptureArgument,
 ) -> Option<JsJitArtifact> {
-    let isa = super::jit_backend::target_isa("speed", true)?;
+    let isa = super::jit_backend::target_isa("speed")?;
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(types::F64));
     signature.returns.push(AbiParam::new(types::F64));
@@ -1555,7 +1555,7 @@ fn compile_string_hash_loop(
         // regular candidate guard still enforces activation and size limits.
         return None;
     }
-    let isa = super::jit_backend::target_isa("speed", true)?;
+    let isa = super::jit_backend::target_isa("speed")?;
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -1773,7 +1773,7 @@ fn compile_string_transform(
         JsJitStringTransform::PrefixUnderscore => 2,
         JsJitStringTransform::RemoveLeadingUnderscore => 3,
     };
-    let isa = super::jit_backend::target_isa("speed", true)?;
+    let isa = super::jit_backend::target_isa("speed")?;
     let pointer = isa.pointer_type();
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(pointer));
@@ -2250,7 +2250,7 @@ fn compile_number_domain_boolean_tree(
     }
 
     let params = usize::from(function.params);
-    let isa = super::jit_backend::target_isa("speed", true)?;
+    let isa = super::jit_backend::target_isa("speed")?;
 
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -3189,7 +3189,7 @@ fn compile_numeric_loop(
         return None;
     }
 
-    let isa = super::jit_backend::target_isa("speed", true)?;
+    let isa = super::jit_backend::target_isa("speed")?;
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -3764,7 +3764,7 @@ fn compile_string_branches(
     }
 
     let params = usize::from(function.params);
-    let isa = super::jit_backend::target_isa("speed", true)?;
+    let isa = super::jit_backend::target_isa("speed")?;
 
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
@@ -4211,7 +4211,7 @@ fn compile_field_reject(
     };
     let resume_pc = u32::try_from(layout.continuation_pc).ok()?;
     let resume_register = u16::try_from(layout.resume_register).ok()?;
-    let isa = super::jit_backend::target_isa("speed", true)?;
+    let isa = super::jit_backend::target_isa("speed")?;
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
     signature.returns.push(AbiParam::new(types::I32));
@@ -4393,8 +4393,8 @@ pub(super) struct JsEntryFacts {
     pub(super) enters: bool,
     /// Whether the function is a specialized tier candidate (`function_candidate`).
     pub(super) candidate: bool,
-    /// Whether the general baseline admits it (`js_general_dispatch_candidate`), and
-    /// without backward jumps (`js_general_dispatch_acyclic_candidate`).
+    /// Whether the general baseline admits it, and without backward jumps
+    /// (`js_general_dispatch_shape`).
     pub(super) general: bool,
     pub(super) general_acyclic: bool,
 }
@@ -4405,8 +4405,8 @@ impl JsEntryFacts {
         let field_increment = cached_this_field_increment_candidate(program, function);
         let field_return = cached_this_field_return_candidate(function);
         let candidate = function_candidate(function, program);
-        let general = super::compiled::js_general_dispatch_candidate(program, function);
-        let general_acyclic = general && super::compiled::js_general_dispatch_acyclic_candidate(program, function);
+        let shape = super::compiled::js_general_dispatch_shape(function);
+        let (general, general_acyclic) = (shape.is_some(), shape == Some(true));
         let enters = candidate || numeric_find.is_some() || field_increment.is_some() || field_return.is_some();
         // The other facts are read only past the candidate check an entering function passes.
         if !enters {
