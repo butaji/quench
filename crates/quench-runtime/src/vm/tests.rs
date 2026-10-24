@@ -12292,14 +12292,14 @@ fn js_jit_general_tier_tracks_hot_function_after_cold_function_churn() {
     let id = programs.insert(program).unwrap();
 
     for function in 0..512 {
-        assert!(!programs.note_js_general_dispatch_entry(id, function, 1));
+        assert!(!programs.note_js_general_dispatch_entry(id, function, 1, crate::MemoryPolicy::Throughput));
     }
     let hot_function = 512;
     for _ in 0..31 {
-        assert!(!programs.note_js_general_dispatch_entry(id, hot_function, 1));
+        assert!(!programs.note_js_general_dispatch_entry(id, hot_function, 1, crate::MemoryPolicy::Throughput));
     }
-    assert!(!programs.note_js_general_dispatch_entry(id, hot_function, 1));
-    assert!(programs.note_js_general_dispatch_entry(id, hot_function, 1));
+    assert!(!programs.note_js_general_dispatch_entry(id, hot_function, 1, crate::MemoryPolicy::Throughput));
+    assert!(programs.note_js_general_dispatch_entry(id, hot_function, 1, crate::MemoryPolicy::Throughput));
 
     assert_eq!(programs.js_jit_tracked_function_count(), 513);
     assert!(matches!(
