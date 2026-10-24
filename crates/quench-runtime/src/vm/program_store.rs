@@ -61,26 +61,39 @@ const JS_JIT_GENERAL_PROMOTION_ENTRIES: u8 = 32;
 /// paying for the complete-semantics baseline.
 pub(super) const JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD: u8 = 8;
 /// The general baseline's compile cost in interpreted-instruction units: a fixed part
-/// and a part per bytecode instruction. Measured on Linux x86_64 (requiring jackspeak
-/// with `QUENCH_JS_JIT_STATS`): a compile takes about 0.8 ms plus 32 µs per instruction,
-/// against roughly 50 ns per interpreted instruction.
+/// and a part per bytecode instruction. Measured on Linux x86_64 with `QUENCH_JS_JIT_STATS`
+/// against roughly 50 ns per interpreted instruction: requiring jackspeak, about 0.8 ms
+/// plus 32 µs per instruction; npm's semver scenario, 1.4 ms for a four-instruction body
+/// and 40 to 76 µs per instruction for 160 to 200.
 const JS_JIT_GENERAL_COMPILE_FIXED_COST: u64 = 16_000;
-const JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION: u64 = 640;
-/// The share of an entry's interpreted instructions the baseline saves, as a fraction:
-/// at most half, since it keeps the interpreter's tagged semantics and callouts.
-const JS_JIT_GENERAL_SAVED_SHARE: (u64, u64) = (1, 2);
+const JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION: u64 = 1_200;
+/// The share of an entry's interpreted instructions the baseline saves, as a fraction. It
+/// keeps the interpreter's tagged semantics and calls back into the VM for most operations
+/// (`js_step_callout` was 11% of npm browserslist with it on), so a quarter until the
+/// baseline's savings are measured.
+const JS_JIT_GENERAL_SAVED_SHARE: (u64, u64) = (1, 4);
+/// What each native entry of the baseline costs beyond a frameless lane activation, in
+/// interpreted-instruction units: a due function's calls take a VM frame and the general
+/// loop (`Vm::js_tier_needs_general_entry`). Measured on npm's browserslist scenario: a
+/// six-instruction body's 72,427 native entries cost about 650 machine instructions each
+/// more than its lane calls, some 32 lane-interpreted instructions.
+const JS_JIT_GENERAL_ENTRY_OVERHEAD: u64 = 32;
 
 /// Whether `entries` of a function of `instructions` bytecode instructions have paid for
-/// its general baseline, taking an entry to run its instructions once and the savings of
-/// the entries so far to stand for those still to come. Backedge observations use their
-/// independently accumulated work in `general_dispatch_work_due`.
+/// its general baseline, taking an entry to run its instructions once (a loop hot within
+/// one entry is OSR's to compile) and the savings of the entries so far to stand for
+/// those still to come. A body whose entry saves less than the baseline's entry overhead
+/// never pays.
 fn general_promotion_due(entries: u32, instructions: usize) -> bool {
-    let instructions = u64::try_from(instructions.max(1)).unwrap_or(u64::MAX);
-    general_dispatch_work_due(
-        u64::from(entries).saturating_mul(instructions),
-        instructions,
-        true,
-    )
+    let Some(saved_per_entry) = general_saved_per_entry(instructions) else {
+        return false;
+    };
+    let instructions = u64::try_from(instructions).unwrap_or(u64::MAX);
+    let (_, of) = JS_JIT_GENERAL_SAVED_SHARE;
+    u64::from(entries).saturating_mul(saved_per_entry)
+        >= JS_JIT_GENERAL_COMPILE_FIXED_COST
+            .saturating_add(JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION.saturating_mul(instructions))
+            .saturating_mul(of)
 }
 
 /// Whether observed bytecode work has paid for one complete-semantics native
@@ -127,6 +140,19 @@ fn promote_general_dispatch_if_paid(
     *state = JsTierState::GeneralCompileDue;
     true
 }
+
+/// What an entry of a body of `instructions` saves under the general baseline, in units of
+/// `1 / JS_JIT_GENERAL_SAVED_SHARE.1` interpreted instruction; `None` where it saves
+/// nothing past the baseline's entry overhead.
+fn general_saved_per_entry(instructions: usize) -> Option<u64> {
+    let (saved, of) = JS_JIT_GENERAL_SAVED_SHARE;
+    u64::try_from(instructions)
+        .unwrap_or(u64::MAX)
+        .saturating_mul(saved)
+        .checked_sub(JS_JIT_GENERAL_ENTRY_OVERHEAD.saturating_mul(of))
+        .filter(|saved| *saved > 0)
+}
+
 const JS_JIT_MAX_FUNCTIONS: usize = 64;
 // Tier observations include dynamically generated functions across all retained
 // programs. Web-SSR exposes more than 1,300 functions in one VM; keep a fixed
@@ -1659,9 +1685,13 @@ impl ProgramStore {
         decision.compile
     }
 
-    /// Promote any ordinary JS function to the complete-semantics native
-    /// dispatch baseline after it is hot. The existing tier record and shared
-    /// code-cache budget remain the single owners for both baseline and
+    /// Whether the general baseline could ever pay through entries for a body of
+    /// `instructions`: unpriced, or its entries save something past the baseline's entry
+    /// overhead. A loop-free body that cannot is not counted toward it at all.
+    pub(super) fn general_baseline_may_pay(&self, instructions: usize) -> bool {
+        !self.general_baseline_priced || general_saved_per_entry(instructions).is_some()
+    }
+
     /// Compile a hot function's general baseline without pricing it, for tests of its
     /// semantics.
     #[cfg(all(test, not(quench_profiled)))]
@@ -1669,6 +1699,9 @@ impl ProgramStore {
         self.general_baseline_priced = false;
     }
 
+    /// Promote any ordinary JS function to the complete-semantics native
+    /// dispatch baseline after it is hot. The existing tier record and shared
+    /// code-cache budget remain the single owners for both baseline and
     /// specialized artifacts.
     pub(super) fn note_js_general_dispatch_entry(
         &mut self,
@@ -2817,6 +2850,22 @@ impl LaneViews {
 }
 
 #[cfg(test)]
+mod general_promotion_tests {
+    use super::general_promotion_due;
+
+    #[test]
+    fn a_large_body_pays_after_enough_entries_and_a_small_one_never() {
+        // 400 instructions: each entry saves 400/4 - 32 = 68 interpreted instructions
+        // against 16,000 + 1,200 x 400 for the compile, so 7,295 entries pay.
+        assert!(!general_promotion_due(7_294, 400));
+        assert!(general_promotion_due(7_295, 400));
+        // Below 4 x 32 instructions an entry saves nothing.
+        assert!(!general_promotion_due(u32::MAX, 128));
+        assert!(!general_promotion_due(u32::MAX, 0));
+    }
+}
+
+#[cfg(test)]
 mod jit_code_cache_tests {
     use super::{
         JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS, WASM_JIT_MAX_BASELINE_MAPPED_BYTES,
@@ -2841,9 +2890,12 @@ mod jit_code_cache_tests {
     fn general_dispatch_backedge_priced_mode_uses_existing_compile_cost() {
         let mut state = JsTierState::Rejected { entries: 8, reason: "test" };
         let mut work = 0;
-        // 100 instructions cost 16,000 + 640*100 units. The 50% savings
-        // assumption requires twice that much observed bytecode work.
-        super::accumulate_general_dispatch_work(&mut work, 159_999);
+        // 100 instructions cost the fixed and per-instruction compile cost, which the
+        // saved share of observed bytecode work must cover.
+        let (saved, of) = super::JS_JIT_GENERAL_SAVED_SHARE;
+        let cost = super::JS_JIT_GENERAL_COMPILE_FIXED_COST + super::JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION * 100;
+        let paid = usize::try_from(cost * of / saved).unwrap();
+        super::accumulate_general_dispatch_work(&mut work, paid - 1);
         assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 100, true));
         super::accumulate_general_dispatch_work(&mut work, 1);
         assert!(super::promote_general_dispatch_if_paid(&mut state, work, 100, true));

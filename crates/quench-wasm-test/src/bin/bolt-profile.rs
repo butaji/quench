@@ -123,6 +123,49 @@ fn add_counts(profile: &str, counts: &mut HashMap<u64, u64>) -> Result<(), Strin
     Ok(())
 }
 
+/// A callgrind position: absolute (`0x...`), relative to `address` (`+n`, `-n`) or the same
+/// (`*`); `None` for anything else.
+fn position(spec: &str, address: u64) -> Option<u64> {
+    if let Some(hex) = spec.strip_prefix("0x") {
+        u64::from_str_radix(hex, 16).ok()
+    } else if let Some(delta) = spec.strip_prefix('+') {
+        Some(address + delta.parse::<u64>().ok()?)
+    } else if let Some(delta) = spec.strip_prefix('-') {
+        address.checked_sub(delta.parse::<u64>().ok()?)
+    } else {
+        (spec == "*").then_some(address)
+    }
+}
+
+/// Adds the taken branches and calls of a callgrind profile recorded with
+/// `--collect-jumps=yes`, by source and target address. A `jump=`, `jcnd=` or `calls=` line
+/// names the count and the target; the position line after it is the source instruction. A
+/// conditional jump's count is `taken/executed`.
+fn add_branches(profile: &str, branches: &mut HashMap<(u64, u64), u64>) -> Result<(), String> {
+    let file = fs::File::open(profile).map_err(|error| format!("{profile}: {error}"))?;
+    let mut address = 0u64;
+    let mut pending: Option<(u64, u64)> = None;
+    for line in BufReader::new(file).lines() {
+        let line = line.map_err(|error| format!("{profile}: {error}"))?;
+        let edge = ["jump=", "jcnd=", "calls="].iter().find_map(|kind| line.strip_prefix(kind));
+        if let Some(rest) = edge {
+            let mut fields = rest.split_whitespace();
+            let count = fields.next().and_then(|count| count.split('/').next()?.parse::<u64>().ok());
+            let target = fields.next().and_then(|target| position(target, address));
+            pending = count.zip(target);
+            continue;
+        }
+        let Some(source) = line.split_whitespace().next().and_then(|spec| position(spec, address)) else {
+            continue;
+        };
+        address = source;
+        if let Some((count, target)) = pending.take().filter(|&(count, _)| count > 0) {
+            *branches.entry((source, target)).or_default() += count;
+        }
+    }
+    Ok(())
+}
+
 /// Calls `visit` with every instruction address `objdump` disassembles in the binary.
 fn instructions(binary: &str, mut visit: impl FnMut(u64)) -> Result<(), String> {
     let mut child = Command::new("objdump")
@@ -147,6 +190,7 @@ fn run(
     out: &str,
     order: Option<&str>,
     dense: &[String],
+    branches: bool,
     profiles: &[String],
 ) -> Result<(), String> {
     let symbols = code_symbols(binary)?;
@@ -185,10 +229,34 @@ fn run(
     }
     fs::create_dir_all(out).map_err(|error| format!("{out}: {error}"))?;
     let mut fdata = Vec::new();
-    writeln!(fdata, "{NO_LBR_HEADER}").map_err(|error| error.to_string())?;
-    for (&(index, offset), count) in &samples {
-        writeln!(fdata, "1 {} {offset:x} {count}", symbols[index].bolt_name)
+    if branches {
+        let mut edges = HashMap::new();
+        for profile in profiles {
+            add_branches(profile, &mut edges)?;
+        }
+        let mut located: BTreeMap<((usize, u64), (usize, u64)), u64> = BTreeMap::new();
+        for (&(source, target), &count) in &edges {
+            if let (Some(from), Some(to)) = (containing(source), containing(target)) {
+                *located
+                    .entry(((from, source - symbols[from].address), (to, target - symbols[to].address)))
+                    .or_default() += count;
+            }
+        }
+        for (((from, from_offset), (to, to_offset)), count) in &located {
+            writeln!(
+                fdata,
+                "1 {} {from_offset:x} 1 {} {to_offset:x} 0 {count}",
+                symbols[*from].bolt_name, symbols[*to].bolt_name
+            )
             .map_err(|error| error.to_string())?;
+        }
+        eprintln!("{} branches", located.len());
+    } else {
+        writeln!(fdata, "{NO_LBR_HEADER}").map_err(|error| error.to_string())?;
+        for (&(index, offset), count) in &samples {
+            writeln!(fdata, "1 {} {offset:x} {count}", symbols[index].bolt_name)
+                .map_err(|error| error.to_string())?;
+        }
     }
     fs::write(format!("{out}/profile.fdata"), fdata).map_err(|error| error.to_string())?;
     let skip: Vec<&str> = symbols
@@ -221,6 +289,7 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
     let mut order = None;
+    let mut branches = false;
     let mut dense = Vec::new();
     let mut profiles = Vec::new();
     let mut arguments = rest.iter();
@@ -228,10 +297,11 @@ fn main() -> ExitCode {
         match argument.as_str() {
             "--order" => order = arguments.next().cloned(),
             "--dense" => dense.extend(arguments.next().cloned()),
+            "--branches" => branches = true,
             _ => profiles.push(argument.clone()),
         }
     }
-    match run(binary, out, order.as_deref(), &dense, &profiles) {
+    match run(binary, out, order.as_deref(), &dense, branches, &profiles) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("error: {error}");
