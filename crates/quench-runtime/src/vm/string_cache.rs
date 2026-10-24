@@ -86,7 +86,9 @@ impl<H: Host> Vm<H> {
     /// TypeScript's `__createBinding` does for each re-exported name) is not hashed and
     /// compared again. `None` when `key` is not a string.
     pub(super) fn string_key_atom(&mut self, key: Value) -> Option<Atom> {
-        let slot = string_atom_slot(key);
+        let slot = key.heap_index().map(|index| {
+            (index as usize).wrapping_mul(STRING_CONCAT_HASH_MULTIPLIER) & (STRING_ATOM_CACHE_SIZE - 1)
+        });
         if let (Some(slot), Some(atoms)) = (slot, &self.string_atoms)
             && atoms[slot].0 == key
         {
@@ -94,24 +96,11 @@ impl<H: Host> Vm<H> {
         }
         let name = self.heap.string(key)?.clone();
         let atom = self.intern_js_atom(&name);
-        self.note_string_atom(key, atom);
-        Some(atom)
-    }
-
-    /// Records that the string `key` spells `atom`, as `string_key_atom` would find. A key
-    /// made from its atom (`atom_string`: a `for-in` or `Object.keys` key) is then not hashed
-    /// on its first use as a key either.
-    pub(super) fn note_string_atom(&mut self, key: Value, atom: Atom) {
-        if let Some(slot) = string_atom_slot(key) {
+        if let Some(slot) = slot {
             self.string_atoms
                 .get_or_insert_with(|| Box::new([(Value::UNDEFINED, 0); STRING_ATOM_CACHE_SIZE]))[slot] =
                 (key, atom);
         }
+        Some(atom)
     }
-}
-
-/// The `string_atoms` slot of the heap string `key`.
-fn string_atom_slot(key: Value) -> Option<usize> {
-    key.heap_index()
-        .map(|index| (index as usize).wrapping_mul(STRING_CONCAT_HASH_MULTIPLIER) & (STRING_ATOM_CACHE_SIZE - 1))
 }
