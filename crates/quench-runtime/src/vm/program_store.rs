@@ -582,6 +582,10 @@ pub(crate) struct ProgramStore {
     reclaim_passes: u64,
     /// Reclaimable programs inserted since the last reclamation pass.
     unchecked_reclaimable: usize,
+    /// The entry facts every function shares whose entries run no native code
+    /// (`JsEntryFacts::enters` false, every other fact unset): most functions the tier
+    /// watches, which had each held a copy (V8-v7 Crypto `--jit`: 32 -> 21 KiB at the heap's peak).
+    no_entry_facts: Rc<super::js_compiled::JsEntryFacts>,
     /// VM-local bounds for the optional JavaScript tier cache.
     js_jit_tracked_functions: usize,
     js_jit_rejected_functions: usize,
@@ -611,6 +615,7 @@ impl Default for ProgramStore {
             owned_scripts: FxHashMap::default(),
             reclaim_passes: 0,
             unchecked_reclaimable: 0,
+            no_entry_facts: Rc::default(),
             js_jit_tracked_functions: 0,
             js_jit_rejected_functions: 0,
             jit_code_cache: JitCodeCacheBudget::default(),
@@ -639,7 +644,12 @@ impl ProgramStore {
             entry.residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect()
         });
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
-            Rc::new(super::js_compiled::JsEntryFacts::of(&entry.residual, body))
+            let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body);
+            if facts.enters {
+                Rc::new(facts)
+            } else {
+                Rc::clone(&self.no_entry_facts)
+            }
         })))
     }
 
