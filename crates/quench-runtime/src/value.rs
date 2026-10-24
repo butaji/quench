@@ -604,7 +604,7 @@ impl Value {
             return Some(self == Self::TRUE);
         }
         if let Some(number) = self.as_number() {
-            return Some(!(number == 0.0 || number.is_nan()));
+            return Some(crate::vm::number_is_truthy(number));
         }
         if self.is_heap() {
             return self.is_record().then_some(true);
