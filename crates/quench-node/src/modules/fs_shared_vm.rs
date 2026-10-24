@@ -1766,8 +1766,7 @@ const ASYNC_READDIR_FACTORY: &str = quench_js_check::checked_js!(
       recursive: options.recursive,
     };
   }
-  if (Buffer.isBuffer(path)) path = path.toString();
-  else if (path instanceof URL) path = path.pathname;
+  if (path instanceof URL) path = path.pathname;
   let entries;
   let failure;
   try {
