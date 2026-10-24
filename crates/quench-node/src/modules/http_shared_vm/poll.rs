@@ -12,6 +12,30 @@ const BAD_REQUEST_RESPONSE: &[u8] = b"HTTP/1.1 400 Bad Request\r\nConnection: cl
 const REQUEST_TIMEOUT_RESPONSE: &[u8] =
     b"HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n";
 
+fn abort_server_request(
+    runtime: &mut Runtime<NodeHost>,
+    request: RootId,
+) -> Result<(), String> {
+    let error = runtime.error_rooted("aborted").map_err(|error| error.to_string())?;
+    let code = runtime.string_rooted("ECONNRESET");
+    let code_key = runtime.string_rooted("code");
+    let set_code = runtime.set_property_rooted(error, code_key, code, error);
+    runtime.release_root(code_key);
+    runtime.release_root(code);
+    set_code.map_err(|error| error.to_string())?;
+    let abort_key = runtime.string_rooted("_quenchAbort");
+    let abort = runtime
+        .get_property_rooted(request, abort_key)
+        .map_err(|error| error.to_string())?;
+    runtime.release_root(abort_key);
+    let result = runtime.call_rooted(abort, request, &[error]);
+    runtime.release_root(abort);
+    runtime.release_root(error);
+    result
+        .map(|result| { runtime.release_root(result); })
+        .map_err(|error| error.to_string())
+}
+
 fn reject_request(shared_state: &Rc<RefCell<SharedNodeState>>, socket: u64) -> Result<(), String> {
     let mut state = shared_state.borrow_mut();
     let Some(connection) = state.http.connections.get_mut(&socket) else {
@@ -356,6 +380,7 @@ pub(crate) fn poll(
                             request_timeout_sent: false,
                             upgraded: false,
                             socket_root: None,
+                            request_root: None,
                         },
                     );
                     if let Some(server) = host.http.servers.get_mut(&server_id) {
@@ -1055,6 +1080,22 @@ pub(crate) fn poll(
                             }
                         };
                         runtime.release_root(diagnostic_message);
+                        let retained_request = duplicate_root(runtime, readable)?;
+                        let (stored_request, previous_request) = shared_state
+                            .borrow_mut()
+                            .http
+                            .connections
+                            .get_mut(&socket)
+                            .map(|connection| {
+                                (true, connection.request_root.replace(retained_request))
+                            })
+                            .unwrap_or((false, None));
+                        if !stored_request {
+                            runtime.release_root(retained_request);
+                        }
+                        if let Some(previous_request) = previous_request {
+                            runtime.release_root(previous_request);
+                        }
                         runtime.release_root(readable);
                         runtime.release_root(response);
                         runtime.release_root(id);
@@ -1369,6 +1410,19 @@ pub(crate) fn poll(
                         })
                     };
                     if active_response || allow_half_open {
+                        if active_response {
+                            let request_root = shared_state
+                                .borrow_mut()
+                                .http
+                                .connections
+                                .get_mut(&socket)
+                                .and_then(|connection| connection.request_root.take());
+                            if let Some(request_root) = request_root {
+                                let result = abort_server_request(runtime, request_root);
+                                runtime.release_root(request_root);
+                                result?;
+                            }
+                        }
                         if let Some(connection) =
                             shared_state.borrow_mut().http.connections.get_mut(&socket)
                         {
@@ -1494,11 +1548,12 @@ pub(crate) fn poll(
                     net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
                     progressed = true;
                 }
-                let (server_id, socket_root, contexts) = {
+                let (server_id, socket_root, request_root, contexts) = {
                     let mut host = shared_state.borrow_mut();
                     let connection = host.http.connections.remove(&socket);
                     let server_id = connection.as_ref().map(|connection| connection.server);
-                    let socket_root = connection.and_then(|connection| connection.socket_root);
+                    let socket_root = connection.as_ref().and_then(|connection| connection.socket_root);
+                    let request_root = connection.and_then(|connection| connection.request_root);
                     let contexts = host
                         .http
                         .responses
@@ -1515,8 +1570,11 @@ pub(crate) fn poll(
                             server.connections.remove(&socket);
                         }
                     }
-                    (server_id, socket_root, contexts)
+                    (server_id, socket_root, request_root, contexts)
                 };
+                if let Some(request_root) = request_root {
+                    runtime.release_root(request_root);
+                }
                 for (_, async_id) in contexts {
                     crate::modules::async_hooks_shared_vm::clear_context(
                         runtime,
@@ -1561,7 +1619,11 @@ pub(crate) fn poll(
                         if let Some(server) = host.http.servers.get_mut(&connection.server) {
                             server.connections.remove(&socket);
                         }
-                        (connection.server, connection.socket_root)
+                        (
+                            connection.server,
+                            connection.socket_root,
+                            connection.request_root,
+                        )
                     });
                     let contexts = host
                         .http
@@ -1583,9 +1645,14 @@ pub(crate) fn poll(
                         async_id,
                     );
                 }
-                if let Some((_, Some(socket_root))) = server_connection {
-                    emit_event(runtime, program, socket_root, "close", &[])?;
-                    runtime.release_root(socket_root);
+                if let Some((_, socket_root, request_root)) = server_connection {
+                    if let Some(request_root) = request_root {
+                        runtime.release_root(request_root);
+                    }
+                    if let Some(socket_root) = socket_root {
+                        emit_event(runtime, program, socket_root, "close", &[])?;
+                        runtime.release_root(socket_root);
+                    }
                 }
                 let reader = shared_state
                     .borrow_mut()
@@ -1993,6 +2060,8 @@ fn deliver_client_response_head(
             return Err(message);
         }
     };
+    let request_response = duplicate_root(runtime, readable)?;
+    set_named(runtime, request_root, "res", request_response)?;
     let emitted = {
         let _scope = crate::modules::async_hooks_shared_vm::enter_context(shared_state, async_id);
         emit_event(runtime, program, request_root, "response", &[readable])

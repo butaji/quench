@@ -226,6 +226,20 @@ pub(crate) fn create(
         }
     };
     let stream = c.construct_rooted(constructor, constructor, &[socket])?;
+    if c.truthy_rooted(server)? {
+        let install_abort = c.evaluate_script_rooted(
+            r#"((request) => {
+              request._quenchAbort = (error) => {
+                if (request.listenerCount('error') === 0) request.on('error', () => {});
+                request.destroy(error);
+              };
+            })"#,
+            "node:http/server-request-abort.js",
+        )?;
+        let undefined = c.undefined();
+        c.call_rooted(install_abort, undefined, &[stream])?;
+        c.release_root(install_abort);
+    }
     let raw = get(c, message, "rawHeaders")?;
     let length = get(c, raw, "length")?;
     call(c, stream, "_addHeaderLines", &[raw, length])?;
