@@ -8515,7 +8515,7 @@ impl<H: Host> Vm<H> {
                 .lane_view_any(program, function)
                 .is_some_and(|view| unsafe { &*view }.environment_window.is_some());
         // Across programs only a plain or keeping activation runs frameless: an environment
-        // activation, or a construction, leaves its calls a frame.
+        // activation or a construction leaves its calls a frame.
         let view = if !(plan.registers_only || environment)
             || cross && environment
             || numeric

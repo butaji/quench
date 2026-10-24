@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "inventory": "quench-js-jit-focused-v1",
+  "purpose": "Focused interpreter/native JIT parity and native-entry checks; this does not restore or claim the historical 116-script oracle.",
+  "oracle": {
+    "runtime": "Node.js",
+    "version": "v26.12.0",
+    "source": "tests/node",
+    "source_revision": "26e72d85a611e222e3f06025de8a3c496923bacd"
+  },
+  "fixture_root": "fixtures",
+  "quench_build": {
+    "profile": "iteration",
+    "cargo_lockfile": "Cargo.lock",
+    "locked": true,
+    "build_environment": {
+      "CARGO_PROFILE_ITERATION_OPT_LEVEL": "0",
+      "CARGO_PROFILE_ITERATION_CODEGEN_UNITS": "16",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  "modes": [
+    "interpreter",
+    "jit"
+  ],
+  "jit_environment": {
+    "QUENCH_JS_JIT_GENERAL_DISPATCH": "1",
+    "QUENCH_JS_JIT_STATS": "1"
+  },
+  "fixtures": [
+    {
+      "id": "numeric-fallback",
+      "path": "numeric-fallback.js",
+      "sha256": "473333f6b90776b09de09a4ec466a78eaccbbc8b6e1fc1ab5d9bd63b2a896b3d",
+      "native_functions": [
+        "add"
+      ],
+      "denotations": [
+        "numeric addition",
+        "int32 speculation",
+        "overflow and type guard fallback"
+      ],
+      "guard_misses": [
+        "negative zero",
+        "NaN",
+        "int32 overflow",
+        "string addition",
+        "Symbol addition"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "{\"negativeZero\":\"-0\",\"nan\":\"NaN\",\"int32Overflow\":2147483648,\"stringFallback\":\"value:4\",\"symbolError\":\"TypeError\"}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "field-read-effects",
+      "path": "field-read-effects.js",
+      "sha256": "c88bb8178196218edb3a6fe8ca2719b67b5ca524986f2ca4c4b92ab63bcb42df",
+      "native_functions": [
+        "readValue"
+      ],
+      "denotations": [
+        "cached field read",
+        "getter effect boundary",
+        "proxy get trap"
+      ],
+      "guard_misses": [
+        "accessor property",
+        "proxy receiver"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "{\"sameError\":true,\"proxyValue\":11,\"effects\":[\"getter\",\"proxy:value\"]}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "call-throw-effects",
+      "path": "call-throw-effects.js",
+      "sha256": "e11b1ed851b1143b11ce9a6c155ce48df408333be5fc62fde9d8ae7e0070c47c",
+      "native_functions": [
+        "invoke"
+      ],
+      "denotations": [
+        "dynamic call",
+        "try/finally completion",
+        "throw identity and effect order"
+      ],
+      "guard_misses": [
+        "callee throws after call entry"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "{\"sameError\":true,\"effects\":[\"before\",\"callee\",\"after\",\"caught\"]}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "locals-tdz",
+      "path": "locals-tdz.js",
+      "sha256": "ccbab45ac91f9176e8f5ea6840d1ca850c10c171bf27a6fe18af356edd663060",
+      "native_functions": [
+        "localValue",
+        "increment"
+      ],
+      "denotations": [
+        "local arithmetic",
+        "captured mutable local",
+        "TDZ exception"
+      ],
+      "guard_misses": [
+        "TDZ access before initialization"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "[10,12,32769,\"ReferenceError\"]\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "dense-array-hole",
+      "path": "dense-array-hole.js",
+      "sha256": "deaec9195ed138c41df2925c3fa6096311d01ca6d10500d924c0ec244c028be6",
+      "native_functions": [
+        "readIndex"
+      ],
+      "denotations": [
+        "dense array indexed read",
+        "hole and prototype lookup",
+        "out-of-range undefined"
+      ],
+      "guard_misses": [
+        "sparse hole with inherited indexed property",
+        "out-of-range index"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "{\"dense\":[3,5,8],\"holeReadsPrototype\":\"inherited\",\"missing\":\"undefined\"}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "reentry-allocation",
+      "path": "reentry-allocation.js",
+      "sha256": "7bde5c1e2f23cd4179c63e392819e2863bcab9c5c3e8fc04a6f47fb7832c674a",
+      "native_functions": [
+        "enter",
+        "callback"
+      ],
+      "denotations": [
+        "nested calls and frame reentry",
+        "allocations live across calls",
+        "retained object identity"
+      ],
+      "guard_misses": [
+        "nested callback reentry"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "{\"result\":6,\"allocationsRetained\":4}\n",
+        "stderr": ""
+      }
+    }
+  ]
+}
