@@ -2468,15 +2468,6 @@ const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 /// polymorphic module cannot turn a tier promotion into eager compilation.
 const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
-/// Functions of at most this many bytecodes are compiled eagerly though they hold
-/// `unreachable` (C asserts and aborts, which most Emscripten functions do): their trap
-/// lowers to a return of the trap status. Larger ones stay interpreted: admitting every
-/// function compiled TSF's few very large ones, its max RSS 24 -> 242 MiB and Score down a
-/// fifth. JetStream 3 `--jit` against no admission (Linux x86_64, 2026-10-24): at 4096,
-/// zlib 14.8 -> 24.4, TSF 12.6 -> 16.0, sqlite3 12.8 -> 15.1, gcc-loops 49.6 -> 60.1,
-/// quicksort 76.9 -> 86.8 (3-round medians), RSS flat; at 2048 zlib's hot pair (over 2700
-/// bytecodes each) stayed interpreted.
-const MAX_JIT_UNREACHABLE_BYTECODES: usize = 4_096;
 
 /// An opt-in JIT switch the environment sets ("1" or "true"), read once per process: a
 /// compiled call consults several, and reading the environment on each call cost more than
@@ -2591,29 +2582,31 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     static WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
         const { std::cell::Cell::new(None) };
-    static WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE: std::cell::Cell<Option<usize>> =
-        const { std::cell::Cell::new(None) };
+    static WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
 }
 
-/// `MAX_JIT_UNREACHABLE_BYTECODES`, which a test may lower to keep a function holding
-/// `unreachable` out of the eager artifact.
-fn jit_unreachable_bytecodes_limit() -> usize {
+/// Whether the eager artifact compiles functions holding `unreachable` (C asserts and aborts,
+/// which most Emscripten functions hold): the trap lowers to a return of the trap status. A test
+/// may reject them to keep such a function for the tier.
+fn eager_unreachable_admitted() -> bool {
     #[cfg(test)]
-    if let Some(limit) = WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return limit;
+    if WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST.with(std::cell::Cell::get) {
+        return false;
     }
-    MAX_JIT_UNREACHABLE_BYTECODES
+    true
 }
 
 #[cfg(test)]
-pub(super) fn with_jit_unreachable_bytecodes_limit_for_test<R>(limit: usize, run: impl FnOnce() -> R) -> R {
-    struct Restore(Option<usize>);
+pub(super) fn with_eager_unreachable_rejected_for_test<R>(run: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
     impl Drop for Restore {
         fn drop(&mut self) {
-            WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE.with(|override_limit| override_limit.set(self.0));
+            WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST.with(|rejected| rejected.set(self.0));
         }
     }
-    let previous = WASM_JIT_UNREACHABLE_BYTECODES_TEST_OVERRIDE.with(|override_limit| override_limit.replace(Some(limit)));
+    let previous =
+        WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST.with(|rejected| rejected.replace(true));
     let _restore = Restore(previous);
     run()
 }
@@ -6890,8 +6883,7 @@ impl<H: Host> Analysis<'_, H> {
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
             Op::WasmUnreachable
-                if self.experimental_root_compilation
-                    || function.code.len() <= jit_unreachable_bytecodes_limit() =>
+                if self.experimental_root_compilation || eager_unreachable_admitted() =>
             {
                 Some(())
             }
@@ -7052,7 +7044,11 @@ fn internal_signature(
 }
 
 /// Instructions a threaded copy may repeat between a constant's jump and the
-/// branch table the constant decides; bounds the code each copy adds.
+/// branch table the constant decides; bounds the code each copy adds. A
+/// dispatch copy repeats its table too, which counts as its edges: TSF's
+/// 290-way state table, copied at each of its 503 jumps, compiled one
+/// function to 10.6 MB of edge moves (3.5 s, 220 MiB peak); charged by its
+/// edges it compiles in 0.1 s.
 const THREAD_BUDGET: usize = 16;
 
 /// Where a threaded copy continues once its path is done.
@@ -7395,6 +7391,11 @@ fn dispatch_path(instructions: &[WideInstruction], plan: &Plan, start: usize) ->
             ControlFlowLayout::Fallthrough => pc + 1,
             ControlFlowLayout::Jump => instruction.jump_target() as usize,
             ControlFlowLayout::BranchTable => {
+                // The copy repeats every edge of the table, each a jump with its own moves.
+                let edges = crate::bytecode::branch_table_entries(pc, instruction).count();
+                if path.len() - 1 + edges > THREAD_BUDGET {
+                    return None;
+                }
                 return Some(Thread {
                     selector: instruction.a(),
                     value: 0,
