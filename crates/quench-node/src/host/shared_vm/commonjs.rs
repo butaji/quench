@@ -50,6 +50,26 @@ pub(super) fn with_commonjs_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver:
     COMMONJS_RESOLVER.with(use_resolver)
 }
 
+thread_local! {
+    /// The resolver of an ES module's imports. It shares the CommonJS resolver's cache, as
+    /// Node's loaders share what they learned of the filesystem: a path either one resolved
+    /// keeps its real path for the other (a symlink retargeted after a `require` still names
+    /// its old target for an `import`, and the reverse).
+    static IMPORT_RESOLVER: oxc_resolver::Resolver = COMMONJS_RESOLVER.with(|resolver| {
+        resolver.clone_with_options(oxc_resolver::ResolveOptions {
+            extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
+            main_files: vec!["index".into()],
+            condition_names: vec!["node".into(), "import".into(), "default".into()],
+            ..Default::default()
+        })
+    });
+}
+
+/// Runs `use_resolver` with the resolver of an ES module's imports.
+pub(crate) fn with_import_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver::Resolver) -> R) -> R {
+    IMPORT_RESOLVER.with(use_resolver)
+}
+
 /// Resolves through a kept resolver. One that finds nothing clears its cache and resolves
 /// again, so a file created since a lookup cached its absence is found: Node keeps resolved
 /// requests, never failed ones.
