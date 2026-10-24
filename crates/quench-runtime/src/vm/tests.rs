@@ -11455,6 +11455,63 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_appends_and_fills_holes_in_place() {
+    // The loops append at the length while the backing has room and fill holes below it.
+    // Once a prototype holds an index, the entry declines, and the setter it defines runs.
+    let source = r#"
+      function grow(n) {
+        var a = [];
+        for (var i = 0; i < n; i++) a[i] = i * 3;
+        var h = [];
+        h[n - 1] = 1;
+        for (var j = n - 2; j >= 0; j--) h[j] = j & 7;
+        var s = 0;
+        for (var k = 0; k < n; k++) s = (s + a[k] + h[k]) | 0;
+        return s + " " + a.length + " " + h.length;
+      }
+      var out;
+      for (var c = 0; c < 200; c++) out = grow(2000);
+      var seen = 0;
+      Object.defineProperty(Array.prototype, 5, { set(v) { seen += v + 1; }, configurable: true });
+      var late = grow(2000);
+      delete Array.prototype[5];
+      print(out + " | " + late + " " + seen);
+    "#;
+    let program = Engine::specialize(source, "osr-append.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "grow"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+
+        assert_eq!(output.borrow().as_slice(), ["6003994 2000 2000 | 6003934 2000 2000 22"], "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(std::cell::OnceCell::get)
+            .expect("hot grow loop lane view")
+            .osr_diagnostics();
+        assert!(osr.native_region_runs > 0, "no native run under {policy:?}: {osr:?}");
+        // A store leaves only where the backing is full, once per capacity growth.
+        assert!(osr.exits < osr.native_region_runs, "appends left native code under {policy:?}: {osr:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_indexes_arrays_that_field_reads_give() {
     // Each iteration reads the arrays from fields of `this` and of an argument, then reads
     // and stores their elements: the arrays are those the fields held at entry.
