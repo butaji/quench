@@ -2,6 +2,7 @@ use crate::host::NodeHost;
 use crate::modules::event_constructor_shared_vm::get;
 use crate::modules::net_shared_vm;
 use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError, Value};
+use std::io;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
@@ -1791,8 +1792,14 @@ pub(crate) fn server_listen(
     }
     let listener = match address {
         HttpListenAddress::Tcp(address) => {
-            net_shared_vm::listen_with_backlog(&mut host.borrow_mut().tcp, address, backlog)
-                .map_err(RootedError::host)?
+            let result =
+                net_shared_vm::listen_with_backlog(&mut host.borrow_mut().tcp, address, backlog);
+            match result {
+                Ok(listener) => listener,
+                Err(error) => {
+                    return queue_http_listen_error(context, receiver, error, address);
+                }
+            }
         }
         #[cfg(unix)]
         HttpListenAddress::Local(path) => {
@@ -1828,6 +1835,58 @@ pub(crate) fn server_listen(
         }
     }
     Ok(receiver)
+}
+
+fn queue_http_listen_error(
+    context: &mut Context<'_>,
+    server: RootId,
+    error: io::Error,
+    address: SocketAddr,
+) -> Result<RootId, RootedError> {
+    let errno = error.raw_os_error().map(|value| -f64::from(value));
+    let code = errno
+        .map(crate::modules::util_system_error_shared_vm::system_error_name)
+        .unwrap_or_else(|| "UNKNOWN".to_owned());
+    let reason = error.to_string();
+    let reason = reason
+        .split(" (os error")
+        .next()
+        .unwrap_or(&reason)
+        .to_lowercase();
+    let error = context.error_rooted(&format!(
+        "listen {code}: {reason} {}:{}",
+        address.ip(),
+        address.port()
+    ))?;
+    for (name, value) in [("code", code.as_str()), ("syscall", "listen")] {
+        let key = context.string_rooted(name);
+        let value = context.string_rooted(value);
+        context.define_data_property_rooted(error, key, value, true, true, true)?;
+    }
+    let key = context.string_rooted("address");
+    let value = context.string_rooted(&address.ip().to_string());
+    context.define_data_property_rooted(error, key, value, true, true, true)?;
+    let key = context.string_rooted("port");
+    let value = context.number(f64::from(address.port()));
+    context.define_data_property_rooted(error, key, value, true, true, true)?;
+    if let Some(errno) = errno {
+        let key = context.string_rooted("errno");
+        let value = context.number(errno);
+        context.define_data_property_rooted(error, key, value, true, true, true)?;
+    }
+    let callback = context.evaluate_script_rooted(
+        "(server, error) => server.emit('error', error)",
+        "node:http/server-listen-error.js",
+    )?;
+    let undefined = context.undefined();
+    crate::modules::shared_event_loop::queue_next_tick(
+        context,
+        callback,
+        undefined,
+        &[server, error],
+    )?;
+    context.release_root(callback);
+    Ok(server)
 }
 
 fn listen_address(
