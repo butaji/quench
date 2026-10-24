@@ -464,8 +464,37 @@ const __quenchDnsValidateResultOrder = (order) => {
   }
   return order;
 };
+const __quenchDnsValidateResolverOptions = (options) => {
+  if (options === null || options === undefined) return;
+  const validateInteger = (key, min, max) => {
+    const value = options[key];
+    if (value === undefined) return;
+    if (typeof value !== "number") {
+      const received = value === null ? "null" : Array.isArray(value)
+        ? "an instance of Array"
+        : typeof value === "object"
+          ? "an instance of Object"
+          : typeof value === "symbol"
+            ? `type symbol (${String(value)})`
+            : typeof value === "function"
+              ? "function "
+              : `type ${typeof value} (${String(value)})`;
+      throw Object.assign(new TypeError(`The "options.${key}" property must be of type number. Received ${received}`), { code: "ERR_INVALID_ARG_TYPE" });
+    }
+    if (!Number.isInteger(value) || value < min || value > max) {
+      const constraint = Number.isInteger(value)
+        ? `>= ${min} && <= ${max}`
+        : "an integer";
+      throw Object.assign(new RangeError(`The value of "options.${key}" is out of range. It must be ${constraint}. Received ${String(value)}`), { code: "ERR_OUT_OF_RANGE" });
+    }
+  };
+  validateInteger("timeout", -1, 0x7fffffff);
+  validateInteger("tries", 1, 0x7fffffff);
+  validateInteger("maxTimeout", 0, 0xffffffff);
+};
 class __quenchResolver {
-  constructor() {
+  constructor(options) {
+    __quenchDnsValidateResolverOptions(options);
     this._handle = { getServers: () => [...__quenchDnsServers] };
   }
   getServers() {
