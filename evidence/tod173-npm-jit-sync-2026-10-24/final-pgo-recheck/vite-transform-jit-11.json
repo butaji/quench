@@ -1,0 +1,1087 @@
+{
+  "schema": 1,
+  "workload": "vite-transform",
+  "phase": "jit",
+  "runs": 11,
+  "qualificationReady": false,
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 5
+  },
+  "rssMeasurement": "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)",
+  "inputs": {
+    "workloadSha256": "34ef4729b0fe5a9d5a8eaf587d97c74c6a83ec1f89f345cc36b55cc4d71ab1d1",
+    "packageLockSha256": "92dbfcb2312b42ddf55a8f0b06c40368544ca4b5e861782ead6770268da3c1b0",
+    "quenchBinarySha256": "0fd1ddc4dee59d52040f8abeaf4c14bb337c663bdffd72be265da28349348616",
+    "nodeBinary": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "bunBinary": "/tmp/quench-bun/bun-linux-x64/bun"
+  },
+  "nodeVersion": "v24.19.0",
+  "bunVersion": "1.4.4",
+  "summary": {
+    "quench-jit": {
+      "medianOperationsPerSecond": 19379.84496124031,
+      "medianElapsedMs": 258,
+      "medianMaximumRssBytes": 54034432
+    },
+    "node-jit": {
+      "medianOperationsPerSecond": 67567.56756756757,
+      "medianElapsedMs": 74,
+      "medianMaximumRssBytes": 78606336
+    },
+    "bun-jit": {
+      "medianOperationsPerSecond": 69444.44444444444,
+      "medianElapsedMs": 72,
+      "medianMaximumRssBytes": 75276288
+    }
+  },
+  "output": {
+    "workload": "vite-transform",
+    "package": "vite@8.3.5",
+    "warmups": 250,
+    "cases": [
+      "warm-tsx-transform",
+      "typescript-erasure",
+      "jsx-automatic"
+    ],
+    "bytes": 2625000,
+    "checksum": 364653877
+  },
+  "samples": [
+    {
+      "engine": "quench-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 268,
+        "operationsPerSecond": 18656.716417910447
+      },
+      "maxRssBytes": 53960704,
+      "wallTimeMs": 361.660973,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 75,
+        "operationsPerSecond": 66666.66666666667
+      },
+      "maxRssBytes": 78430208,
+      "wallTimeMs": 177.753187,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 71,
+        "operationsPerSecond": 70422.5352112676
+      },
+      "maxRssBytes": 75284480,
+      "wallTimeMs": 149.48353,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 76,
+        "operationsPerSecond": 65789.47368421052
+      },
+      "maxRssBytes": 78626816,
+      "wallTimeMs": 175.689464,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 71,
+        "operationsPerSecond": 70422.5352112676
+      },
+      "maxRssBytes": 75423744,
+      "wallTimeMs": 145.733238,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 260,
+        "operationsPerSecond": 19230.76923076923
+      },
+      "maxRssBytes": 54034432,
+      "wallTimeMs": 347.257306,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 74,
+        "operationsPerSecond": 67567.56756756757
+      },
+      "maxRssBytes": 75173888,
+      "wallTimeMs": 148.479307,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 255,
+        "operationsPerSecond": 19607.843137254902
+      },
+      "maxRssBytes": 54059008,
+      "wallTimeMs": 342.558214,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 73,
+        "operationsPerSecond": 68493.1506849315
+      },
+      "maxRssBytes": 78422016,
+      "wallTimeMs": 174.665106,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 256,
+        "operationsPerSecond": 19531.25
+      },
+      "maxRssBytes": 54034432,
+      "wallTimeMs": 343.944435,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 75,
+        "operationsPerSecond": 66666.66666666667
+      },
+      "maxRssBytes": 79110144,
+      "wallTimeMs": 179.684247,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 73,
+        "operationsPerSecond": 68493.1506849315
+      },
+      "maxRssBytes": 75587584,
+      "wallTimeMs": 149.077476,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 77,
+        "operationsPerSecond": 64935.06493506493
+      },
+      "maxRssBytes": 78606336,
+      "wallTimeMs": 179.905837,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 73,
+        "operationsPerSecond": 68493.1506849315
+      },
+      "maxRssBytes": 75235328,
+      "wallTimeMs": 147.759961,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 258,
+        "operationsPerSecond": 19379.84496124031
+      },
+      "maxRssBytes": 54165504,
+      "wallTimeMs": 348.665544,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 6,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 72,
+        "operationsPerSecond": 69444.44444444444
+      },
+      "maxRssBytes": 75440128,
+      "wallTimeMs": 149.568385,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 6,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 258,
+        "operationsPerSecond": 19379.84496124031
+      },
+      "maxRssBytes": 53915648,
+      "wallTimeMs": 347.983099,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 6,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 74,
+        "operationsPerSecond": 67567.56756756757
+      },
+      "maxRssBytes": 78548992,
+      "wallTimeMs": 174.188884,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 7,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 256,
+        "operationsPerSecond": 19531.25
+      },
+      "maxRssBytes": 53911552,
+      "wallTimeMs": 340.89387,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 7,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 74,
+        "operationsPerSecond": 67567.56756756757
+      },
+      "maxRssBytes": 78725120,
+      "wallTimeMs": 176.688503,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 7,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 71,
+        "operationsPerSecond": 70422.5352112676
+      },
+      "maxRssBytes": 75276288,
+      "wallTimeMs": 144.426943,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 8,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 73,
+        "operationsPerSecond": 68493.1506849315
+      },
+      "maxRssBytes": 78774272,
+      "wallTimeMs": 172.163701,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 8,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 71,
+        "operationsPerSecond": 70422.5352112676
+      },
+      "maxRssBytes": 75067392,
+      "wallTimeMs": 145.513648,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 8,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 263,
+        "operationsPerSecond": 19011.406844106463
+      },
+      "maxRssBytes": 54341632,
+      "wallTimeMs": 350.150867,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 9,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 71,
+        "operationsPerSecond": 70422.5352112676
+      },
+      "maxRssBytes": 75141120,
+      "wallTimeMs": 148.097078,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 9,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 258,
+        "operationsPerSecond": 19379.84496124031
+      },
+      "maxRssBytes": 54128640,
+      "wallTimeMs": 343.520724,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 9,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 74,
+        "operationsPerSecond": 67567.56756756757
+      },
+      "maxRssBytes": 78639104,
+      "wallTimeMs": 175.644508,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 10,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 265,
+        "operationsPerSecond": 18867.924528301886
+      },
+      "maxRssBytes": 54005760,
+      "wallTimeMs": 354.616081,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 10,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 74,
+        "operationsPerSecond": 67567.56756756757
+      },
+      "maxRssBytes": 78565376,
+      "wallTimeMs": 179.150781,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 10,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 75,
+        "operationsPerSecond": 66666.66666666667
+      },
+      "maxRssBytes": 74940416,
+      "wallTimeMs": 157.249753,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 11,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 81,
+        "operationsPerSecond": 61728.39506172839
+      },
+      "maxRssBytes": 78503936,
+      "wallTimeMs": 194.555621,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 11,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 76,
+        "operationsPerSecond": 65789.47368421052
+      },
+      "maxRssBytes": 77910016,
+      "wallTimeMs": 159.707124,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 11,
+      "measurement": {
+        "workload": "vite-transform",
+        "package": "vite@8.3.5",
+        "rounds": 5000,
+        "warmups": 250,
+        "cases": [
+          "warm-tsx-transform",
+          "typescript-erasure",
+          "jsx-automatic"
+        ],
+        "bytes": 2625000,
+        "checksum": 364653877,
+        "elapsedMs": 257,
+        "operationsPerSecond": 19455.252918287937
+      },
+      "maxRssBytes": 54345728,
+      "wallTimeMs": 342.077541,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/vite-transform.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    }
+  ]
+}
