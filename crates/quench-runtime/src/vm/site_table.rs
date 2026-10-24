@@ -155,6 +155,23 @@ impl<T: SiteEntry> SiteTable<T> {
     }
 
     #[inline(always)]
+    /// The entries from `index` on, as a pointer `load_from` reads: a caller that holds it
+    /// re-derives it whenever the table grows or is replaced, which may move the mapping.
+    pub(super) fn entries_from(&self, index: usize) -> *const T::Stored {
+        self.base.as_ptr().wrapping_add(index)
+    }
+
+    /// Entry `offset` of `entries` (`entries_from`).
+    ///
+    /// # Safety
+    /// `entries` comes from `entries_from` of a table that has not grown or been replaced
+    /// since, and `offset` names one of its entries.
+    #[inline(always)]
+    pub(super) unsafe fn load_from(entries: *const T::Stored, offset: usize) -> T {
+        // SAFETY: per the contract.
+        T::load(unsafe { *entries.add(offset) })
+    }
+
     pub(super) fn get(&self, index: usize) -> T {
         assert!(index < self.len, "cache site out of range");
         // SAFETY: checked above.
