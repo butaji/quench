@@ -860,7 +860,7 @@ pub(super) fn compile_js_numeric_region(
                 terminal = true;
                 None
             }
-            JsDenotation::Unsupported => return None,
+            JsDenotation::Noop | JsDenotation::Unsupported => return None,
         };
         if let Some(value) = result {
             let destination = usize::from(instruction.result_register());
@@ -963,19 +963,18 @@ pub(super) fn compile_js_general_dispatch(
     builder.seal_block(entry);
     let parameters = builder.block_params(entry).to_vec();
     let context = parameters[0];
+    let arguments = parameters[3];
     let result_pointer = parameters[4];
-    let dispatch = builder.create_block();
-    let dispatch_pc = builder.append_block_param(dispatch, types::I64);
-    let continue_block = builder.create_block();
     let stopped_block = builder.create_block();
     let invalid_pc = builder.create_block();
+    let invalid_pc_value = builder.append_block_param(invalid_pc, types::I64);
     let callout = builder
         .ins()
         .load(types::I64, invariant(), context, CONTEXT_CALLOUT);
-    let initial_pc = builder.ins().iconst(types::I64, 0);
-    builder
-        .ins()
-        .jump(dispatch, &[ir::BlockArg::Value(initial_pc)]);
+    let blocks: Vec<_> = (0..instruction_count)
+        .map(|_| builder.create_block())
+        .collect();
+    builder.ins().jump(blocks[0], &[]);
 
     let mut callout_signature = Signature::new(isa.default_call_conv());
     for _ in 0..4 {
@@ -983,49 +982,147 @@ pub(super) fn compile_js_general_dispatch(
     }
     callout_signature.returns.push(AbiParam::new(types::I64));
     let callout_signature = builder.import_signature(callout_signature);
-    builder.switch_to_block(dispatch);
-    let call = builder.ins().call_indirect(
-        callout_signature,
-        callout,
-        &[context, dispatch_pc, result_pointer, result_pointer],
-    );
-    let status = builder.inst_results(call)[0];
-    let failed = builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
-    builder
-        .ins()
-        .brif(failed, stopped_block, &[], continue_block, &[]);
-    builder.seal_block(stopped_block);
     builder.switch_to_block(stopped_block);
     // A nonzero callout status has a rooted `JsStepDispatch` result in the
     // adapter payload. The status itself only tells the outer entry to stop.
     let stopped = builder.ins().iconst(types::I32, 1);
     builder.ins().return_(&[stopped]);
 
-    builder.seal_block(continue_block);
-    builder.switch_to_block(continue_block);
-    let next_pc = builder
-        .ins()
-        .load(types::I64, MemFlagsData::trusted(), result_pointer, 0);
-    let in_function = builder.ins().icmp_imm_u(
-        IntCC::UnsignedLessThan,
-        next_pc,
-        instruction_count as i64,
-    );
-    builder
-        .ins()
-        .brif(
-            in_function,
-            dispatch,
-            &[ir::BlockArg::Value(next_pc)],
-            invalid_pc,
-            &[],
-        );
-    builder.seal_block(invalid_pc);
     builder.switch_to_block(invalid_pc);
+    builder.ins().store(
+        MemFlagsData::trusted(),
+        invalid_pc_value,
+        result_pointer,
+        0,
+    );
     let out_of_range = builder.ins().iconst(types::I32, 2);
     builder.ins().return_(&[out_of_range]);
 
-    builder.seal_block(dispatch);
+    let register_offset = |register: u16| -> Option<i32> {
+        if register >= function.registers {
+            return None;
+        }
+        i32::try_from(usize::from(register).checked_mul(std::mem::size_of::<u64>())?).ok()
+    };
+    for (pc, block) in blocks.iter().copied().enumerate() {
+        builder.switch_to_block(block);
+        let packed = function.code[pc];
+        let instruction = super::dispatch_fast::decoded_instruction(function, packed);
+        let next = blocks.get(pc + 1).copied();
+        let direct = if let Some(next) = next {
+            match instruction.op().js_denotation() {
+                JsDenotation::Noop
+                    if instruction.result_flags() == 0
+                        && !instruction.returns_from_frame()
+                        && !instruction.writes_current_this() =>
+                {
+                    builder.ins().jump(next, &[]);
+                    true
+                }
+                JsDenotation::Move
+                    if instruction.result_flags() == 0
+                        && !instruction.returns_from_frame()
+                        && !instruction.writes_current_this() =>
+                {
+                    if let (Some(source), Some(destination)) = (
+                        register_offset(instruction.register_b()),
+                        register_offset(instruction.result_register()),
+                    ) {
+                        let value = builder.ins().load(
+                            types::I64,
+                            MemFlagsData::trusted(),
+                            arguments,
+                            source,
+                        );
+                        builder.ins().store(
+                            MemFlagsData::trusted(),
+                            value,
+                            arguments,
+                            destination,
+                        );
+                        builder.ins().jump(next, &[]);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                JsDenotation::LoadConst
+                    if instruction.result_flags() == 0
+                        && !instruction.returns_from_frame()
+                        && !instruction.writes_current_this() =>
+                {
+                    let value = program.constants.get(instruction.constant_index()).and_then(
+                        |constant| match constant {
+                            crate::bytecode::Constant::Number(value) => {
+                                Some(Value::number(*value))
+                            }
+                            crate::bytecode::Constant::Boolean(value) => {
+                                Some(Value::boolean(*value))
+                            }
+                            crate::bytecode::Constant::Null => Some(Value::NULL),
+                            crate::bytecode::Constant::Undefined => Some(Value::UNDEFINED),
+                            crate::bytecode::Constant::String(_)
+                            | crate::bytecode::Constant::StringUnits(_)
+                            | crate::bytecode::Constant::BigInt(_)
+                            | crate::bytecode::Constant::WasmBits64(_)
+                            | crate::bytecode::Constant::WasmV128(_) => None,
+                        },
+                    );
+                    if let (Some(value), Some(destination)) =
+                        (value, register_offset(instruction.result_register()))
+                    {
+                        let value = builder.ins().iconst(types::I64, value.to_bits() as i64);
+                        builder.ins().store(
+                            MemFlagsData::trusted(),
+                            value,
+                            arguments,
+                            destination,
+                        );
+                        builder.ins().jump(next, &[]);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+        if direct {
+            continue;
+        }
+
+        let pc_value = builder.ins().iconst(types::I64, pc as i64);
+        let call = builder.ins().call_indirect(
+            callout_signature,
+            callout,
+            &[context, pc_value, result_pointer, result_pointer],
+        );
+        let status = builder.inst_results(call)[0];
+        let failed = builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
+        let continue_block = builder.create_block();
+        builder.ins().brif(failed, stopped_block, &[], continue_block, &[]);
+
+        builder.switch_to_block(continue_block);
+        let next_pc = builder
+            .ins()
+            .load(types::I64, MemFlagsData::trusted(), result_pointer, 0);
+        let selector = builder.ins().ireduce(types::I32, next_pc);
+        let cases: Vec<_> = blocks
+            .iter()
+            .map(|target| builder.func.dfg.block_call(*target, &[]))
+            .collect();
+        let invalid_argument = ir::BlockArg::Value(next_pc);
+        let default = builder
+            .func
+            .dfg
+            .block_call(invalid_pc, &[invalid_argument]);
+        let table = ir::JumpTableData::new(default, &cases);
+        let table = builder.create_jump_table(table);
+        builder.ins().br_table(selector, table);
+        builder.seal_block(continue_block);
+    }
     builder.seal_all_blocks();
     builder.finalize(isa.frontend_config());
     let code = compile_native_function(
@@ -3609,6 +3706,8 @@ struct JsStepDispatch {
     program_id: ProgramId,
     frame: usize,
     allow_inline_calls: bool,
+    native_registers: *mut Value,
+    register_count: usize,
     outcome: Option<JsNativeStep>,
 }
 
@@ -3663,6 +3762,17 @@ unsafe extern "C" fn js_step_callout<H: Host>(
             .checked_add(1)
             .ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
 
+        if vm.frames[dispatch.frame].registers.len() != dispatch.register_count {
+            return Err(JsError::validation(
+                "native JS frame register layout changed".into(),
+            ));
+        }
+        let native_registers = unsafe {
+            std::slice::from_raw_parts(dispatch.native_registers, dispatch.register_count)
+        };
+        vm.frames[dispatch.frame]
+            .registers
+            .copy_from_slice(native_registers);
         vm.frames[dispatch.frame].pc = pc;
         vm.frames[dispatch.frame].pc_is_resume = false;
         if let Err(error) = vm.check_execution_interrupt() {
@@ -3693,6 +3803,13 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                         )),
                     }));
                 }
+                let native_registers = unsafe {
+                    std::slice::from_raw_parts_mut(
+                        dispatch.native_registers,
+                        dispatch.register_count,
+                    )
+                };
+                native_registers.copy_from_slice(&vm.frames[dispatch.frame].registers);
                 vm.frames[dispatch.frame].pc = next;
                 vm.frames[dispatch.frame].pc_is_resume = true;
                 Ok(JsCalloutStep::Continue(next))
@@ -3999,6 +4116,20 @@ impl CompiledJsFunction {
         context.vm = vm.cast();
         context.program = program;
         context.callout = js_step_callout::<H> as Callout as usize;
+        let dispatch_frame = unsafe { (*payload.cast::<JsStepDispatch>()).frame };
+        let mut native_registers = smallvec::SmallVec::<[Value; 32]>::new();
+        let register_count = unsafe {
+            let vm = &*vm.cast::<Vm<H>>();
+            let frame = vm.frames.get(dispatch_frame)?;
+            native_registers.extend_from_slice(&frame.registers);
+            frame.registers.len()
+        };
+        unsafe {
+            let dispatch = &mut *payload.cast::<JsStepDispatch>();
+            dispatch.native_registers = native_registers.as_mut_ptr();
+            dispatch.register_count = register_count;
+        }
+        let arguments = native_registers.as_mut_ptr().cast::<u64>();
         let mut word = 0u64;
         // SAFETY: the function's bytecode, frame and adapter payload outlive
         // the native dispatch. The callout writes only `word` and its payload.
@@ -4007,7 +4138,7 @@ impl CompiledJsFunction {
                 &mut context,
                 0,
                 0,
-                std::ptr::null(),
+                arguments,
                 &mut word,
                 NativeEntryMode::Resumable,
                 entry,
@@ -4027,7 +4158,15 @@ impl CompiledJsFunction {
                 unsafe { (*payload.cast::<JsStepDispatch>()).outcome.take() }
                     .map(JsNativeDispatchResult::Step)
             }
-            2 => Some(JsNativeDispatchResult::Resume(word as usize)),
+            2 => {
+                let vm = unsafe { &mut *vm.cast::<Vm<H>>() };
+                let frame = vm.frames.get_mut(dispatch_frame)?;
+                if frame.registers.len() != native_registers.len() {
+                    return None;
+                }
+                frame.registers.copy_from_slice(&native_registers);
+                Some(JsNativeDispatchResult::Resume(word as usize))
+            }
             _ => None,
         }
     }
@@ -8500,6 +8639,8 @@ impl<H: Host> Vm<H> {
             program_id,
             frame,
             allow_inline_calls,
+            native_registers: std::ptr::null_mut(),
+            register_count: 0,
             outcome: None,
         };
         let interrupt = self.execution_interrupt.atomic_flag();
