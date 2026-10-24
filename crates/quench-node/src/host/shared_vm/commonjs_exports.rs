@@ -16,6 +16,21 @@ pub(super) fn names(path: &Path, source: &str) -> Vec<String> {
     names.into_iter().collect()
 }
 
+pub(crate) fn parse(source: &str) -> (Vec<String>, Vec<String>) {
+    let allocator = oxc_allocator::Allocator::default();
+    let parsed = oxc_parser::Parser::new(&allocator, source, oxc_span::SourceType::cjs()).parse();
+    let mut exports = Exports {
+        source,
+        names: BTreeSet::new(),
+        reexports: BTreeSet::new(),
+    };
+    exports.visit_program(&parsed.program);
+    (
+        exports.names.into_iter().collect(),
+        exports.reexports.into_iter().collect(),
+    )
+}
+
 fn collect(
     path: &Path,
     source: &str,

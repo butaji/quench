@@ -4,7 +4,7 @@ use super::NodeHost;
 use quench_runtime::{HostFunction, HostFunctionId, NativeContext, RootedError, SystemHost};
 
 pub(crate) mod commonjs;
-mod commonjs_exports;
+pub(crate) mod commonjs_exports;
 pub(crate) mod policy_projection;
 pub(crate) use commonjs::source_kind;
 
@@ -1000,6 +1000,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "traceInitialize" (2) => crate::modules::trace_shared_vm::initialize,
         method "traceInspect" (3) => crate::modules::trace_shared_vm::inspect,
         method "traceInternal" (1) => crate::modules::trace_shared_vm::internal_binding,
+        method "cjsLexerParse" (1) => crate::modules::trace_shared_vm::cjs_lexer_parse,
         method "traceRecord" (5) => crate::modules::trace_shared_vm::record,
         method "traceCategoryBuffer" (1) => crate::modules::trace_shared_vm::category_buffer,
         method "traceCategoryEnabled" (1) => crate::modules::trace_shared_vm::category_enabled,

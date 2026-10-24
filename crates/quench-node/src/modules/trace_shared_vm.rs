@@ -449,6 +449,13 @@ fn build_internal_binding(
             put(context, binding, "usePerfetto", perfetto)?;
             Ok(binding)
         }
+        "cjs_lexer" => {
+            let binding = context.object_rooted()?;
+            let parse =
+                context.host_function(crate::host::shared_vm::operation("cjsLexerParse"))?;
+            put(context, binding, "parse", parse)?;
+            Ok(binding)
+        }
         "constants" => {
             let binding = context.object_rooted()?;
             let fs = super::fs_shared_vm::fs_constants(context)?;
@@ -485,6 +492,43 @@ fn build_internal_binding(
             return Err(context.throw(error));
         }
     }
+}
+
+pub(crate) fn cjs_lexer_parse(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let absent = context.undefined();
+    let source = args.first().copied().unwrap_or(absent);
+    let source_text = if undefined(context, source)
+        || context
+            .rooted_value(source)
+            .is_some_and(|value| value.is_null())
+    {
+        String::new()
+    } else if let Some(source) = context.string_text(source)? {
+        source
+    } else {
+        let error = context.type_error_rooted("source must be a string")?;
+        return Err(context.throw(error));
+    };
+    let (exports, reexports) = crate::host::shared_vm::commonjs_exports::parse(&source_text);
+    let export_values = exports
+        .iter()
+        .map(|name| context.string_rooted(name))
+        .collect::<Vec<_>>();
+    let reexport_values = reexports
+        .iter()
+        .map(|name| context.string_rooted(name))
+        .collect::<Vec<_>>();
+    let export_values = context.array_rooted(&export_values)?;
+    let reexport_values = context.array_rooted(&reexport_values)?;
+    let global = context.global_root()?;
+    let set_constructor = get(context, global, "Set")?;
+    let export_set =
+        context.construct_rooted(set_constructor, set_constructor, &[export_values])?;
+    context.array_rooted(&[export_set, reexport_values])
 }
 
 /// Surface the parts of Node's tty_wrap binding used by the public tty module
