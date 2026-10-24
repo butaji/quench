@@ -397,7 +397,6 @@ struct Admission<'a> {
     pub(crate) fields: Vec<FieldUse>,
     numbers: std::collections::BTreeMap<u16, f64>,
     values: std::collections::BTreeMap<u16, Value>,
-    writes_indexed: bool,
 }
 
 impl Admission<'_> {
@@ -480,7 +479,6 @@ pub(super) fn region(
         fields: Vec::new(),
         numbers: std::collections::BTreeMap::new(),
         values: std::collections::BTreeMap::new(),
-        writes_indexed: false,
     };
     for instruction in &decoded[start..=end] {
         admit(&mut admission, *instruction, constants, &tagged)
@@ -496,15 +494,16 @@ pub(super) fn region(
     if admission.fields.len() > MAX_REGION_FIELDS {
         return Err(RegionRejection::FieldLimit);
     }
-    if !admission.fields.is_empty()
-        && (admission.writes_indexed
-            || admission.fields.iter().any(|field| match field.receiver {
-                FieldReceiver::This => false,
-                FieldReceiver::Register(register) => decoded[start..=end]
-                    .iter()
-                    .any(|instruction| number_definition(*instruction) == Some(register)),
-            }))
-    {
+    // A field read holds the value its receiver had at entry, so no instruction may give a
+    // receiver register another value. Element stores cannot change one: a store writes an
+    // existing, non-hole element within the length it guards (`Lowering::index`), which
+    // neither adds, removes nor redefines a named property.
+    if admission.fields.iter().any(|field| match field.receiver {
+        FieldReceiver::This => false,
+        FieldReceiver::Register(register) => decoded[start..=end]
+            .iter()
+            .any(|instruction| number_definition(*instruction) == Some(register)),
+    }) {
         return Err(RegionRejection::FieldMutation);
     }
     let registers = usize::from(function.registers);
@@ -644,7 +643,6 @@ fn admit(
             }
         }
         Op::SetIndex => {
-            admission.writes_indexed = true;
             admission.number(instruction.register_a())?;
             admission.note(instruction.register_b(), Role::Array { written: true })?;
             admission.number(instruction.register_c())?;
