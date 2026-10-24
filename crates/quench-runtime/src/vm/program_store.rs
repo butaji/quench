@@ -1635,7 +1635,7 @@ impl ProgramStore {
     }
 
     /// Records the counters `QUENCH_JS_JIT_STATS` enables, for a test to read.
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn enable_js_jit_diagnostics(&mut self) {
         self.js_jit_diagnostics.get_or_insert_with(FxHashMap::default);
     }
