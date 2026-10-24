@@ -1551,7 +1551,7 @@ impl ProgramStore {
     /// code-cache budget remain the single owners for both baseline and
     /// Compile a hot function's general baseline without pricing it, for tests of its
     /// semantics.
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn compile_general_baseline_when_hot(&mut self) {
         self.general_baseline_priced = false;
     }
