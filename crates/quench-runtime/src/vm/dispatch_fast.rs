@@ -5492,9 +5492,11 @@ script_handler! {
         {
             next!(cx, r, header, Carried::script(cx))
         }
-        let Some(entry) = lane_loop_entry(cx, r, site) else {
+        // The record is filled where it lives, so its words are neither cleared nor copied.
+        let mut entry = super::compiled::LoopEntry::new();
+        if lane_loop_entry(cx, r, site, &mut entry).is_none() {
             next!(cx, r, header, Carried::script(cx))
-        };
+        }
         // The tier's state is borrowed only here, so the dispatch below holds no borrow.
         let continuation = lane_loop_run(cx, r, site, &entry);
         // SAFETY: native code returns PCs of the function, whose records are contiguous.
@@ -5632,10 +5634,10 @@ fn lane_loop_entry<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     site: &LoopSite,
-) -> Option<super::compiled::LoopEntry> {
+    entry: &mut super::compiled::LoopEntry,
+) -> Option<()> {
     let vm = unsafe { vm(cx) };
     let region = &site.region;
-    let mut entry = super::compiled::LoopEntry::new();
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
         if slots.is_null() {
@@ -5685,7 +5687,7 @@ fn lane_loop_entry<H: Host>(
         };
         entry.push_field(value, field.tagged)?;
     }
-    Some(entry)
+    Some(())
 }
 
 script_handler! {
