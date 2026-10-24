@@ -1495,7 +1495,7 @@ struct Lowering<'a, 'b> {
     /// whose other arm returns into the chain), so every chain block dominates the blocks
     /// lowered after it in the chain.
     chains: std::collections::HashMap<ir::Block, ir::Block>,
-    /// The exact `i32` results computed so far, by operator and operands, with the chain
+    /// The exact `i32` results computed so far, by operator and operands (`int32_key`), with the chain
     /// computing them: the same arithmetic later in that chain is that result, its guards
     /// having passed.
     exact: std::collections::BTreeMap<
@@ -2365,13 +2365,17 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let chain = self.chain(current);
         // A variable read where a join's parameter proved trivial is an alias of its value.
         let (left, right) = (self.body.builder.func.dfg.resolve_aliases(left), self.body.builder.func.dfg.resolve_aliases(right));
-        if let Some((result, computed)) = self.exact.get(&(operator, left, right)) {
+        let key = {
+            let dfg = &self.body.builder.func.dfg;
+            (operator, int32_key(dfg, left), int32_key(dfg, right))
+        };
+        if let Some((result, computed)) = self.exact.get(&key) {
             if *computed == chain {
                 return *result;
             }
         }
         let result = self.int32_arithmetic_guarded(pc, operator, register, left, right);
-        self.exact.insert((operator, left, right), (result, chain));
+        self.exact.insert(key, (result, chain));
         result
     }
 
@@ -2762,4 +2766,23 @@ impl<'a, 'b> Lowering<'a, 'b> {
             _ => None,
         }
     }
+}
+
+/// The SSA value an `i32` operand is a pure function of, so that two reads of one register
+/// definition key the same arithmetic: each read of an `i32` view narrows its stored
+/// zero-extended value anew (`Body::read`), giving distinct `ireduce`s of one value, and a
+/// view written in the same block chain reads back as `ireduce(uextend(x))`, which is `x`.
+fn int32_key(dfg: &ir::DataFlowGraph, value: ir::Value) -> ir::Value {
+    let operand = |value: ir::Value, opcode: ir::Opcode| match dfg.value_def(value) {
+        ir::ValueDef::Result(instruction, 0) => match dfg.insts[instruction] {
+            ir::InstructionData::Unary { opcode: found, arg } if found == opcode => Some(dfg.resolve_aliases(arg)),
+            _ => None,
+        },
+        _ => None,
+    };
+    let value = dfg.resolve_aliases(value);
+    let Some(wide) = operand(value, ir::Opcode::Ireduce) else { return value };
+    operand(wide, ir::Opcode::Uextend)
+        .filter(|narrow| dfg.value_type(*narrow) == types::I32)
+        .unwrap_or(wide)
 }
