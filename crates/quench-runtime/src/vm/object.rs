@@ -3788,6 +3788,10 @@ impl<H: Host> Vm<H> {
     pub(super) fn transition_property_shape(&mut self, shape: u32, key: PropertyKey) -> u32 {
         self.transition_data_property_shape(shape, key, DEFAULT_DATA_ATTRIBUTES)
     }
+    /// Out of line and of plain values: a lane construct that inlined it would otherwise pass
+    /// the transition it builds by its stack address, which keeps the construct's dispatch
+    /// from being a sibling call (`tools/check-lane-tail-calls.sh`).
+    #[inline(never)]
     pub(super) fn transition_data_property_shape(
         &mut self,
         shape: u32,
