@@ -4364,6 +4364,12 @@ pub(super) struct JsEntryFacts {
     /// Whether an entry may run native code (`Vm::js_jit_at_entry`): the function is a tier
     /// candidate, or one of the entry patterns that run without a tier matched it.
     pub(super) enters: bool,
+    /// Whether the function is a specialized tier candidate (`function_candidate`).
+    pub(super) candidate: bool,
+    /// Whether the general baseline admits it (`js_general_dispatch_candidate`), and
+    /// without backward jumps (`js_general_dispatch_acyclic_candidate`).
+    pub(super) general: bool,
+    pub(super) general_acyclic: bool,
 }
 
 impl JsEntryFacts {
@@ -4371,16 +4377,19 @@ impl JsEntryFacts {
         let numeric_find = numeric_find_candidate(function);
         let field_increment = cached_this_field_increment_candidate(program, function);
         let field_return = cached_this_field_return_candidate(function);
-        let enters = function_candidate(function, program)
-            || numeric_find.is_some()
-            || field_increment.is_some()
-            || field_return.is_some();
+        let candidate = function_candidate(function, program);
+        let general = super::compiled::js_general_dispatch_candidate(program, function);
+        let general_acyclic = general && super::compiled::js_general_dispatch_acyclic_candidate(program, function);
+        let enters = candidate || numeric_find.is_some() || field_increment.is_some() || field_return.is_some();
         // The other facts are read only past the candidate check an entering function passes.
         if !enters {
-            return Self::default();
+            return Self { candidate, general, general_acyclic, ..Self::default() };
         }
         Self {
             enters,
+            candidate,
+            general,
+            general_acyclic,
             numeric_find,
             field_increment,
             field_return,
