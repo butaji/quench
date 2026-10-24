@@ -73,22 +73,24 @@ impl EnvironmentEdge {
 
 /// A set of slot indexes, one bit each, inline for an environment of up to one word's slots.
 #[derive(Debug)]
-struct SlotSet(SmallVec<[u64; 1]>);
+struct SlotSet {
+    words: SmallVec<[u64; 1]>,
+}
 
 impl SlotSet {
     fn new(slots: usize) -> Self {
-        Self(smallvec::smallvec![0; slots.div_ceil(u64::BITS as usize)])
+        Self { words: smallvec::smallvec![0; slots.div_ceil(u64::BITS as usize)] }
     }
 
     fn contains(&self, slot: usize) -> bool {
-        self.0
+        self.words
             .get(slot / u64::BITS as usize)
             .is_some_and(|word| word & (1 << (slot % u64::BITS as usize)) != 0)
     }
 
     /// Adds `slot`; `false` when it was in the set (or past its slots).
     fn insert(&mut self, slot: usize) -> bool {
-        let Some(word) = self.0.get_mut(slot / u64::BITS as usize) else {
+        let Some(word) = self.words.get_mut(slot / u64::BITS as usize) else {
             return false;
         };
         let bit = 1 << (slot % u64::BITS as usize);
@@ -109,9 +111,9 @@ struct PartialEnvironment {
     lexical_this: bool,
     /// Whether a `Whole` edge reached it.
     whole: bool,
-    /// The closure edges followed through it, as (program, function, distance): closures of
-    /// one function made in one activation read the same slots.
-    followed: SmallVec<[(u32, u32, u32); 1]>,
+    /// What the closure edges followed through it have cost: one for each edge and its edge
+    /// to the parent, and one for each slot its demand walked (`whole_cost`).
+    closure_cost: usize,
 }
 
 impl PartialEnvironment {
@@ -121,8 +123,19 @@ impl PartialEnvironment {
             initialization: None,
             lexical_this: false,
             whole: false,
-            followed: SmallVec::new(),
+            closure_cost: 0,
         }
+    }
+
+    /// What tracing an environment of `slots` whole costs, in the units of `closure_cost`:
+    /// each slot, and the edge to its parent. Closure edges into one environment may cost
+    /// as much again before it is traced whole, so a full collection's environment trace
+    /// costs at most about twice the whole-chain trace it refines. A scope that thousands of
+    /// functions close over, as a module's is, otherwise walked a demand per function
+    /// (typescript-eslint, npm lane 2026-10-24: 24M slot reads over 8 full collections and
+    /// a 40% slower run).
+    fn whole_cost(slots: usize) -> usize {
+        slots + 1
     }
 
     /// Records `slot` read for its initialization alone; `false` when it already was.
@@ -155,6 +168,11 @@ pub(crate) struct EnvironmentTrace<'s> {
     /// page of it for nearly every environment, at each full collection's peak.
     entries: rustc_hash::FxHashMap<u32, u32>,
     pending: Vec<EnvironmentEdge>,
+    /// The closure edges followed, as (environment heap slot, program, function, distance):
+    /// closures of one function made in one activation read the same slots, so each is
+    /// followed once. One set for the trace, since a module environment reaches thousands
+    /// of functions' edges and a per-environment list made each check linear in them.
+    followed: rustc_hash::FxHashSet<(u32, u32, u32, u32)>,
     /// The last program whose table a closure edge read, which the next one most often reads.
     last_reads: Option<(u32, Option<&'s ClosureReads>)>,
 }
@@ -168,6 +186,7 @@ impl<'s> EnvironmentTrace<'s> {
             partial: Vec::new(),
             entries: rustc_hash::FxHashMap::default(),
             pending: Vec::new(),
+            followed: rustc_hash::FxHashSet::default(),
             last_reads: None,
         }
     }
@@ -285,9 +304,8 @@ impl Heap {
         };
         let (parent, function, program) = (*parent, *function, scope.program());
         if let EnvironmentEdge::Closure { program, function: closure, distance, .. } = edge
-            && trace
-                .entry(index)
-                .is_some_and(|entry| trace.partial[entry].followed.contains(&(program, closure, distance)))
+            && (trace.entry(index).is_some_and(|entry| trace.partial[entry].whole)
+                || !trace.followed.insert((index, program, closure, distance)))
         {
             return;
         }
@@ -356,7 +374,15 @@ impl Heap {
         let has_parent = parent.legacy_heap_index().is_some();
         let read_lexical_this = match edge {
             EnvironmentEdge::Closure { program, function: closure, distance, .. } => {
-                partial.followed.push((program, closure, distance));
+                let walked = match demand {
+                    Some(demand @ EnvironmentDemand::Slots { .. }) => demand.slot_count(),
+                    _ => slots.len(),
+                };
+                partial.closure_cost += 1 + walked;
+                if partial.closure_cost > PartialEnvironment::whole_cost(slots.len()) {
+                    pending.push(EnvironmentEdge::Whole { environment });
+                    return;
+                }
                 match demand {
                     Some(demand @ EnvironmentDemand::Slots { lexical_this, .. }) => {
                         for slot in demand.slot_iter() {

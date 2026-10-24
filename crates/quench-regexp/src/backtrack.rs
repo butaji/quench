@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use std::ops::Range;
 
 use super::{
-    canonical, canonical_preimages_of, class_is_single_unit, class_matches, equal, is_line_terminator, is_word_mode, merge_flags,
+    canonical, canonical_preimages_of, class_is_single_unit, class_item_matches, class_matches, equal, is_line_terminator, is_word_mode, merge_flags,
     literal_finder, Assertion, Backreference, ClassExpr, ClassItem, ClassKind, Expr, Flags, LiteralFinder, Lookaround,
     Unit, ASCII_MAX,
 };
@@ -257,20 +257,11 @@ impl Beyond {
                 let members = ranges
                     .iter()
                     .take_while(|(min, _)| *min < ASCII_UNITS)
-                    .fold(0u128, |bits, &(min, max)| {
-                        let max = max.min(ASCII_UNITS - 1);
-                        bits | (u128::MAX >> (ASCII_UNITS - 1 - max)) & (u128::MAX << min)
-                    });
+                    .fold(0u128, |bits, &(min, max)| bits | range_ascii_mask(min, max));
                 if *negative { !members } else { members }
             }
-            // The units folding to the literal's canonical form: that form and its preimages.
-            Self::Literal { value, unicode } => {
-                let form = canonical(*value, *unicode);
-                std::iter::once(form)
-                    .chain(canonical_preimages_of(form, *unicode))
-                    .filter(|unit| *unit < ASCII_UNITS && canonical(*unit, *unicode) == form)
-                    .fold(0u128, |bits, unit| bits | 1 << unit)
-            }
+            Self::Literal { value, unicode } => folded_ascii_mask(*value, *unicode),
+            Self::Class { class, ignore_case, unicode } => class_ascii_mask(class, *ignore_case, *unicode),
             _ => (0..ASCII_UNITS)
                 .filter(|value| self.matches(*value))
                 .fold(0u128, |bits, value| bits | 1 << value),
@@ -306,6 +297,53 @@ impl Beyond {
                 member != *negative
             }
         }
+    }
+}
+
+/// The ASCII units of `min..=max`, one bit per unit.
+fn range_ascii_mask(min: u32, max: u32) -> u128 {
+    if min >= ASCII_UNITS || min > max {
+        return 0;
+    }
+    let max = max.min(ASCII_UNITS - 1);
+    (u128::MAX >> (ASCII_UNITS - 1 - max)) & (u128::MAX << min)
+}
+
+/// The ASCII units equal to `value` under case folding (`equal` ignoring case): those
+/// folding to its canonical form, which are that form and its preimages.
+fn folded_ascii_mask(value: u32, unicode: bool) -> u128 {
+    let form = canonical(value, unicode);
+    std::iter::once(form)
+        .chain(canonical_preimages_of(form, unicode))
+        .filter(|unit| *unit < ASCII_UNITS && canonical(*unit, unicode) == form)
+        .fold(0u128, |bits, unit| bits | 1 << unit)
+}
+
+/// The ASCII units `class` admits (`class_matches`), combined from each item's as its kind
+/// combines their tests.
+fn class_ascii_mask(class: &ClassExpr, ignore_case: bool, unicode: bool) -> u128 {
+    let mut items = class.items.iter().map(|item| class_item_ascii_mask(item, ignore_case, unicode));
+    let members = match class.kind {
+        ClassKind::Union => items.fold(0, |bits, item| bits | item),
+        ClassKind::Intersection => items.fold(u128::MAX, |bits, item| bits & item),
+        ClassKind::Subtraction => {
+            let first = items.next().unwrap_or(0);
+            items.fold(first, |bits, item| bits & !item)
+        }
+    };
+    if class.negative { !members } else { members }
+}
+
+/// The ASCII units one class item admits (`class_item_matches`): exact for a character and,
+/// without case folding, a range; by testing each ASCII unit otherwise.
+fn class_item_ascii_mask(item: &ClassItem, ignore_case: bool, unicode: bool) -> u128 {
+    match *item {
+        ClassItem::Character(character) if !ignore_case => range_ascii_mask(character, character),
+        ClassItem::Character(character) => folded_ascii_mask(character, unicode),
+        ClassItem::Range(min, max) if !ignore_case => range_ascii_mask(min, max),
+        _ => (0..ASCII_UNITS)
+            .filter(|value| class_item_matches(item, *value, ignore_case, unicode))
+            .fold(0u128, |bits, value| bits | 1 << value),
     }
 }
 
@@ -1954,6 +1992,48 @@ mod tests {
                     .filter(|unit| beyond.matches(*unit))
                     .fold(0u128, |bits, unit| bits | 1 << unit);
                 assert_eq!(beyond.ascii_mask(), each, "{value:#x} unicode={unicode}");
+            }
+        }
+    }
+
+    /// A class test's derived ASCII mask: the units its per-unit test admits, for each class
+    /// kind, negation and flag set, over characters (some folding with ASCII letters),
+    /// ranges, escapes and a nested class.
+    #[test]
+    fn class_ascii_mask_matches_each_unit() {
+        use super::super::{ClassExpr, ClassItem, ClassKind};
+        use oxc::regular_expression::ast::CharacterClassEscapeKind as Escape;
+        let items = || {
+            vec![
+                ClassItem::Character(u32::from('k')),
+                ClassItem::Character(0x212a),
+                ClassItem::Character(0x17f),
+                ClassItem::Range(u32::from('A'), u32::from('F')),
+                ClassItem::Range(0x60, 0x2000),
+                ClassItem::Escape(Escape::D),
+                ClassItem::Escape(Escape::NegativeW),
+                ClassItem::Escape(Escape::S),
+                ClassItem::Nested(ClassExpr {
+                    negative: true,
+                    kind: ClassKind::Union,
+                    items: vec![ClassItem::Range(u32::from('0'), u32::from('z'))],
+                }),
+            ]
+        };
+        for kind in [ClassKind::Union, ClassKind::Intersection, ClassKind::Subtraction] {
+            for take in 0..=items().len() {
+                for negative in [false, true] {
+                    for ignore_case in [false, true] {
+                        for unicode in [false, true] {
+                            let class = ClassExpr { negative, kind, items: items().into_iter().skip(take % 3).take(take).collect() };
+                            let beyond = Beyond::Class { class, ignore_case, unicode };
+                            let each = (0..ASCII_UNITS)
+                                .filter(|unit| beyond.matches(*unit))
+                                .fold(0u128, |bits, unit| bits | 1 << unit);
+                            assert_eq!(beyond.ascii_mask(), each, "take={take} negative={negative} i={ignore_case} u={unicode}");
+                        }
+                    }
+                }
             }
         }
     }
