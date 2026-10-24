@@ -1208,7 +1208,7 @@ pub(super) fn compile_js_general_dispatch(
                         && !instruction.writes_current_this() =>
                 {
                     let target = usize::try_from(instruction.jump_target()).ok();
-                    if let Some(target) = target
+                    if let Some(target) = target.filter(|target| *target > pc)
                         && let Some(target) = blocks.get(target).copied()
                     {
                         builder.ins().jump(target, &[]);
