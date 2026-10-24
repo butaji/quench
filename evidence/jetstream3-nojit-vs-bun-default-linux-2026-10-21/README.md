@@ -60,3 +60,25 @@ Geomean score 0.790× Bun no-JIT, max RSS 1.53× smaller; 7/34 tests at ≥1.2×
 The lowest score ratios are argon2-wasm 0.23, web-ssr 0.32, doxbee-async 0.34,
 bigint-noble-ed25519 0.36, chai 0.38, validatorjs 0.39, doxbee-promise 0.41, async-fs 0.42.
 RSS is above Bun on babel-wtb, postcss-wtb (0.95) and doxbee-promise (0.92).
+
+## Paired sweep at 2e17be07a (2026-10-24)
+
+Same method and host as the 740c3c6c1 sweep (`psweep.sh`, quench and Bun `BUN_JSC_useJIT=0`
+back to back per test; Linux 6.18.44-fc-v153, Xeon 2.10GHz, 4 vCPU). Raw rows:
+`paired-2e17be07-raw.txt`; ratios with the previous sweep's beside them:
+`paired-2e17be07-ratios.txt`.
+
+Geomean score 0.788× Bun no-JIT (was 0.790), max RSS 1.59× smaller (was 1.53); 6/34 tests at
+≥1.2× score, 26/34 at ≥1.2× smaller RSS. Gains since 740c3c6c1: chai 0.38 → 0.56 and RSS
+1.21 → 1.84, validatorjs 0.39 → 0.45, postcss 0.52 → 0.63 and RSS 0.95 → 1.12, babel RSS
+0.95 → 1.09, doxbee-promise RSS 0.92 → 1.02, bigint 0.36 → 0.51, prettier 0.66 → 0.76,
+esprima-next 0.73 → 0.89, json-stringify 0.47 → 0.54. The stanford-crypto tests and hash-map
+fell (sha256 1.23 → 0.79, pbkdf2 1.10 → 0.70, aes 0.93 → 0.69, hash-map 1.08 → 0.88): the
+merge of origin/v2-merged at 3464b1bb5 brought a ~30% slowdown on them (sha256 38.2 before
+the merge, 26.7 at it, same host, paired medians); see the bisect note below.
+
+Bisect: `git bisect run` over origin/v2-merged (good 1c4b797e2, scoring
+stanford-crypto-sha256 ≥ 32) names b00f1cd5e (jit: share number bitwise lowering stage) as
+the first bad commit. 282264598 restores int-tagged bitwise results; paired medians on the
+same host then: sha256 27.6 → 39.5 (pre-regression 39.4), pbkdf2 28.0 → 38.1, aes 21.2 →
+28.1, hash-map 23.3 → 24.6. The ratios above predate that fix.
