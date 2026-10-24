@@ -1948,9 +1948,15 @@ impl Function {
     /// Whether the activation itself may read its implicit bindings through a name or scope
     /// operation, or must keep them for its kind of activation.
     fn activation_binding_reads(&self, atoms: &AtomTable) -> bool {
+        self.is_class_constructor || self.binding_reads_beside_class(atoms)
+    }
+
+    /// `activation_binding_reads` but for a class constructor's own kind: a base class
+    /// constructor's body that reaches none of its implicit bindings (`new.target`, `super`
+    /// and the like read hidden names) needs none to run frameless when constructed.
+    fn binding_reads_beside_class(&self, atoms: &AtomTable) -> bool {
         self.is_async
             || self.is_generator
-            || self.is_class_constructor
             || self.derived_constructor
             // A field initializer or static block keeps its instance's implicit bindings; an
             // arrow inside one (also `class_initializer`) binds none of its own.
@@ -2093,7 +2099,7 @@ impl Function {
             // (`activation_binding_reads`) or its home as a capture, as any closure reads one.
             // Ordinary but for a rest parameter, which a frameless activation gathers
             // (`CallEntry::Gathers`) and a plain frame does not.
-            let ordinary_with_rest = self.parent.is_some()
+            let registers_layout = self.parent.is_some()
                 && !self.derived_constructor
                 && self.self_binding_slot.is_none()
                 && !self.parameter_eval_arguments_error
@@ -2101,9 +2107,15 @@ impl Function {
                 && !self.is_generator
                 && !self.is_async
                 && promoted_parameters == usize::from(self.params)
-                && !self.activation_binding_reads(atoms)
                 // A plain activation makes no closure, whichever bindings it would see.
                 && !self.instructions().any(|instruction| instruction.op() == Op::MakeClosure);
+            let ordinary_with_rest = registers_layout && !self.activation_binding_reads(atoms);
+            // A base class constructor laid out as an ordinary function runs frameless when
+            // constructed (`lane_script_construct`); its calls, which throw, keep a frame.
+            let constructs_frameless = registers_layout
+                && self.is_class_constructor
+                && !self.rest
+                && !self.binding_reads_beside_class(atoms);
             let ordinary = ordinary_with_rest && !self.rest;
             // A field initializer is an ordinary method call on the instance whose
             // activation keeps its implicit bindings (`activation_binding_reads`); only the
@@ -2174,8 +2186,7 @@ impl Function {
                 live_parameters,
                 addresses_locals,
                 forwards_arguments,
-                registers_only: ordinary_with_rest
-                    && in_loop
+                registers_only: (ordinary_with_rest && in_loop || constructs_frameless)
                     && self.initial_register == InitialRegister::Undefined
                     && if self.arguments_slot.is_none() {
                         // A rest body's activation keeps every value passed

@@ -182,14 +182,8 @@ impl<H: Host> Vm<H> {
         value: Option<Value>,
     ) -> Result<usize, JsError> {
         let number = self.to_number(p, value.unwrap_or(Value::UNDEFINED))?;
-        if number.is_nan() || number == 0.0 {
-            return Ok(0);
-        }
-        let integer = number.trunc();
-        if !integer.is_finite() || integer < 0.0 || integer > MAX_SAFE_INTEGER {
-            return Err(self.range_error(p, "DataView index is out of range".into()));
-        }
-        Ok(integer as usize)
+        data_view_index_of(number)
+            .ok_or_else(|| self.range_error(p, "DataView index is out of range".into()))
     }
 
     pub(super) fn data_view_view(&self, object: Value) -> Option<(Value, usize, usize)> {
@@ -316,6 +310,44 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// A DataView element get or set other than the BigInt ones, when it runs no guest code
+    /// and raises nothing: a DataView receiver, an index (and a set's value) whose ToNumber
+    /// reads nothing (`Value::immediate_number`) and whose ToIndex is in range, a view in
+    /// bounds of its buffer, a writable buffer for a set, and an element inside the view.
+    /// The endianness argument's ToBoolean reads nothing either. `None` leaves the call to
+    /// `data_view_native`, which raises what this declines.
+    pub(super) fn plain_data_view_access(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Option<Value> {
+        if matches!(
+            native,
+            Native::DataViewGetBigInt64
+                | Native::DataViewGetBigUint64
+                | Native::DataViewSetBigInt64
+                | Native::DataViewSetBigUint64
+        ) {
+            return None;
+        }
+        let (buffer, offset, length) = self.data_view_view(this)?;
+        let index = data_view_index_of(args.first().copied().unwrap_or(Value::UNDEFINED).immediate_number()?)?;
+        if data_view_setter(native)
+            && (args.get(1).copied().unwrap_or(Value::UNDEFINED).immediate_number().is_none()
+                || matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { immutable: true, .. })))
+        {
+            return None;
+        }
+        if self.array_buffer_out_of_bounds(buffer, offset, length)
+            || index.saturating_add(data_view_width(native)) > length
+        {
+            return None;
+        }
+        self.data_view_native(p, native, this, args).ok()
+    }
+
     pub(super) fn data_view_native(
         &mut self,
         p: &ResidualProgram,
@@ -337,20 +369,7 @@ impl<H: Host> Vm<H> {
         let (buffer, offset, length) = self.data_view_view(this).ok_or_else(|| {
             self.type_error(p, "DataView method called on incompatible receiver".into())
         })?;
-        let is_setter = matches!(
-            native,
-            Native::DataViewSetUint8
-                | Native::DataViewSetInt8
-                | Native::DataViewSetUint16
-                | Native::DataViewSetInt16
-                | Native::DataViewSetUint32
-                | Native::DataViewSetInt32
-                | Native::DataViewSetFloat16
-                | Native::DataViewSetFloat32
-                | Native::DataViewSetFloat64
-                | Native::DataViewSetBigInt64
-                | Native::DataViewSetBigUint64
-        );
+        let is_setter = data_view_setter(native);
         if native == Native::DataViewByteLengthGetter || native == Native::DataViewByteOffsetGetter
         {
             if self.array_buffer_out_of_bounds(buffer, offset, length) {
@@ -381,51 +400,14 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, "Detached DataView".into()));
             }
         }
-        let width = match native {
-            Native::DataViewGetUint16
-            | Native::DataViewSetUint16
-            | Native::DataViewGetInt16
-            | Native::DataViewSetInt16
-            | Native::DataViewGetFloat16
-            | Native::DataViewSetFloat16 => DATA_VIEW_SHORT_WIDTH,
-            Native::DataViewGetUint32
-            | Native::DataViewSetUint32
-            | Native::DataViewGetInt32
-            | Native::DataViewSetInt32
-            | Native::DataViewGetFloat32
-            | Native::DataViewSetFloat32 => DATA_VIEW_WORD_WIDTH,
-            Native::DataViewGetFloat64
-            | Native::DataViewSetFloat64
-            | Native::DataViewGetBigInt64
-            | Native::DataViewSetBigInt64
-            | Native::DataViewGetBigUint64
-            | Native::DataViewSetBigUint64 => DATA_VIEW_DOUBLE_WIDTH,
-            _ => DATA_VIEW_BYTE_WIDTH,
-        };
+        let width = data_view_width(native);
         let check_bounds = || index.saturating_add(width) > length;
         if !is_setter && check_bounds() {
             return Err(self.range_error(p, "Offset is outside the bounds of the DataView".into()));
         }
         let little_endian = width > 1
             && args
-                .get(
-                    if matches!(
-                        native,
-                        Native::DataViewSetUint16
-                            | Native::DataViewSetInt16
-                            | Native::DataViewSetUint32
-                            | Native::DataViewSetInt32
-                            | Native::DataViewSetFloat16
-                            | Native::DataViewSetFloat32
-                            | Native::DataViewSetFloat64
-                            | Native::DataViewSetBigInt64
-                            | Native::DataViewSetBigUint64
-                    ) {
-                        DATA_VIEW_SET_ENDIAN_ARGUMENT
-                    } else {
-                        DATA_VIEW_GET_ENDIAN_ARGUMENT
-                    },
-                )
+                .get(if is_setter { DATA_VIEW_SET_ENDIAN_ARGUMENT } else { DATA_VIEW_GET_ENDIAN_ARGUMENT })
                 .is_some_and(|value| self.truthy(*value));
         match native {
             Native::DataViewBufferGetter => Ok(buffer),
@@ -644,5 +626,76 @@ impl<H: Host> Vm<H> {
         };
         *slot = value;
         Ok(())
+    }
+}
+
+/// ToIndex of a Number for a DataView index; `None` where it raises a RangeError.
+fn data_view_index_of(number: f64) -> Option<usize> {
+    if number.is_nan() || number == 0.0 {
+        return Some(0);
+    }
+    let integer = number.trunc();
+    (integer.is_finite() && integer >= 0.0 && integer <= MAX_SAFE_INTEGER).then_some(integer as usize)
+}
+
+/// Whether `native` is a DataView element `get` or `set` method.
+pub(super) fn data_view_element(native: Native) -> bool {
+    data_view_setter(native)
+        || matches!(
+            native,
+            Native::DataViewGetUint8
+                | Native::DataViewGetInt8
+                | Native::DataViewGetUint16
+                | Native::DataViewGetInt16
+                | Native::DataViewGetUint32
+                | Native::DataViewGetInt32
+                | Native::DataViewGetFloat16
+                | Native::DataViewGetFloat32
+                | Native::DataViewGetFloat64
+                | Native::DataViewGetBigInt64
+                | Native::DataViewGetBigUint64
+        )
+}
+
+/// Whether `native` is a DataView `set` method.
+fn data_view_setter(native: Native) -> bool {
+    matches!(
+        native,
+        Native::DataViewSetUint8
+            | Native::DataViewSetInt8
+            | Native::DataViewSetUint16
+            | Native::DataViewSetInt16
+            | Native::DataViewSetUint32
+            | Native::DataViewSetInt32
+            | Native::DataViewSetFloat16
+            | Native::DataViewSetFloat32
+            | Native::DataViewSetFloat64
+            | Native::DataViewSetBigInt64
+            | Native::DataViewSetBigUint64
+    )
+}
+
+/// The bytes the DataView element `native` gets or sets.
+fn data_view_width(native: Native) -> usize {
+    match native {
+        Native::DataViewGetUint16
+        | Native::DataViewSetUint16
+        | Native::DataViewGetInt16
+        | Native::DataViewSetInt16
+        | Native::DataViewGetFloat16
+        | Native::DataViewSetFloat16 => DATA_VIEW_SHORT_WIDTH,
+        Native::DataViewGetUint32
+        | Native::DataViewSetUint32
+        | Native::DataViewGetInt32
+        | Native::DataViewSetInt32
+        | Native::DataViewGetFloat32
+        | Native::DataViewSetFloat32 => DATA_VIEW_WORD_WIDTH,
+        Native::DataViewGetFloat64
+        | Native::DataViewSetFloat64
+        | Native::DataViewGetBigInt64
+        | Native::DataViewSetBigInt64
+        | Native::DataViewGetBigUint64
+        | Native::DataViewSetBigUint64 => DATA_VIEW_DOUBLE_WIDTH,
+        _ => DATA_VIEW_BYTE_WIDTH,
     }
 }
