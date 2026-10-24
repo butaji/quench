@@ -12423,15 +12423,16 @@ fn js_jit_general_dispatch_loads_rooted_string_and_bigint_constants_natively() {
         .enumerate()
         .filter_map(|(pc, packed)| {
             let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
-            let is_heap_constant = matches!(
-                program.constants.get(instruction.constant_index()),
-                Some(
-                    crate::bytecode::Constant::String(_)
-                        | crate::bytecode::Constant::StringUnits(_)
-                        | crate::bytecode::Constant::BigInt(_)
-                )
-            );
-            (instruction.op() == crate::bytecode::Op::LoadConst && is_heap_constant)
+            // Only a LoadConst names a constant index.
+            (instruction.op() == crate::bytecode::Op::LoadConst
+                && matches!(
+                    program.constants.get(instruction.constant_index()),
+                    Some(
+                        crate::bytecode::Constant::String(_)
+                            | crate::bytecode::Constant::StringUnits(_)
+                            | crate::bytecode::Constant::BigInt(_)
+                    )
+                ))
                 .then_some(pc)
         })
         .collect::<Vec<_>>();
@@ -12547,13 +12548,13 @@ fn js_jit_general_dispatch_static_global_name_loads_keep_exact_fallbacks() {
             .enumerate()
             .filter_map(|(pc, packed)| {
                 let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
-                (instruction.atom_index() == atom
-                    && matches!(
-                        instruction.op(),
-                        crate::bytecode::Op::LoadName
-                            | crate::bytecode::Op::LoadNameCall
-                            | crate::bytecode::Op::LoadNameTypeof
-                    ))
+                // Only the name loads carry an atom index.
+                (matches!(
+                    instruction.op(),
+                    crate::bytecode::Op::LoadName
+                        | crate::bytecode::Op::LoadNameCall
+                        | crate::bytecode::Op::LoadNameTypeof
+                ) && instruction.atom_index() == atom)
                 .then_some((pc, instruction.op()))
             })
             .collect::<Vec<_>>()
