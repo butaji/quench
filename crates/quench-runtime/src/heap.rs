@@ -39,7 +39,6 @@ use records::{
     ArrayRecordSpace, AwaitRecordSpace, FunctionRecordSpace, IteratorRecordSpace, V128RecordSpace,
     ObjectRecordSpace, PromiseRecordSpace, RecordFamily, StringRecordSpace, RecordId, RecordSweep,
 };
-#[cfg(test)]
 use records::RECORD_SPACE_CAPACITY;
 pub use root::RootId;
 pub(crate) use root::{RootTable, WeakHandle};
@@ -55,7 +54,6 @@ use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
 /// copy-on-write array mutation can replace and free its backing. The read itself must not
 /// call into the VM or permit collection while the borrowed raw pointers are in use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg(test)]
 pub(crate) struct NativeArrayLayout {
     pub(crate) record_capacity: usize,
     pub(crate) record_size: usize,
@@ -67,7 +65,6 @@ pub(crate) struct NativeArrayLayout {
 }
 
 /// Layout facts for code generators which emit read-only ordinary-array accesses.
-#[cfg(test)]
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     record_capacity: RECORD_SPACE_CAPACITY,
     record_size: cell::NATIVE_ARRAY_RECORD_SIZE,
@@ -78,7 +75,6 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     header_values_offset: array_elements::NATIVE_HEADER_VALUES_OFFSET,
 };
 
-#[cfg(test)]
 const _: () = assert!(
     NATIVE_ARRAY_LAYOUT
         .record_size
