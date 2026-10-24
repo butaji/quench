@@ -1819,6 +1819,7 @@ pub(crate) struct Vm<H> {
     private_site_homes: private_site_home::PrivateSiteHomes,
     array_iteration_proof: Option<iterators::ArrayIterationProof>,
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
+    index_free_chain_proof: std::cell::Cell<Option<object::IndexFreeChainProof>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
@@ -2804,6 +2805,7 @@ impl<H: Host> Vm<H> {
         self.private_site_homes.clear();
         self.array_iteration_proof = None;
         self.species_slot_proof.set(None);
+        self.index_free_chain_proof.set(None);
         self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();
         self.atom_strings.clear();
