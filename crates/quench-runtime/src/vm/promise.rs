@@ -5256,7 +5256,7 @@ impl<H: Host> Vm<H> {
             Constant::Number(value) => Value::number(value),
             Constant::WasmBits64(bits) => self.encode_bits64(bits),
             Constant::WasmV128(bits) => self.heap.alloc_v128(bits),
-            Constant::String(value) => self.heap.alloc_string(value.into()),
+            Constant::String(value) => self.heap.alloc_string(JsString::from_shared_text(&value)),
             Constant::StringUnits(value) => {
                 self.heap.alloc_string(JsString::from_units(&value))
             }

@@ -307,7 +307,7 @@ fn number_type_dispatch_reaches(
                     .clone(),
                 OperandKind::Constant => {
                     match program.constants.get(usize::from(operand.payload()))? {
-                        Constant::String(value) => Some(NumberDispatchValue::String(value.clone())),
+                        Constant::String(value) => Some(NumberDispatchValue::String(value.to_string())),
                         Constant::Number(value) => Some(NumberDispatchValue::Number(*value)),
                         _ => Some(NumberDispatchValue::Other),
                     }
@@ -337,7 +337,7 @@ fn number_type_dispatch_reaches(
             }
             Op::LoadConst => {
                 let value = match program.constants.get(instruction.constant_index())? {
-                    Constant::String(value) => NumberDispatchValue::String(value.clone()),
+                    Constant::String(value) => NumberDispatchValue::String(value.to_string()),
                     Constant::Number(value) => NumberDispatchValue::Number(*value),
                     _ => NumberDispatchValue::Other,
                 };
