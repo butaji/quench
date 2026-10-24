@@ -82,3 +82,17 @@ stanford-crypto-sha256 ≥ 32) names b00f1cd5e (jit: share number bitwise loweri
 the first bad commit. 282264598 restores int-tagged bitwise results; paired medians on the
 same host then: sha256 27.6 → 39.5 (pre-regression 39.4), pbkdf2 28.0 → 38.1, aes 21.2 →
 28.1, hash-map 23.3 → 24.6. The ratios above predate that fix.
+
+## Paired sweep at 3a7eaaf0f (2026-10-24)
+
+Same method and host as above. Raw rows `paired-3a7eaaf0-raw.txt`; ratios, with the
+740c3c6c1 baseline beside them, `paired-3a7eaaf0-ratios.txt`.
+
+Geomean score **0.845×** Bun no-JIT (740c3c6c1: 0.790), max RSS **1.58×** smaller (1.53);
+8/34 tests at ≥1.2× score (the six Wasm tests other than argon2, stanford-crypto-sha256 1.22,
+stanford-crypto-aes 1.33), 26/34 at ≥1.2× smaller RSS. Against the baseline: chai 0.38 → 0.57,
+validatorjs 0.39 → 0.53, json-stringify 0.47 → 0.66, json-parse 0.49 → 0.53, postcss 0.52 →
+0.68, bigint 0.36 → 0.57, sync-fs 0.50 → 0.58, aes 0.93 → 1.33, pbkdf2 1.10 → 1.16; RSS
+babel 0.95 → 1.08, postcss 0.95 → 1.12, babel-minify 1.14 → 1.20, chai 1.21 → 1.68. js-tokens
+(1.15 → 0.98) and babel (0.70 → 0.55) moved mostly with Bun's single-run scores (Bun js-tokens
+20.7 → 26.0, babel 11.9 → 16.8); quench's own scores rose on both.
