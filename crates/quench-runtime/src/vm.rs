@@ -180,6 +180,7 @@ use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
 mod operations;
+pub(crate) use operations::number_is_truthy;
 mod primitives;
 pub(crate) mod program_store;
 mod promise;
@@ -246,6 +247,9 @@ pub(super) struct Frame {
     pc: usize,
     /// Whether pc is a saved continuation after a call rather than the executing operation.
     pc_is_resume: bool,
+    /// Skip one function-entry tier attempt after a native continuation stopped
+    /// on an already-executed backedge to PC zero.
+    pub(super) js_jit_skip_entry_once: bool,
     source_field: Option<(usize, crate::bytecode::FieldPart)>,
     // The current operation's lexical projection, independent of the PC
     // published for GC roots or saved as the continuation after a call.
@@ -332,6 +336,7 @@ impl Frame {
             function: 0,
             pc: 0,
             pc_is_resume: true,
+            js_jit_skip_entry_once: false,
             source_field: None,
             binding_site_pc: None,
             env: Value::NULL,
@@ -371,6 +376,7 @@ impl Frame {
         function: &crate::bytecode::Function,
         arguments: &[Value],
     ) {
+        self.js_jit_skip_entry_once = false;
         let initial = function.initial_register.value();
         let count = usize::from(function.registers);
         let (base, parameters) = match function.parameter_registers {
@@ -418,6 +424,7 @@ impl Frame {
     /// on that fill, so it is always cleared.
     #[inline(always)]
     fn prepare_registers_for(&mut self, function: &crate::bytecode::Function) {
+        self.js_jit_skip_entry_once = false;
         let register_count = usize::from(function.registers);
         if !function.register_roots.covered()
             || function.is_generator
@@ -925,8 +932,8 @@ struct ProgramCacheLayout {
 }
 
 impl ProgramCacheLayout {
-    fn shared_uncached_field(field_base: usize, program: &ResidualProgram) -> Option<usize> {
-        (program.cache_sites > crate::bytecode::SHARED_UNCACHED_SITE)
+    fn shared_uncached_field(field_base: usize, field_sites: u16) -> Option<usize> {
+        (field_sites > crate::bytecode::SHARED_UNCACHED_SITE)
             .then(|| field_base + usize::from(crate::bytecode::SHARED_UNCACHED_SITE))
     }
 }
@@ -1778,6 +1785,10 @@ pub(crate) struct Vm<H> {
     /// The active program's materialized constants, kept by `set_active_program` and by
     /// constant installation. A program's constant buffer never moves once installed.
     active_constants: *const [Value],
+    /// The active program's field cache entries (`SiteTable::entries_from` of its
+    /// `field_base`), re-derived by `refresh_active_field_entries` whenever the active program
+    /// changes or the table grows: a site's entry is then one load from it.
+    active_field_entries: *const <FieldCache as site_table::SiteEntry>::Stored,
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
@@ -1801,6 +1812,7 @@ pub(crate) struct Vm<H> {
     /// Lane private-name sites' homes (`private_site_home`).
     private_site_homes: private_site_home::PrivateSiteHomes,
     array_iteration_proof: Option<iterators::ArrayIterationProof>,
+    species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
@@ -2784,6 +2796,7 @@ impl<H: Host> Vm<H> {
         self.symbol_load_proofs.clear();
         self.private_site_homes.clear();
         self.array_iteration_proof = None;
+        self.species_slot_proof.set(None);
         self.enumerable_keys.clear();
         self.shape_attribute_memo.clear();
         self.atom_strings.clear();
@@ -2841,8 +2854,9 @@ impl<H: Host> Vm<H> {
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
         };
         self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.refresh_active_field_entries();
         self.field_cache_writes = Some(Vec::new());
-        Self::prime_loop_decoding(program);
+        program.prime_loop_decoding();
         self.inherited_field_caches.clear();
         self.inherited_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
@@ -2877,7 +2891,7 @@ impl<H: Host> Vm<H> {
         self.set_instanceof_has_instance_holder(Value::NULL);
         self.program_cache_layouts.clear();
         self.program_cache_layouts.push(ProgramCacheLayout {
-            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program),
+            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program.cache_sites),
             ..ProgramCacheLayout::default()
         });
         self.set_active_program(ProgramId::MAIN);
@@ -2971,35 +2985,29 @@ impl<H: Host> Vm<H> {
         Some(id)
     }
     /// Primes every looping function of an installed `program` to expand on first entry.
-    fn prime_loop_decoding(program: &ResidualProgram) {
-        // A released function primes as it compiles again (`ResidualProgram::function`).
-        for function in program.functions.iter().filter_map(crate::bytecode::FunctionSlot::record) {
-            function.decoded.prime_loop(&function.code, &function.wide);
-        }
+    fn append_program_cache_layout(&mut self, id: ProgramId, program: &ResidualProgram) {
+        program.prime_loop_decoding();
+        self.append_cache_layout(id, program.cache_site_counts());
     }
 
-    fn append_program_cache_layout(&mut self, id: ProgramId, program: &ResidualProgram) {
+    /// Lays out the cache tables of program `id`, with `sites` of each kind, after those of
+    /// the programs before it.
+    pub(super) fn append_cache_layout(&mut self, id: ProgramId, sites: crate::bytecode::CacheSiteCounts) {
         debug_assert_eq!(id.raw() as usize, self.program_cache_layouts.len());
-        Self::prime_loop_decoding(program);
         self.program_cache_layouts.push(ProgramCacheLayout {
-            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(
-                self.field_caches.len(),
-                program,
-            ),
+            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(self.field_caches.len(), sites.fields),
             field_base: self.field_caches.len(),
             method_base: self.method_caches.len(),
             object_base: self.object_shapes.len(),
         });
-        let sites = usize::from(program.cache_sites);
-        self.field_caches.extend_empty(sites);
-        self.megamorphic_field_indices.extend_empty(sites);
-        self.field_add_indices.extend_empty(sites);
-        self.inherited_field_indices.extend_empty(sites);
-        self.method_caches.resize(
-            self.method_caches.len() + program.method_sites.len(),
-            [EMPTY_METHOD_CACHE; 2],
-        );
-        self.object_shapes.extend_empty(program.object_sites.len());
+        let fields = usize::from(sites.fields);
+        self.field_caches.extend_empty(fields);
+        self.refresh_active_field_entries();
+        self.megamorphic_field_indices.extend_empty(fields);
+        self.field_add_indices.extend_empty(fields);
+        self.inherited_field_indices.extend_empty(fields);
+        self.method_caches.resize(self.method_caches.len() + sites.methods, [EMPTY_METHOD_CACHE; 2]);
+        self.object_shapes.extend_empty(sites.objects);
     }
     /// Makes `program` the executing program and caches its layout, the projection every cache
     /// index reads. A program's layout is appended before the program can run.
@@ -3008,6 +3016,13 @@ impl<H: Host> Vm<H> {
         self.active_program = program;
         self.active_layout = self.program_cache_layouts[program.raw() as usize];
         self.active_constants = self.programs.constants(program);
+        self.refresh_active_field_entries();
+    }
+
+    /// Re-derive `active_field_entries` after the active program or the field cache table
+    /// changed.
+    pub(super) fn refresh_active_field_entries(&mut self) {
+        self.active_field_entries = self.field_caches.entries_from(self.active_layout.field_base);
     }
 
     /// Constant `index` of the active program.

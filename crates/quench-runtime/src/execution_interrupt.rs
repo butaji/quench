@@ -144,6 +144,11 @@ impl ExecutionInterrupt {
     /// bytes it spans; `None` where the host cannot provide one. The page is unreadable once
     /// termination is requested.
     pub(crate) fn poll_page(&self) -> Option<(usize, usize)> {
+        // Once the page exists, a request closes it itself (`request_termination`); only its
+        // creation races a request, which the fence below orders.
+        if let Some(page) = self.state.poll.get() {
+            return page.as_ref().map(|page| (page.address, PollPage::BYTES));
+        }
         let page = self.state.poll.get_or_init(PollPage::new).as_ref()?;
         std::sync::atomic::fence(Ordering::SeqCst);
         if self.state.requested.load(Ordering::Relaxed) {

@@ -2,6 +2,18 @@ use super::property_key::PropertyKey;
 use super::*;
 use crate::heap::PrivateBrand;
 
+/// Where constructors of one shape hold their own `@@species` getter
+/// (`Vm::has_intrinsic_species_getter`) under one `prototype_layout_epoch`: the shape names
+/// the slot and that the slot holds the getter itself, and every collection advances the
+/// epoch, so a proof never names a reused shape. The getter may change in place, so each use
+/// reads the slot.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct SpeciesSlotProof {
+    shape: u32,
+    epoch: u64,
+    slot: usize,
+}
+
 pub(super) enum DiagnosticProperty {
     Absent,
     Data(Value),
@@ -28,22 +40,46 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether `constructor`'s own `@@species` is an accessor whose getter is an intrinsic
-    /// `get [Symbol.species]`, which returns its receiver and observes nothing.
+    /// `get [Symbol.species]`, which returns its receiver and observes nothing. A proof for
+    /// the constructor's shape (`SpeciesSlotProof`) names the slot holding the getter, so a
+    /// repeated check reads that slot alone.
     pub(super) fn has_intrinsic_species_getter(&self, constructor: Value) -> bool {
-        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
+        let Some(data) = self.object_data(constructor) else {
             return false;
         };
-        self.property_attributes(constructor, PropertyKey::symbol(species))
+        let (shape, epoch) = (data.shape(), crate::heap::prototype_layout_epoch());
+        let getter = match self.species_slot_proof.get() {
+            Some(proof) if proof.shape == shape && proof.epoch == epoch => {
+                self.heap.property_get(data, proof.slot)
+            }
+            _ => self.prove_species_slot(constructor, shape, epoch),
+        };
+        getter.is_some_and(|getter| {
+            matches!(
+                self.heap.function(getter),
+                Some(FunctionRecord {
+                    kind: FunctionKind::Native(native),
+                    ..
+                }) if native.is_intrinsic_species_getter()
+            )
+        })
+    }
+
+    /// `has_intrinsic_species_getter` past its proof: the getter of `constructor`'s own
+    /// `@@species` accessor, recording its slot when the shape alone says the slot holds the
+    /// getter (`ShapeAttributes::slot_getter` on a non-dictionary shape).
+    #[cold]
+    #[inline(never)]
+    fn prove_species_slot(&self, constructor: Value, shape: u32, epoch: u64) -> Option<Value> {
+        let key = PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::Species)?);
+        if let Some(slot) = self.property_shape_slot(shape, key)
+            && !self.shape_is_dictionary(shape)
+            && self.shape_slot_attributes(shape, slot).is_some_and(ShapeAttributes::slot_getter)
+        {
+            self.species_slot_proof.set(Some(SpeciesSlotProof { shape, epoch, slot }));
+        }
+        self.property_attributes(constructor, key)
             .and_then(|attributes| attributes.getter.filter(|_| attributes.accessor))
-            .is_some_and(|getter| {
-                matches!(
-                    self.heap.function(getter),
-                    Some(FunctionRecord {
-                        kind: FunctionKind::Native(native),
-                        ..
-                    }) if native.is_intrinsic_species_getter()
-                )
-            })
     }
 
     pub(super) fn diagnostic_own_property(&self, object: Value, key: PropertyKey) -> DiagnosticProperty {

@@ -707,9 +707,12 @@ macro_rules! opcodes {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum JsDenotation {
     Unsupported,
+    Noop,
+    Jump,
     LoadConst,
     Move,
     GetField,
+    FieldStore,
     NumericBinary,
     NumericUnary,
     CapturedValue,
@@ -722,7 +725,7 @@ const WRITE_THROW: Effect = Effect::WRITES_HEAP.union(Effect::THROWS);
 const CALL_EFFECT: Effect = READ_THROW.union(Effect::WRITES_HEAP);
 
 opcodes!(
-    Nop => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
+    Nop => Effect::PURE; layout Scalar; meaning Unused; js Noop, @ Register, @ fields(Unused, Unused, Unused),
     CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning EnvironmentCloneIndex, @ Register, @ fields(Unused, Unused, Unused),
     Wide => Effect::PURE; layout Scalar; meaning WideInstructionIndex, @ Register, @ fields(WideIndexChunk, WideIndexChunk, WideIndexChunk),
     LoadConst => Effect::PURE; layout Scalar; meaning ConstantIndex; js LoadConst, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -776,7 +779,7 @@ opcodes!(
     CopyDataProperties => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
     MarkPrivateName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Unused, Register, Register),
     DefinePrivateField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, Register),
-    SetField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
+    SetField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore, @ Register, @ fields(Register, Register, CacheSiteIndex),
     DefineComputedField => WRITE_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
     SetThisField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     SetIndex => WRITE_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(Register, Register, Register),
@@ -790,11 +793,12 @@ opcodes!(
     Move => Effect::PURE; layout Scalar; meaning Unused; js Move, @ Register, @ fields(ResultRegister, Register, Unused),
     Call => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
     CallArray => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
+    CallSpread => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
     CallKnown => CALL_EFFECT; layout CallWindow; flow Call, @ Returnable, @ fields(ResultRegister, FunctionIndex, Unused),
     CallMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call, @ Returnable, @ fields(ResultRegister, Register, Unused),
     CallThisMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call, @ Returnable, @ fields(ResultRegister, Unused, Unused),
     Construct => CALL_EFFECT; layout ConstructCountAndFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, ConstructArguments),
-    Jump => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow Jump, @ Register, @ fields(Unused, Unused, Unused),
+    Jump => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow Jump; js Jump, @ Register, @ fields(Unused, Unused, Unused),
     JumpFalse => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
     JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(BinaryOperator, Operand, Operand),
     Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal; js Return, @ Register, @ fields(Register, Unused, Unused),
@@ -806,7 +810,7 @@ opcodes!(
     LoadCachedTemplateObject => Effect::READS_HEAP; layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     DefineField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
     ValidateClassHeritage => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
-    SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
+    SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore, @ Register, @ fields(Register, Register, CacheSiteIndex),
     SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     // The general loop's fast arms dispatch on these with the opcodes above, so they share
     // one dense range of opcode numbers.
@@ -1474,6 +1478,10 @@ pub(crate) struct SourcePosition {
     pub(crate) column: u32,
 }
 
+/// The name of a parameter slot whose argument a list's patterns or defaults bind apart
+/// (`FunctionCompiler::parameter_name`): an argument's own slot, which no source name reaches.
+pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
+
 /// Whether register liveness covers a function's register forms, so a frame may leave its
 /// dead registers stale; and the per-pc live register masks the collector scans, derived
 /// when a collection first finds the function on the stack. Most of a program's functions
@@ -1481,7 +1489,7 @@ pub(crate) struct SourcePosition {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RegisterRoots {
     covered: bool,
-    masks: std::cell::OnceCell<Box<[u64]>>,
+    masks: std::cell::OnceCell<Box<[crate::compile::liveness::RegisterSet]>>,
 }
 
 impl RegisterRoots {
@@ -1496,7 +1504,7 @@ impl RegisterRoots {
     /// The masks a collection derived so far; none until one finds the function running.
     #[cfg(feature = "profile-memory")]
     pub(crate) fn capacity_bytes(&self) -> usize {
-        self.masks.get().map_or(0, |masks| size_of_val::<[u64]>(masks))
+        self.masks.get().map_or(0, |masks| size_of_val::<[crate::compile::liveness::RegisterSet]>(masks))
     }
 }
 
@@ -1947,9 +1955,15 @@ impl Function {
     /// Whether the activation itself may read its implicit bindings through a name or scope
     /// operation, or must keep them for its kind of activation.
     fn activation_binding_reads(&self, atoms: &AtomTable) -> bool {
+        self.is_class_constructor || self.binding_reads_beside_class(atoms)
+    }
+
+    /// `activation_binding_reads` but for a class constructor's own kind: a base class
+    /// constructor's body that reaches none of its implicit bindings (`new.target`, `super`
+    /// and the like read hidden names) needs none to run frameless when constructed.
+    fn binding_reads_beside_class(&self, atoms: &AtomTable) -> bool {
         self.is_async
             || self.is_generator
-            || self.is_class_constructor
             || self.derived_constructor
             // A field initializer or static block keeps its instance's implicit bindings; an
             // arrow inside one (also `class_initializer`) binds none of its own.
@@ -2070,6 +2084,21 @@ impl Function {
         self.simple_parameters || self.rest && self.parameters_bind_directly(name)
     }
 
+    /// Whether each argument arrives in a slot of its own that only the activation's own
+    /// loads and stores reach: `parameters_own_their_slots`, or a list without a rest
+    /// parameter whose patterns or defaults bind its names apart, each argument then in its
+    /// hidden parameter slot (`HIDDEN_PARAMETER_PREFIX`). Promoted locals require it.
+    pub(crate) fn arguments_own_their_slots<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
+        self.parameters_own_their_slots(&name)
+            || !self.rest
+                && self.local_atoms[..usize::from(self.params).min(self.local_atoms.len())].iter().all(|atom| {
+                    usize::try_from(*atom)
+                        .ok()
+                        .and_then(&name)
+                        .is_some_and(|name| name.starts_with(HIDDEN_PARAMETER_PREFIX))
+                })
+    }
+
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
     pub(crate) fn suspends(&self) -> bool {
         self.instructions()
@@ -2092,7 +2121,7 @@ impl Function {
             // (`activation_binding_reads`) or its home as a capture, as any closure reads one.
             // Ordinary but for a rest parameter, which a frameless activation gathers
             // (`CallEntry::Gathers`) and a plain frame does not.
-            let ordinary_with_rest = self.parent.is_some()
+            let registers_layout = self.parent.is_some()
                 && !self.derived_constructor
                 && self.self_binding_slot.is_none()
                 && !self.parameter_eval_arguments_error
@@ -2100,9 +2129,15 @@ impl Function {
                 && !self.is_generator
                 && !self.is_async
                 && promoted_parameters == usize::from(self.params)
-                && !self.activation_binding_reads(atoms)
                 // A plain activation makes no closure, whichever bindings it would see.
                 && !self.instructions().any(|instruction| instruction.op() == Op::MakeClosure);
+            let ordinary_with_rest = registers_layout && !self.activation_binding_reads(atoms);
+            // A base class constructor laid out as an ordinary function runs frameless when
+            // constructed (`lane_script_construct`); its calls, which throw, keep a frame.
+            let constructs_frameless = registers_layout
+                && self.is_class_constructor
+                && !self.rest
+                && !self.binding_reads_beside_class(atoms);
             let ordinary = ordinary_with_rest && !self.rest;
             // A field initializer is an ordinary method call on the instance whose
             // activation keeps its implicit bindings (`activation_binding_reads`); only the
@@ -2173,8 +2208,7 @@ impl Function {
                 live_parameters,
                 addresses_locals,
                 forwards_arguments,
-                registers_only: ordinary_with_rest
-                    && in_loop
+                registers_only: (ordinary_with_rest && in_loop || constructs_frameless)
                     && self.initial_register == InitialRegister::Undefined
                     && if self.arguments_slot.is_none() {
                         // A rest body's activation keeps every value passed
@@ -3082,6 +3116,15 @@ impl ProgramSource {
     }
 }
 
+/// The sizes of a program's inline-cache site tables (`ResidualProgram::cache_site_counts`):
+/// its field, method and object literal sites.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CacheSiteCounts {
+    pub(crate) fields: u16,
+    pub(crate) methods: usize,
+    pub(crate) objects: usize,
+}
+
 #[derive(Clone, Debug)]
 pub struct ResidualProgram {
     pub(crate) specialized: bool,
@@ -3221,7 +3264,7 @@ impl ResidualProgram {
                     })
                     .function,
             };
-            // As `prime_loop_decoding` primes the functions of an installed program.
+            // As `ResidualProgram::prime_loop_decoding` primes an installed program's records.
             function.decoded.prime_loop(&function.code, &function.wide);
             std::rc::Rc::new(function)
         })
@@ -3250,13 +3293,13 @@ impl ResidualProgram {
     }
 
     /// The registers live at `pc` in `function`, when liveness covers it.
-    pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<u64> {
+    pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<crate::compile::liveness::RegisterSet> {
         self.register_root_masks(function)?.get(pc).copied()
     }
 
     /// `function`'s live register masks by pc, one past its last instruction included, when
     /// liveness covers it.
-    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&[u64]> {
+    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&[crate::compile::liveness::RegisterSet]> {
         let function = self.function_get(function as usize)?;
         if !function.register_roots.covered {
             return None;
@@ -3298,7 +3341,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 105;
+    pub const FORMAT_VERSION: u8 = 106;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
@@ -3380,6 +3423,28 @@ impl ResidualProgram {
 
     /// `encode_snapshot`'s bytes, sharing `atoms` (the restored VM's) and with `text` as the
     /// source; valid as the compiler output it was when written.
+    /// The sizes of the program's inline-cache site tables, which a VM lays out per program.
+    pub(crate) fn cache_site_counts(&self) -> CacheSiteCounts {
+        CacheSiteCounts {
+            fields: self.cache_sites,
+            methods: self.method_sites.len(),
+            objects: self.object_sites.len(),
+        }
+    }
+
+    /// Primes the loop decoding of every function record the program holds; a released
+    /// record primes as it compiles again (`ResidualProgram::function`).
+    pub(crate) fn prime_loop_decoding(&self) {
+        for function in self.functions.iter().filter_map(FunctionSlot::record) {
+            function.decoded.prime_loop(&function.code, &function.wide);
+        }
+    }
+
+    /// Checks `encode_snapshot`'s bytes as `decode_snapshot` would before decoding them.
+    pub(crate) fn verify_snapshot(bytes: &[u8]) -> Result<(), String> {
+        binary::verify_snapshot_program(bytes)
+    }
+
     pub(crate) fn decode_snapshot(
         bytes: KeptBytes,
         text: Option<SourceText>,
