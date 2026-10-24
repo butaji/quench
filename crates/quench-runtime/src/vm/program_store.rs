@@ -29,6 +29,7 @@ struct JsJitCounters {
     native_entries: u64,
     field_cache_probes: u64,
     field_cache_hits: u64,
+    field_cache_sites: FxHashMap<u16, (u64, u64)>,
     field_store_cache_probes: u64,
     field_store_cache_hits: u64,
     field_return_candidate_entries: u64,
@@ -2100,6 +2101,7 @@ impl ProgramStore {
         &mut self,
         id: ProgramId,
         function: u32,
+        cache_site: u16,
         hit: bool,
     ) {
         if let Some(counters) = self
@@ -2111,6 +2113,9 @@ impl ProgramStore {
             counters.field_cache_hits = counters
                 .field_cache_hits
                 .saturating_add(u64::from(hit));
+            let site = counters.field_cache_sites.entry(cache_site).or_default();
+            site.0 = site.0.saturating_add(1);
+            site.1 = site.1.saturating_add(u64::from(hit));
         }
     }
 
@@ -2588,7 +2593,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"opcodes\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"field_cache_sites\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -2630,6 +2635,23 @@ impl Drop for ProgramStore {
                 osr.exits,
                 osr.widenings,
             );
+            let mut field_cache_sites: Vec<_> = counters.field_cache_sites.iter().collect();
+            field_cache_sites.sort_unstable_by_key(|(site, _)| **site);
+            for (index, (site, (probes, hits))) in field_cache_sites.iter().enumerate() {
+                if index != 0 {
+                    let _ = write!(stderr, ",");
+                }
+                let hit_ppm = if *probes == 0 {
+                    0
+                } else {
+                    (u128::from(*hits) * 1_000_000 / u128::from(*probes)) as u64
+                };
+                let _ = write!(
+                    stderr,
+                    "{{\"cache_site\":{site},\"probes\":{probes},\"hits\":{hits},\"hit_rate_ppm\":{hit_ppm}}}"
+                );
+            }
+            let _ = write!(stderr, "],\"opcodes\":[");
             for (index, (opcode, count)) in counters.opcode_counts.iter().enumerate() {
                 if index != 0 {
                     let _ = write!(stderr, ",");
