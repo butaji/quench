@@ -12222,6 +12222,7 @@ fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
     assert_eq!(result, Value::number(10.0));
 }
 
+#[cfg(not(quench_profiled))]
 #[test]
 fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
     let program = Engine::compile(crate::ExecutionRequest::script(
