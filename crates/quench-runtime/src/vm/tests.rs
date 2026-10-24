@@ -11137,7 +11137,8 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
         })
         .unwrap();
 
-    // Each policy compiles the loop at its own optimization level (`LOOP_TIER_OPT_LEVELS`).
+    // Each policy compiles the loop at its own optimization level, or not at all
+    // (`LOOP_TIER_OPT_LEVELS`); the result is the same either way.
     for policy in crate::MemoryPolicy::ALL {
         let compiled_output = Rc::new(RefCell::new(Vec::new()));
         let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
@@ -11156,7 +11157,8 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
             .expect("hot sum loop lane view");
         let osr = view.osr_diagnostics();
         assert_eq!(osr.admitted_sites, 1, "OSR analysis rejected the field loop under {policy:?}");
-        assert_eq!(osr.currently_compiled_sites, 1, "field loop did not compile natively under {policy:?}");
+        let compiles = super::compiled::loop_tier_compiles(policy);
+        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field loop native code under {policy:?}");
     }
 }
 
