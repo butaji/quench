@@ -124,6 +124,17 @@ struct LoopTier {
     compilations: u32,
 }
 
+impl LoopTier {
+    /// Whether the site has native code or may still compile it. A site whose compilations
+    /// ran out, or under a policy that compiles no loop regions, takes its backward jump in
+    /// the interpreter without reading an entry: reading one at every iteration had cost
+    /// V8-v7 Crypto `--jit` a third of its instructions under memory-first.
+    fn may_run(&self, policy: crate::MemoryPolicy) -> bool {
+        self.code.is_some()
+            || (self.compilations < LOOP_TIER_MAX_COMPILATIONS && super::compiled::loop_tier_compiles(policy))
+    }
+}
+
 /// Backward jumps a loop takes in the interpreter before it compiles: enough that loops
 /// which run briefly never pay the compilation.
 pub(super) const LOOP_TIER_THRESHOLD: u32 = 1000;
@@ -5410,7 +5421,10 @@ script_handler! {
             site.taken.set(site.taken.get() + 1);
             next!(cx, r, header, Carried::script(cx))
         }
-        if site.exits.get() >= LOOP_TIER_MAX_EXITS {
+        // SAFETY: the lane's VM is live, and nothing borrows it across the read.
+        if site.exits.get() >= LOOP_TIER_MAX_EXITS
+            || !site.tier.borrow().may_run(unsafe { vm(cx) }.heap.memory_policy())
+        {
             next!(cx, r, header, Carried::script(cx))
         }
         let Some(entry) = lane_loop_entry(cx, r, site) else {
@@ -5455,8 +5469,7 @@ fn lane_loop_run<H: Host>(
     let tier = &mut *tier;
     if tier.code.is_none() {
         // SAFETY: the lane's VM is live, and nothing borrows it across the read.
-        let policy = unsafe { vm(cx) }.heap.memory_policy();
-        if tier.compilations >= LOOP_TIER_MAX_COMPILATIONS || !super::compiled::loop_tier_compiles(policy) {
+        if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
             return LoopContinuation::Jump;
         }
         tier.compilations += 1;
