@@ -536,8 +536,11 @@ mod tests {
         let next = pacing.plan(&mut state, minor(live, live, live / 2));
         assert_eq!(state.regime(&pacing), Regime::Generational);
         assert!(!next.full);
-        // Nearly everything young survives, twice: full collections with full-only headroom.
-        pacing.plan(&mut state, minor(live + live / 2, live, live / 2));
+        // Nearly everything young survives until smoothed survival passes the table's limit:
+        // full collections with full-only headroom.
+        while (state.survival + SURVIVAL_SCALE) / 2 <= pacing.survival_limit {
+            pacing.plan(&mut state, minor(live + live / 2, live, live / 2));
+        }
         let next = pacing.plan(&mut state, minor(2 * live, 3 * live / 2, live / 2));
         assert_eq!(state.regime(&pacing), Regime::FullOnly);
         // The next full collection keeps the interval measured from the last full one.
