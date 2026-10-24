@@ -1485,7 +1485,7 @@ fn admit(
 
 /// How native code holds a Number register or capture: as an `i32` while every value it
 /// takes is one, else as an `f64`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Representation {
     Int32,
     Float64,
@@ -2031,6 +2031,12 @@ struct Int32Facts {
     /// The PCs of products whose zero needs no sign: no factor is ever negative, or every
     /// read of the product treats -0 as +0 and no leave writes it back.
     signless_zero: std::collections::BTreeSet<u32>,
+    /// The PCs of sums and differences every read of which takes ToInt32 of them (a
+    /// bitwise operand, or an operand of another such sum) and no leave writes back: the
+    /// wrapped `i32` is the exact result modulo 2^32, which is all any read observes, so it
+    /// needs no overflow guard. An exit's write-back gives the interpreter that `i32`, which
+    /// its same reads observe alike.
+    truncated: std::collections::BTreeSet<u32>,
 }
 
 /// The range of an operation's exact result from its operands' ranges; `None` while an
@@ -2187,6 +2193,40 @@ fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representati
             }
         })
     };
+    // The webs only ToInt32 reads, as the greatest fixpoint: a sum's operand counts while
+    // the sum is one.
+    let sums = |instruction: WideInstruction| {
+        matches!(instruction.op(), Op::Binary | Op::NumericAdd | Op::NumericMultiply).then(|| arithmetic(instruction.op(), instruction.binary_operator())).flatten()
+    };
+    let mut truncated: std::collections::BTreeSet<Definition> = (0..webs.parent.len())
+        .filter(|definition| webs.find(*definition) == *definition && int32(*definition) && !written_back.contains(definition))
+        .collect();
+    loop {
+        let before = truncated.len();
+        let kept: std::collections::BTreeSet<Definition> = truncated
+            .iter()
+            .copied()
+            .filter(|web| {
+                region.instructions.iter().copied().enumerate().all(|(offset, instruction)| {
+                    let pc = region.header + offset as u32;
+                    if !number_reads(instruction).into_iter().any(|register| webs.read(region, pc, register) == *web) {
+                        return true;
+                    }
+                    match sums(instruction) {
+                        Some(Arithmetic::Int32(_)) => true,
+                        Some(Arithmetic::Float(NumberArithmetic::Add | NumberArithmetic::Subtract)) => {
+                            truncated.contains(&webs.defined(region, pc))
+                        }
+                        _ => false,
+                    }
+                })
+            })
+            .collect();
+        truncated = kept;
+        if truncated.len() == before {
+            break;
+        }
+    }
     let mut facts = Int32Facts::default();
     for (offset, instruction) in region.instructions.iter().copied().enumerate() {
         let pc = region.header + offset as u32;
@@ -2200,6 +2240,9 @@ fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representati
         let web = webs.defined(region, pc);
         if !int32(web) {
             continue;
+        }
+        if operator != NumberArithmetic::Multiply && truncated.contains(&web) {
+            facts.truncated.insert(pc);
         }
         let operand = |operand: Operand| operand_range(&ranges, pc, operand);
         if let Some((low, high)) =
@@ -2581,6 +2624,12 @@ struct Lowering<'a, 'b> {
         (NumberArithmetic, ir::Value, ir::Value),
         (ir::Value, ir::Block),
     >,
+    /// The elements read so far, by array register, key and representation, with the chain
+    /// reading them and the element stores lowered before: the same read later in that
+    /// chain, with no store between, is that value, its guards having passed.
+    element_reads: std::collections::HashMap<(Register, ir::Value, Representation), (Typed, ir::Block, usize)>,
+    /// The element stores lowered so far; any may write any array's elements.
+    element_stores: usize,
     /// The Number each canonical encoding read from memory unboxes to, mapped to the bits as
     /// read: boxing the Number gives those bits back, so a store of it stores them.
     encodings: std::collections::HashMap<ir::Value, ir::Value>,
@@ -2684,6 +2733,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
             exits: super::RegionExitBlocks::default(),
             chains: std::collections::HashMap::new(),
             exact: std::collections::BTreeMap::new(),
+            element_reads: std::collections::HashMap::new(),
+            element_stores: 0,
             encodings: std::collections::HashMap::new(),
             straight,
             registers,
@@ -3579,7 +3630,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
             NumberArithmetic::Subtract => (left, -self.int32_constant(right)?),
             NumberArithmetic::Multiply | NumberArithmetic::Divide => return None,
         };
-        if !self.proved(pc) && offset != 0 {
+        let unguarded = self.proved(pc) || self.facts.exact.contains(&pc) || self.facts.truncated.contains(&pc);
+        if !unguarded && offset != 0 {
             let (condition, bound) = if offset > 0 {
                 (IntCC::SignedGreaterThan, i64::from(i32::MAX) - offset)
             } else {
@@ -3617,11 +3669,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
         // A proof or the operands' ranges cover a result's exactness, so it needs no
         // overflow flag.
         let exact = self.proved(pc) || self.facts.exact.contains(&pc);
+        let unguarded = exact || self.facts.truncated.contains(&pc);
+        // `int32_offset` leaves the same sums unguarded.
         match operator {
-            NumberArithmetic::Add if exact => {
+            NumberArithmetic::Add if unguarded => {
                 return self.body.builder.ins().iadd(left, right);
             }
-            NumberArithmetic::Subtract if exact => {
+            NumberArithmetic::Subtract if unguarded => {
                 return self.body.builder.ins().isub(left, right);
             }
             _ => {}
@@ -3850,12 +3904,22 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let base = instruction.operand_b().register_index()?;
                 let array = self.arrays[&base];
                 let key = self.operand(instruction.operand_c())?;
+                let representation = element_representation(&instruction, self.observation);
+                let current = self.body.builder.current_block().expect("lowering inside a block");
+                let chain = self.chain(current);
+                let read = (base, self.body.builder.func.dfg.resolve_aliases(key.value), representation);
+                if let Some((value, computed, stores)) = self.element_reads.get(&read).copied()
+                    && computed == chain
+                    && stores == self.element_stores
+                {
+                    self.define(instruction.result_register(), value);
+                    return self.fall_through(pc);
+                }
                 let (index, element) = self.element_index(pc, key);
                 self.read_index(pc, array, index);
                 let (address, displacement) = self.element_address(array.elements, element);
                 // A hole is tagged, so unboxing sends it to the general path too. A Float64
                 // element loads straight into a float register.
-                let representation = element_representation(&instruction, self.observation);
                 let value = match representation {
                     Representation::Int32 => {
                         let bits = self.body.builder.ins().load(types::I64, flags(), address, displacement);
@@ -3869,10 +3933,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     }
                     Representation::Tagged => return None,
                 };
+                self.element_reads.insert(read, (Typed { value, representation }, chain, self.element_stores));
                 self.define(instruction.result_register(), Typed { value, representation });
                 self.fall_through(pc)
             }
             Op::SetIndex => {
+                self.element_stores += 1;
                 let array = self.arrays[&instruction.register_b()];
                 let key = self.register(instruction.register_c());
                 let (index, element) = self.element_index(pc, key);
