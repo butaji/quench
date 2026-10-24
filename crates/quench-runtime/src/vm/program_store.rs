@@ -2622,7 +2622,8 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            Option<&[crate::compile::liveness::RegisterSet]>,
+            Option<&crate::compile::liveness::RegisterMasks>,
+            &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
@@ -2636,7 +2637,7 @@ impl ProgramStore {
         }
         Some(view.get_or_init(|| {
             let live = entry.residual.register_root_masks(function);
-            let view = derive(code, &entry.constants, entry.residual.kind, live);
+            let view = derive(code, &entry.constants, entry.residual.kind, live, &entry.residual.field_sites);
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();
@@ -2670,7 +2671,8 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            Option<&[crate::compile::liveness::RegisterSet]>,
+            Option<&crate::compile::liveness::RegisterMasks>,
+            &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
@@ -2678,7 +2680,7 @@ impl ProgramStore {
         let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         Some(view.get_or_init(|| {
             let live = entry.residual.register_root_masks(function);
-            let view = derive(code, &entry.constants, entry.residual.kind, live);
+            let view = derive(code, &entry.constants, entry.residual.kind, live, &entry.residual.field_sites);
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();

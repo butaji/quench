@@ -143,6 +143,38 @@ fn sealed_encoding_length(bytes: &[u8]) -> Result<usize, String> {
     Ok(checksum_start)
 }
 
+/// Ends a compile-cache entry that keeps its source text after its encoding
+/// (`append_kept_source`).
+const KEPT_SOURCE_MAGIC: u32 = u32::from_le_bytes(*b"QSRC");
+
+/// The bytes after a kept source: its checksum, its length and `KEPT_SOURCE_MAGIC`.
+const KEPT_SOURCE_TRAILER: usize = size_of::<u64>() + size_of::<u64>() + size_of::<u32>();
+
+/// Appends `source` to a compile-cache entry after its encoding, so a program decoded from
+/// the entry reads its source text in place (`super::split_kept_source`), as the host's
+/// mapping the program keeps for its records, instead of holding a copy on the heap for its
+/// whole run (V8-v7 RegExp: 118 KiB at its heap's peak).
+pub(crate) fn append_kept_source(entry: &mut Vec<u8>, source: &str) {
+    entry.extend_from_slice(source.as_bytes());
+    entry.extend_from_slice(&compact_checksum(source.as_bytes()).to_le_bytes());
+    entry.extend_from_slice(&(source.len() as u64).to_le_bytes());
+    entry.extend_from_slice(&KEPT_SOURCE_MAGIC.to_le_bytes());
+}
+
+/// Where an entry's kept source lies (`append_kept_source`), when it ends with one whose
+/// checksum holds.
+pub(super) fn kept_source_range(entry: &[u8]) -> Option<std::ops::Range<usize>> {
+    let trailer = entry.len().checked_sub(KEPT_SOURCE_TRAILER)?;
+    let (checksum, rest) = entry[trailer..].split_at(size_of::<u64>());
+    let (length, magic) = rest.split_at(size_of::<u64>());
+    if u32::from_le_bytes(magic.try_into().ok()?) != KEPT_SOURCE_MAGIC {
+        return None;
+    }
+    let length = usize::try_from(u64::from_le_bytes(length.try_into().ok()?)).ok()?;
+    let start = trailer.checked_sub(length)?;
+    (u64::from_le_bytes(checksum.try_into().ok()?) == compact_checksum(&entry[start..trailer])).then_some(start..trailer)
+}
+
 /// A cached encoding ends with this checksum of the bytes before it, which a decoder checks
 /// before trusting them as the compiler output they encode (`sealed_encoding_length`), and each
 /// deferred record ends its body entry with this checksum of the record.

@@ -4850,16 +4850,18 @@ impl CompiledOsrRegion {
 
 /// Analyze a loop candidate whose calls run inlined (`osr_loop::inline_region`), each
 /// callee from `resolve` of the cached field its function is read from.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn analyze_inlining_osr_region<'a>(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[crate::value::Value],
-    live: &[crate::compile::liveness::RegisterSet],
+    sites: &[crate::bytecode::FieldSite],
+    live: &crate::compile::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
-    resolve: &mut dyn FnMut(FieldUse) -> Option<InlineCallee<'a>>,
+    resolve: &mut dyn FnMut(&[FieldUse]) -> Option<InlineCallee<'a>>,
 ) -> Option<LoopRegion> {
-    osr_loop::inline_region(function, decoded, constants, live, header, backedge, resolve)
+    osr_loop::inline_region(function, decoded, constants, sites, live, header, backedge, resolve)
 }
 
 /// Analyze a loop candidate through the shared region compiler's OSR mode.
@@ -4867,11 +4869,12 @@ pub(super) fn analyze_osr_region(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[crate::value::Value],
-    live: Option<&[crate::compile::liveness::RegisterSet]>,
+    sites: &[crate::bytecode::FieldSite],
+    live: Option<&crate::compile::liveness::RegisterMasks>,
     header: u32,
     backedge: u32,
 ) -> Result<LoopRegion, RegionRejection> {
-    osr_loop::region(function, decoded, constants, live, header, backedge)
+    osr_loop::region(function, decoded, constants, sites, live, header, backedge)
 }
 
 /// The Cranelift optimization level the loop tier compiles regions at under each memory

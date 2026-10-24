@@ -10,20 +10,7 @@ pub(crate) mod esm_wasm;
 pub(crate) mod policy_projection;
 pub(crate) use commonjs::source_kind;
 
-thread_local! {
-    /// The import resolver, kept as `commonjs::with_commonjs_resolver` keeps the require one.
-    static IMPORT_RESOLVER: oxc_resolver::Resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
-        extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
-        main_files: vec!["index".into()],
-        condition_names: vec!["node".into(), "import".into(), "default".into()],
-        ..Default::default()
-    });
-}
-
-/// Runs `use_resolver` with the resolver of an ES module's imports.
-pub(crate) fn with_import_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver::Resolver) -> R) -> R {
-    IMPORT_RESOLVER.with(use_resolver)
-}
+pub(crate) use commonjs::with_import_resolver;
 
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
@@ -1712,22 +1699,12 @@ impl NodeHost {
         let path = match path {
             Some(path) => path,
             None => {
-                thread_local! {
-                    /// The import resolver, kept as `commonjs::with_commonjs_resolver` keeps
-                    /// the require one.
-                    static IMPORT_RESOLVER: oxc_resolver::Resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
-                        extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
-                        main_files: vec!["index".into()],
-                        condition_names: vec!["node".into(), "import".into(), "default".into()],
-                        ..Default::default()
-                    });
-                }
                 let resolution_specifier = if internal {
                     format!("./{specifier}")
                 } else {
                     specifier.to_owned()
                 };
-                let resolved = IMPORT_RESOLVER.with(|resolver| {
+                let resolved = with_import_resolver(|resolver| {
                     match commonjs::resolve_kept(resolver, |resolver| resolver.resolve(&base, &resolution_specifier)) {
                         Ok(resolution) => Ok(Some(resolution.full_path())),
                         Err(oxc_resolver::ResolveError::Specifier(_)) => Ok(None),
