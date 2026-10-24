@@ -353,6 +353,12 @@ pub(super) fn encode_snapshot_program(program: &super::ResidualProgram) -> Vec<u
     sealed(encode_program(program, AtomEncoding::Shared).0)
 }
 
+/// Checks that `bytes` are an `encode_snapshot_program` encoding whose checksum holds, as
+/// decoding them would first.
+pub(super) fn verify_snapshot_program(bytes: &[u8]) -> Result<(), String> {
+    sealed_encoding_length(bytes).map(drop)
+}
+
 /// `encode_snapshot_program`'s bytes, with `text` as the source; the caller gives the program
 /// its VM's atom table, as long as the returned count.
 pub(super) fn decode_snapshot_program(
