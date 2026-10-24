@@ -12301,6 +12301,164 @@ fn js_jit_general_dispatch_loads_rooted_string_and_bigint_constants_natively() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_static_global_name_loads_keep_exact_fallbacks() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          globalThis.cachedData = 41;
+          globalThis.nameGetterCalls = 0;
+          Object.defineProperty(globalThis, 'accessorData', {
+            configurable: true,
+            get() { nameGetterCalls++; return 73; }
+          });
+          function strictTarget() { 'use strict'; return this === undefined; }
+          globalThis.dynamicStrictTarget = strictTarget;
+
+          function readCachedData() { return cachedData; }
+          function callStrictTarget() { return dynamicStrictTarget(); }
+          function readLexicalShadow() { return lexicalShadow; }
+          function readTdz() { return tdzName; }
+          function readAccessor() { return accessorData; }
+          function readMissing() {
+            try { return missingName; }
+            catch (error) { return error instanceof ReferenceError; }
+          }
+          function typeofMissing() { return typeof missingName; }
+
+          let lexicalShadow = 59;
+          let sawTdz = true;
+          for (let index = 0; index < 48; index++) {
+            if (readCachedData() !== 41) throw Error('cached global data');
+            if (!callStrictTarget()) throw Error('strict global call receiver');
+            if (readLexicalShadow() !== 59) throw Error('global lexical shadow');
+            try { readTdz(); sawTdz = false; }
+            catch (error) { if (!(error instanceof ReferenceError)) throw error; }
+            if (readAccessor() !== 73) throw Error('global accessor');
+            if (!readMissing()) throw Error('missing global must throw');
+            if (typeofMissing() !== 'undefined') throw Error('typeof missing global');
+          }
+          let tdzName = 61;
+          if (!sawTdz) throw Error('global lexical TDZ');
+          if (nameGetterCalls !== 48) throw Error('accessor count');
+          globalThis.nameLoadResult = [
+            readCachedData(), callStrictTarget(), readLexicalShadow(),
+            readAccessor(), readMissing(), typeofMissing(), nameGetterCalls
+          ];
+        "#,
+        "js-jit-general-static-names.js",
+    ))
+    .unwrap();
+
+    let function_id = |name: &str| {
+        program
+            .functions
+            .iter()
+            .position(|body| {
+                body.header()
+                    .name
+                    .or(body.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32
+    };
+    let name_sites = |function_id: u32, name: &str| {
+        let body = program.function(function_id as usize);
+        let atom = program
+            .atoms
+            .iter()
+            .position(|candidate| candidate == name)
+            .unwrap() as u32;
+        body.code
+            .iter()
+            .enumerate()
+            .filter_map(|(pc, packed)| {
+                let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+                (instruction.atom_index() == atom
+                    && matches!(
+                        instruction.op(),
+                        crate::bytecode::Op::LoadName
+                            | crate::bytecode::Op::LoadNameCall
+                            | crate::bytecode::Op::LoadNameTypeof
+                    ))
+                .then_some((pc, instruction.op()))
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let eligible = [
+        ("readCachedData", "cachedData", crate::bytecode::Op::LoadName),
+        (
+            "callStrictTarget",
+            "dynamicStrictTarget",
+            crate::bytecode::Op::LoadNameCall,
+        ),
+    ]
+    .map(|(function, name, op)| (function, function_id(function), name, op));
+    let fallback = [
+        ("readLexicalShadow", "lexicalShadow", false),
+        ("readTdz", "tdzName", false),
+        ("readAccessor", "accessorData", true),
+        ("readMissing", "missingName", true),
+        ("typeofMissing", "missingName", true),
+    ]
+    .map(|(function, name, has_name_op)| (function, function_id(function), name, has_name_op));
+
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let result_atom = interpreter.intern_atom("nameLoadResult");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, result_atom)
+        .unwrap();
+    let expected = interpreter.to_string(&program, expected).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+    let result_atom = compiled.intern_atom("nameLoadResult");
+    let actual = compiled
+        .own_property(compiled.realm.globals, result_atom)
+        .unwrap();
+    assert_eq!(compiled.to_string(&program, actual).unwrap(), expected);
+
+    for (name, function, atom, expected_op) in eligible {
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should use the general JavaScript compiler");
+        };
+        let pcs = name_sites(function, atom);
+        assert_eq!(pcs.len(), 1, "{name} should have one global name site");
+        assert_eq!(pcs[0].1, expected_op, "{name} should use the expected load op");
+        assert!(
+            native.general_dispatch_global_name_cache_hits() > 0,
+            "eligible cached global load in {name} should take the cache-hit path"
+        );
+    }
+
+    for (name, function, atom, has_name_op) in fallback {
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should use the general JavaScript compiler");
+        };
+        let pcs = name_sites(function, atom);
+        assert_eq!(
+            pcs.len(),
+            usize::from(has_name_op),
+            "{name} should have the expected number of unresolved name sites"
+        );
+        assert!(
+            native.general_dispatch_global_name_cache_hits() == 0,
+            "lexical/effectful name load in {name} should retain exact fallback"
+        );
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_lowers_tagged_plain_local_accesses() {
     let source = r#"
       function transfer() { return this.invoke.apply(this, arguments); }
