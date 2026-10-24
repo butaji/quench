@@ -5412,7 +5412,7 @@ fn lane_loop_run<H: Host>(
             widened: &tier.widened,
         };
         tier.code =
-            super::compiled::compile_osr_region(&site.region, &observation, &unsafe { vm(cx) }.execution_interrupt);
+            super::compiled::compile_osr_region(&site.region, &observation, &unsafe { vm(cx) }.execution_interrupt, heap.memory_policy());
         // SAFETY: as above; the observation's borrow of the heap has ended.
         unsafe { vm(cx) }.host.after_native_compilation();
         if site.diagnostics && tier.code.is_some() {

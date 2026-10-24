@@ -3176,12 +3176,22 @@ pub(super) fn analyze_osr_region(
 }
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
+/// The Cranelift optimization level the loop tier compiles under each memory policy
+/// (`MemoryPolicy` order). A loop region's compilation is the largest transient allocation
+/// of a `--jit` run, and under memory-first it set the peak: Cranelift's e-graph pass adds
+/// values that its register allocator then tracks. Without that pass the `--jit` max RSS
+/// fell by 576 KiB on Crypto (-13.5%, score -2.8%) and by 648 KiB on NavierStokes (-8.4%,
+/// score -6.1%); the other V8-v7 rows moved within noise (static x86_64 build, median of 11
+/// runs, 2026-10-24). Throughput keeps the optimizing pass, whose code it ran 2.8-6.1% faster.
+const LOOP_TIER_OPT_LEVELS: [&str; crate::MemoryPolicy::ALL.len()] = ["speed", "none"];
+
 pub(super) fn compile_osr_region(
     region: &LoopRegion,
     observation: &Observation<'_>,
     interrupt: &crate::execution_interrupt::ExecutionInterrupt,
+    policy: crate::MemoryPolicy,
 ) -> Option<CompiledOsrRegion> {
-    let isa = super::jit_backend::target_isa("speed", false)?;
+    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize], false)?;
     let (function, widenings) = osr_loop::lower(
         region,
         observation,
