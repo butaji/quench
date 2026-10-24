@@ -12,8 +12,10 @@ The full package matrix still shows Quench far behind peers on these three JIT r
 
 A broad native `GetField` site-marking trial then let the existing callout skip `Vm::step` on cached hits. It improved Zod by 9.3% over control but regressed React by 1.3% and Pino by 9.3%, so the runtime change was reverted. Raw reports and details are in `fieldsite-trial/`.
 
-## Next shared JIT slice
+## Per-site attribution and next shared JIT slice
 
-The next iteration must avoid taxing cold field sites. First collect per-site call counts and cache-hit ratios from the same broad workloads; only then consider an adaptive native guard. A permanent object/cache ABI remains a separate, larger design task. Any field operation must validate changing receivers, inherited properties, accessors, proxies, and exceptions before measuring. Screen React, Zod, and Pino first and rerun the full 22-row matrix only if the shared feature wins across all three.
+Opt-in per-site counters are now implemented in `program_store.rs` and emitted under the existing `QUENCH_JS_JIT_STATS=1` flag. The 11-round results in `per-site-attribution/README.md` show hot sites beside zero-hit sites inside the same functions. Aggregate function hit rates are insufficient to mark every GetField PC native.
+
+The next trial should gate lowering at individual site PCs using runtime-local evidence, preserve exact `Vm::step` fallback on every guard miss or effectful case, and screen React, Zod, and Pino against a same-run control. A permanent object/cache ABI remains a separate, larger design task. Any field operation must validate changing receivers, inherited properties, accessors, proxies, and exceptions before measuring. Rerun the full 22-row matrix only if the shared feature wins across all three screens.
 
 Source counters: `work/tod173-jit-eval/zod-shared-jit-stats-100k.log`, `work/tod173-jit-eval/react-general-jit-stats.log`, and `work/tod173-jit-eval/pino-general-jit-stats.log`. Current exact package/mode measurements remain in `scorecard.md` and the row JSON reports.

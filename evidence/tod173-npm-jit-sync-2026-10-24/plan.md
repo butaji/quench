@@ -17,10 +17,10 @@ For each of the 10 npm workloads, in both no-JIT and JIT modes, Quench must be a
 ## Current execution
 
 - Steps 1–3 complete. Ten generic JIT commits are synced. The runtime suite passed 942 tests. The clean production build used only general runtime training.
-- Step 4 complete: all 22 workload/mode reports are present with output parity. Node's no-JIT mode cannot run the Vite and Undici paths because Node 24.19.0 removes the required WebAssembly global under `--jitless`; those rows compare Quench and Bun.
-- Step 5 complete diagnostically: 0 of 22 rows pass both throughput gates. The throughput margins range from -3.0% to -99.4%. RSS sampling is explicitly marked diagnostic in every report and cannot qualify the memory gate yet.
-- Step 6 is complete: commit `be9bf963f` is pushed to `v2-zod`, and TOD-173 records the unmet gates.
-- Step 7 profiling found high field-cache hit rates, but a broad `GetField` native-site trial regressed React by 1.3% and Pino by 9.3% while improving Zod by 9.3%; that runtime change was reverted. See `profile.md` and `fieldsite-trial/`. The next step is per-site call and hit-rate attribution so a candidate can avoid taxing cold sites.
-- The goal remains unmet: all 22 rows fail the throughput gate, and the current RSS method is diagnostic only.
+- Step 4 complete: the corrected final recheck has all 22 workload/mode reports with output parity, using the same production binary. Node's no-JIT mode cannot run Vite and Undici because Node 24.19.0 removes the required WebAssembly global under `--jitless`; those two rows compare Quench and Bun.
+- Step 5 complete diagnostically: 0 of 22 rows pass the throughput gate. Throughput margins range from -0.8% to -99.3%. RSS sampling is explicitly diagnostic in every report and cannot qualify the memory gate. The latest scorecard and reports are in `final-pgo-recheck/`.
+- Step 6 has source and prior evidence synced to `v2-zod`; the refreshed scorecard is being committed with this update. TOD-173 remains In Progress.
+- Step 7 profiling found high field-cache hit rates, but a broad `GetField` native-site trial regressed React by 1.3% and Pino by 9.3% while improving Zod by 9.3%; that runtime change was reverted. See `profile.md` and `fieldsite-trial/`. The next implementation step is opt-in per-cache-site call and hit-rate attribution, followed by an adaptive guarded JIT fast path only for sites where measurements support it.
+- The goal remains unmet. Every workload/mode row misses the throughput gate, and RSS remains unqualified.
 
-See `scorecard.md` and the per-row JSON files for exact measurements and reproduction inputs.
+The authoritative current scorecard is [`final-pgo-recheck/scorecard.md`](final-pgo-recheck/scorecard.md), with the per-row reports beside it. The root `scorecard.md` records the earlier baseline.
