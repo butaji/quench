@@ -11654,6 +11654,77 @@ fn js_jit_field_reject_resumes_interpreter_on_match_and_accessor() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_compiles_number_truthiness_branches() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function jumpFalse(value) {
+            if (value) return 1;
+            return 0;
+          }
+          function jumpTrue(value) {
+            if (!value) return 2;
+            return 3;
+          }
+          function conditional(value) {
+            return value ? 4 : 5;
+          }
+          const values = [0, -0, NaN, 1, -1, Infinity, -Infinity, 'x'];
+          for (const value of values) {
+            const truthy = typeof value === 'number'
+              ? value !== 0 && !Number.isNaN(value)
+              : true;
+            if (jumpFalse(value) !== (truthy ? 1 : 0)) throw Error('JumpFalse truthiness');
+            if (jumpTrue(value) !== (truthy ? 3 : 2)) throw Error('JumpTrue truthiness');
+            if (conditional(value) !== (truthy ? 4 : 5)) throw Error('conditional truthiness');
+          }
+          for (let index = 0; index < 40; index++) {
+            jumpFalse(index - 20);
+            jumpTrue(index - 20);
+            conditional(index - 20);
+          }
+        "#,
+        "js-jit-number-truthiness.js",
+    ))
+    .unwrap();
+    let function_id = |name: &str| {
+        program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32
+    };
+    let functions = ["jumpFalse", "jumpTrue", "conditional"].map(function_id);
+    for function_id in functions {
+        assert!(
+            super::js_compiled::compile(&program, function_id).is_some(),
+            "the numeric branch function should have a generic compiled denotation"
+        );
+    }
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).expect("interpreted truthiness");
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).expect("compiled truthiness");
+    for function_id in functions {
+        let Some(super::program_store::JsTierState::Compiled(artifact)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function_id)
+        else {
+            panic!("number truthiness function {function_id} was not compiled");
+        };
+        assert!(artifact.native_entries() > 0);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_forward_numeric_branches_to_rooted_string_returns() {
     let source = r#"
       const rating = price => price < 100 ? '€' : price < 1000 ? '€€' : '€€€';
