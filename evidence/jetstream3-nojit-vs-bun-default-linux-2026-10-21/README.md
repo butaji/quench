@@ -131,3 +131,13 @@ Same method and host, nothing else running. Raw rows `paired-ad48589e-raw.txt`, 
 1.20 joins). Both engines scored lower than in the 3a7eaaf0f run (Bun web-ssr 68.4 → 62.8,
 doxbee-async 150.0 → 136.5), so the score ratios are within that run's spread. RSS:
 babel 1.08 → 1.15, postcss 1.12 → 1.18, babel-minify 1.15 → 1.20.
+
+## Paired JIT sweep at 5a673e40e (2026-10-24)
+
+`quench-node --jit` against Bun with its JIT on, back to back per test on the same host.
+Raw `paired-jit-5a673e40-raw.txt`, ratios `paired-jit-5a673e40-ratios.txt`. Geomean score
+**0.113×** Bun JIT, max RSS **2.93×** smaller; 0/34 tests at ≥1.2× score, 33/34 at ≥1.2×
+smaller RSS (sqlite3-wasm 1.06). Closest: json-stringify 0.99, quicksort-wasm 0.91,
+json-parse 0.64. `--jit` scores below quench's own no-JIT run on several Wasm tests
+(sqlite3 0.60 vs 3.31, HashSet 6.99 vs 19.89, tsf 6.56 vs 11.95, argon2 equal): a JIT-tier
+regression, reported on TOD-110.
