@@ -34,6 +34,13 @@ fn direct_array_record_base_resolves_the_current_live_array_value() {
         .array_elements(array)
         .expect("array elements")
         .as_ptr();
+    let shared_elements = heap
+        .array_elements(array)
+        .expect("array elements")
+        .clone();
+    let shared = heap.alloc(Cell::Array {
+        object: ArrayObject::new(plain_object(), shared_elements),
+    });
     heap.array_elements_mut(array)
         .expect("array elements")
         .make_mut()
@@ -45,6 +52,7 @@ fn direct_array_record_base_resolves_the_current_live_array_value() {
         .as_ptr();
     assert_ne!(before, after, "copy-on-write can replace the backing");
     assert_eq!(heap.array(array).unwrap().elements().len(), 2);
+    assert_eq!(heap.array(shared).unwrap().elements().len(), 1);
 }
 
 #[test]
