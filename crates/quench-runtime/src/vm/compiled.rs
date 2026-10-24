@@ -10283,6 +10283,7 @@ impl<H: Host> Vm<H> {
             parameters: parameters.iter().copied().collect(),
             captures: TierCaptures::Environment(env),
             allocates: false,
+            facts: self.programs.js_entry_facts(id, function)?,
         };
         let mut specialized_guard_miss = false;
         let entered = self.js_jit_at_entry(program, &entry, &mut specialized_guard_miss);
@@ -10296,8 +10297,8 @@ impl<H: Host> Vm<H> {
                     function,
                     instructions,
                 );
-            } else if let Some(facts) = self.programs.js_entry_facts(id, function) {
-                self.js_tier_note_general_entry(program, id, function, &facts);
+            } else {
+                self.js_tier_note_general_entry(program, id, function, &entry.facts);
             }
             self.programs.record_js_jit_fallback_entry(id, function);
         }
@@ -10375,6 +10376,7 @@ impl<H: Host> Vm<H> {
                 parameters: record.registers.iter().copied().take(usize::from(params)).collect(),
                 captures: TierCaptures::Frame(frame),
                 allocates: true,
+                facts: Rc::clone(&facts),
             })
         });
         let (general_candidate, mut promote_general) =
@@ -10679,7 +10681,7 @@ impl<H: Host> Vm<H> {
         }
         let (program_id, function_id) = (entry.program, entry.function);
         let function = program.function_get(function_id as usize)?;
-        let facts = self.programs.js_entry_facts(program_id, function_id)?;
+        let facts = &*entry.facts;
         // Most entries are of functions no entry path can claim; diagnostics still count them.
         if !facts.enters && !self.programs.js_jit_diagnostics_enabled() {
             return None;
@@ -12817,6 +12819,8 @@ pub(super) struct TierEntry {
     captures: TierCaptures,
     /// Whether a native result may allocate: not in a lane activation, where nothing collects.
     allocates: bool,
+    /// The function's entry facts, looked up once per entry (`ProgramStore::js_entry_facts`).
+    facts: Rc<super::js_compiled::JsEntryFacts>,
 }
 
 /// Where an entry's captures are read.
