@@ -8588,7 +8588,7 @@ impl<H: Host> Vm<H> {
         if !environment
             && !cross
             && !body.rest
-            && !plan.forwards_arguments
+            && !plan.keeps_arguments
             && shape.entry == CallEntry::Activates
             && self.js_tier_may_claim(code, program, function)
         {
@@ -8627,7 +8627,7 @@ impl<H: Host> Vm<H> {
             // completes across programs as a call does (`Completion::CrossConstructs`); a
             // forwarding one runs its program's keeping construction
             // (`lane_construct_keeping_activation`), which another program's caller does not.
-            constructs: shape.constructs && !environment && !body.rest && !(cross && plan.forwards_arguments),
+            constructs: shape.constructs && !environment && !body.rest && !(cross && plan.keeps_arguments),
             initializes: shape.initializes && !environment && !cross && !body.rest,
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
@@ -8637,7 +8637,7 @@ impl<H: Host> Vm<H> {
                 CallEntry::Environment
             } else if body.rest {
                 CallEntry::Gathers
-            } else if plan.forwards_arguments {
+            } else if plan.keeps_arguments {
                 CallEntry::Keeps
             } else if cross {
                 CallEntry::Activates
@@ -10591,6 +10591,40 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// `LoadLocal` of an `arguments` binding a keeping activation makes at its last read
+    /// (`KeptArguments::Passes`): the object made from the values it kept, as its frame
+    /// makes one on entry, whose binding a frame's run reads.
+    #[inline(never)]
+    fn lane_load_kept_arguments_object<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let value = if unsafe { (*cx).env }.is_deleted() {
+            // SAFETY: validated bytecode bounds the slot by Function.locals.
+            unsafe { vm.read_validated_local((*cx).frame, i.imm() as usize) }
+        } else {
+            let Some((function, Some(script))) =
+                vm.lane_stack.activations.last().map(|activation| (activation.function, activation.script()))
+            else {
+                return exit(ip);
+            };
+            // SAFETY: the context's program outlives the lane run.
+            let body = unsafe { &*(*cx).code }.function(function as usize);
+            // A keeping activation's values follow its registers (`lane_activate_keeping`).
+            let kept = (0..script.argc)
+                .map(|index| r.get(body.registers + index))
+                .collect::<smallvec::SmallVec<[Value; GATHERED_INLINE_VALUES]>>();
+            let context = CallContext::user_function(function, script.callee);
+            let Ok(arguments) = vm.activation_arguments_object(body, context, &kept) else {
+                return exit(ip);
+            };
+            note_allocation(vm);
+            arguments
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
 /// The values the running function kept for its unmaterialized `arguments` binding, in the
 /// local slot `slot` (`lane_kept_arguments`): `None` where a frame's binding was
 /// materialized, which the general path then reads.
@@ -10659,7 +10693,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `ArgumentsLength` of a binding only kept values answer (`Function::forwards_arguments_only`):
+    /// `ArgumentsLength` of a binding only kept values answer (`Function::kept_arguments`):
     /// their count, as the object made on entry holds it. `lane_arguments_length` answers a
     /// keeping activation first.
     #[inline(never)]
@@ -13589,7 +13623,7 @@ fn derive_lane_view<H: Host>(
     let wasm = kind == crate::bytecode::ProgramKind::Wasm;
     let resolves_names = function.has_dynamic_scope_access();
     // One function-wide fact, consulted per local load; it scans the whole body.
-    let forwards_arguments = std::cell::OnceCell::new();
+    let kept_arguments = std::cell::OnceCell::new();
     let mut producer: Option<u16> = None;
     // Per instruction: the general path executes it, and its record reads
     // the accumulator.
@@ -13663,12 +13697,19 @@ fn derive_lane_view<H: Host>(
                 })
             } else if matches!(op, Op::LoadLocal | Op::LoadLocalPlain | Op::ArgumentsLength | Op::ArgumentGet)
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
-                && *forwards_arguments.get_or_init(|| function.forwards_arguments_only())
+                && let Some(kept) = *kept_arguments.get_or_init(|| function.kept_arguments())
             {
+                let forwards = decoded.get(pc + 1).is_some_and(|next| {
+                    next.op() == Op::CallForwardingArguments
+                        && next.call_window().last() == Some(instruction.result_register())
+                });
                 Some(LaneHandler {
                     handler: match op {
                         Op::ArgumentsLength => lane_arguments_length::<H> as Handler,
                         Op::ArgumentGet => lane_argument_get::<H> as Handler,
+                        _ if kept == crate::bytecode::KeptArguments::Passes && !forwards => {
+                            lane_load_kept_arguments_object::<H> as Handler
+                        }
                         _ => lane_load_forwarded_arguments::<H> as Handler,
                     },
                     produces: false,

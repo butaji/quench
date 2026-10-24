@@ -853,7 +853,7 @@ impl<H: Host> Vm<H> {
     /// A new activation's `arguments` object, mapped onto the parameters when the function's
     /// parameter list allows it.
     #[inline(never)]
-    fn activation_arguments_object(
+    pub(super) fn activation_arguments_object(
         &mut self,
         function: &crate::bytecode::Function,
         context: CallContext,
