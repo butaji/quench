@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use std::ops::Range;
 
 use super::{
-    canonical, canonical_preimages_of, class_is_single_unit, class_item_matches, class_matches, equal, is_line_terminator, is_word_mode, merge_flags,
+    canonical, canonical_preimages_of, class_is_single_unit, class_item_matches, class_matches, equal, escape_matches, is_line_terminator, is_word_mode, merge_flags,
     literal_finder, Assertion, Backreference, ClassExpr, ClassItem, ClassKind, Expr, Flags, LiteralFinder, Lookaround,
     Unit, ASCII_MAX,
 };
@@ -341,10 +341,58 @@ fn class_item_ascii_mask(item: &ClassItem, ignore_case: bool, unicode: bool) -> 
         ClassItem::Character(character) if !ignore_case => range_ascii_mask(character, character),
         ClassItem::Character(character) => folded_ascii_mask(character, unicode),
         ClassItem::Range(min, max) if !ignore_case => range_ascii_mask(min, max),
+        ClassItem::Escape(escape) => escape_ascii_mask(escape, ignore_case, unicode),
+        ClassItem::Range(min, max) => folded_range_ascii_mask(min, max, unicode),
         _ => (0..ASCII_UNITS)
             .filter(|value| class_item_matches(item, *value, ignore_case, unicode))
             .fold(0u128, |bits, value| bits | 1 << value),
     }
+}
+
+/// The ASCII units a case-folded range admits (`class_item_matches`), by testing each unit
+/// once per range and folding: patterns repeat a few ranges (`[a-z]`, `[0-9a-f]`) across
+/// all their classes, and a schema validator compiles dozens of such patterns. The memo
+/// holds one entry per distinct range a run's case-insensitive patterns name.
+fn folded_range_ascii_mask(min: u32, max: u32, unicode: bool) -> u128 {
+    thread_local! {
+        static MASKS: RefCell<std::collections::HashMap<(u32, u32, bool), u128>> = RefCell::new(Default::default());
+    }
+    MASKS.with(|masks| {
+        *masks.borrow_mut().entry((min, max, unicode)).or_insert_with(|| {
+            let range = ClassItem::Range(min, max);
+            (0..ASCII_UNITS)
+                .filter(|unit| class_item_matches(&range, *unit, true, unicode))
+                .fold(0u128, |bits, unit| bits | 1 << unit)
+        })
+    })
+}
+
+/// The class escapes, in `escape_ascii_mask`'s table order.
+const CLASS_ESCAPES: [oxc::regular_expression::ast::CharacterClassEscapeKind; 6] = {
+    use oxc::regular_expression::ast::CharacterClassEscapeKind as Escape;
+    [Escape::D, Escape::NegativeD, Escape::S, Escape::NegativeS, Escape::W, Escape::NegativeW]
+};
+
+/// The ASCII units a class escape admits under the flags (`escape_matches`). Each depends on
+/// the escape and the flags alone, and every class compiled with one tests all ASCII units,
+/// so the table is derived once per process.
+fn escape_ascii_mask(escape: oxc::regular_expression::ast::CharacterClassEscapeKind, ignore_case: bool, unicode: bool) -> u128 {
+    /// One mask per flag pair, indexed by `ignore_case` then `unicode`.
+    type FlagMasks = [[u128; 2]; 2];
+    static MASKS: std::sync::OnceLock<[FlagMasks; CLASS_ESCAPES.len()]> = std::sync::OnceLock::new();
+    let masks = MASKS.get_or_init(|| {
+        CLASS_ESCAPES.map(|escape| {
+            [false, true].map(|ignore_case| {
+                [false, true].map(|unicode| {
+                    (0..ASCII_UNITS)
+                        .filter(|unit| escape_matches(escape, *unit, ignore_case, unicode))
+                        .fold(0u128, |bits, unit| bits | 1 << unit)
+                })
+            })
+        })
+    });
+    let index = CLASS_ESCAPES.iter().position(|known| *known == escape).expect("every class escape has a mask");
+    masks[index][usize::from(ignore_case)][usize::from(unicode)]
 }
 
 /// An assertion with the flags that decide it.

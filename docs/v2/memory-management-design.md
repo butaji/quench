@@ -390,6 +390,32 @@ controlled term, the evidence below bounds what any setting of it could still re
 | Cold first runs | where records live | A cold-compiled entry runs from its kept form; no row's worst run is its first. | `tod137-cold-entry-kept-form-…` |
 | Code pages | release at boundaries | Releases at every collection and paced first-call releases. Every finer release rule measured raised a peak, or cost npm 1.4–2.9× in time (§8.2). | `tod137-first-call-release-…` |
 
+**Against reference counting.** QuickJS frees each object when its count drops to zero, so it
+holds no garbage between collections: its working set above its own empty-process floor is
+what the workload needs with no collector headroom. Quench's working set above its floor is
+smaller than that on all eight fixtures. In the board's median runs:
+
+| Fixture | Quench above its floor | QuickJS above its floor | Ratio |
+|---|--:|--:|--:|
+| Splay | 29,484 KiB | 157,508 | 0.19 |
+| EarleyBoyer | 4,336 | 15,172 | 0.29 |
+| Richards | 316 | 712 | 0.44 |
+| DeltaBlue | 756 | 1,208 | 0.63 |
+| NavierStokes | 1,916 | 2,572 | 0.74 |
+| Crypto | 856 | 1,068 | 0.80 |
+| RegExp | 3,832 | 4,356 | 0.88 |
+| RayTrace | 696 | 744 | 0.94 |
+
+The empty-process floors, from 7 evicted runs of an empty script, are Quench 2016 KiB and
+QuickJS 2744 KiB (median).
+
+The rows that miss the target are those whose workload above the floor is small:
+- RayTrace needs 744 KiB above QuickJS's floor, and Crypto 1068.
+- With such a workload, 0.8 × QuickJS's total requires a floor far below QuickJS's own, even
+  with no garbage at all.
+- Quench's floor is already 27% lower. What remains lies in that floor's code pages and
+  start-up state.
+
 What is left on the three missing rows (1–8% over the target) lies outside these terms:
 - **Crypto and RayTrace:** code pages, about 1.2–1.5 MB at the peak, which the code-layout
   lane owns (TOD-171); and start-up state, about 1.5 MB, which the start-up lane owns
