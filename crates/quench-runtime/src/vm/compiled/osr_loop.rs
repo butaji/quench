@@ -21,8 +21,11 @@
 //! Nothing in a region allocates, collects, or runs guest code, so the arrays, their
 //! element storage and the captures the entry read stay as they are while native code runs.
 
-use crate::bytecode::{FieldBase, FieldLookup, Function, Op, Operand, OperandKind, Register, WideInstruction};
+use crate::bytecode::{
+    FieldBase, FieldLookup, Function, Op, Operand, OperandKind, Register, WideInstruction,
+};
 use crate::value::{Value, ValueLayout};
+use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
 use cranelift_codegen::ir::{
     self, InstBuilder, UserFuncName,
     condcodes::{FloatCC, IntCC},
@@ -45,9 +48,6 @@ pub(super) const MAX_CODE_BYTES: usize = 64 * 1024;
 
 /// What native code writes to its result word: the outcome in the high word, a bytecode PC
 /// in the low one.
-const OUTCOME_SHIFT: u32 = u32::BITS;
-const PC_MASK: u64 = u32::MAX as u64;
-
 /// The outcome of one native run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LoopOutcome {
@@ -81,25 +81,21 @@ pub(crate) enum Widening {
     Unit(Register),
 }
 
-const OUTCOME_NOT_ENTERED: u64 = 0;
-const OUTCOME_RESUME: u64 = 1;
-const OUTCOME_EXIT: u64 = 2;
-const OUTCOME_WIDEN: u64 = 3;
 /// A not-entered outcome's low word: zero, or a widening's kind bit over its payload.
 const WIDEN_REGISTER: u64 = 1 << u16::BITS;
 const WIDEN_CAPTURE: u64 = WIDEN_REGISTER << 1;
 const WIDEN_UNIT: u64 = WIDEN_CAPTURE << 1;
-const _: () = assert!(WIDEN_UNIT <= PC_MASK);
+const _: () = assert!(WIDEN_UNIT <= u32::MAX as u64);
 const WIDEN_PAYLOAD: u64 = WIDEN_REGISTER - 1;
 
 impl Widening {
     /// The not-entered word of an entry guard's widening; element reads are guarded where
     /// they run, so an entry never names them.
-    fn code(self) -> u64 {
+    fn code(self) -> u32 {
         match self {
-            Self::Register(register) => WIDEN_REGISTER | u64::from(register),
-            Self::Capture(index) => WIDEN_CAPTURE | u64::from(index),
-            Self::Unit(register) => WIDEN_UNIT | u64::from(register),
+            Self::Register(register) => (WIDEN_REGISTER | u64::from(register)) as u32,
+            Self::Capture(index) => (WIDEN_CAPTURE | u64::from(index)) as u32,
+            Self::Unit(register) => (WIDEN_UNIT | u64::from(register)) as u32,
             Self::Elements(_) => 0,
         }
     }
@@ -120,12 +116,11 @@ impl Widening {
 
 impl LoopOutcome {
     pub(super) fn decode(word: u64) -> Self {
-        let low = word & PC_MASK;
-        match word >> OUTCOME_SHIFT {
-            OUTCOME_RESUME => Self::Resume(low as u32),
-            OUTCOME_EXIT => Self::Exit(low as u32),
-            OUTCOME_WIDEN => Self::Widen(low as u32),
-            _ => Self::NotEntered(Widening::decode(low)),
+        match super::RegionExit::decode(word) {
+            super::RegionExit::EntryMiss(payload) => Self::NotEntered(Widening::decode(u64::from(payload))),
+            super::RegionExit::Resume(pc) => Self::Resume(pc),
+            super::RegionExit::Fallback(pc) => Self::Exit(pc),
+            super::RegionExit::Recompile(pc) => Self::Widen(pc),
         }
     }
 }
@@ -262,72 +257,31 @@ enum Source {
 /// The arithmetic and comparison a region lowers, by the operator's tag.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Arithmetic {
-    Float(FloatOperator),
-    Int32(Int32Operator),
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum FloatOperator {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Int32Operator {
-    Or,
-    And,
-    Xor,
-    ShiftLeft,
-    ShiftRight,
-    ShiftRightUnsigned,
+    Float(NumberArithmetic),
+    Int32(super::super::operations::NumberBitwise),
 }
 
 fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
-    if let Some(operation) = super::super::operations::NumberArithmetic::from_js_instruction(
-        instruction,
-        operator,
-    ) {
-        return Some(Arithmetic::Float(match operation {
-            super::super::operations::NumberArithmetic::Add => FloatOperator::Add,
-            super::super::operations::NumberArithmetic::Subtract => FloatOperator::Subtract,
-            super::super::operations::NumberArithmetic::Multiply => FloatOperator::Multiply,
-            super::super::operations::NumberArithmetic::Divide => FloatOperator::Divide,
-        }));
+    if let Some(operation) = NumberArithmetic::from_js_instruction(instruction, operator) {
+        return Some(Arithmetic::Float(operation));
     }
-    let operation = super::super::operations::NumberBitwise::from_js_instruction(
-        instruction,
-        operator,
-    )?;
-    Some(Arithmetic::Int32(match operation {
-        super::super::operations::NumberBitwise::Or => Int32Operator::Or,
-        super::super::operations::NumberBitwise::And => Int32Operator::And,
-        super::super::operations::NumberBitwise::Xor => Int32Operator::Xor,
-        super::super::operations::NumberBitwise::ShiftLeft => Int32Operator::ShiftLeft,
-        super::super::operations::NumberBitwise::ShiftRight => Int32Operator::ShiftRight,
-        super::super::operations::NumberBitwise::ShiftRightUnsigned => {
-            Int32Operator::ShiftRightUnsigned
-        }
-    }))
+    super::super::operations::NumberBitwise::from_js_instruction(instruction, operator)
+        .map(Arithmetic::Int32)
 }
 
 /// A unary operator a region lowers on a Number.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Unary {
-    Plus,
-    Negate,
+    Number(NumberUnary),
     BitwiseNot,
 }
 
-fn unary(operator: u32) -> Option<Unary> {
-    use UnaryOperator as U;
-    Some(match operator {
-        op if op == U::UnaryPlus as u32 => Unary::Plus,
-        op if op == U::UnaryNegation as u32 => Unary::Negate,
-        op if op == U::BitwiseNot as u32 => Unary::BitwiseNot,
-        _ => return None,
-    })
+fn unary(instruction: Op, operator: u32) -> Option<Unary> {
+    if let Some(operation) = NumberUnary::from_js_instruction(instruction, operator) {
+        return Some(Unary::Number(operation));
+    }
+    (instruction == Op::Unary && operator == UnaryOperator::BitwiseNot as u32)
+        .then_some(Unary::BitwiseNot)
 }
 
 /// What each register of a region holds.
@@ -505,7 +459,7 @@ fn admit(admission: &mut Admission<'_>, instruction: WideInstruction) -> Option<
             admission.number(instruction.register_b())?;
         }
         Op::Unary => {
-            unary(instruction.unary_operator())?;
+            unary(instruction.op(), instruction.unary_operator())?;
             admission.result(instruction)?;
             admission.number(instruction.register_b())?;
         }
@@ -669,11 +623,11 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
 /// where the lane resumes; as lowered (`Lowering::jump`, `Lowering::fall_through`).
 fn successors(region: &LoopRegion, pc: u32) -> Vec<u32> {
     let instruction = region.instructions[(pc - region.header) as usize];
-    match instruction.op() {
-        Op::Jump => vec![instruction.jump_target()],
-        Op::JumpBinaryFalse => vec![pc + 1, instruction.jump_target()],
-        _ => vec![pc + 1],
-    }
+    let mut successors = Vec::with_capacity(2);
+    crate::bytecode::for_each_instruction_successor(pc as usize, instruction, |successor| {
+        successors.push(successor as u32);
+    });
+    successors
 }
 
 fn webs(region: &LoopRegion) -> Webs {
@@ -857,16 +811,16 @@ fn definition(
         }
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
             match arithmetic(instruction.op(), instruction.binary_operator())? {
-                Arithmetic::Float(FloatOperator::Divide) => Representation::Float64,
+                Arithmetic::Float(NumberArithmetic::Divide) => Representation::Float64,
                 Arithmetic::Float(_) => {
                     both(source(instruction.operand_b()), source(instruction.operand_c()))
                 }
-                Arithmetic::Int32(Int32Operator::ShiftRightUnsigned) => Representation::Float64,
+                Arithmetic::Int32(NumberBitwise::ShiftRightUnsigned) => Representation::Float64,
                 Arithmetic::Int32(_) => Representation::Int32,
             }
         }
-        Op::Unary => match unary(instruction.unary_operator())? {
-            Unary::Plus | Unary::Negate => registers(instruction.register_b()),
+        Op::Unary => match unary(instruction.op(), instruction.unary_operator())? {
+            Unary::Number(_) => registers(instruction.register_b()),
             Unary::BitwiseNot => Representation::Int32,
         },
         Op::GetIndex => element_representation(instruction, observation),
@@ -1143,7 +1097,7 @@ fn counted_loop(
                 };
                 let operator = arithmetic(instruction.op(), instruction.binary_operator())?;
                 let sum = match (operator, left.1, right.1) {
-                    (Arithmetic::Float(FloatOperator::Add), Some(left), Some(right)) => match (left, right) {
+                    (Arithmetic::Float(NumberArithmetic::Add), Some(left), Some(right)) => match (left, right) {
                         (_, Affine { base: Base::Constant, addend: None, offset }) => left.plus(offset),
                         (Affine { base: Base::Constant, addend: None, offset }, _) => right.plus(offset),
                         // An invariant value folds into the other's addend.
@@ -1155,12 +1109,12 @@ fn counted_loop(
                         }
                         _ => None,
                     },
-                    (Arithmetic::Float(FloatOperator::Subtract), Some(left), Some(right))
+                    (Arithmetic::Float(NumberArithmetic::Subtract), Some(left), Some(right))
                         if right.base == Base::Constant && right.addend.is_none() =>
                     {
                         left.plus(-right.offset)
                     }
-                    (Arithmetic::Float(FloatOperator::Multiply), Some(left), Some(right))
+                    (Arithmetic::Float(NumberArithmetic::Multiply), Some(left), Some(right))
                         if held && factor(&left) && factor(&right) =>
                     {
                         terms.push(Term { multiply: true, left, right });
@@ -1170,7 +1124,7 @@ fn counted_loop(
                     }
                     _ => None,
                 };
-                if operator != Arithmetic::Float(FloatOperator::Multiply)
+                if operator != Arithmetic::Float(NumberArithmetic::Multiply)
                     && let Some(value) = sum.filter(|_| held)
                 {
                     candidates.push(Fact { pc, value, bound: Bound::Int32 });
@@ -1342,7 +1296,7 @@ struct Lowering<'a, 'b> {
     /// there and returns its parameter, the outcome word.
     leaves: std::collections::BTreeMap<u32, ir::Block>,
     /// The cold blocks that end the run with a fixed outcome (`outcome_block`).
-    outcomes: Vec<(ir::Block, u64, u64)>,
+    outcomes: Vec<(ir::Block, super::RegionExit)>,
     registers: ir::Value,
     entry: ir::Value,
     /// The result word the outcome is written to.
@@ -1358,7 +1312,10 @@ struct Lowering<'a, 'b> {
     /// The exact `i32` results computed so far, by operator and operands, with the chain
     /// computing them: the same arithmetic later in that chain is that result, its guards
     /// having passed.
-    exact: std::collections::BTreeMap<(FloatOperator, ir::Value, ir::Value), (ir::Value, ir::Block)>,
+    exact: std::collections::BTreeMap<
+        (NumberArithmetic, ir::Value, ir::Value),
+        (ir::Value, ir::Block),
+    >,
     /// The Number each canonical encoding read from memory unboxes to, mapped to the bits as
     /// read: boxing the Number gives those bits back, so a store of it stores them.
     encodings: std::collections::HashMap<ir::Value, ir::Value>,
@@ -1676,10 +1633,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.ins().return_(&[status]);
     }
 
-    fn outcome(&mut self, outcome: u64, low: u64) -> ir::Value {
-        self.body.builder
-            .ins()
-            .iconst(types::I64, ((outcome << OUTCOME_SHIFT) | low) as i64)
+    fn outcome(&mut self, outcome: super::RegionExit) -> ir::Value {
+        self.body.builder.ins().iconst(types::I64, outcome.encode() as i64)
     }
 
     fn word(&mut self, index: usize) -> ir::Value {
@@ -1698,27 +1653,27 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// A block that returns not entered, naming `widening`.
     fn not_entered(&mut self, widening: Option<Widening>) -> ir::Block {
-        self.outcome_block(OUTCOME_NOT_ENTERED, widening.map_or(0, Widening::code))
+        self.outcome_block(super::RegionExit::EntryMiss(widening.map_or(0, Widening::code)))
     }
 
-    /// A cold block that ends the run with `outcome` over `low`, filled once the body is
+    /// A cold block that ends the run with `outcome`, filled once the body is
     /// lowered (`fill_outcomes`): the builder leaves a block only once it is filled.
-    fn outcome_block(&mut self, outcome: u64, low: u64) -> ir::Block {
+    fn outcome_block(&mut self, outcome: super::RegionExit) -> ir::Block {
         let block = self.cold_block();
-        self.outcomes.push((block, outcome, low));
+        self.outcomes.push((block, outcome));
         block
     }
 
     /// Fills each `outcome_block`: not entered returns at once, and every other outcome
     /// leaves at its PC through the write-back.
     fn fill_outcomes(&mut self) {
-        for (block, outcome, low) in std::mem::take(&mut self.outcomes) {
+        for (block, outcome) in std::mem::take(&mut self.outcomes) {
             self.body.builder.switch_to_block(block);
-            if outcome == OUTCOME_NOT_ENTERED {
-                let word = self.outcome(outcome, low);
+            if matches!(outcome, super::RegionExit::EntryMiss(_)) {
+                let word = self.outcome(outcome);
                 self.finish(word);
             } else {
-                self.leave(outcome, low as u32);
+                self.leave(outcome);
             }
         }
     }
@@ -1939,8 +1894,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     /// Leaves with `outcome` at `pc`.
-    fn leave(&mut self, outcome: u64, pc: u32) {
-        let word = self.outcome(outcome, u64::from(pc));
+    fn leave(&mut self, outcome: super::RegionExit) {
+        let pc = match outcome {
+            super::RegionExit::Resume(pc)
+            | super::RegionExit::Fallback(pc)
+            | super::RegionExit::Recompile(pc) => pc,
+            super::RegionExit::EntryMiss(_) => unreachable!("entry miss does not write back"),
+        };
+        let word = self.outcome(outcome);
         let block = match self.leaves.get(&pc) {
             Some(block) => *block,
             None => {
@@ -1955,7 +1916,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// A block that exits at `pc` for the general path.
     fn exit_block(&mut self, pc: u32) -> ir::Block {
-        self.outcome_block(OUTCOME_EXIT, u64::from(pc))
+        self.outcome_block(super::RegionExit::Fallback(pc))
     }
 
     /// Continues past a guard that `failed` decides, exiting at `pc` when it holds.
@@ -1989,7 +1950,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// compilation.
     fn widen_block(&mut self, pc: u32, widening: Widening) -> ir::Block {
         self.widenings.insert(pc, widening);
-        self.outcome_block(OUTCOME_WIDEN, u64::from(pc))
+        self.outcome_block(super::RegionExit::Recompile(pc))
     }
 
     /// `guard` of an `i32` assumption: `widening` was no `i32` when it fails.
@@ -2076,7 +2037,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Some(block) => {
                 self.body.builder.ins().jump(block, &[]);
             }
-            None => self.leave(OUTCOME_RESUME, target),
+            None => self.leave(super::RegionExit::Resume(target)),
         }
         Some(())
     }
@@ -2086,7 +2047,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Some(block) => {
                 self.body.builder.ins().jump(block, &[]);
             }
-            None => self.leave(OUTCOME_RESUME, pc + 1),
+            None => self.leave(super::RegionExit::Resume(pc + 1)),
         }
         Some(())
     }
@@ -2176,7 +2137,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn int32_arithmetic(
         &mut self,
         pc: u32,
-        operator: FloatOperator,
+        operator: NumberArithmetic,
         register: Register,
         left: ir::Value,
         right: ir::Value,
@@ -2201,19 +2162,19 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn int32_offset(
         &mut self,
         pc: u32,
-        operator: FloatOperator,
+        operator: NumberArithmetic,
         register: Register,
         left: ir::Value,
         right: ir::Value,
     ) -> Option<ir::Value> {
         let (value, offset) = match operator {
-            FloatOperator::Add => match (self.int32_constant(left), self.int32_constant(right)) {
+            NumberArithmetic::Add => match (self.int32_constant(left), self.int32_constant(right)) {
                 (_, Some(offset)) => (left, offset),
                 (Some(offset), None) => (right, offset),
                 (None, None) => return None,
             },
-            FloatOperator::Subtract => (left, -self.int32_constant(right)?),
-            FloatOperator::Multiply | FloatOperator::Divide => return None,
+            NumberArithmetic::Subtract => (left, -self.int32_constant(right)?),
+            NumberArithmetic::Multiply | NumberArithmetic::Divide => return None,
         };
         if !self.proved(pc) && offset != 0 {
             let (condition, bound) = if offset > 0 {
@@ -2242,7 +2203,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn int32_arithmetic_guarded(
         &mut self,
         pc: u32,
-        operator: FloatOperator,
+        operator: NumberArithmetic,
         register: Register,
         left: ir::Value,
         right: ir::Value,
@@ -2252,15 +2213,21 @@ impl<'a, 'b> Lowering<'a, 'b> {
         }
         // A proof covers a sum's exactness, so it needs no overflow flag.
         match operator {
-            FloatOperator::Add if self.proved(pc) => return self.body.builder.ins().iadd(left, right),
-            FloatOperator::Subtract if self.proved(pc) => return self.body.builder.ins().isub(left, right),
+            NumberArithmetic::Add if self.proved(pc) => {
+                return self.body.builder.ins().iadd(left, right);
+            }
+            NumberArithmetic::Subtract if self.proved(pc) => {
+                return self.body.builder.ins().isub(left, right);
+            }
             _ => {}
         }
         let (result, overflow) = match operator {
-            FloatOperator::Add => self.body.builder.ins().sadd_overflow(left, right),
-            FloatOperator::Subtract => self.body.builder.ins().ssub_overflow(left, right),
-            FloatOperator::Multiply if self.proved(pc) => return self.body.builder.ins().imul(left, right),
-            FloatOperator::Multiply => {
+            NumberArithmetic::Add => self.body.builder.ins().sadd_overflow(left, right),
+            NumberArithmetic::Subtract => self.body.builder.ins().ssub_overflow(left, right),
+            NumberArithmetic::Multiply if self.proved(pc) => {
+                return self.body.builder.ins().imul(left, right);
+            }
+            NumberArithmetic::Multiply => {
                 let (product, overflow) = self.body.builder.ins().smul_overflow(left, right);
                 self.guard_int32(pc, overflow, Widening::Register(register));
                 // A zero product is -0 when a factor is negative; the signs are tested only
@@ -2284,7 +2251,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.seal_block(done);
                 return product;
             }
-            FloatOperator::Divide => unreachable!("division has a Float64 result"),
+            NumberArithmetic::Divide => unreachable!("division has a Float64 result"),
         };
         if !self.proved(pc) {
             self.guard_int32(pc, overflow, Widening::Register(register));
@@ -2311,32 +2278,28 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             Arithmetic::Float(operator) => {
                 let (left, right) = (self.float(left), self.float(right));
-                let ins = self.body.builder.ins();
-                let value = match operator {
-                    FloatOperator::Add => ins.fadd(left, right),
-                    FloatOperator::Subtract => ins.fsub(left, right),
-                    FloatOperator::Multiply => ins.fmul(left, right),
-                    FloatOperator::Divide => ins.fdiv(left, right),
-                };
+                let value = super::emit_number_arithmetic_operation(
+                    &mut self.body.builder,
+                    operator,
+                    left,
+                    right,
+                );
                 Typed { value, representation: Representation::Float64 }
             }
             Arithmetic::Int32(operator) => {
                 let left = self.int32(pc, left);
                 let right = self.int32(pc, right);
-                let ins = self.body.builder.ins();
-                // Shift counts are taken modulo 32, as Cranelift's shifts take them.
-                let value = match operator {
-                    Int32Operator::Or => ins.bor(left, right),
-                    Int32Operator::And => ins.band(left, right),
-                    Int32Operator::Xor => ins.bxor(left, right),
-                    Int32Operator::ShiftLeft => ins.ishl(left, right),
-                    Int32Operator::ShiftRight => ins.sshr(left, right),
-                    Int32Operator::ShiftRightUnsigned => {
-                        let shifted = ins.ushr(left, right);
-                        let value = self.body.builder.ins().fcvt_from_uint(types::F64, shifted);
-                        return Typed { value, representation: Representation::Float64 };
-                    }
-                };
+                let bits = super::emit_number_bitwise_bits(
+                    &mut self.body.builder,
+                    operator,
+                    left,
+                    right,
+                );
+                if operator == NumberBitwise::ShiftRightUnsigned {
+                    let value = self.body.builder.ins().fcvt_from_uint(types::F64, bits);
+                    return Typed { value, representation: Representation::Float64 };
+                }
+                let value = bits;
                 Typed { value, representation: Representation::Int32 }
             }
         }
@@ -2372,9 +2335,21 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let unit = |operand: Operand| operand.register_index().is_some_and(|register| self.units.contains(&register));
                 let value = match operator {
                     // `x * 1`, `1 * x` and `x / 1` are `x` (`Lowering::units`).
-                    Arithmetic::Float(FloatOperator::Multiply) if unit(instruction.operand_c()) => left,
-                    Arithmetic::Float(FloatOperator::Multiply) if unit(instruction.operand_b()) => right,
-                    Arithmetic::Float(FloatOperator::Divide) if unit(instruction.operand_c()) => left,
+                    Arithmetic::Float(NumberArithmetic::Multiply)
+                        if unit(instruction.operand_c()) =>
+                    {
+                        left
+                    }
+                    Arithmetic::Float(NumberArithmetic::Multiply)
+                        if unit(instruction.operand_b()) =>
+                    {
+                        right
+                    }
+                    Arithmetic::Float(NumberArithmetic::Divide)
+                        if unit(instruction.operand_c()) =>
+                    {
+                        left
+                    }
                     _ => self.arithmetic(pc, operator, result, left, right),
                 };
                 self.define(result, value);
@@ -2397,7 +2372,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     let value = self.body.builder.ins().iadd_imm_s(operand.value, step);
                     Typed { value, representation: Representation::Int32 }
                 } else {
-                    let operator = if decrement { FloatOperator::Subtract } else { FloatOperator::Add };
+                    let operator = if decrement {
+                        NumberArithmetic::Subtract
+                    } else {
+                        NumberArithmetic::Add
+                    };
                     let one = self.read(Source::Number(1.0));
                     self.arithmetic(pc, Arithmetic::Float(operator), result, operand, one)
                 };
@@ -2407,9 +2386,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Op::Unary => {
                 let operand = self.register(instruction.register_b());
                 let result = instruction.result_register();
-                let value = match unary(instruction.unary_operator())? {
-                    Unary::Plus => operand,
-                    Unary::Negate
+                let value = match unary(instruction.op(), instruction.unary_operator())? {
+                    Unary::Number(NumberUnary::Plus) => operand,
+                    Unary::Number(NumberUnary::Negate)
                         if operand.representation == Representation::Int32
                             && self.result_representation() == Representation::Int32 =>
                     {
@@ -2422,9 +2401,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
                         let value = self.body.builder.ins().ineg(operand.value);
                         Typed { value, representation: Representation::Int32 }
                     }
-                    Unary::Negate => {
+                    Unary::Number(NumberUnary::Negate) => {
                         let number = self.float(operand);
-                        let value = self.body.builder.ins().fneg(number);
+                        let value = super::emit_number_unary_operation(
+                            &mut self.body.builder,
+                            NumberUnary::Negate,
+                            number,
+                        );
                         Typed { value, representation: Representation::Float64 }
                     }
                     Unary::BitwiseNot => {
@@ -2498,15 +2481,29 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let operator = instruction.binary_operator_field();
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
-                let holds = if left.representation == Representation::Int32
+                let (left, right, domain) = if left.representation == Representation::Int32
                     && right.representation == Representation::Int32
                 {
-                    let condition = integer_comparison(operator)?;
-                    self.body.builder.ins().icmp(condition, left.value, right.value)
+                    (
+                        left.value,
+                        right.value,
+                        super::NumberRelationDomain::Int32,
+                    )
                 } else {
                     let (left, right) = (self.float(left), self.float(right));
-                    super::emit_number_relation(&mut self.body.builder, operator, left, right)?
+                    (
+                        left,
+                        right,
+                        super::NumberRelationDomain::Float64,
+                    )
                 };
+                let holds = super::emit_number_relation(
+                    &mut self.body.builder,
+                    operator,
+                    left,
+                    right,
+                    domain,
+                )?;
                 let taken = self.body.builder.create_block();
                 let not_taken = self.body.builder.create_block();
                 let tested = self.body.builder.current_block().expect("lowering inside a block");
@@ -2524,40 +2521,4 @@ impl<'a, 'b> Lowering<'a, 'b> {
             _ => None,
         }
     }
-}
-
-/// `comparison` of two `i32` Numbers.
-fn integer_comparison(operator: u32) -> Option<IntCC> {
-    struct IntegerCondition;
-
-    impl super::super::operations::NumberRelationStage<()> for IntegerCondition {
-        type Output = IntCC;
-
-        fn equal(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::Equal
-        }
-        fn not_equal(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::NotEqual
-        }
-        fn less_than(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::SignedLessThan
-        }
-        fn less_equal(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::SignedLessThanOrEqual
-        }
-        fn greater_than(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::SignedGreaterThan
-        }
-        fn greater_equal(&mut self, (): (), (): ()) -> Self::Output {
-            IntCC::SignedGreaterThanOrEqual
-        }
-    }
-
-    Some(
-        super::super::operations::NumberRelation::from_operator(operator)?.apply(
-            &mut IntegerCondition,
-            (),
-            (),
-        ),
-    )
 }
