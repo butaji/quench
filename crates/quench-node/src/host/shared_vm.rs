@@ -591,6 +591,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpResponseSend" (4) => crate::modules::http_shared_vm::response_send,
         method "assertStrictEqual" (2) => crate::modules::assert_shared_vm::strict_equal,
         method "assertNotStrictEqual" (2) => crate::modules::assert_shared_vm::not_strict_equal,
+        method "assertDeepEqual" (2) => crate::modules::assert_shared_vm::deep_equal,
         method "vfsDescriptorGet" (1) => commonjs::vfs_descriptor_get,
         method "vfsDescriptorClose" (1) => commonjs::vfs_descriptor_close,
         method "vfsDescriptorOpen" (1) => commonjs::vfs_descriptor_open,
@@ -1066,6 +1067,8 @@ const BESIDE_ACTIVATIONS: &[&str] = &[
     "httpResponseWriteHead",
     "httpResponseFinish",
     "httpResponseInitialize",
+    "httpIncomingDestroy",
+    "asyncResourceInit",
     "stringDecoderDecode",
     "markAsUncloneable",
 ];

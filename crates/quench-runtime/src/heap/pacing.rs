@@ -249,7 +249,7 @@ impl GenerationalPacing {
 /// (`Runtime::set_memory_policy`), that selects the collection pacing table, whether the
 /// host returns pages at collection boundaries (`Host::at_collection_boundary`),
 /// whether and how the loop tier compiles (`LOOP_TIER_OPT_LEVELS`), and whether the
-/// general-dispatch tier compiles (`GENERAL_DISPATCH_TIER`).
+/// JavaScript function tiers compile (`JS_FUNCTION_TIERS`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum MemoryPolicy {
     /// Fewer, larger collections, and pages stay resident across them (`THROUGHPUT_PACING`).

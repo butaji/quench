@@ -891,6 +891,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Whether two values are provably the same plain data (`Vm::plain_data_equal`): the same
+    /// value, or dense arrays and ordinary objects of the intrinsic prototypes, holding only
+    /// string-keyed data properties, with the same enumerable keys and pairwise the same
+    /// plain data. Observes nothing; `false` proves nothing.
+    pub fn plain_data_equal_rooted(&mut self, left: RootId, right: RootId) -> Result<bool, RootedError> {
+        self.vm
+            .embedding_plain_data_equal(left, right)
+            .map_err(|error| self.error(error))
+    }
+
     /// Apply JavaScript abstract equality, preserving coercion effects and throws.
     pub fn equal_rooted(&mut self, left: RootId, right: RootId) -> Result<bool, RootedError> {
         self.vm
