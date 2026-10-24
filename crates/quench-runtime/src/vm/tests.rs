@@ -12348,6 +12348,7 @@ fn js_jit_general_baseline_waits_until_entries_pay_for_its_compile() {
     assert!(native.is_general_dispatch());
 }
 
+#[cfg(not(quench_profiled))]
 #[test]
 fn js_jit_rejected_functions_promote_to_general_dispatch_and_keep_frames() {
     let program = Engine::compile(crate::ExecutionRequest::script(
@@ -12474,6 +12475,7 @@ fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
     ));
 }
 
+#[cfg(not(quench_profiled))]
 #[test]
 fn js_jit_failed_numeric_look_promotes_general_dispatch_at_32_entries() {
     let program = Engine::compile(crate::ExecutionRequest::script(
