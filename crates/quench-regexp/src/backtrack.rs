@@ -107,13 +107,29 @@ struct UnitSet {
     beyond: Beyond,
 }
 
-/// The ASCII units of a mask as one flag per unit, derived for the sets a program matches
-/// with (`MatchSet`): a test of an ASCII unit loads its flag instead
-/// of shifting the 128-bit mask. The set algebra that builds those sets keeps only the mask.
-type AsciiTable = [bool; ASCII_UNITS as usize];
+/// The ASCII units of a mask as machine words, derived for the sets a program matches with
+/// (`MatchSet`): a test of an ASCII unit loads its word and shifts it, where a shift of the
+/// 128-bit mask takes several instructions. The set algebra that builds those sets keeps
+/// only the mask. A flag per unit had cost 128 bytes a set, and sets were the largest part
+/// of a compiled pattern (V8-v7 RegExp's 237 patterns: 123 of 312 KiB, x86_64, 2026-10-24).
+#[derive(Clone, Copy)]
+struct AsciiTable([u64; ASCII_TABLE_WORDS]);
+
+/// The words of an `AsciiTable`, one bit per ASCII unit.
+const ASCII_TABLE_WORDS: usize = (ASCII_UNITS / u64::BITS) as usize;
+
+impl AsciiTable {
+    /// Whether `unit`, a byte of an ASCII subject, is in the set; masked to ASCII, so the
+    /// word index needs no bounds check.
+    #[inline(always)]
+    fn contains(&self, unit: u8) -> bool {
+        let unit = u32::from(unit & ASCII_MAX as u8);
+        self.0[(unit / u64::BITS) as usize] >> (unit % u64::BITS) & 1 != 0
+    }
+}
 
 fn ascii_table(ascii: u128) -> AsciiTable {
-    std::array::from_fn(|unit| ascii >> unit & 1 != 0)
+    AsciiTable(std::array::from_fn(|word| (ascii >> (word as u32 * u64::BITS)) as u64))
 }
 
 /// A set a program's instructions test units against: the set with its `AsciiTable`.
@@ -135,7 +151,7 @@ impl MatchSet {
     #[inline(always)]
     fn contains(&self, value: u32) -> bool {
         if value < ASCII_UNITS {
-            self.table[value as usize]
+            self.table.contains(value as u8)
         } else {
             self.beyond.matches(value)
         }
@@ -1440,7 +1456,7 @@ impl Program {
                 let table = &self.sets[set as usize].table;
                 bytes[from..to]
                     .iter()
-                    .position(|unit| !table[usize::from(*unit & ASCII_MAX as u8)])
+                    .position(|unit| !table.contains(*unit))
             }
             (UnitTest::Exact(expected), Some(bytes)) => {
                 bytes[from..to].iter().position(|unit| u32::from(*unit) != expected)
@@ -1565,7 +1581,7 @@ impl Program {
             Some(starts) if let Some(bytes) = text.bytes() => {
                 // A start right here, as in a run of matches, needs no scan; a start at the
                 // subject's start is found here or first in the scan.
-                if bytes.get(from).is_some_and(|unit| starts.units.table[usize::from(*unit & ASCII_MAX as u8)]) {
+                if bytes.get(from).is_some_and(|unit| starts.units.table.contains(*unit)) {
                     return Some(from);
                 }
                 // A one-position search, as a sticky one, has no further unit to scan for.
@@ -1590,7 +1606,7 @@ impl Program {
         }
         let found = bytes
             .get(from..)
-            .and_then(|rest| scan.find(rest, |unit| starts.units.table[usize::from(unit & ASCII_MAX as u8)]))
+            .and_then(|rest| scan.find(rest, |unit| starts.units.table.contains(unit)))
             .map(|offset| from + offset)
             .or_else(|| starts.at_end.then_some(bytes.len()))?;
         (found <= last).then_some(found)
