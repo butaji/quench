@@ -12007,6 +12007,41 @@ print(out);
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_wraps_sums_only_int32_conversions_read() {
+    // `u` leaves the `i32`s but is read only by `|` and `>>`, which see it modulo 2^32;
+    // `v`, the same sum, is compared, so it must hold the exact Number.
+    let source = r#"
+function wrap(a, n) {
+  var s = 0, t = 0;
+  for (var i = 0; i < n; i++) {
+    var u = a[i] + 0x7ffffff0;
+    s = (s + (u | 0) + (u >> 3)) | 0;
+    var v = a[i] + 0x7ffffff0;
+    if (v > 0x7fffffff) t++;
+  }
+  return s + " " + t;
+}
+var a = [];
+for (var i = 0; i < 400; i++) a.push((i * 7) % 40);
+var out = "";
+for (var c = 0; c < 300; c++) out = wrap(a, 400);
+print(out);
+"#;
+    let program = Engine::specialize(source, "osr-truncated-sums.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
