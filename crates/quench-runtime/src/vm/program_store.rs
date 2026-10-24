@@ -1634,6 +1634,12 @@ impl ProgramStore {
         self.js_jit_general_dispatch_enabled
     }
 
+    /// Records the counters `QUENCH_JS_JIT_STATS` enables, for a test to read.
+    #[cfg(test)]
+    pub(super) fn enable_js_jit_diagnostics(&mut self) {
+        self.js_jit_diagnostics.get_or_insert_with(FxHashMap::default);
+    }
+
     pub(super) fn js_jit_dataview_float64_enabled(&self) -> bool {
         self.js_jit_dataview_float64_enabled
     }
