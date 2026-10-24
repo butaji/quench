@@ -71,29 +71,39 @@ impl EnvironmentEdge {
     }
 }
 
-/// A set of slot indexes, one bit each, inline for an environment of up to one word's slots.
+/// A set of slot indexes, one bit each, inline for an environment of up to one word's slots,
+/// with the count of its environment's slots not yet in it.
 #[derive(Debug)]
-struct SlotSet(SmallVec<[u64; 1]>);
+struct SlotSet {
+    words: SmallVec<[u64; 1]>,
+    absent: usize,
+}
 
 impl SlotSet {
     fn new(slots: usize) -> Self {
-        Self(smallvec::smallvec![0; slots.div_ceil(u64::BITS as usize)])
+        Self { words: smallvec::smallvec![0; slots.div_ceil(u64::BITS as usize)], absent: slots }
+    }
+
+    /// Whether every slot of the environment is in the set, so adding any is a no-op.
+    fn is_full(&self) -> bool {
+        self.absent == 0
     }
 
     fn contains(&self, slot: usize) -> bool {
-        self.0
+        self.words
             .get(slot / u64::BITS as usize)
             .is_some_and(|word| word & (1 << (slot % u64::BITS as usize)) != 0)
     }
 
     /// Adds `slot`; `false` when it was in the set (or past its slots).
     fn insert(&mut self, slot: usize) -> bool {
-        let Some(word) = self.0.get_mut(slot / u64::BITS as usize) else {
+        let Some(word) = self.words.get_mut(slot / u64::BITS as usize) else {
             return false;
         };
         let bit = 1 << (slot % u64::BITS as usize);
         let new = *word & bit == 0;
         *word |= bit;
+        self.absent -= usize::from(new);
         new
     }
 }
@@ -109,9 +119,6 @@ struct PartialEnvironment {
     lexical_this: bool,
     /// Whether a `Whole` edge reached it.
     whole: bool,
-    /// The closure edges followed through it, as (program, function, distance): closures of
-    /// one function made in one activation read the same slots.
-    followed: SmallVec<[(u32, u32, u32); 1]>,
 }
 
 impl PartialEnvironment {
@@ -121,7 +128,6 @@ impl PartialEnvironment {
             initialization: None,
             lexical_this: false,
             whole: false,
-            followed: SmallVec::new(),
         }
     }
 
@@ -155,6 +161,11 @@ pub(crate) struct EnvironmentTrace<'s> {
     /// page of it for nearly every environment, at each full collection's peak.
     entries: rustc_hash::FxHashMap<u32, u32>,
     pending: Vec<EnvironmentEdge>,
+    /// The closure edges followed, as (environment heap slot, program, function, distance):
+    /// closures of one function made in one activation read the same slots, so each is
+    /// followed once. One set for the trace, since a module environment reaches thousands
+    /// of functions' edges and a per-environment list made each check linear in them.
+    followed: rustc_hash::FxHashSet<(u32, u32, u32, u32)>,
     /// The last program whose table a closure edge read, which the next one most often reads.
     last_reads: Option<(u32, Option<&'s ClosureReads>)>,
 }
@@ -168,6 +179,7 @@ impl<'s> EnvironmentTrace<'s> {
             partial: Vec::new(),
             entries: rustc_hash::FxHashMap::default(),
             pending: Vec::new(),
+            followed: rustc_hash::FxHashSet::default(),
             last_reads: None,
         }
     }
@@ -285,9 +297,7 @@ impl Heap {
         };
         let (parent, function, program) = (*parent, *function, scope.program());
         if let EnvironmentEdge::Closure { program, function: closure, distance, .. } = edge
-            && trace
-                .entry(index)
-                .is_some_and(|entry| trace.partial[entry].followed.contains(&(program, closure, distance)))
+            && trace.followed.contains(&(index, program, closure, distance))
         {
             return;
         }
@@ -351,16 +361,22 @@ impl Heap {
                 trace.insert(index, PartialEnvironment::new(slots.len()))
             }
         };
+        if let EnvironmentEdge::Closure { program, function: closure, distance, .. } = edge {
+            trace.followed.insert((index, program, closure, distance));
+        }
         let partial = &mut trace.partial[entry];
         let pending = &mut trace.pending;
         let has_parent = parent.legacy_heap_index().is_some();
         let read_lexical_this = match edge {
             EnvironmentEdge::Closure { program, function: closure, distance, .. } => {
-                partial.followed.push((program, closure, distance));
                 match demand {
                     Some(demand @ EnvironmentDemand::Slots { lexical_this, .. }) => {
-                        for slot in demand.slot_iter() {
-                            read_slot(slots, partial, slot, work, pending);
+                        // Sibling closures of a module scope read most of its slots between
+                        // them; once every slot is read, the rest add none.
+                        if !partial.read.is_full() {
+                            for slot in demand.slot_iter() {
+                                read_slot(slots, partial, slot, work, pending);
+                            }
                         }
                         if has_parent {
                             pending.push(EnvironmentEdge::Closure {
