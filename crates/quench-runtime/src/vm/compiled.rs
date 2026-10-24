@@ -939,6 +939,24 @@ fn js_general_dispatch_candidate(_program: &ResidualProgram, function: &Function
         })
 }
 
+/// Preserve OSR as the owner of legacy hot-loop promotion. The generic
+/// dispatcher can still compile loops admitted through its ordinary tier path;
+/// this predicate only selects the earlier fallback for rejected/profiled
+/// legacy candidates.
+fn js_general_dispatch_acyclic_candidate(
+    program: &ResidualProgram,
+    function: &Function,
+) -> bool {
+    js_general_dispatch_candidate(program, function)
+        && function.code.iter().enumerate().all(|(pc, packed)| {
+            let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+            !matches!(
+                instruction.op(),
+                Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
+            ) || usize::try_from(instruction.jump_target()).is_ok_and(|target| target > pc)
+        })
+}
+
 fn read_js_tagged_operand(
     builder: &mut FunctionBuilder<'_>,
     program: &ResidualProgram,
@@ -9043,8 +9061,14 @@ impl<H: Host> Vm<H> {
         if !js_general_dispatch_candidate(program, body) {
             return legacy_candidate && self.programs.js_jit_diagnostics_enabled();
         }
+        if legacy_candidate && !js_general_dispatch_acyclic_candidate(program, body) {
+            return self.programs.js_jit_diagnostics_enabled();
+        }
         match self.programs.js_tier(id, function) {
-            Some(super::program_store::JsTierState::PromotionPending)
+            Some(
+                super::program_store::JsTierState::PromotionPending
+                | super::program_store::JsTierState::GeneralPromotionPending,
+            )
             | Some(super::program_store::JsTierState::Compiled(_)) => true,
             Some(super::program_store::JsTierState::Unsupported) => {
                 self.programs.js_jit_diagnostics_enabled()
@@ -9062,7 +9086,7 @@ impl<H: Host> Vm<H> {
     /// loop so a pending or installed generic native region can run there.
     pub(super) fn js_tier_needs_general_entry(&self, id: ProgramId, function: u32) -> bool {
         match self.programs.js_tier(id, function) {
-            Some(super::program_store::JsTierState::PromotionPending) => true,
+            Some(super::program_store::JsTierState::GeneralPromotionPending) => true,
             Some(super::program_store::JsTierState::Compiled(compiled)) => {
                 compiled.is_general_dispatch()
             }
@@ -9102,12 +9126,15 @@ impl<H: Host> Vm<H> {
             if !super::js_compiled::function_candidate(body, program) {
                 return true;
             }
+            if !js_general_dispatch_acyclic_candidate(program, body) {
+                return false;
+            }
             match self
                 .programs
                 .js_tier(self.frames[frame].program, function)
             {
                 Some(
-                    super::program_store::JsTierState::PromotionPending
+                    super::program_store::JsTierState::GeneralPromotionPending
                     | super::program_store::JsTierState::Rejected { .. },
                 ) => true,
                 Some(super::program_store::JsTierState::Compiled(compiled)) => {
@@ -9773,7 +9800,8 @@ impl<H: Host> Vm<H> {
             }
             Some(
                 super::program_store::JsTierState::Unsupported
-                | super::program_store::JsTierState::Rejected { .. },
+                | super::program_store::JsTierState::Rejected { .. }
+                | super::program_store::JsTierState::GeneralPromotionPending,
             ) => return None,
             Some(super::program_store::JsTierState::Hot { .. })
             | Some(super::program_store::JsTierState::PromotionPending)
@@ -9792,6 +9820,7 @@ impl<H: Host> Vm<H> {
                         || (!capture_arguments.is_empty() && captures_numeric)
                         || string_hash_units.is_some()
                         || string_transform_units.is_some(),
+                    js_general_dispatch_acyclic_candidate(program, function),
                 ) || (!numeric
                     && !(field_reject_candidate && arguments.len() == 1)
                     && string_hash_units.is_none()
