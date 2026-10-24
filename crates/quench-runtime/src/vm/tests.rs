@@ -11923,6 +11923,52 @@ print(t);
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_widens_an_int32_field_that_holds_a_double() {
+    // `o.k` holds an `i32` while the loop compiles; once it holds 0.5 the entry declines,
+    // naming the field, and the next compilation holds it as an `f64`.
+    let source = r#"
+      function sum(o, a) {
+        var s = 0;
+        for (var i = 0; i < o.n; i++) s += a[i] * o.k;
+        return s;
+      }
+      var a = [], o = { n: 500, k: 3 }, t = 0;
+      for (var i = 0; i < 500; i++) a.push(i);
+      for (var c = 0; c < 400; c++) { if (c == 200) o.k = 0.5; t += sum(o, a); }
+      print(t);
+    "#;
+    let program = Engine::specialize(source, "osr-field-widening.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "sum"))
+        .unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["87325000"]);
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views.get(function_id).and_then(std::cell::OnceCell::get).expect("hot sum loop lane view").osr_diagnostics();
+        assert!(osr.entry_guard_misses > 0 && osr.compile_successes > 1, "the double field widened nothing under {policy:?}: {osr:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"

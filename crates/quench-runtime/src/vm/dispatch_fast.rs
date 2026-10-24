@@ -5612,6 +5612,7 @@ fn lane_loop_run<H: Host>(
         // SAFETY: the lane's VM is live, and nothing borrows it across the call.
         unsafe { vm(cx) }.host.before_native_compilation();
         let captures = entry.captures(region.captures.len());
+        let fields: Vec<Value> = (0..region.fields.len()).map(|index| entry.field_value(region, index)).collect();
         let heap = &unsafe { vm(cx) }.heap;
         // A field's array is the value its entry word holds, not yet the register's.
         let array_value = |register| match region.arrays.iter().find(|array| array.register == register) {
@@ -5630,6 +5631,7 @@ fn lane_loop_run<H: Host>(
             register: &|register| if register < caller_registers { r.get(register) } else { Value::UNDEFINED },
             int32_elements: &int32_elements,
             captures: &captures,
+            fields: &fields,
             widened: &tier.widened,
         };
         let track_backedges = unsafe { vm(cx) }
