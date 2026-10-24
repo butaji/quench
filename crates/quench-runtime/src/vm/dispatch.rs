@@ -1359,7 +1359,7 @@ impl<H: Host> Vm<H> {
                     *pc = i.jump_target() as usize;
                 }
             }
-            Op::Call | Op::CallArray | Op::CallForwardingArguments => {
+            Op::Call | Op::CallArray | Op::CallSpread | Op::CallForwardingArguments => {
                 if i.op() == Op::CallForwardingArguments
                     && let Some(result) =
                         self.forward_activation_arguments(p, f, i, *pc, allow_inline_calls)
@@ -1371,7 +1371,15 @@ impl<H: Host> Vm<H> {
                 // A spread argument array is read before any call state changes, since
                 // reading it can fail; register windows are copied only on the paths that
                 // need an owned argument list.
-                let spread_arguments = if i.op() == Op::CallArray {
+                if i.op() == Op::CallSpread {
+                    // ArgumentListEvaluation of the one spread: its values, as the argument
+                    // array a `CallArray` reads, in the window it reads them from.
+                    let iterable = self.read(f, window.base);
+                    let array = self.hole_array(0);
+                    self.write(f, window.base, array);
+                    self.spread_into_array(p, array, iterable)?;
+                }
+                let spread_arguments = if matches!(i.op(), Op::CallArray | Op::CallSpread) {
                     let array = self.read(f, window.base);
                     Some(CallArguments::from_values(self.array_values(array)?))
                 } else {

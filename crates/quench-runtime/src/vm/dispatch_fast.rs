@@ -9497,6 +9497,27 @@ fn lane_list_activation<H: Host>(
 }
 
 script_handler! {
+    /// A call of one spread (`CallSpread`), whose window holds the iterable: an intact array
+    /// (`Vm::array_iteration_intact`) of present own data elements (`present_dense_elements`)
+    /// passes them, which iterating it would yield and the activation copies, as a spread call's argument array
+    /// (`lane_list_activation`); any other iterable takes the general path, which builds it.
+    #[inline(never)]
+    fn lane_call_spread<>(cx, r, ip, i, view) {
+        let list = r.get(ImmediateLayout::call_window_base(i.imm()));
+        let vm = unsafe { vm(cx) };
+        let length = vm.heap.array(list).map_or(0, |array| array.elements().len());
+        if !vm.array_iteration_intact(list) || vm.present_dense_elements(list, 0..length).is_none() {
+            return exit(ip);
+        }
+        match lane_list_activation(cx, r, ip, i, r.get(i.b), r.get(i.c), list, true) {
+            Some(Ok((registers, base))) => next!(cx, registers, base, Carried::script(cx)),
+            Some(Err(next)) => next,
+            None => exit(ip),
+        }
+    }
+}
+
+script_handler! {
     /// A spread call (`CallArray`), whose window holds the argument array the spread built:
     /// the callee's activation with its elements, as an applied call's
     /// (`lane_list_activation`); any other call takes the general path.
@@ -13022,6 +13043,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CallKnown => Some(lane_call_known::<H>),
         Op::Call => Some(lane_script_call::<H>),
         Op::CallArray => Some(lane_call_array::<H>),
+        Op::CallSpread => Some(lane_call_spread::<H>),
         Op::Delete => Some(lane_delete::<H>),
         Op::Construct => Some(lane_script_construct::<H>),
         Op::LoadName => Some(lane_load_name_first::<H, LOAD_NAME>),
@@ -13222,7 +13244,7 @@ fn lane_operand(
 /// other result flag.
 fn lane_call_fits(instruction: WideInstruction) -> bool {
     match instruction.op() {
-        Op::Call | Op::CallArray => {
+        Op::Call | Op::CallArray | Op::CallSpread => {
             lane_returns(instruction)
                 && !instruction.direct_eval()
                 && !instruction.parameter_eval()
