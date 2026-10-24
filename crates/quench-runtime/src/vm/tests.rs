@@ -10720,7 +10720,10 @@ fn js_jit_compiles_forward_numeric_decision_trees() {
         Some(super::program_store::JsTierState::PromotionPending) => {
             panic!("the Number decision tree remained promotion-pending");
         }
-        Some(super::program_store::JsTierState::GeneralPromotionPending) => {
+        Some(
+            super::program_store::JsTierState::GeneralPromotionPending { .. }
+            | super::program_store::JsTierState::GeneralCompileDue,
+        ) => {
             panic!("the numeric decision tree was sent to the general baseline");
         }
         Some(super::program_store::JsTierState::Unsupported) => {
@@ -10760,7 +10763,10 @@ fn js_jit_compiles_forward_numeric_decision_trees() {
         Some(super::program_store::JsTierState::PromotionPending) => {
             panic!("the Number join remained promotion-pending");
         }
-        Some(super::program_store::JsTierState::GeneralPromotionPending) => {
+        Some(
+            super::program_store::JsTierState::GeneralPromotionPending { .. }
+            | super::program_store::JsTierState::GeneralCompileDue,
+        ) => {
             panic!("the numeric join was sent to the general baseline");
         }
         Some(super::program_store::JsTierState::Unsupported) => {
@@ -12093,7 +12099,10 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
     interpreter.execute(&program).unwrap();
 
     let mut compiled = Vm::new(TestHost::default());
+
+    compiled.programs.enable_js_general_dispatch();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
 
     for name in ["read", "write", "writeFixed", "readFixed", "readFixedGetter"] {
@@ -12157,7 +12166,10 @@ fn js_jit_general_dispatch_lowers_tagged_plain_local_accesses() {
     interpreter.execute(&program).unwrap();
 
     let mut compiled = Vm::new(TestHost::default());
+
+    compiled.programs.enable_js_general_dispatch();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
     let Some(super::program_store::JsTierState::Compiled(native)) = compiled
         .programs
@@ -12211,7 +12223,10 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
     interpreter.execute(&program).unwrap();
 
     let mut compiled = Vm::new(TestHost::default());
+
+    compiled.programs.enable_js_general_dispatch();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
 
     for name in ["combine", "negate", "positive"] {
@@ -12264,7 +12279,10 @@ fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
     interpreter.execute(&program).unwrap();
 
     let mut compiled = Vm::new(TestHost::default());
+
+    compiled.programs.enable_js_general_dispatch();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
 
     let function = program
@@ -12293,6 +12311,45 @@ fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
 
 #[cfg(not(quench_profiled))]
 #[test]
+fn js_jit_general_baseline_waits_until_entries_pay_for_its_compile() {
+    let state = |calls: u32| {
+        let source = format!(
+            "function add(a, b) {{ return a + b; }} for (let i = 0; i < {calls}; i++) globalThis.last = add('s', i);"
+        );
+        let program = Engine::compile(crate::ExecutionRequest::script(&source, "js-jit-priced.js")).unwrap();
+        let function = program
+            .functions
+            .iter()
+            .position(|body| {
+                body.header()
+                    .name
+                    .or(body.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == "add")
+            })
+            .unwrap() as u32;
+        let mut interpreter = Vm::new(TestHost::default());
+        interpreter.execute(&program).unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_general_dispatch();
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.execute(&program).unwrap();
+        let name = interpreter.intern_atom("last");
+        let expected = interpreter.own_property(interpreter.realm.globals, name).unwrap();
+        let name = vm.intern_atom("last");
+        assert_eq!(vm.own_property(vm.realm.globals, name).unwrap(), expected);
+        vm.programs.js_tier(super::program_store::ProgramId::MAIN, function)
+    };
+    // Hot, but a short run has not paid for the compile.
+    assert!(matches!(state(48), Some(super::program_store::JsTierState::GeneralPromotionPending { .. })));
+    // A long run has.
+    let Some(super::program_store::JsTierState::Compiled(native)) = state(16_000) else {
+        panic!("the general baseline compiles once its entries pay for it");
+    };
+    assert!(native.is_general_dispatch());
+}
+
+#[cfg(not(quench_profiled))]
+#[test]
 fn js_jit_rejected_functions_promote_to_general_dispatch_and_keep_frames() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         "function add(a, b) { return a + b; } for (let i = 0; i < 48; i++) globalThis.last = add('s', i);",
@@ -12313,7 +12370,9 @@ fn js_jit_rejected_functions_promote_to_general_dispatch_and_keep_frames() {
     let mut interpreter = Vm::new(TestHost::default());
     interpreter.execute(&program).unwrap();
     let mut vm = Vm::new(TestHost::default());
+    vm.programs.enable_js_general_dispatch();
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.compile_general_baseline_when_hot();
     vm.execute(&program).unwrap();
 
     let Some(super::program_store::JsTierState::Compiled(native)) = vm
@@ -12332,7 +12391,10 @@ fn js_jit_rejected_functions_promote_to_general_dispatch_and_keep_frames() {
     assert_eq!(actual, expected);
 
     let mut exhausted = Vm::new(TestHost::default());
+
+    exhausted.programs.enable_js_general_dispatch();
     exhausted.set_execution_mode(crate::ExecutionMode::Compiled);
+    exhausted.programs.compile_general_baseline_when_hot();
     let exhausted_id = exhausted.programs.insert(program.clone()).unwrap();
     for _ in 0..32 {
         exhausted
@@ -12413,6 +12475,7 @@ fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
     ));
 }
 
+#[cfg(not(quench_profiled))]
 #[test]
 fn js_jit_failed_numeric_look_promotes_general_dispatch_at_32_entries() {
     let program = Engine::compile(crate::ExecutionRequest::script(
@@ -12431,7 +12494,7 @@ fn js_jit_failed_numeric_look_promotes_general_dispatch_at_32_entries() {
     assert!(!programs.note_js_function_entry(id, 1, false, false, true));
     assert!(matches!(
         programs.js_tier(id, 1),
-        Some(super::program_store::JsTierState::GeneralPromotionPending)
+        Some(super::program_store::JsTierState::GeneralPromotionPending { .. })
     ));
 }
 
