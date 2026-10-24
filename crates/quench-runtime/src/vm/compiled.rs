@@ -4850,16 +4850,18 @@ impl CompiledOsrRegion {
 
 /// Analyze a loop candidate whose calls run inlined (`osr_loop::inline_region`), each
 /// callee from `resolve` of the cached field its function is read from.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn analyze_inlining_osr_region<'a>(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[crate::value::Value],
+    sites: &[crate::bytecode::FieldSite],
     live: &crate::compile::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
-    resolve: &mut dyn FnMut(FieldUse) -> Option<InlineCallee<'a>>,
+    resolve: &mut dyn FnMut(&[FieldUse]) -> Option<InlineCallee<'a>>,
 ) -> Option<LoopRegion> {
-    osr_loop::inline_region(function, decoded, constants, live, header, backedge, resolve)
+    osr_loop::inline_region(function, decoded, constants, sites, live, header, backedge, resolve)
 }
 
 /// Analyze a loop candidate through the shared region compiler's OSR mode.
@@ -4867,11 +4869,12 @@ pub(super) fn analyze_osr_region(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[crate::value::Value],
+    sites: &[crate::bytecode::FieldSite],
     live: Option<&crate::compile::liveness::RegisterMasks>,
     header: u32,
     backedge: u32,
 ) -> Result<LoopRegion, RegionRejection> {
-    osr_loop::region(function, decoded, constants, live, header, backedge)
+    osr_loop::region(function, decoded, constants, sites, live, header, backedge)
 }
 
 /// The Cranelift optimization level the loop tier compiles regions at under each memory
@@ -5371,6 +5374,23 @@ unsafe extern "C" fn js_step_callout<H: Host>(
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
+            let direct_call_target = if vm.programs.js_jit_diagnostics_enabled()
+                && matches!(current_instruction.op(), Op::Call | Op::CallArray)
+            {
+                vm.frames[dispatch.frame]
+                    .registers
+                    .get(usize::from(current_instruction.register_b()))
+                    .copied()
+                    .and_then(|callee| vm.heap.function(callee))
+                    .and_then(|record| match &record.kind {
+                        crate::heap::FunctionKind::User(program, function) => {
+                            Some((program.raw(), *function))
+                        }
+                        _ => None,
+                    })
+            } else {
+                None
+            };
             let step = if dispatch.allow_inline_calls
                 && matches!(current_instruction.op(), Op::Call | Op::CallArray)
             {
@@ -5452,6 +5472,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     frame_function,
                     current_pc,
                     current_instruction.op(),
+                    direct_call_target,
                     outcome,
                 );
             }
@@ -10746,7 +10767,7 @@ impl<H: Host> Vm<H> {
                     .programs
                     .install_js_tier(program_id, function_id, compiled.clone(), false);
                 if let Some(compile_started) = compile_started {
-                    self.programs.record_js_jit_compile(
+                    self.programs.record_js_jit_general_compile(
                         program_id,
                         function_id,
                         u64::try_from(compile_started.elapsed().as_nanos()).unwrap_or(u64::MAX),

@@ -570,12 +570,74 @@ impl<H: Host> Vm<H> {
         found
     }
 
+    /// Whether no object on the prototype chain from `first` holds any array index or could
+    /// answer one outside its storage: the chain's ordinary objects and arrays hold no
+    /// index-keyed property, indexed descriptor, element or sparse element, and none is exotic.
+    /// [[Get]] of an index the chain's base lacks is then `undefined`, and its OrdinarySet
+    /// defines data on the base. Proved under the prototype layout epoch, which every change
+    /// to a prototype's shape, link or indexed descriptors advances; elements are not part of
+    /// a prototype's layout, so the proof reads its one array holder's (the intrinsic
+    /// `Array.prototype`, typically) on each use (`IndexFreeChainProof`).
+    pub(super) fn chain_holds_no_index(&self, first: Value) -> bool {
+        let epoch = crate::heap::prototype_layout_epoch();
+        match self.index_free_chain_proof.get() {
+            Some(proof) if proof.first == first && proof.epoch == epoch => {
+                proof.array.is_none_or(|array| self.array_holds_no_element(array))
+            }
+            _ => self.prove_index_free_chain(first, epoch),
+        }
+    }
+
+    /// Whether array `array` has no element, dense or sparse.
+    fn array_holds_no_element(&self, array: Value) -> bool {
+        self.heap.array_elements(array).is_none_or(|elements| elements.len() == 0)
+            && self.heap.sparse_length(array).is_none()
+    }
+
+    /// `chain_holds_no_index` past its proof: the walk, recording the proof when it holds.
+    #[cold]
+    #[inline(never)]
+    fn prove_index_free_chain(&self, first: Value, epoch: u64) -> bool {
+        let mut array = None;
+        let mut current = first;
+        while !current.is_null() {
+            let Some(data) = self.object_data(current) else {
+                return false;
+            };
+            let is_array = self.heap.array(current).is_some();
+            if data.has_indexed_descriptors()
+                || data.is_arguments_object()
+                || data.boxed_primitive().is_some()
+                || data.is_module_namespace()
+                || data.deferred_module().is_some()
+                || self.shape_has_index_key(data.shape())
+                || (!is_array && self.heap.ordinary_object(current).is_none())
+            {
+                return false;
+            }
+            if is_array {
+                // One array holder is read on each use; a chain of more is not proved.
+                if array.is_some() || !self.array_holds_no_element(current) {
+                    return false;
+                }
+                array = Some(current);
+            }
+            current = data.proto();
+        }
+        self.index_free_chain_proof.set(Some(IndexFreeChainProof { first, epoch, array }));
+        true
+    }
+
     /// Whether OrdinarySet of array index `index` on `object`, which holds no own property
     /// there, ends in a plain data definition on `object`: no prototype answers it with an
     /// accessor, read-only data or an exotic [[Set]] (proxy, typed array, module namespace).
     pub(super) fn inherited_index_unclaimed(&self, object: Value, index: usize) -> bool {
+        let first = self.object_data(object).map(|data| data.proto());
+        if first.is_some_and(|first| self.chain_holds_no_index(first)) {
+            return true;
+        }
         let mut atom = None;
-        let mut current = self.object_data(object).map(|data| data.proto());
+        let mut current = first;
         while let Some(holder) = current.filter(|value| !value.is_null()) {
             // A direct object or array record is neither a Proxy nor a typed array, whose
             // cells only a slot holds.
@@ -830,6 +892,7 @@ impl<H: Host> Vm<H> {
         self.symbol_load_proofs.clear();
         self.array_iteration_proof = None;
         self.species_slot_proof.set(None);
+        self.index_free_chain_proof.set(None);
         self.enumerable_keys.clear();
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
@@ -2211,6 +2274,7 @@ impl<H: Host> Vm<H> {
                         prototype,
                         holder: OWN_ACCESSOR,
                         slot: slot as u16,
+                        getter_in_slot: self.getter_in_slot(receiver_shape, slot),
                         epoch,
                     },
                 );
@@ -2245,6 +2309,7 @@ impl<H: Host> Vm<H> {
         {
             return;
         }
+        let getter_in_slot = self.getter_in_slot(holder_object.shape(), slot);
         let mut link = prototype;
         for _ in 0..depth {
             self.heap.mark_prototype(link);
@@ -2261,9 +2326,16 @@ impl<H: Host> Vm<H> {
                 prototype,
                 holder,
                 slot: slot as u16,
+                getter_in_slot,
                 epoch,
             },
         );
+    }
+
+    /// Whether `shape` keeps the getter of the accessor at `slot` in the slot itself.
+    fn getter_in_slot(&self, shape: u32, slot: usize) -> bool {
+        !self.shape_is_dictionary(shape)
+            && self.shape_slot_attributes(shape, slot).is_some_and(ShapeAttributes::slot_getter)
     }
 
     /// Records `entry` among the site's accessor entries: one for its receiver shape is
@@ -2297,6 +2369,9 @@ impl<H: Host> Vm<H> {
         } else {
             self.heap.ordinary_object(cache.holder)?
         };
+        if cache.getter_in_slot {
+            return self.heap.property_get(holder, usize::from(cache.slot));
+        }
         self.slot_attributes(holder, usize::from(cache.slot))?.getter
     }
 
@@ -3056,6 +3131,45 @@ impl<H: Host> Vm<H> {
         {
             self.invalidate_method_caches_for_prototype_add(object, atom);
         }
+        Ok(())
+    }
+
+    /// A new accessor property, reaching the shape `set_shape_property` then
+    /// `set_property_attributes` would: the default data add, then the descriptor transition
+    /// of its slot, without looking the just-added slot up again or writing it twice.
+    /// Re-exports (`__createBinding`, `__export`) define these by the thousand.
+    pub(super) fn create_shape_accessor_property(
+        &mut self,
+        object: Value,
+        key: PropertyKey,
+        attributes: PropertyAttributes,
+    ) -> Result<(), JsError> {
+        debug_assert!(attributes.accessor, "an accessor property has accessor attributes");
+        let shape = self
+            .object_data(object)
+            .ok_or_else(|| JsError("property write on non-object".into()))?
+            .shape();
+        self.check_property_key_write(object, key, false)?;
+        let slot = u32::try_from(self.shapes[shape as usize].storage_len())
+            .expect("object property index exceeds u32");
+        let added = self.transition_data_property_shape(shape, key, DEFAULT_DATA_ATTRIBUTES);
+        let recorded = ShapeAttributes::record(attributes, &mut self.shape_accessors);
+        let next_shape = self.append_cached_shape_transition(
+            added,
+            ShapeTransition::Descriptor { slot, attributes: recorded },
+        );
+        let value = if recorded.slot_getter() {
+            attributes.getter.expect("a slot getter record has a getter")
+        } else {
+            Value::UNDEFINED
+        };
+        self.heap.property_add(object, value, next_shape);
+        if let PropertyKey::String(atom) = key
+            && self.method_caches_may_name(atom)
+        {
+            self.invalidate_method_caches_for_prototype_add(object, atom);
+        }
+        self.invalidate_method_caches_for_key(key);
         Ok(())
     }
 
@@ -4039,4 +4153,13 @@ fn keyed_add_index(shape: u32, atom: Atom) -> usize {
     let mut hasher = rustc_hash::FxHasher::default();
     hasher.write_u64(u64::from(shape) << u32::BITS | u64::from(atom));
     (hasher.finish() >> (u64::BITS - super::KEYED_ADD_INDEX_BITS)) as usize
+}
+
+/// `Vm::chain_holds_no_index` proved for the chain from `first` under prototype layout `epoch`,
+/// with the chain's one array holder, whose elements each use reads.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct IndexFreeChainProof {
+    first: Value,
+    epoch: u64,
+    array: Option<Value>,
 }
