@@ -1292,11 +1292,8 @@ struct Lowering<'a, 'b> {
     proved_blocks: Vec<Vec<ir::Block>>,
     /// The counted loop whose proved copy is being lowered.
     copy: Option<usize>,
-    /// Per PC the code leaves at, the block that writes back the Number registers live
-    /// there and returns its parameter, the outcome word.
-    leaves: std::collections::BTreeMap<u32, ir::Block>,
-    /// The cold blocks that end the run with a fixed outcome (`outcome_block`).
-    outcomes: Vec<(ir::Block, super::RegionExit)>,
+    /// Shared handoff blocks; this tier fills per-PC leaves with its live-state writeback.
+    exits: super::RegionExitBlocks,
     registers: ir::Value,
     entry: ir::Value,
     /// The result word the outcome is written to.
@@ -1412,8 +1409,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             preheaders,
             proved_blocks,
             copy: None,
-            leaves: std::collections::BTreeMap::new(),
-            outcomes: Vec::new(),
+            exits: super::RegionExitBlocks::default(),
             chains: std::collections::HashMap::new(),
             exact: std::collections::BTreeMap::new(),
             encodings: std::collections::HashMap::new(),
@@ -1633,10 +1629,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.ins().return_(&[status]);
     }
 
-    fn outcome(&mut self, outcome: super::RegionExit) -> ir::Value {
-        self.body.builder.ins().iconst(types::I64, outcome.encode() as i64)
-    }
-
     fn word(&mut self, index: usize) -> ir::Value {
         self.body.builder
             .ins()
@@ -1653,27 +1645,22 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// A block that returns not entered, naming `widening`.
     fn not_entered(&mut self, widening: Option<Widening>) -> ir::Block {
-        self.outcome_block(super::RegionExit::EntryMiss(widening.map_or(0, Widening::code)))
-    }
-
-    /// A cold block that ends the run with `outcome`, filled once the body is
-    /// lowered (`fill_outcomes`): the builder leaves a block only once it is filled.
-    fn outcome_block(&mut self, outcome: super::RegionExit) -> ir::Block {
-        let block = self.cold_block();
-        self.outcomes.push((block, outcome));
-        block
+        self.exits.outcome_block(
+            &mut self.body.builder,
+            super::RegionExit::EntryMiss(widening.map_or(0, Widening::code)),
+        )
     }
 
     /// Fills each `outcome_block`: not entered returns at once, and every other outcome
     /// leaves at its PC through the write-back.
     fn fill_outcomes(&mut self) {
-        for (block, outcome) in std::mem::take(&mut self.outcomes) {
+        for (block, outcome) in self.exits.take_outcomes() {
             self.body.builder.switch_to_block(block);
             if matches!(outcome, super::RegionExit::EntryMiss(_)) {
-                let word = self.outcome(outcome);
+                let word = self.body.builder.ins().iconst(types::I64, outcome.encode() as i64);
                 self.finish(word);
             } else {
-                self.leave(outcome);
+                self.exits.leave(&mut self.body.builder, outcome);
             }
         }
     }
@@ -1862,7 +1849,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// there (`LoopRegion::live`) take their native values; any other keeps the value it
     /// held, which nothing reads before writing.
     fn write_back(&mut self) {
-        let leaves: Vec<(u32, ir::Block)> = self.leaves.iter().map(|(pc, block)| (*pc, *block)).collect();
+        let leaves = self.exits.leave_blocks();
         for (pc, block) in leaves {
             self.body.builder.switch_to_block(block);
             let word = self.body.builder.block_params(block)[0];
@@ -1893,30 +1880,15 @@ impl<'a, 'b> Lowering<'a, 'b> {
         }
     }
 
-    /// Leaves with `outcome` at `pc`.
+    /// Leaves with `outcome` at its exact continuation PC.
     fn leave(&mut self, outcome: super::RegionExit) {
-        let pc = match outcome {
-            super::RegionExit::Resume(pc)
-            | super::RegionExit::Fallback(pc)
-            | super::RegionExit::Recompile(pc) => pc,
-            super::RegionExit::EntryMiss(_) => unreachable!("entry miss does not write back"),
-        };
-        let word = self.outcome(outcome);
-        let block = match self.leaves.get(&pc) {
-            Some(block) => *block,
-            None => {
-                let block = self.cold_block();
-                self.body.builder.append_block_param(block, types::I64);
-                self.leaves.insert(pc, block);
-                block
-            }
-        };
-        self.body.builder.ins().jump(block, &[ir::BlockArg::Value(word)]);
+        self.exits.leave(&mut self.body.builder, outcome);
     }
 
     /// A block that exits at `pc` for the general path.
     fn exit_block(&mut self, pc: u32) -> ir::Block {
-        self.outcome_block(super::RegionExit::Fallback(pc))
+        self.exits
+            .outcome_block(&mut self.body.builder, super::RegionExit::Fallback(pc))
     }
 
     /// Continues past a guard that `failed` decides, exiting at `pc` when it holds.
@@ -1950,7 +1922,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// compilation.
     fn widen_block(&mut self, pc: u32, widening: Widening) -> ir::Block {
         self.widenings.insert(pc, widening);
-        self.outcome_block(super::RegionExit::Recompile(pc))
+        self.exits
+            .outcome_block(&mut self.body.builder, super::RegionExit::Recompile(pc))
     }
 
     /// `guard` of an `i32` assumption: `widening` was no `i32` when it fails.

@@ -94,6 +94,60 @@ impl RegionExit {
     }
 }
 
+/// Common cold handoff blocks for a compiled region. The tier still supplies its live-state
+/// writeback at each exact PC; this type owns only the shared control-flow continuation.
+#[derive(Default)]
+pub(super) struct RegionExitBlocks {
+    leave_blocks: std::collections::BTreeMap<u32, ir::Block>,
+    outcomes: Vec<(ir::Block, RegionExit)>,
+}
+
+impl RegionExitBlocks {
+    /// Queues a cold outcome block for filling after the hot region has been lowered.
+    pub(super) fn outcome_block(
+        &mut self,
+        builder: &mut FunctionBuilder<'_>,
+        outcome: RegionExit,
+    ) -> ir::Block {
+        let block = builder.create_block();
+        builder.set_cold_block(block);
+        self.outcomes.push((block, outcome));
+        block
+    }
+
+    /// Sends control to the shared per-PC leave block, carrying the handoff word as an
+    /// argument. The tier fills that block with its exact-PC live-state writeback.
+    pub(super) fn leave(&mut self, builder: &mut FunctionBuilder<'_>, outcome: RegionExit) {
+        let pc = match outcome {
+            RegionExit::Resume(pc) | RegionExit::Fallback(pc) | RegionExit::Recompile(pc) => pc,
+            RegionExit::EntryMiss(_) => unreachable!("entry miss does not write back"),
+        };
+        let word = builder.ins().iconst(types::I64, outcome.encode() as i64);
+        let block = match self.leave_blocks.get(&pc) {
+            Some(block) => *block,
+            None => {
+                let block = builder.create_block();
+                builder.set_cold_block(block);
+                builder.append_block_param(block, types::I64);
+                self.leave_blocks.insert(pc, block);
+                block
+            }
+        };
+        builder.ins().jump(block, &[ir::BlockArg::Value(word)]);
+    }
+
+    pub(super) fn take_outcomes(&mut self) -> Vec<(ir::Block, RegionExit)> {
+        std::mem::take(&mut self.outcomes)
+    }
+
+    pub(super) fn leave_blocks(&self) -> Vec<(u32, ir::Block)> {
+        self.leave_blocks
+            .iter()
+            .map(|(pc, block)| (*pc, *block))
+            .collect()
+    }
+}
+
 /// Emit a Number relation using the same relation dispatch as the interpreter.
 /// The domain selects its Cranelift condition codes; the operation mapping is shared.
 pub(super) fn emit_number_relation(
