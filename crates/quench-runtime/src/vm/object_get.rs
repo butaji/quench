@@ -586,7 +586,21 @@ impl<H: Host> Vm<H> {
         let Some(atom) = self.lookup_string_atom(key) else {
             return false;
         };
-        self.set_plain_named_property(object, atom, value).is_some()
+        if !self.plain_named_key(atom) {
+            return false;
+        }
+        // An add a keyed store made before replays from its entry (`keyed_add_hit`).
+        if self.keyed_add_hit(object, atom, value) {
+            return true;
+        }
+        let guard = self.keyed_add_guard(object, atom);
+        if self.set_plain_key_property(object, atom, value).is_none() {
+            return false;
+        }
+        if let Some((shape, guard)) = guard {
+            self.record_keyed_add(object, atom, shape, guard);
+        }
+        true
     }
 
     /// A keyed read of a symbol, or of a string naming an existing non-index atom, that the
