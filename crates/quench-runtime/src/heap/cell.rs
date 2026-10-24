@@ -1692,7 +1692,7 @@ impl std::ops::DerefMut for FinalizationEntries {
     }
 }
 impl Object {
-    #[inline]
+    #[inline(always)]
     pub(crate) fn new(proto: Value) -> Self {
         Self::with_property_storage(
             proto,
@@ -1906,7 +1906,9 @@ impl Object {
         }
     }
 
-    #[inline]
+    /// Inlined: most callers pass constant inline values (`Object::new`), which then pack
+    /// to a constant payload word.
+    #[inline(always)]
     pub(crate) fn with_property_storage(
         proto: Value,
         properties: ValueVec,
