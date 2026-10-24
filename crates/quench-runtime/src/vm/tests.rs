@@ -12038,10 +12038,35 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
         .unwrap();
     let mut programs = super::program_store::ProgramStore::default();
     let id = programs.insert(program).unwrap();
-    for function in 0..512 {
+    for function in 0..4096 {
         assert!(!programs.note_js_function_entry(id, function, false, false, false));
     }
-    assert_eq!(programs.js_jit_tracked_function_count(), 256);
+    assert_eq!(programs.js_jit_tracked_function_count(), 2048);
+    assert_eq!(programs.js_jit_tracking_exhaustion_count(), 2048);
+}
+
+#[test]
+fn js_jit_general_tier_tracks_hot_function_after_cold_function_churn() {
+    let program = Engine::compile(crate::ExecutionRequest::script("void 0", "js-jit-cold-churn.js"))
+        .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+
+    for function in 0..512 {
+        assert!(!programs.note_js_general_dispatch_entry(id, function));
+    }
+    let hot_function = 512;
+    for _ in 0..31 {
+        assert!(!programs.note_js_general_dispatch_entry(id, hot_function));
+    }
+    assert!(programs.note_js_general_dispatch_entry(id, hot_function));
+
+    assert_eq!(programs.js_jit_tracked_function_count(), 513);
+    assert!(matches!(
+        programs.js_tier(id, hot_function),
+        Some(super::program_store::JsTierState::GeneralPromotionPending)
+    ));
+    assert_eq!(programs.js_jit_tracking_exhaustion_count(), 0);
 }
 
 #[cfg(not(quench_profiled))]
