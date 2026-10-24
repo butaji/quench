@@ -11411,6 +11411,52 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
+    // The loop reads `src.n`, `src.scale` and a named property of the very array it stores
+    // into: in-bounds element stores leave every named property as it was.
+    let source = r#"
+      function fill(src, dst) {
+        for (let index = 0; index < src.n; index++) dst[index] = index * src.scale + dst.bias;
+        return dst[0] + dst[src.n - 1];
+      }
+      const dst = new Array(4096).fill(0);
+      dst.bias = 7;
+      const src = { n: 4000, scale: 3 };
+      let answer = 0;
+      for (let call = 0; call < 100; call++) answer += fill(src, dst);
+      print(answer);
+    "#;
+    let program = Engine::specialize(source, "osr-field-store.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "fill"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+
+        assert_eq!(compiled_output.borrow().as_slice(), ["1201100"], "{policy:?}");
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(std::cell::OnceCell::get)
+            .expect("hot fill loop lane view")
+            .osr_diagnostics();
+        assert_eq!(osr.admitted_sites, 1, "OSR analysis rejected the field-reading store loop under {policy:?}");
+        let compiles = super::compiled::loop_tier_compiles(policy);
+        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "store loop native code under {policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
