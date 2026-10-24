@@ -185,8 +185,9 @@ fn cached_field_reads_follow_in_place_writes() {
 fn spread_sources_stay_rooted_through_the_loop_that_reuses_them() {
     // `AppendArray` reads its optional value register, so a spread source the next iteration
     // reads again is in every root map of the loop, the resume point of the call the spread
-    // feeds included: a collection inside that call must not free it.
-    let source = "function parse(texts, next) { let token; while (token = next(...texts)) {} return token; }";
+    // feeds included: a collection inside that call must not free it. (A call of one spread
+    // alone is a `CallSpread`, `call_spread_sources_stay_rooted_through_the_loop`.)
+    let source = "function parse(texts, next) { let token; while (token = next(1, ...texts)) {} return token; }";
     let program = Engine::specialize(source, "spread-roots.js").unwrap();
     program.compile_released();
     let function = program
@@ -223,6 +224,47 @@ fn spread_sources_stay_rooted_through_the_loop_that_reuses_them() {
     for pc in head..=back_edge {
         let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
         assert_ne!(root_map & (1u64 << register), 0, "pc {pc} drops register {register}");
+    }
+}
+
+#[test]
+fn call_spread_sources_stay_rooted_through_the_loop() {
+    // A call of one spread (`CallSpread`) iterates the source a `Move` copies into its call
+    // window: the window register is rooted at the call, which may collect while it builds
+    // the argument list, and the source, which the next iteration copies again, in every root
+    // map of the loop.
+    let source = "function parse(texts, next) { let token; while (token = next(...texts)) {} return token; }";
+    let program = Engine::specialize(source, "call-spread-roots.js").unwrap();
+    program.compile_released();
+    let (function_id, function) = program
+        .functions
+        .iter()
+        .enumerate()
+        .find(|(_, function)| function.name.is_some_and(|name| &program.atoms[name as usize] == "parse"))
+        .unwrap();
+    let (call_pc, call) =
+        function.code.iter().copied().enumerate().find(|(_, instruction)| instruction.op() == Op::CallSpread).unwrap();
+    let window = call.call_window().base;
+    let copy = function.code[..call_pc]
+        .iter()
+        .rev()
+        .find(|instruction| instruction.op() == Op::Move && instruction.result_register() == window)
+        .expect("the call window's copy of the source");
+    let source_register = copy.register_b();
+    let call_roots = program.register_root_mask(function_id as u32, call_pc).unwrap();
+    assert_ne!(call_roots & (1u64 << window), 0, "the call drops its window register {window}");
+    let (back_edge, head) = function
+        .code
+        .iter()
+        .enumerate()
+        .find_map(|(pc, instruction)| {
+            (instruction.op() == Op::Jump && instruction.jump_target() as usize <= call_pc)
+                .then(|| (pc, instruction.jump_target() as usize))
+        })
+        .unwrap();
+    for pc in head..=back_edge {
+        let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
+        assert_ne!(root_map & (1u64 << source_register), 0, "pc {pc} drops register {source_register}");
     }
 }
 

@@ -790,6 +790,7 @@ opcodes!(
     Move => Effect::PURE; layout Scalar; meaning Unused; js Move, @ Register, @ fields(ResultRegister, Register, Unused),
     Call => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
     CallArray => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
+    CallSpread => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
     CallKnown => CALL_EFFECT; layout CallWindow; flow Call, @ Returnable, @ fields(ResultRegister, FunctionIndex, Unused),
     CallMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call, @ Returnable, @ fields(ResultRegister, Register, Unused),
     CallThisMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call, @ Returnable, @ fields(ResultRegister, Unused, Unused),
