@@ -212,6 +212,7 @@ impl Snap for Continuation {
             locals, dynamic_bindings, registers, active_iterators, with_objects, captured,
             pc_is_resume: _, source_field: _, binding_site_pc: _, initialized_registers: _,
             capture_cache: _, with_base: _, js_jit_interpreter_started: _, fixed_this: _,
+            js_jit_skip_entry_once: _,
         } = &*self.frame;
         context.snap(writer)?;
         reflected_parameters.snap(writer)?;
