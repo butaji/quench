@@ -4856,7 +4856,7 @@ pub(super) fn analyze_inlining_osr_region<'a>(
     decoded: &[WideInstruction],
     constants: &[crate::value::Value],
     sites: &[crate::bytecode::FieldSite],
-    live: &[crate::compile::liveness::RegisterSet],
+    live: &crate::compile::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
     resolve: &mut dyn FnMut(&[FieldUse]) -> Option<InlineCallee<'a>>,
@@ -4870,7 +4870,7 @@ pub(super) fn analyze_osr_region(
     decoded: &[WideInstruction],
     constants: &[crate::value::Value],
     sites: &[crate::bytecode::FieldSite],
-    live: Option<&[crate::compile::liveness::RegisterSet]>,
+    live: Option<&crate::compile::liveness::RegisterMasks>,
     header: u32,
     backedge: u32,
 ) -> Result<LoopRegion, RegionRejection> {

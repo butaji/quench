@@ -14140,7 +14140,7 @@ fn lane_call_fits(instruction: WideInstruction) -> bool {
 fn lane_call_result_marked(
     operand: LaneOperand,
     instruction: WideInstruction,
-    live: Option<&[crate::compile::liveness::RegisterSet]>,
+    live: Option<&crate::compile::liveness::RegisterMasks>,
     pc: usize,
 ) -> LaneOperand {
     if instruction.op() != Op::Call || instruction.result_flags() != 0 {
@@ -14149,7 +14149,7 @@ fn lane_call_result_marked(
     let result = instruction.a() & crate::bytecode::REGISTER_MASK;
     let dead = live
         .and_then(|live| live.get(pc + 1))
-        .is_some_and(|after| crate::compile::liveness::register_dead(*after, usize::from(result)));
+        .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(result)));
     if !dead {
         return operand;
     }
@@ -14241,7 +14241,7 @@ fn derive_lane_view<H: Host>(
     function: &Function,
     constants: &[Value],
     kind: crate::bytecode::ProgramKind,
-    live: Option<&[crate::compile::liveness::RegisterSet]>,
+    live: Option<&crate::compile::liveness::RegisterMasks>,
     sites: &[crate::bytecode::FieldSite],
     loop_tier: bool,
     diagnostics: bool,
@@ -15293,7 +15293,7 @@ fn install_loop_sites<H: Host>(
     decoded: &[WideInstruction],
     constants: &[Value],
     sites: &[crate::bytecode::FieldSite],
-    live: Option<&[crate::compile::liveness::RegisterSet]>,
+    live: Option<&crate::compile::liveness::RegisterMasks>,
     diagnostics: bool,
     records: &mut [LaneInstruction],
 ) -> (Box<[LoopSite]>, Vec<(super::compiled::RegionRejection, usize)>) {

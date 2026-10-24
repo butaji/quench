@@ -2622,7 +2622,7 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            Option<&[crate::compile::liveness::RegisterSet]>,
+            Option<&crate::compile::liveness::RegisterMasks>,
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
@@ -2671,7 +2671,7 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            Option<&[crate::compile::liveness::RegisterSet]>,
+            Option<&crate::compile::liveness::RegisterMasks>,
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
