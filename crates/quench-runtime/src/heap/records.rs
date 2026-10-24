@@ -137,6 +137,21 @@ impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
     }
 }
 
+impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
+    /// The first address in this record family's reserved range, if it has been reserved.
+    ///
+    /// The range is allocated once and kept for the lifetime of the record space. A native
+    /// reader may resolve a live direct Value through this base and its record ID, but it must
+    /// keep the Value rooted and must not carry a record or payload pointer across a VM
+    /// safepoint. In particular, a record's owned suballocations may change when the VM runs.
+    #[cfg(test)]
+    #[inline]
+    pub(super) fn base_ptr(&self) -> Option<*const T> {
+        self.reserved
+            .then(|| self.base.as_ptr().cast::<T>().cast_const())
+    }
+}
+
 struct RecordBlock {
     occupied: [u64; RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS],
     marked: [u64; RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS],
@@ -779,6 +794,22 @@ impl<T, const CAPACITY: usize> Drop for RecordSpace<T, CAPACITY> {
 mod tests {
     use super::{RECORD_SPACE_CAPACITY, RECORDS_PER_BLOCK, RecordSpace};
     use std::mem::size_of;
+
+    #[test]
+    fn reserved_record_base_is_absent_until_reserved_and_then_stable() {
+        let mut arena: RecordSpace<u64, RECORDS_PER_BLOCK> = RecordSpace::default();
+        assert!(arena.base_ptr().is_none());
+
+        let first = arena.try_insert(11).unwrap();
+        let base = arena.base_ptr().expect("insertion reserves the record range");
+        // SAFETY: `first` is the live ID returned by the insertion above.
+        assert_eq!(unsafe { *base.add(first as usize) }, 11);
+
+        let second = arena.try_insert(22).unwrap();
+        assert_eq!(arena.base_ptr(), Some(base));
+        // SAFETY: `second` is the live ID returned by the insertion above.
+        assert_eq!(unsafe { *base.add(second as usize) }, 22);
+    }
 
     #[test]
     fn object_record_addresses_are_dense_and_reuse_vacancies() {
