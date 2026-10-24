@@ -11379,6 +11379,19 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         ActivationArguments::Window(_) => usize::from(ImmediateLayout::argument_count(i.imm())),
         ActivationArguments::Kept(_, count) => count,
     };
+    #[cfg(feature = "profile-lane-exits")]
+    if let Some(body) = vm.programs.residual(target.program).and_then(|code| {
+        let body = code.function_get(target.function as usize)?;
+        let plan = body.call_plan(code);
+        Some(format!(
+            "keeping {} @{:?} entry={} argc={argc} params={} strict={} legacy={} forwards={} arguments={}",
+            body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+            body.source_span.map(|span| span.start), target.entry as u8, target.params, body.strict,
+            plan.legacy_reflection, plan.forwards_arguments, body.arguments_slot.is_some(),
+        ))
+    }) {
+        super::lane_exits::record_detail(body);
+    }
     let count = usize::from(target.registers);
     // A forwarding activation keeps every value passed after its registers, as does one for
     // a skipped forwarding constructor, whose frame passed them on, and one passed more values
