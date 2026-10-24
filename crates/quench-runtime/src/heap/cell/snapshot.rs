@@ -475,15 +475,15 @@ impl crate::heap::PromiseCell {
             writer.value(reaction.on_fulfilled);
             writer.value(reaction.on_rejected);
             writer.value(reaction.next);
-            writer.bool(reaction.execution_context.is_some());
-            if let Some(context) = reaction.execution_context {
+            writer.bool(reaction.execution_context.get().is_some());
+            if let Some(context) = reaction.execution_context.get() {
                 writer.u64(context.0);
             }
         }
         promise_rejection::write(writer, *rejection);
         writer.u64(rejection_id.map_or(0, std::num::NonZeroU64::get));
-        writer.bool(host_context.is_some());
-        if let Some(context) = host_context {
+        writer.bool(host_context.get().is_some());
+        if let Some(context) = host_context.get() {
             writer.u64(context.0);
         }
         Ok(())
@@ -498,12 +498,12 @@ impl crate::heap::PromiseCell {
                 on_fulfilled: reader.value()?,
                 on_rejected: reader.value()?,
                 next: reader.value()?,
-                execution_context: if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None },
+                execution_context: if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None }.into(),
             })
         })?;
         let rejection = promise_rejection::read(reader)?;
         let rejection_id = std::num::NonZeroU64::new(reader.u64()?);
-        let host_context = if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None };
+        let host_context = if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None }.into();
         Ok(Self {
             object,
             record: crate::heap::PromiseRecord {
