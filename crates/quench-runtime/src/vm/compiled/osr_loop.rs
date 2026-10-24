@@ -1666,7 +1666,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.body.builder.ins().return_(&[status]);
         }
         self.body.builder.seal_all_blocks();
-        self.body.builder.finalize(frontend);
+        self.body.into_builder().finalize(frontend);
         Some(self.widenings)
     }
 
