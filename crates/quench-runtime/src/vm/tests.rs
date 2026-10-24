@@ -13742,16 +13742,18 @@ fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
         .programs
         .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, caller)
         .expect("diagnostics should track call sites for the compiled caller");
-    assert!(call_sites.iter().any(|(_, opcode, attempts, outcomes)| {
+    assert!(call_sites.iter().any(|(_, opcode, attempts, outcomes, direct_target, target_calls, _, _)| {
         *opcode == crate::bytecode::Op::CallArray as u16
             && *attempts > 0
+            && *direct_target == Some((super::program_store::ProgramId::MAIN.raw(), callee))
+            && *target_calls == *attempts
             && outcomes[super::program_store::JsJitCallOutcome::PushFrame as usize] > 0
     }));
     let callee_call_sites = compiled
         .programs
         .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, callee)
         .expect("diagnostics should track call sites for the compiled callee");
-    assert!(callee_call_sites.iter().any(|(_, opcode, attempts, outcomes)| {
+    assert!(callee_call_sites.iter().any(|(_, opcode, attempts, outcomes, _, _, _, _)| {
         *opcode == crate::bytecode::Op::Call as u16
             && *attempts > 0
             && outcomes[super::program_store::JsJitCallOutcome::Continue as usize] > 0
