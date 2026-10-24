@@ -5665,9 +5665,9 @@ fn lane_loop_entry<H: Host>(
             entry.push_array(elements.as_ptr().cast_mut(), elements.len())?;
         }
     }
-    // These regions cannot run calls or field writes; indexed writes are rejected when a
-    // cached field is present. Thus a hit on an ordinary data field stays valid for the
-    // whole native run. Any miss, accessor, private name, or non-Number exits before native
+    // These regions cannot run calls or field writes, and their element stores replace
+    // existing elements in bounds, which changes no named property. Thus a hit on an
+    // ordinary data field stays valid for the whole native run. Any miss, accessor, private name, or non-Number exits before native
     // code can alter a register.
     let code = unsafe { &*(*cx).code };
     for field in &region.fields {
