@@ -36,19 +36,13 @@ pub(crate) struct ArrayElements {
 
 /// Offsets for the native read-only array view. These are derived beside the fields they
 /// describe so native code does not maintain a second copy of the storage layout.
-#[cfg(test)]
 pub(super) const NATIVE_HEADER_POINTER_OFFSET: usize =
     std::mem::offset_of!(ArrayElements, header);
-#[cfg(test)]
 pub(super) const NATIVE_HEADER_LENGTH_OFFSET: usize = std::mem::offset_of!(Header, len);
-#[cfg(test)]
 pub(super) const NATIVE_HEADER_VALUES_OFFSET: usize = VALUES_OFFSET;
 
-#[cfg(test)]
 const _: () = assert!(NATIVE_HEADER_POINTER_OFFSET == 0);
-#[cfg(test)]
 const _: () = assert!(NATIVE_HEADER_LENGTH_OFFSET + size_of::<u32>() <= size_of::<Header>());
-#[cfg(test)]
 const _: () = assert!(NATIVE_HEADER_VALUES_OFFSET >= size_of::<Header>());
 
 /// An `ArrayElements` that no other array shares (`ArrayElements::make_mut`): the only view
