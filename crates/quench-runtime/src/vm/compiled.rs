@@ -10334,7 +10334,7 @@ impl<H: Host> Vm<H> {
         // Keep bounded candidates on a frame entry until the shared tier has
         // settled. Lane target caches otherwise preserve a frameless route
         // across the later promotion and no longer consult tiering.
-        facts.candidate || facts.general
+        facts.candidate || (self.programs.js_jit_general_dispatch_enabled() && facts.general)
     }
 
     /// Whether the general tier holds `function`: pending, due or compiled.
@@ -10372,6 +10372,9 @@ impl<H: Host> Vm<H> {
         function: u32,
         facts: &super::js_compiled::JsEntryFacts,
     ) -> (bool, bool) {
+        if !self.programs.js_jit_general_dispatch_enabled() {
+            return (false, false);
+        }
         let Some(body) = program.function_get(function as usize).filter(|_| facts.general) else {
             return (false, false);
         };
@@ -10498,7 +10501,11 @@ impl<H: Host> Vm<H> {
         let Some(facts) = self
             .programs
             .js_entry_facts(program_id, function)
-            .filter(|facts| facts.enters || facts.general || self.programs.js_jit_diagnostics_enabled())
+            .filter(|facts| {
+                facts.enters
+                    || (self.programs.js_jit_general_dispatch_enabled() && facts.general)
+                    || self.programs.js_jit_diagnostics_enabled()
+            })
         else {
             return JsTierFrameEntry::Interpreter;
         };
@@ -10577,6 +10584,7 @@ impl<H: Host> Vm<H> {
         promote: bool,
     ) -> Option<JsNativeDispatchResult> {
         if !self.js_tier_runs()
+            || !self.programs.js_jit_general_dispatch_enabled()
             || program.kind == crate::bytecode::ProgramKind::Wasm
             || start_pc >= program.function_get(self.frames.get(frame)?.function as usize)?.code.len()
         {
