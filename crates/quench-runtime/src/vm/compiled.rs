@@ -5371,6 +5371,23 @@ unsafe extern "C" fn js_step_callout<H: Host>(
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
+            let direct_call_target = if vm.programs.js_jit_diagnostics_enabled()
+                && matches!(current_instruction.op(), Op::Call | Op::CallArray)
+            {
+                vm.frames[dispatch.frame]
+                    .registers
+                    .get(usize::from(current_instruction.register_b()))
+                    .copied()
+                    .and_then(|callee| vm.heap.function(callee))
+                    .and_then(|record| match &record.kind {
+                        crate::heap::FunctionKind::User(program, function) => {
+                            Some((program.raw(), *function))
+                        }
+                        _ => None,
+                    })
+            } else {
+                None
+            };
             let step = if dispatch.allow_inline_calls
                 && matches!(current_instruction.op(), Op::Call | Op::CallArray)
             {
@@ -5452,6 +5469,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     frame_function,
                     current_pc,
                     current_instruction.op(),
+                    direct_call_target,
                     outcome,
                 );
             }

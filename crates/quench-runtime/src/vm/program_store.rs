@@ -56,6 +56,10 @@ struct JsJitCallSiteCounters {
     pc: u32,
     opcode: u16,
     attempts: u64,
+    direct_target: Option<(u32, u32)>,
+    direct_target_calls: u64,
+    alternate_target_calls: u64,
+    other_target_calls: u64,
     outcomes: [u64; JsJitCallOutcome::COUNT],
 }
 
@@ -2424,6 +2428,7 @@ impl ProgramStore {
         function: u32,
         pc: usize,
         opcode: crate::bytecode::Op,
+        direct_target: Option<(u32, u32)>,
         outcome: JsJitCallOutcome,
     ) {
         let Some(counters) = self
@@ -2456,6 +2461,23 @@ impl ProgramStore {
         };
         let site = &mut counters.call_sites[index];
         site.attempts = site.attempts.saturating_add(1);
+        match direct_target {
+            Some(target) => match site.direct_target {
+                None => {
+                    site.direct_target = Some(target);
+                    site.direct_target_calls = site.direct_target_calls.saturating_add(1);
+                }
+                Some(first) if first == target => {
+                    site.direct_target_calls = site.direct_target_calls.saturating_add(1);
+                }
+                Some(_) => {
+                    site.alternate_target_calls = site.alternate_target_calls.saturating_add(1);
+                }
+            },
+            None => {
+                site.other_target_calls = site.other_target_calls.saturating_add(1);
+            }
+        }
         let outcome_count = &mut site.outcomes[outcome as usize];
         *outcome_count = outcome_count.saturating_add(1);
     }
@@ -2465,7 +2487,16 @@ impl ProgramStore {
         &self,
         id: ProgramId,
         function: u32,
-    ) -> Option<Vec<(u32, u16, u64, [u64; JsJitCallOutcome::COUNT])>> {
+    ) -> Option<Vec<(
+        u32,
+        u16,
+        u64,
+        [u64; JsJitCallOutcome::COUNT],
+        Option<(u32, u32)>,
+        u64,
+        u64,
+        u64,
+    )>> {
         self.js_jit_diagnostics
             .as_ref()?
             .get(&(id.raw(), function))
@@ -2473,7 +2504,18 @@ impl ProgramStore {
                 counters
                     .call_sites
                     .iter()
-                    .map(|site| (site.pc, site.opcode, site.attempts, site.outcomes))
+                    .map(|site| {
+                        (
+                            site.pc,
+                            site.opcode,
+                            site.attempts,
+                            site.outcomes,
+                            site.direct_target,
+                            site.direct_target_calls,
+                            site.alternate_target_calls,
+                            site.other_target_calls,
+                        )
+                    })
                     .collect()
             })
     }
@@ -2905,7 +2947,19 @@ impl Drop for ProgramStore {
                     .unwrap_or("unknown");
                 let _ = write!(stderr, "{{\"pc\":{},\"opcode\":", site.pc);
                 let _ = write_json_string(&mut stderr, opcode);
-                let _ = write!(stderr, ",\"attempts\":{},\"outcomes\":{{", site.attempts);
+                let _ = write!(stderr, ",\"attempts\":{},\"direct_target\":", site.attempts);
+                if let Some((program, function)) = site.direct_target {
+                    let _ = write!(stderr, "{{\"program\":{program},\"function\":{function}}}");
+                } else {
+                    let _ = write!(stderr, "null");
+                }
+                let _ = write!(
+                    stderr,
+                    ",\"direct_target_calls\":{},\"alternate_target_calls\":{},\"other_target_calls\":{},\"outcomes\":{{",
+                    site.direct_target_calls,
+                    site.alternate_target_calls,
+                    site.other_target_calls,
+                );
                 for (outcome_index, (outcome, count)) in JsJitCallOutcome::ALL
                     .into_iter()
                     .zip(site.outcomes)
