@@ -151,6 +151,7 @@ use property_definition::PropertyDefinitionKind;
 mod iterators;
 mod json;
 mod method_cache;
+mod plain_equality;
 mod module;
 mod number;
 mod object;
