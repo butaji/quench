@@ -5174,8 +5174,12 @@ script_handler! {
         let equal = match NULLISH {
             NULLISH_NULL => value == Value::NULL,
             NULLISH_UNDEFINED => value == Value::UNDEFINED,
-            _ if value.is_heap() && !value.is_record() => {
-                sibling!(lane_jump_nullish_cell::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
+            // A record is an ordinary object: never `null`, `undefined` or [[IsHTMLDDA]].
+            _ if value.is_heap() => {
+                if !value.is_record() {
+                    sibling!(lane_jump_nullish_cell::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
+                }
+                false
             }
             _ => value.is_null() || value.is_undefined(),
         };
