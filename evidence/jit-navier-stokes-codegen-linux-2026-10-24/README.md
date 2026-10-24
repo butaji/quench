@@ -80,3 +80,54 @@ This loop has no counted-loop proof, so every access keeps its bounds check.
 Each access also reloads its array base and its length from stack spills
 (`[rsp+0x30]` through `[rsp+0x48]`). The region pins one base and one length per
 array as values live across the loop, which exceeds the register budget.
+
+## Per-function time and the `lin_solve` floor (`ns-timed.js`)
+
+`ns-timed.js` wraps each solver function to record exclusive time. One run per
+engine on CPU 1:
+
+| ms per call, exclusive | Node | Bun | Quench `--jit` |
+|---|---:|---:|---:|
+| `lin_solve` | 1.44 | 1.40 | **1.23** |
+| `advect` | 0.172 | 0.164 | 0.282 |
+| `project` (excluding inner calls) | 0.193 | 0.172 | 0.265 |
+| `set_bnd` | 0.0020 | 0.0009 | 0.0045 |
+
+`lin_solve` is 64% of Quench's time, and Quench is already the fastest engine on
+it. All three engines are bound by the same serial floating-point chain.
+`lastX` feeds `((lastX + p) + q) + r`, then `*a`, `+x0` and `*invC`, and IEEE
+order forbids reassociating it. The `linsolve-fixed.js` kernel confirms this:
+Node 428 ms, Bun 458 ms, Quench 460 ms.
+
+Folding constant key offsets into the displacement (item 1 above) removes 3
+instructions per element. It measured 3.4% slower on that kernel, so it was not
+kept.
+
+What this means for a 1.2× win:
+- **vs Bun:** with `lin_solve` at 1.23 ms per call, everything else must take at
+  most 0.23 ms per `lin_solve` call. Bun spends 0.36 ms on it, so Quench would
+  have to be about 1.5× faster than JavaScriptCore's optimizing tier there.
+- **vs Node:** everything else must take at most 0.34 ms per call, against
+  Node's 0.44 ms.
+- **At parity:** matching both engines on everything except `lin_solve` gives
+  only about 1.1×.
+
+## Shared guarded arithmetic (`int32_key`)
+
+In `set_bnd`, `j*rowSize` was multiplied four times per iteration, each copy with
+its own overflow and −0 guards. The exact-arithmetic cache keys on operand
+values. Each read of an `i32` register view emits a fresh `ireduce`, and a view
+written in the same chain reads back as `ireduce(uextend(x))`, so the keys never
+matched. Keying on the SSA value each operand is a pure function of lets later
+copies in the chain reuse the guarded result.
+
+Results:
+- `setbnd-fixed.js`, fixed work: 18,750 → 17,400 instructions per call (−7%).
+  Wall time +2.6% (11 pairs, 6/11).
+- `lin_solve` kernel: neutral.
+- Whole fixtures: within this host's JIT-mode noise. NavierStokes measured +9%
+  over 7 pairs and −1.5% over 11 pairs.
+- Runtime lib tests: 918/918 pass.
+- `--jit` oracles: 137 of 138 match. The exception, `deeprec`, also fails on the
+  baseline: deep recursion throws `RangeError: Maximum call stack size exceeded`
+  under `--jit` and completes under Node.

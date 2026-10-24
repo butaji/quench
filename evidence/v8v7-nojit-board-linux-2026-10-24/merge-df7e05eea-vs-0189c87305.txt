@@ -1,0 +1,8 @@
+richards ratio=1.0018 wins=3/5 rssA=12380 rssB=12380
+deltablue ratio=0.8672 wins=1/5 rssA=12524 rssB=12524
+crypto ratio=1.0188 wins=3/5 rssA=12524 rssB=12524
+raytrace ratio=0.9734 wins=2/5 rssA=12524 rssB=12524
+earley-boyer ratio=0.9519 wins=1/5 rssA=15424 rssB=15264
+regexp ratio=0.9871 wins=2/5 rssA=13784 rssB=13456
+splay ratio=0.8790 wins=0/5 rssA=50976 rssB=50904
+navier-stokes ratio=0.9678 wins=2/5 rssA=12524 rssB=12524

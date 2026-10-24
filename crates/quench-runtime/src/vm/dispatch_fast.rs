@@ -124,6 +124,17 @@ struct LoopTier {
     compilations: u32,
 }
 
+impl LoopTier {
+    /// Whether the site has native code or may still compile it. A site whose compilations
+    /// ran out, or under a policy that compiles no loop regions, takes its backward jump in
+    /// the interpreter without reading an entry: reading one at every iteration had cost
+    /// V8-v7 Crypto `--jit` a third of its instructions under memory-first.
+    fn may_run(&self, policy: crate::MemoryPolicy) -> bool {
+        self.code.is_some()
+            || (self.compilations < LOOP_TIER_MAX_COMPILATIONS && super::compiled::loop_tier_compiles(policy))
+    }
+}
+
 /// Backward jumps a loop takes in the interpreter before it compiles: enough that loops
 /// which run briefly never pay the compilation.
 pub(super) const LOOP_TIER_THRESHOLD: u32 = 1000;
@@ -3420,6 +3431,9 @@ unsafe fn lane_unary_value<H: Host>(
     if let Some((index, negated)) = crate::bytecode::typeof_test(operator) {
         return Some(vm.typeof_test_value(operand, index, negated));
     }
+    if operator == crate::bytecode::UNARY_TYPEOF_INDEX {
+        return Some(vm.typeof_index_value(operand));
+    }
     if operator == super::coercion::TYPEOF {
         let name = vm.typeof_value(operand);
         // Interning the type's name can allocate.
@@ -5472,7 +5486,10 @@ script_handler! {
             site.taken.set(site.taken.get() + 1);
             next!(cx, r, header, Carried::script(cx))
         }
-        if site.exits.get() >= LOOP_TIER_MAX_EXITS {
+        // SAFETY: the lane's VM is live, and nothing borrows it across the read.
+        if site.exits.get() >= LOOP_TIER_MAX_EXITS
+            || !site.tier.borrow().may_run(unsafe { vm(cx) }.heap.memory_policy())
+        {
             next!(cx, r, header, Carried::script(cx))
         }
         let Some(entry) = lane_loop_entry(cx, r, site) else {
@@ -5517,8 +5534,7 @@ fn lane_loop_run<H: Host>(
     let tier = &mut *tier;
     if tier.code.is_none() {
         // SAFETY: the lane's VM is live, and nothing borrows it across the read.
-        let policy = unsafe { vm(cx) }.heap.memory_policy();
-        if tier.compilations >= LOOP_TIER_MAX_COMPILATIONS || !super::compiled::loop_tier_compiles(policy) {
+        if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
             return LoopContinuation::Jump;
         }
         tier.compilations += 1;
@@ -8502,7 +8518,7 @@ impl<H: Host> Vm<H> {
                 .lane_view_any(program, function)
                 .is_some_and(|view| unsafe { &*view }.environment_window.is_some());
         // Across programs only a plain or keeping activation runs frameless: an environment
-        // activation, or a construction, leaves its calls a frame.
+        // activation or a construction leaves its calls a frame.
         let view = if !(plan.registers_only || environment)
             || cross && environment
             || numeric
@@ -10905,8 +10921,10 @@ fn lane_tier_enter<H: Host>(
         }
         return Some(entered);
     }
-    if !vm.js_tier_may_claim(code, program, function)
-        && let Some(own) = own
+    // The general baseline runs only from a VM frame (`Vm::js_tier_frame_entry`), so a
+    // function the general tier holds gains nothing from frameless claims either.
+    if let Some(own) = own
+        && (vm.js_tier_holds_for_general(program, function) || !vm.js_tier_may_claim(code, program, function))
     {
         own.release_from_tier();
     }

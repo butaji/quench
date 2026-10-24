@@ -1,0 +1,2 @@
+richards ratio=1.2021 wins=15/15 rssA=24188 rssB=12644
+navier-stokes ratio=1.2355 wins=15/15 rssA=24684 rssB=12644

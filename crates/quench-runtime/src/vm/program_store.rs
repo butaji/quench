@@ -52,12 +52,42 @@ struct JsJitCounters {
 /// under a stationary Bernoulli model; it is not a VM-wide multiple-test bound.
 pub(super) const JS_JIT_PROMOTION_LOOKS: [(u8, u8); 4] =
     [(32, 31), (64, 59), (128, 113), (255, 219)];
-/// The general tagged-dispatch baseline compiles after a fixed number of
-/// function entries; unlike the optimizing tier, it does not require numeric
-/// arguments or a bytecode-shape candidate.
+/// Entries after which a function is hot enough to price its general tagged-dispatch
+/// baseline (`GeneralPromotionPending`); unlike the optimizing tier, the baseline needs
+/// no numeric arguments or bytecode-shape candidate.
 const JS_JIT_GENERAL_PROMOTION_ENTRIES: u8 = 32;
+/// A specialized artifact that repeatedly rejects entry values is useful only
+/// for its matching profile. Eight confirmed misses cap this experiment before
+/// paying for the complete-semantics baseline.
+pub(super) const JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD: u8 = 8;
+/// The general baseline's compile cost in interpreted-instruction units: a fixed part
+/// and a part per bytecode instruction. Measured on Linux x86_64 (requiring jackspeak
+/// with `QUENCH_JS_JIT_STATS`): a compile takes about 0.8 ms plus 32 µs per instruction,
+/// against roughly 50 ns per interpreted instruction.
+const JS_JIT_GENERAL_COMPILE_FIXED_COST: u64 = 16_000;
+const JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION: u64 = 640;
+/// The share of an entry's interpreted instructions the baseline saves, as a fraction:
+/// at most half, since it keeps the interpreter's tagged semantics and callouts.
+const JS_JIT_GENERAL_SAVED_SHARE: (u64, u64) = (1, 2);
+
+/// Whether `entries` of a function of `instructions` bytecode instructions have paid for
+/// its general baseline, taking an entry to run its instructions once (a loop hot within
+/// one entry is OSR's to compile) and the savings of the entries so far to stand for
+/// those still to come.
+fn general_promotion_due(entries: u32, instructions: usize) -> bool {
+    let instructions = u64::try_from(instructions.max(1)).unwrap_or(u64::MAX);
+    let (saved, of) = JS_JIT_GENERAL_SAVED_SHARE;
+    u64::from(entries).saturating_mul(instructions).saturating_mul(saved)
+        >= JS_JIT_GENERAL_COMPILE_FIXED_COST
+            .saturating_add(JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION.saturating_mul(instructions))
+            .saturating_mul(of)
+}
 const JS_JIT_MAX_FUNCTIONS: usize = 64;
-const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 256;
+// Tier observations include dynamically generated functions across all retained
+// programs. Web-SSR exposes more than 1,300 functions in one VM; keep a fixed
+// metadata bound large enough to observe that workload without changing the
+// independent compiled-artifact or executable-memory budgets.
+const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 2048;
 const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
 const JS_JIT_MAX_REJECTED_FUNCTIONS: usize = 4096;
 const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
@@ -162,9 +192,12 @@ pub(super) enum JsTierState {
     /// The numeric profile passed its look, so wait for a numeric entry before
     /// compiling the specialized artifact.
     PromotionPending,
-    /// The numeric profile did not pass its first look; compile the tagged
-    /// semantics baseline without waiting for more profile observations.
-    GeneralPromotionPending,
+    /// The function is hot but not numeric: count its `entries` until they pay for the
+    /// tagged semantics baseline (`general_promotion_due`). Its calls stay as they were.
+    GeneralPromotionPending { entries: u32 },
+    /// The entries paid for the baseline: its calls take a VM frame
+    /// (`Vm::js_tier_needs_general_entry`), whose next entry compiles it.
+    GeneralCompileDue,
     Rejected {
         entries: u64,
         reason: &'static str,
@@ -269,7 +302,7 @@ impl JitTierManager {
                     }
                 } else if promotion == Some(false) && general_candidate {
                     decision.promoted = true;
-                    *state = JsTierState::GeneralPromotionPending;
+                    *state = JsTierState::GeneralPromotionPending { entries: u32::from(*observations) };
                     false
                 } else {
                     if promotion == Some(false) && *observations == u8::MAX {
@@ -286,7 +319,7 @@ impl JitTierManager {
                     numeric
                 }
             }
-            JsTierState::GeneralPromotionPending => false,
+            JsTierState::GeneralPromotionPending { .. } | JsTierState::GeneralCompileDue => false,
             JsTierState::Rejected { .. }
             | JsTierState::Unsupported
             | JsTierState::Compiled(_) => false,
@@ -559,11 +592,21 @@ pub(crate) struct ProgramStore {
     unchecked_reclaimable: usize,
     /// VM-local bounds for the optional JavaScript tier cache.
     js_jit_tracked_functions: usize,
+    js_jit_tracking_exhaustions: u64,
     js_jit_rejected_functions: usize,
     /// Shared JS/Wasm executable-code cache admission and accounting.
     jit_code_cache: JitCodeCacheBudget,
+    /// Whether a hot function's general baseline waits until its entries pay for
+    /// the compile (`general_promotion_due`); tests of the baseline's semantics compile it
+    /// once hot.
+    general_baseline_priced: bool,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
+    /// Whether ordinary JS functions promote to the general native dispatch tier
+    /// (`note_js_general_dispatch_entry`). Off unless `QUENCH_JS_JIT_GENERAL_DISPATCH=1`:
+    /// a fixed entry count promoted short runs into compile cost (npm p51, TOD-138) until
+    /// promotion weighs size and compile cost.
+    js_jit_general_dispatch_enabled: bool,
     js_jit_dataview_float64_enabled: bool,
     js_jit_dataview_float64_get_entries: u64,
     js_jit_dataview_float64_set_entries: u64,
@@ -578,11 +621,15 @@ impl Default for ProgramStore {
             reclaim_passes: 0,
             unchecked_reclaimable: 0,
             js_jit_tracked_functions: 0,
+            js_jit_tracking_exhaustions: 0,
             js_jit_rejected_functions: 0,
             jit_code_cache: JitCodeCacheBudget::default(),
+            general_baseline_priced: true,
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
+            js_jit_general_dispatch_enabled: std::env::var_os("QUENCH_JS_JIT_GENERAL_DISPATCH")
+                .is_some_and(|value| value == "1"),
             js_jit_dataview_float64_enabled:
                 std::env::var_os("QUENCH_JS_JIT_DATAVIEW_FLOAT64")
                     .is_none_or(|value| value != "0"),
@@ -1453,6 +1500,11 @@ impl ProgramStore {
         self.entry(id)?.jit_tiers.js(function)
     }
 
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn enable_js_general_dispatch(&mut self) {
+        self.js_jit_general_dispatch_enabled = true;
+    }
+
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {
         self.js_jit_diagnostics.is_some()
     }
@@ -1487,6 +1539,7 @@ impl ProgramStore {
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
+        let already_tracked = entry.jit_tiers.js(function).is_some();
         let decision = entry.jit_tiers.note_js_entry(
             function,
             numeric,
@@ -1497,6 +1550,9 @@ impl ProgramStore {
         );
         if decision.tracked {
             self.js_jit_tracked_functions += 1;
+        } else if !can_track && !already_tracked {
+            self.js_jit_tracking_exhaustions =
+                self.js_jit_tracking_exhaustions.saturating_add(1);
         }
         if decision.promoted {
             self.record_js_jit_promotion(id, function);
@@ -1507,12 +1563,26 @@ impl ProgramStore {
     /// Promote any ordinary JS function to the complete-semantics native
     /// dispatch baseline after it is hot. The existing tier record and shared
     /// code-cache budget remain the single owners for both baseline and
+    /// Compile a hot function's general baseline without pricing it, for tests of its
+    /// semantics.
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn compile_general_baseline_when_hot(&mut self) {
+        self.general_baseline_priced = false;
+    }
+
     /// specialized artifacts.
     pub(super) fn note_js_general_dispatch_entry(
         &mut self,
         id: ProgramId,
         function: u32,
+        instructions: usize,
+        policy: crate::MemoryPolicy,
     ) -> bool {
+        // Admission: the tier's switch, and the memory policy's (`GENERAL_DISPATCH_TIER`).
+        if !self.js_jit_general_dispatch_enabled || !super::compiled::general_dispatch_compiles(policy) {
+            return false;
+        }
+        let priced = self.general_baseline_priced;
         let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
         let Some(entry) = self.entry_mut(id) else {
             return false;
@@ -1523,6 +1593,8 @@ impl ProgramStore {
         let mut promoted = false;
         let Some(state) = entry.jit_tiers.js_mut(function) else {
             if !can_track {
+                self.js_jit_tracking_exhaustions =
+                    self.js_jit_tracking_exhaustions.saturating_add(1);
                 return false;
             }
             let tracked = entry.jit_tiers.js_insert(
@@ -1542,16 +1614,26 @@ impl ProgramStore {
             JsTierState::Hot { observations, .. } => {
                 *observations = observations.saturating_add(1);
                 if *observations >= JS_JIT_GENERAL_PROMOTION_ENTRIES {
-                    *state = JsTierState::GeneralPromotionPending;
+                    *state = JsTierState::GeneralPromotionPending { entries: u32::from(*observations) };
                     promoted = true;
                 }
             }
             JsTierState::PromotionPending => return false,
-            JsTierState::GeneralPromotionPending => return true,
+            JsTierState::GeneralPromotionPending { entries } => {
+                *entries = entries.saturating_add(1);
+                if priced && !general_promotion_due(*entries, instructions) {
+                    return false;
+                }
+                *state = JsTierState::GeneralCompileDue;
+                return true;
+            }
+            JsTierState::GeneralCompileDue => return true,
             JsTierState::Rejected { entries, .. } => {
                 *entries = entries.saturating_add(1);
                 if *entries >= u64::from(JS_JIT_GENERAL_PROMOTION_ENTRIES) {
-                    *state = JsTierState::GeneralPromotionPending;
+                    *state = JsTierState::GeneralPromotionPending {
+                        entries: u32::try_from(*entries).unwrap_or(u32::MAX),
+                    };
                     promoted = true;
                 }
             }
@@ -1560,7 +1642,55 @@ impl ProgramStore {
         if promoted {
             self.record_js_jit_promotion(id, function);
         }
-        promoted
+        false
+    }
+
+    /// Count only an explicit pre-native guard rejection by an installed
+    /// specialized artifact. Each such entry runs in the interpreter, so it is
+    /// paid evidence for GeneralDispatch. Completed native values and native
+    /// exits never reach this transition.
+    pub(super) fn note_js_specialized_guard_miss(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        instructions: usize,
+    ) -> bool {
+        if !self.js_jit_general_dispatch_enabled {
+            return false;
+        }
+        let priced = self.general_baseline_priced;
+        let Some(entry) = self.entry_mut(id) else {
+            return false;
+        };
+        if entry.jit_tiers.is_wasm() {
+            return false;
+        }
+        let Some(state) = entry.jit_tiers.js_mut(function) else {
+            return false;
+        };
+        let (misses, mapped_bytes) = match state {
+            JsTierState::Compiled(compiled) if !compiled.is_general_dispatch() => {
+                let misses = compiled.note_specialized_guard_miss(
+                    JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD,
+                );
+                if misses < JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD {
+                    return false;
+                }
+                (misses, compiled.mapped_bytes())
+            }
+            _ => return false,
+        };
+        let entries = u32::from(misses);
+        let compile_due = !priced || general_promotion_due(entries, instructions);
+        *state = if compile_due {
+            JsTierState::GeneralCompileDue
+        } else {
+            JsTierState::GeneralPromotionPending { entries }
+        };
+        self.jit_code_cache
+            .release(JitArtifactKind::JsFunction, 1, mapped_bytes);
+        self.record_js_jit_promotion(id, function);
+        compile_due
     }
 
     /// Memoize an unsupported bytecode shape separately from tier candidates.
@@ -2017,6 +2147,7 @@ impl ProgramStore {
         id: ProgramId,
         function: u32,
         compiled: Option<Rc<super::compiled::CompiledJsFunction>>,
+        general_fallback_after_codegen_rejection: bool,
     ) -> bool {
         let Some(entry) = self.entry(id) else {
             return false;
@@ -2024,12 +2155,19 @@ impl ProgramStore {
         if entry.jit_tiers.is_wasm() {
             return false;
         }
+        let compilation_succeeded = compiled.is_some();
         let compiled = compiled.filter(|compiled| {
             self.jit_code_cache
                 .retain(JitArtifactKind::JsFunction, compiled.mapped_bytes())
         });
         if let Some(entry) = self.entry_mut(id) {
-            let tier = compiled.map_or(JsTierState::Unsupported, JsTierState::Compiled);
+            let tier = match compiled {
+                Some(compiled) => JsTierState::Compiled(compiled),
+                None if general_fallback_after_codegen_rejection && !compilation_succeeded => {
+                    JsTierState::GeneralPromotionPending { entries: 1 }
+                }
+                None => JsTierState::Unsupported,
+            };
             if let Some(state) = entry.jit_tiers.js_mut(function) {
                 *state = tier;
             } else {
@@ -2043,6 +2181,11 @@ impl ProgramStore {
     #[cfg(test)]
     pub(super) fn js_jit_tracked_function_count(&self) -> usize {
         self.js_jit_tracked_functions
+    }
+
+    #[cfg(test)]
+    pub(super) fn js_jit_tracking_exhaustion_count(&self) -> u64 {
+        self.js_jit_tracking_exhaustions
     }
 
     #[cfg(all(test, not(quench_profiled)))]
@@ -2268,7 +2411,8 @@ impl Drop for ProgramStore {
                 .map(|tier| match tier {
                     JsTierState::Hot { .. } => "hot",
                     JsTierState::PromotionPending => "promotion-pending",
-                    JsTierState::GeneralPromotionPending => "general-promotion-pending",
+                    JsTierState::GeneralPromotionPending { .. } => "general-promotion-pending",
+                    JsTierState::GeneralCompileDue => "general-compile-due",
                     JsTierState::Rejected { .. } => "unsupported",
                     JsTierState::Unsupported => "unsupported",
                     JsTierState::Compiled(_) => "compiled",
@@ -2431,6 +2575,13 @@ impl Drop for ProgramStore {
             self.js_jit_dataview_float64_enabled,
             self.js_jit_dataview_float64_get_entries,
             self.js_jit_dataview_float64_set_entries
+        );
+        let _ = writeln!(
+            stderr,
+            "QUENCH_JS_JIT_TIER_TRACKING {{\"tracked_functions\":{},\"tracking_limit\":{},\"exhaustion_events\":{}}}",
+            self.js_jit_tracked_functions,
+            JS_JIT_MAX_TRACKED_FUNCTIONS,
+            self.js_jit_tracking_exhaustions
         );
     }
 }

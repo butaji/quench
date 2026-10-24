@@ -52,6 +52,13 @@ impl<H: Host> Vm<H> {
         if self.is_html_dda(value) { crate::ValueType::Undefined } else { self.value_type(value) }
     }
 
+    /// The integer a `UNARY_TYPEOF_INDEX` operator yields for `value`: the index in
+    /// `bytecode::TYPEOF_NAMES` of the name `typeof value` is.
+    #[inline]
+    pub(super) fn typeof_index_value(&self, value: Value) -> Value {
+        Value::integer(typeof_name_index(self.typeof_kind(value)) as i32)
+    }
+
     /// The boolean a `UNARY_TYPEOF_IS` operator testing the name at `index` in
     /// `bytecode::TYPEOF_NAMES` yields for `value`.
     #[inline]
@@ -231,6 +238,7 @@ impl<H: Host> Vm<H> {
             op if let Some((index, negated)) = crate::bytecode::typeof_test(op) => {
                 self.typeof_test_value(value, index, negated)
             }
+            crate::bytecode::UNARY_TYPEOF_INDEX => self.typeof_index_value(value),
             crate::bytecode::UNARY_TO_STRING => {
                 let text = self.coerce_js_string(p, value)?;
                 self.string_value_from(value, &text)
