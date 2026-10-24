@@ -1774,6 +1774,7 @@ impl<H: Host> Vm<H> {
                 self.programs.record_js_jit_general_dispatch_opcode(
                     cursor.program,
                     cursor.function,
+                    instruction_pc as u32,
                     ins.op(),
                 );
             }

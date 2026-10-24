@@ -44,6 +44,7 @@ struct JsJitCounters {
     interpreter_inclusive_ns: u64,
     opcode_counts: Vec<(u16, u32)>,
     general_dispatch_opcode_counts: Vec<(u16, u64)>,
+    general_dispatch_opcode_sites: FxHashMap<(u32, u16), u64>,
     code_bytes: usize,
 }
 
@@ -2217,6 +2218,7 @@ impl ProgramStore {
         &mut self,
         id: ProgramId,
         function: u32,
+        pc: u32,
         opcode: crate::bytecode::Op,
     ) {
         let Some(counters) = self
@@ -2236,6 +2238,10 @@ impl ProgramStore {
         } else {
             counters.general_dispatch_opcode_counts.push((opcode, 1));
         }
+        *counters
+            .general_dispatch_opcode_sites
+            .entry((pc, opcode))
+            .or_default() += 1;
     }
 
     pub(super) fn record_js_jit_fallback_entry(&mut self, id: ProgramId, function: u32) {
@@ -2703,6 +2709,21 @@ impl Drop for ProgramStore {
                 let _ = write!(stderr, "[");
                 let _ = write_json_string(&mut stderr, name);
                 let _ = write!(stderr, ",{count}]");
+            }
+            let _ = write!(stderr, "],\"general_dispatch_opcode_sites\":[");
+            let mut opcode_sites: Vec<_> = counters.general_dispatch_opcode_sites.iter().collect();
+            opcode_sites.sort_unstable_by_key(|((pc, opcode), _)| (*pc, *opcode));
+            for (index, ((pc, opcode), count)) in opcode_sites.iter().enumerate() {
+                if index != 0 {
+                    let _ = write!(stderr, ",");
+                }
+                let name = crate::bytecode::Op::NAMES
+                    .get(usize::from(*opcode))
+                    .copied()
+                    .unwrap_or("unknown");
+                let _ = write!(stderr, "{{\"pc\":{pc},\"opcode\":");
+                let _ = write_json_string(&mut stderr, name);
+                let _ = write!(stderr, ",\"count\":{count}}}");
             }
             let _ = write!(stderr, "],\"osr_analysis_rejections\":[");
             for (index, (reason, count)) in osr.analysis_rejections.iter().enumerate() {
