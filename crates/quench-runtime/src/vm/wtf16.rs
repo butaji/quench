@@ -1035,23 +1035,21 @@ impl JsString {
         if text.len() == 0 {
             return;
         }
-        // Two flat ASCII pieces the policy below joins are joined by one copy of each, straight
-        // into the joined storage (a template literal's pieces, a key built from parts).
-        if let (Some(Units::Ascii(left)), Some(Units::Ascii(right))) =
-            (self.existing_flat().map(FlatUnits::view), text.existing_flat().map(FlatUnits::view))
-            && right.len() <= ROPE_LEAF_MAX_UNITS
-            && left.len() <= FLAT_PREFIX_MAX_UNITS
-        {
-            let units = FlatUnits::ascii_with(left.len() + right.len(), |bytes| {
-                let (head, tail) = bytes.split_at_mut(left.len());
-                head.write_copy_of_slice(left);
-                tail.write_copy_of_slice(right);
-            });
-            *self = Self { repr: Repr::Flat(units) };
-            return;
-        }
         let short = |piece: &Self| piece.len() <= ROPE_LEAF_MAX_UNITS;
+        // Two flat pieces the policy below joins: one copy of each, straight into the joined
+        // storage when both are ASCII (a template literal's pieces, a key built from parts,
+        // a rope's last leaf and the text appended to it).
         let joined = |left: &Self, right: &Self| {
+            if let (Some(Units::Ascii(head)), Some(Units::Ascii(tail))) =
+                (left.existing_flat().map(FlatUnits::view), right.existing_flat().map(FlatUnits::view))
+            {
+                let units = FlatUnits::ascii_with(head.len() + tail.len(), |bytes| {
+                    let (start, end) = bytes.split_at_mut(head.len());
+                    start.write_copy_of_slice(head);
+                    end.write_copy_of_slice(tail);
+                });
+                return Self { repr: Repr::Flat(units) };
+            }
             let mut flat = JsStringBuilder::default();
             flat.append(left);
             flat.append(right);
@@ -1061,6 +1059,15 @@ impl JsString {
         let rope = |left: &Self, right: &Self| {
             Self::shared(JsStringInner::concat(left.node(), right.node()))
         };
+        // A flattened rope joins as the flat text it holds.
+        if self.existing_flat().is_some()
+            && text.existing_flat().is_some()
+            && short(text)
+            && self.len() <= FLAT_PREFIX_MAX_UNITS
+        {
+            *self = joined(self, text);
+            return;
+        }
         // The QuickJS policy: a short flat piece joins the flat side it meets, whether that
         // is the other operand or the facing half of a rope operand.
         *self = match (self.rope_halves(), text.rope_halves()) {
