@@ -712,6 +712,7 @@ pub(crate) enum JsDenotation {
     LoadConst,
     Move,
     GetField,
+    FieldStore,
     NumericBinary,
     NumericUnary,
     CapturedValue,
@@ -778,7 +779,7 @@ opcodes!(
     CopyDataProperties => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
     MarkPrivateName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Unused, Register, Register),
     DefinePrivateField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, Register),
-    SetField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
+    SetField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore, @ Register, @ fields(Register, Register, CacheSiteIndex),
     DefineComputedField => WRITE_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
     SetThisField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     SetIndex => WRITE_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(Register, Register, Register),
@@ -809,7 +810,7 @@ opcodes!(
     LoadCachedTemplateObject => Effect::READS_HEAP; layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     DefineField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
     ValidateClassHeritage => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
-    SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
+    SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore, @ Register, @ fields(Register, Register, CacheSiteIndex),
     SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     // The general loop's fast arms dispatch on these with the opcodes above, so they share
     // one dense range of opcode numbers.
@@ -1477,6 +1478,10 @@ pub(crate) struct SourcePosition {
     pub(crate) column: u32,
 }
 
+/// The name of a parameter slot whose argument a list's patterns or defaults bind apart
+/// (`FunctionCompiler::parameter_name`): an argument's own slot, which no source name reaches.
+pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
+
 /// Whether register liveness covers a function's register forms, so a frame may leave its
 /// dead registers stale; and the per-pc live register masks the collector scans, derived
 /// when a collection first finds the function on the stack. Most of a program's functions
@@ -2077,6 +2082,21 @@ impl Function {
     /// read this one rule.
     pub(crate) fn parameters_own_their_slots<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
         self.simple_parameters || self.rest && self.parameters_bind_directly(name)
+    }
+
+    /// Whether each argument arrives in a slot of its own that only the activation's own
+    /// loads and stores reach: `parameters_own_their_slots`, or a list without a rest
+    /// parameter whose patterns or defaults bind its names apart, each argument then in its
+    /// hidden parameter slot (`HIDDEN_PARAMETER_PREFIX`). Promoted locals require it.
+    pub(crate) fn arguments_own_their_slots<'n>(&self, name: impl Fn(usize) -> Option<&'n str>) -> bool {
+        self.parameters_own_their_slots(&name)
+            || !self.rest
+                && self.local_atoms[..usize::from(self.params).min(self.local_atoms.len())].iter().all(|atom| {
+                    usize::try_from(*atom)
+                        .ok()
+                        .and_then(&name)
+                        .is_some_and(|name| name.starts_with(HIDDEN_PARAMETER_PREFIX))
+                })
     }
 
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.

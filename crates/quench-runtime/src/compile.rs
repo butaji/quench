@@ -3182,6 +3182,7 @@ impl<'a> Compiler<'a> {
     fn promoted_local_plan(
         &mut self,
         eligible: bool,
+        arguments_only: bool,
         own_arguments: Option<(bool, &[Atom])>,
         body: &[Statement<'_>],
         expression_body: Option<&Expression<'_>>,
@@ -3221,12 +3222,17 @@ impl<'a> Compiler<'a> {
         let mut promoted_local_slots = latest_local_slot
             .into_iter()
             .filter_map(|(atom, slot)| {
-                (function_scope.contains(&atom)
-                    && !lexical_atoms.contains(&atom)
-                    && atom != arguments_atom
-                    && self_binding_slot != Some(slot)
-                    && !self.atoms[atom as usize].starts_with('\0'))
-                .then_some(slot)
+                let promotable = if arguments_only {
+                    // The hidden argument slots lead the locals, one per parameter.
+                    own_arguments.is_some_and(|(_, parameters)| usize::from(slot) < parameters.len())
+                } else {
+                    function_scope.contains(&atom)
+                        && !lexical_atoms.contains(&atom)
+                        && atom != arguments_atom
+                        && self_binding_slot != Some(slot)
+                        && !self.atoms[atom as usize].starts_with('\0')
+                };
+                promotable.then_some(slot)
             })
             .collect::<Vec<_>>();
         // Promoted locals take the lowest registers; past half the register domain a
@@ -3357,19 +3363,36 @@ impl<'a> Compiler<'a> {
                 .is_none_or(|formal| !FunctionCompiler::has_non_simple_parameters(formal));
         let direct_parameters = !options.rest_override
             && options.defaults.is_none_or(FunctionCompiler::binds_parameters_directly);
+        // A list binding its names apart through patterns or defaults that reach no parameter
+        // scope promotes just its hidden argument slots; its bindings, which open dead zones,
+        // stay plain locals for the later promotion that tracks them (`frame_registers`).
+        let hidden_parameters = !direct_parameters
+            && !options.rest_override
+            && options.defaults.is_some_and(|formal| {
+                formal.rest.is_none()
+                    && early::parameters_reach_no_scope(formal, &FunctionCompiler::parameter_bound_names(formal))
+            });
         let promote_plain_locals = parent.is_some()
-            && direct_parameters
+            && (direct_parameters || hidden_parameters)
             && !options.async_function
             && !options.generator
             && !options.derived_constructor
             && !options.class_initializer
             && !options.implicit_super
             && options.with_depth == 0
+            // A constructor runs its instance fields' initializers inline, where a function
+            // one makes captures the constructor's frame as one its body makes would.
+            && !options.instance_fields.is_some_and(|fields| {
+                fields
+                    .iter()
+                    .any(|field| class::class_field_value(*field).is_some_and(early::expression_makes_function))
+            })
             // A nested function's own parameters and locals are its own in eval code and host
             // scripts too: names it does not declare resolve as they would without promotion.
             && !dynamic_eval;
         let PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments } = self.promoted_local_plan(
             promote_plain_locals,
+            hidden_parameters,
             Some((root_strict, &params)),
             body,
             expression_body,
