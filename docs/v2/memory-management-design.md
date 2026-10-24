@@ -297,7 +297,7 @@ nursery and pretenuring; QuickJS; Lua 5.4 generational mode; Go GC guide
 and soft memory limit; Wingo on Nofl field-logging barriers, V8 MinorMS and
 pretenuring. Full notes with links: the Linear design document.
 
-## 8. State and evidence (2026-10-22)
+## 8. State and evidence (2026-10-24)
 
 Linux x86_64, 4 vCPU, static + BOLT `quench-node` unless noted. Each line names its evidence
 directory under `evidence/`. A component counts as settled when its alternatives were
@@ -361,13 +361,46 @@ At each peak, sampled from `/proc` with resident pages attributed by symbol size
   the runtime's builtins, 958 native function objects among them, and about 0.6 MB for the
   Node host (EventEmitter 164 KiB, `process` 168 KiB). QuickJS's whole heap is 0.55 MB.
 
-Against the target, max RSS ≤ 0.8 × the lowest other runtime
-(`tod137-board-after-replace-and-jit-release-…`):
+Against the target, max RSS ≤ 0.8 × the lowest other runtime, on the board of 2026-10-24
+(`tod137-board-memory-first-js-tiers-…`). Each cell is the worst of 5 runs, the median in
+brackets:
 
-| Mode | Met | Within 1.2× of the target | Beyond |
+| Fixture | No JIT | `--jit` |
+|---|---|---|
+| Richards | 0.97 (0.85) | 0.90 (0.90) |
+| DeltaBlue | 0.89 (0.89) | 0.93 (0.89) |
+| Crypto | 1.03 (0.97) | 1.02 (1.01) |
+| RayTrace | 1.05 (0.98) | 1.01 (0.98) |
+| RegExp | 1.04 (1.03) | 1.08 (1.05) |
+| NavierStokes | 0.93 (0.93) | 0.93 (0.93) |
+| EarleyBoyer | 0.45 | 0.46 |
+| Splay | 0.64 | 0.64 |
+
+### 8.3a Why the memory manager is at its floor on the rows that miss
+
+A MemoryFirst peak is the sum of terms; the memory manager controls some of them. For each
+controlled term, the evidence below bounds what any setting of it could still remove.
+
+| Term | What the memory manager controls | Bound | Evidence |
 |---|---|---|---|
-| no JIT | EarleyBoyer, Splay | Richards 1.16, DeltaBlue 1.13, NavierStokes 1.15 | RegExp 1.22, Crypto 1.28, RayTrace 1.32 |
-| `--jit` | EarleyBoyer, Splay | DeltaBlue 1.08, RayTrace 1.11, Richards 1.13, RegExp 1.19 | Crypto 1.41, NavierStokes 1.84 |
+| Garbage at the peak | collection pacing | The most eager pacing the knobs allow, with page releases off, removes at most 96 KiB on Crypto, 136 on RayTrace and none on DeltaBlue, at Score −24 to −79%. RegExp still holds about 430 KiB of garbage, and Richards about 260, that only that pacing removes (Score −45%, −5%). | `tod137-eager-collector-bound-…` |
+| Pacing alternatives | young size, release timing | Young 2^10 with paced releases; earlier first collections; trailing releases. None lowers most rows (§8.2). | `tod137-paced-release-young-…` and the §8.2 rows |
+| Retention | what a closure keeps | Closures keep only what their code can read, with the trace bounded at twice a whole trace. | `closure-retention-…`, `tod137-environment-trace-cost-…` |
+| Compile transients | which tiers compile under the policy, and code release around them | Under MemoryFirst no JavaScript tier compiles: every `--jit` row peaks at its no-JIT level. | `tod137-memory-first-js-tiers-…` |
+| Cold first runs | where records live | A cold-compiled entry runs from its kept form; no row's worst run is its first. | `tod137-cold-entry-kept-form-…` |
+| Code pages | release at boundaries | Releases at every collection and paced first-call releases. Every finer release rule measured raised a peak, or cost npm 1.4–2.9× in time (§8.2). | `tod137-first-call-release-…` |
+
+What is left on the three missing rows (1–8% over the target) lies outside these terms:
+- **Crypto and RayTrace:** code pages, about 1.2–1.5 MB at the peak, which the code-layout
+  lane owns (TOD-171); and start-up state, about 1.5 MB, which the start-up lane owns
+  (TOD-21, TOD-104).
+- **RegExp:** about 0.5 MB of compiled regexps, held live by the matcher cache and by live
+  RegExp objects; pruning the cache raised the peak (§8.2). Lowered programs, literal finders
+  and match sets are the regex engine's to shrink. RegExp also holds about 430 KiB of garbage
+  that only the −45% pacing removes.
+
+Run-to-run spread is 100–300 KiB on these rows, with the peaks set by time-paced releases.
+It is of the same order as the remaining gaps.
 
 ### 8.4 What remains, by owner
 

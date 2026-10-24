@@ -28,3 +28,36 @@ regex natives and short interpreted glue, not numeric loops.
 
 Reaching 1.9× needs all three, so the RegExp JIT-mode win is not reachable
 through the glue alone.
+
+## Follow-up: per-call cost and what the components can deliver
+
+- **`exec` microbenchmark** (`rx-each.js` shape): Quench `--jit` is 3–6× slower
+  than Node on every pattern, including the literal `/search/` (240 ns against
+  75 ns per call).
+  - An `exec` that builds its result costs about 2,300 instructions. Building the
+    result is ~800, glue plus matching ~890, the GC its allocations trigger ~130,
+    and the interpreter ~400.
+  - The result layout lookup hashes the realm's globals on every call.
+  - Building the result elements in place instead of through a temporary `Vec`
+    saved nothing measurable (2,966 → 2,963 instructions per call), so it was
+    not kept.
+- **Fixture call mix:**
+  - About 2.2 M of the 4.16 M regex calls end in the prefilter. Before it, the
+    steady path runs about 130 instructions of receiver, `lastIndex` and
+    method-cache checks.
+  - Few exec results are built; most calls are `test`, `exec` whose result is
+    unused, or `replace`.
+- **Matcher:** only `backtrack::Program::run` (17%) would gain from native
+  compilation. The prefix, range and `memchr` searches (about 14%) are already
+  SIMD code.
+
+Upper bounds:
+
+| Change | Share it removes | Overall gain |
+|---|---:|---:|
+| `Program::run` compiled 3× faster | ~11% | ~1.13× |
+| Glue halved | ~17% | ~1.2× |
+| Both together | | ~1.36× |
+
+Leading Node by 1.2× in `--jit` needs about 1.9×. The rest would have to come
+from the interpreted JavaScript, which only a JS function tier can speed up.

@@ -96,3 +96,48 @@ validatorjs 0.39 → 0.53, json-stringify 0.47 → 0.66, json-parse 0.49 → 0.5
 babel 0.95 → 1.08, postcss 0.95 → 1.12, babel-minify 1.14 → 1.20, chai 1.21 → 1.68. js-tokens
 (1.15 → 0.98) and babel (0.70 → 0.55) moved mostly with Bun's single-run scores (Bun js-tokens
 20.7 → 26.0, babel 11.9 → 16.8); quench's own scores rose on both.
+
+## Paired sweep at ae6e0837a (2026-10-24, perturbed)
+
+Raw rows `paired-ae6e0837-raw-perturbed.txt`. Profiling and builds ran on the same 4-vCPU
+host during this sweep, so quench's scores are low by an unknown amount (web-ssr 23.1 → 19.4
+against the clean 3a7eaaf0f run with no change that could slow it); RSS is unaffected. Read it
+for RSS only.
+
+## Decoded text kept as UTF-8 (3bbc8be24)
+
+Every web-tooling bundle the harness preloads (and the bundle it loads as a script) is mostly
+ASCII with a handful of non-ASCII characters (babel.bundle.js: 5,616,858 characters, 10 of
+them non-ASCII), so each was held as UTF-16 at twice its size. Decoded text of 64 KiB or more
+now keeps its UTF-8 until a reader needs units; the compiler and JSON.parse read the UTF-8.
+
+| test | max RSS before (KiB) | after | Bun no-JIT | ratio after |
+|---|---|---|---|---|
+| babel-wtb | 87684 | 83104 | 94676 | 1.14 |
+| babel-minify-wtb | 62064 | 59656 | 71204 | 1.19 |
+| postcss-wtb | 69368 | 64908 | 77528 | 1.19 |
+| typescript-lib | 172704 | 172844 | 195928 | 1.13 |
+
+babel-wtb's peak is now its bundle's compilation at load (78 MiB at 640 ms; steady state 72 →
+65 MiB): the OXC tree of the 5.6 MB source is 36.6 MB of it (VmRSS by compile phase: start
+16.5, parsed 53.1, semantic 61.2, emitted 66.1, tree dropped 29.7 MB). Scores are within the
+host's noise (babel median 9.06 → 9.49 over 5 paired rounds; callgrind −2.6% instructions).
+
+## Paired sweep at ad48589e4 (2026-10-24)
+
+Same method and host, nothing else running. Raw rows `paired-ad48589e-raw.txt`, ratios
+`paired-ad48589e-ratios.txt`. Geomean score **0.839×** Bun no-JIT (3a7eaaf0f: 0.845), max RSS
+**1.59×** smaller (1.58); 8/34 tests at ≥1.2× score, 27/34 at ≥1.2× smaller RSS (babel-minify
+1.20 joins). Both engines scored lower than in the 3a7eaaf0f run (Bun web-ssr 68.4 → 62.8,
+doxbee-async 150.0 → 136.5), so the score ratios are within that run's spread. RSS:
+babel 1.08 → 1.15, postcss 1.12 → 1.18, babel-minify 1.15 → 1.20.
+
+## Paired JIT sweep at 5a673e40e (2026-10-24)
+
+`quench-node --jit` against Bun with its JIT on, back to back per test on the same host.
+Raw `paired-jit-5a673e40-raw.txt`, ratios `paired-jit-5a673e40-ratios.txt`. Geomean score
+**0.113×** Bun JIT, max RSS **2.93×** smaller; 0/34 tests at ≥1.2× score, 33/34 at ≥1.2×
+smaller RSS (sqlite3-wasm 1.06). Closest: json-stringify 0.99, quicksort-wasm 0.91,
+json-parse 0.64. `--jit` scores below quench's own no-JIT run on several Wasm tests
+(sqlite3 0.60 vs 3.31, HashSet 6.99 vs 19.89, tsf 6.56 vs 11.95, argon2 equal): a JIT-tier
+regression, reported on TOD-110.

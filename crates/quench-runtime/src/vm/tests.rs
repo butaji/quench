@@ -11401,9 +11401,59 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
             .and_then(std::cell::OnceCell::get)
             .expect("hot sum loop lane view");
         let osr = view.osr_diagnostics();
-        assert_eq!(osr.admitted_sites, 1, "OSR analysis rejected the field loop under {policy:?}");
+        // Loop sites are analyzed only where the JavaScript tiers run (`JS_FUNCTION_TIERS`).
+        let analyzes = super::compiled::js_function_tiers_compile(policy);
+        assert_eq!(osr.admitted_sites, usize::from(analyzes), "field loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
         assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field loop native code under {policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
+    // The loop reads `src.n`, `src.scale` and a named property of the very array it stores
+    // into: in-bounds element stores leave every named property as it was.
+    let source = r#"
+      function fill(src, dst) {
+        for (let index = 0; index < src.n; index++) dst[index] = index * src.scale + dst.bias;
+        return dst[0] + dst[src.n - 1];
+      }
+      const dst = new Array(4096).fill(0);
+      dst.bias = 7;
+      const src = { n: 4000, scale: 3 };
+      let answer = 0;
+      for (let call = 0; call < 100; call++) answer += fill(src, dst);
+      print(answer);
+    "#;
+    let program = Engine::specialize(source, "osr-field-store.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "fill"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+
+        assert_eq!(compiled_output.borrow().as_slice(), ["1201100"], "{policy:?}");
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(std::cell::OnceCell::get)
+            .expect("hot fill loop lane view")
+            .osr_diagnostics();
+        // Loop sites are analyzed only where the JavaScript tiers run (`JS_FUNCTION_TIERS`).
+        let analyzes = super::compiled::js_function_tiers_compile(policy);
+        assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-reading store loop admission under {policy:?}");
+        let compiles = super::compiled::loop_tier_compiles(policy);
+        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "store loop native code under {policy:?}");
     }
 }
 
@@ -12292,14 +12342,14 @@ fn js_jit_general_tier_tracks_hot_function_after_cold_function_churn() {
     let id = programs.insert(program).unwrap();
 
     for function in 0..512 {
-        assert!(!programs.note_js_general_dispatch_entry(id, function, 1));
+        assert!(!programs.note_js_general_dispatch_entry(id, function, 1, crate::MemoryPolicy::Throughput));
     }
     let hot_function = 512;
     for _ in 0..31 {
-        assert!(!programs.note_js_general_dispatch_entry(id, hot_function, 1));
+        assert!(!programs.note_js_general_dispatch_entry(id, hot_function, 1, crate::MemoryPolicy::Throughput));
     }
-    assert!(!programs.note_js_general_dispatch_entry(id, hot_function, 1));
-    assert!(programs.note_js_general_dispatch_entry(id, hot_function, 1));
+    assert!(!programs.note_js_general_dispatch_entry(id, hot_function, 1, crate::MemoryPolicy::Throughput));
+    assert!(programs.note_js_general_dispatch_entry(id, hot_function, 1, crate::MemoryPolicy::Throughput));
 
     assert_eq!(programs.js_jit_tracked_function_count(), 513);
     assert!(matches!(
@@ -12423,15 +12473,16 @@ fn js_jit_general_dispatch_loads_rooted_string_and_bigint_constants_natively() {
         .enumerate()
         .filter_map(|(pc, packed)| {
             let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
-            let is_heap_constant = matches!(
-                program.constants.get(instruction.constant_index()),
-                Some(
-                    crate::bytecode::Constant::String(_)
-                        | crate::bytecode::Constant::StringUnits(_)
-                        | crate::bytecode::Constant::BigInt(_)
-                )
-            );
-            (instruction.op() == crate::bytecode::Op::LoadConst && is_heap_constant)
+            // Only a LoadConst names a constant index.
+            (instruction.op() == crate::bytecode::Op::LoadConst
+                && matches!(
+                    program.constants.get(instruction.constant_index()),
+                    Some(
+                        crate::bytecode::Constant::String(_)
+                            | crate::bytecode::Constant::StringUnits(_)
+                            | crate::bytecode::Constant::BigInt(_)
+                    )
+                ))
                 .then_some(pc)
         })
         .collect::<Vec<_>>();
@@ -12547,13 +12598,13 @@ fn js_jit_general_dispatch_static_global_name_loads_keep_exact_fallbacks() {
             .enumerate()
             .filter_map(|(pc, packed)| {
                 let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
-                (instruction.atom_index() == atom
-                    && matches!(
-                        instruction.op(),
-                        crate::bytecode::Op::LoadName
-                            | crate::bytecode::Op::LoadNameCall
-                            | crate::bytecode::Op::LoadNameTypeof
-                    ))
+                // Only the name loads carry an atom index.
+                (matches!(
+                    instruction.op(),
+                    crate::bytecode::Op::LoadName
+                        | crate::bytecode::Op::LoadNameCall
+                        | crate::bytecode::Op::LoadNameTypeof
+                ) && instruction.atom_index() == atom)
                 .then_some((pc, instruction.op()))
             })
             .collect::<Vec<_>>()
@@ -14902,5 +14953,57 @@ fn set_iteration_copies_only_while_the_intrinsics_iterate() {
     "#;
     for program in [Engine::compile(crate::ExecutionRequest { source, name: "set-iteration.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "set-iteration.js").unwrap()] {
         Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_function_tiers_follow_the_memory_policy() {
+    for policy in crate::MemoryPolicy::ALL {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_memory_policy(policy);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        assert_eq!(vm.js_tier_runs(), super::compiled::js_function_tiers_compile(policy), "{policy:?}");
+    }
+    assert!(super::compiled::js_function_tiers_compile(crate::MemoryPolicy::Throughput));
+    assert!(!super::compiled::js_function_tiers_compile(crate::MemoryPolicy::MemoryFirst));
+}
+
+#[test]
+fn plain_data_equality_proves_only_plain_data() {
+    // Each row: [left, right, proved]. A proof needs plain data on both sides; anything else
+    // stays unproved, even when a structural comparison would call it equal.
+    let source = r#"
+      const sym = Symbol('s');
+      const holey = [1, , 3];
+      const extra = [1]; extra.foo = 1;
+      const hidden = { a: 1 }; Object.defineProperty(hidden, 'h', { value: 1, enumerable: false });
+      const cycle = { a: 1 }; cycle.self = cycle;
+      const cycle2 = { a: 1 }; cycle2.self = cycle2;
+      class K { constructor() { this.a = 1; } }
+      globalThis.rows = [
+        [1, 1, true], [NaN, NaN, true], [0, -0, false], ['a', 'a', true], [10n, 10n, true],
+        [[1, [2, 'x']], [1, [2, 'x']], true], [[1, 2], [1, 3], false], [[1], [1, 2], false],
+        [{ a: 1, b: { c: [1] } }, { b: { c: [1] }, a: 1 }, true], [{ a: 1 }, { a: 2 }, false],
+        [{ a: 1 }, { a: 1, b: undefined }, false], [{ a: undefined }, { b: undefined }, false],
+        [JSON.parse('[{"a":"x"}]'), [{ a: 'x' }], true],
+        [hidden, { a: 1 }, true],
+        [holey, [1, undefined, 3], false], [extra, [1], false],
+        [{ a: 1, [sym]: 1 }, { a: 1, [sym]: 1 }, false], [{ get a() { return 1; } }, { a: 1 }, false],
+        [{ constructor: Object }, { constructor: Object }, false], [new K(), new K(), false],
+        [Object.create(null), Object.create(null), false], [new Date(1), new Date(1), false],
+        [new Error('x'), new Error('x'), false], [new Number(1), new Number(1), false],
+        [cycle, cycle2, false], [[1], { 0: 1 }, false],
+      ];
+    "#;
+    let program = Engine::specialize(source, "plain-equality.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let rows_atom = vm.intern_atom("rows");
+    let rows = vm.plain_named_get(vm.realm.globals, rows_atom).unwrap();
+    let rows = vm.present_dense_elements(rows, 0..vm.heap.array(rows).unwrap().elements().len()).unwrap().to_vec();
+    for (index, row) in rows.into_iter().enumerate() {
+        let row = vm.present_dense_elements(row, 0..3).unwrap().to_vec();
+        assert_eq!(Some(vm.plain_data_equal(row[0], row[1])), row[2].as_bool(), "row {index}");
     }
 }
