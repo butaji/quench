@@ -96,3 +96,29 @@ validatorjs 0.39 → 0.53, json-stringify 0.47 → 0.66, json-parse 0.49 → 0.5
 babel 0.95 → 1.08, postcss 0.95 → 1.12, babel-minify 1.14 → 1.20, chai 1.21 → 1.68. js-tokens
 (1.15 → 0.98) and babel (0.70 → 0.55) moved mostly with Bun's single-run scores (Bun js-tokens
 20.7 → 26.0, babel 11.9 → 16.8); quench's own scores rose on both.
+
+## Paired sweep at ae6e0837a (2026-10-24, perturbed)
+
+Raw rows `paired-ae6e0837-raw-perturbed.txt`. Profiling and builds ran on the same 4-vCPU
+host during this sweep, so quench's scores are low by an unknown amount (web-ssr 23.1 → 19.4
+against the clean 3a7eaaf0f run with no change that could slow it); RSS is unaffected. Read it
+for RSS only.
+
+## Decoded text kept as UTF-8 (3bbc8be24)
+
+Every web-tooling bundle the harness preloads (and the bundle it loads as a script) is mostly
+ASCII with a handful of non-ASCII characters (babel.bundle.js: 5,616,858 characters, 10 of
+them non-ASCII), so each was held as UTF-16 at twice its size. Decoded text of 64 KiB or more
+now keeps its UTF-8 until a reader needs units; the compiler and JSON.parse read the UTF-8.
+
+| test | max RSS before (KiB) | after | Bun no-JIT | ratio after |
+|---|---|---|---|---|
+| babel-wtb | 87684 | 83104 | 94676 | 1.14 |
+| babel-minify-wtb | 62064 | 59656 | 71204 | 1.19 |
+| postcss-wtb | 69368 | 64908 | 77528 | 1.19 |
+| typescript-lib | 172704 | 172844 | 195928 | 1.13 |
+
+babel-wtb's peak is now its bundle's compilation at load (78 MiB at 640 ms; steady state 72 →
+65 MiB): the OXC tree of the 5.6 MB source is 36.6 MB of it (VmRSS by compile phase: start
+16.5, parsed 53.1, semantic 61.2, emitted 66.1, tree dropped 29.7 MB). Scores are within the
+host's noise (babel median 9.06 → 9.49 over 5 paired rounds; callgrind −2.6% instructions).
