@@ -1519,7 +1519,7 @@ pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RegisterRoots {
     covered: bool,
-    masks: std::cell::OnceCell<Box<[crate::compile::liveness::RegisterSet]>>,
+    masks: std::cell::OnceCell<crate::compile::liveness::RegisterMasks>,
 }
 
 impl RegisterRoots {
@@ -1534,7 +1534,7 @@ impl RegisterRoots {
     /// The masks a collection derived so far; none until one finds the function running.
     #[cfg(feature = "profile-memory")]
     pub(crate) fn capacity_bytes(&self) -> usize {
-        self.masks.get().map_or(0, |masks| size_of_val::<[crate::compile::liveness::RegisterSet]>(masks))
+        self.masks.get().map_or(0, crate::compile::liveness::RegisterMasks::bytes)
     }
 }
 
@@ -3031,12 +3031,73 @@ impl ProgramKind {
 }
 
 /// The source text a program retains for diagnostics and `Function.prototype.toString`: its
-/// own copy, or static host text (an embedded library) the compiled source wrapped.
+/// own copy, static host text (an embedded library) the compiled source wrapped, or the text
+/// its compile-cache entry keeps after its encoding (`binary::append_kept_source`), read in
+/// place from the host's mapping.
 #[derive(Clone, Debug)]
 pub(crate) enum SourceText {
     Shared(std::sync::Arc<str>),
     Static(&'static str),
+    Kept(KeptText),
 }
+
+/// Text inside kept bytes: valid UTF-8, checked when made (`KeptText::new`).
+#[derive(Clone)]
+pub(crate) struct KeptText {
+    bytes: KeptBytes,
+    range: std::ops::Range<usize>,
+}
+
+impl KeptText {
+    /// The text `range` of `bytes` holds, if it is UTF-8.
+    pub(crate) fn new(bytes: KeptBytes, range: std::ops::Range<usize>) -> Option<Self> {
+        std::str::from_utf8((*bytes).as_ref().get(range.clone())?).ok()?;
+        Some(Self { bytes, range })
+    }
+}
+
+impl std::ops::Deref for KeptText {
+    type Target = str;
+    fn deref(&self) -> &str {
+        // SAFETY: `new` checked that the range holds UTF-8, and kept bytes never change.
+        unsafe { std::str::from_utf8_unchecked(&(*self.bytes).as_ref()[self.range.clone()]) }
+    }
+}
+
+impl std::fmt::Debug for KeptText {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("KeptText").field("len", &self.range.len()).finish()
+    }
+}
+
+/// The first `len` bytes of kept bytes: a compile-cache entry's encoding, without the source
+/// text after it.
+struct KeptPrefix {
+    bytes: KeptBytes,
+    len: usize,
+}
+
+impl AsRef<[u8]> for KeptPrefix {
+    fn as_ref(&self) -> &[u8] {
+        &(*self.bytes).as_ref()[..self.len]
+    }
+}
+
+/// A compile-cache entry split into its encoding and the source text
+/// `binary::append_kept_source` kept after it, when it keeps `source_len` bytes of text whose
+/// checksum holds; the entry itself otherwise.
+pub(crate) fn split_kept_source(entry: KeptBytes, source_len: usize) -> Result<(KeptBytes, SourceText), KeptBytes> {
+    let Some(range) = binary::kept_source_range((*entry).as_ref()).filter(|range| range.len() == source_len) else {
+        return Err(entry);
+    };
+    let Some(text) = KeptText::new(entry.clone(), range.clone()) else {
+        return Err(entry);
+    };
+    let encoding: KeptBytes = std::rc::Rc::new(KeptPrefix { bytes: entry, len: range.start });
+    Ok((encoding, SourceText::Kept(text)))
+}
+
+pub(crate) use binary::append_kept_source;
 
 impl std::ops::Deref for SourceText {
     type Target = str;
@@ -3044,6 +3105,7 @@ impl std::ops::Deref for SourceText {
         match self {
             Self::Shared(text) => text,
             Self::Static(text) => text,
+            Self::Kept(text) => text,
         }
     }
 }
@@ -3075,9 +3137,10 @@ const SNAPSHOT_TEXT_EDGE: usize = 32;
 impl SourceText {
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         match self {
-            Self::Shared(text) => {
+            // A snapshot outlives the entry's mapping, so it keeps its own copy of kept text.
+            Self::Shared(_) | Self::Kept(_) => {
                 writer.u8(0);
-                writer.str(text);
+                writer.str(self);
             }
             Self::Static(text) => {
                 writer.u8(1);
@@ -3380,12 +3443,12 @@ impl ResidualProgram {
 
     /// The registers live at `pc` in `function`, when liveness covers it.
     pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<crate::compile::liveness::RegisterSet> {
-        self.register_root_masks(function)?.get(pc).copied()
+        self.register_root_masks(function)?.get(pc)
     }
 
     /// `function`'s live register masks by pc, one past its last instruction included, when
     /// liveness covers it.
-    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&[crate::compile::liveness::RegisterSet]> {
+    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&crate::compile::liveness::RegisterMasks> {
         let function = self.function_get(function as usize)?;
         if !function.register_roots.covered {
             return None;
@@ -3400,8 +3463,8 @@ impl ResidualProgram {
                     &self.field_sites,
                     &self.superinstructions,
                 )
+                .map(crate::compile::liveness::RegisterMasks::new)
                 .expect("a covered function's liveness is derivable")
-                .into_boxed_slice()
             });
         Some(masks)
     }
