@@ -9581,7 +9581,8 @@ fn lane_promise_native<H: Host>(
 /// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), for-in's per-key
 /// check (`Vm::plain_for_in_key_is_enumerable`), `Object.hasOwn`, `Object.is`, `Symbol.for`
 /// of a string, and the Map and Set mutators on their own collections
-/// (`Vm::plain_collection_mutation`). `None` leaves any other call to `lane_call_native`.
+/// (`Vm::plain_collection_mutation`), and a DataView element get or set that raises nothing
+/// (`Vm::plain_data_view_access`). `None` leaves any other call to `lane_call_native`.
 #[inline(never)]
 fn lane_pure_native<H: Host>(
     vm: &mut Vm<H>,
@@ -9608,6 +9609,9 @@ fn lane_pure_native<H: Host>(
             let removed = vm.plain_array_splice(code, callee, receiver, args)?;
             note_allocation(vm);
             Some(removed)
+        }
+        native if super::data_view::data_view_element(*native) => {
+            vm.plain_data_view_access(code, *native, receiver, args)
         }
         Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
         Native::ArrayShift => vm.plain_array_shift(receiver),
