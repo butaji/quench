@@ -12473,10 +12473,12 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
         get throwing() { throw marker; },
         fallback: 0
       };
+      const alternate = { fallback: -1 };
       for (let index = 1; index <= 48; index++) {
         if (read(target, 'value') !== index * 2 - 1) throw Error('getter result');
         if (write(target, 'fallback', index) !== index) throw Error('dynamic write result');
         if (readFixed(target) !== index) throw Error('cached field result');
+        if (readFixed(alternate) !== -1) throw Error('changing receiver field result');
         if (writeFixed(target, index + 100) !== index + 100) throw Error('cached own store result');
         if (readFixedGetter(target) !== index * 2) throw Error('cached getter result');
         if (!strictWriteGetter(target)) throw Error('strict getter-only store fallback');
