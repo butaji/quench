@@ -4127,7 +4127,7 @@ pub(super) fn analyze_osr_region(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[crate::value::Value],
-    live: Option<&[crate::compile::liveness::RegisterSet]>,
+    live: Option<&crate::compile::liveness::RegisterMasks>,
     header: u32,
     backedge: u32,
 ) -> Result<LoopRegion, RegionRejection> {
