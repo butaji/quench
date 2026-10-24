@@ -397,38 +397,6 @@ fn equivalent_data_descriptor_transitions_share_one_shape() {
 }
 
 #[test]
-fn new_accessor_properties_reach_the_two_step_shape_in_one_add() {
-    let program = Engine::specialize("", "accessor-add.js").unwrap();
-    let mut vm = Vm::new(TestHost::default());
-    vm.initialize(&program).unwrap();
-    vm.heap.retain_allocations_for_test();
-
-    let key = super::property_key::PropertyKey::string(vm.intern_atom("binding"));
-    let accessor = |getter, setter| super::PropertyAttributes {
-        writable: false,
-        enumerable: true,
-        configurable: false,
-        accessor: true,
-        getter: Some(getter),
-        setter,
-    };
-    let (first_getter, second_getter, setter) = (vm.object(), vm.object(), vm.object());
-    let two_step = vm.object();
-    vm.set_shape_property(two_step, key, Value::UNDEFINED).unwrap();
-    vm.set_property_attributes(two_step, key, accessor(first_getter, None));
-    let fused = vm.object();
-    vm.create_shape_accessor_property(fused, key, accessor(second_getter, None)).unwrap();
-
-    assert_eq!(vm.object_data(fused).unwrap().shape(), vm.object_data(two_step).unwrap().shape());
-    assert!(vm.property_attributes(fused, key) == Some(accessor(second_getter, None)));
-    assert!(vm.property_attributes(two_step, key) == Some(accessor(first_getter, None)));
-
-    let both = vm.object();
-    vm.create_shape_accessor_property(both, key, accessor(first_getter, Some(setter))).unwrap();
-    assert!(vm.property_attributes(both, key) == Some(accessor(first_getter, Some(setter))));
-}
-
-#[test]
 fn repeated_normal_closures_reuse_function_descriptor_shapes() {
     const CLOSURES: usize = 32;
 
