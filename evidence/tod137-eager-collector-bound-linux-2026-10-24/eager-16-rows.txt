@@ -1,0 +1,18 @@
+richards             default med 3204 min 3116  eager med 2728 min 2728  d -476  score 1519->1297
+richards      --jit  default med 3072 min 2872  eager med 2816 min 2816  d -256  score 1518->1300
+deltablue            default med 3204 min 3116  eager med 2820 min 2776  d -384  score 1255->182
+deltablue     --jit  default med 3372 min 3332  eager med 3036 min 2988  d -336  score 1307->183
+crypto               default med 3596 min 3392  eager med 3164 min 3140  d -432  score 2556->1222
+crypto        --jit  default med 3748 min 3716  eager med 3700 min 3572  d -48  score 4601->1689
+raytrace             default med 3464 min 3016  eager med 2820 min 2784  d -644  score 2127->127
+raytrace      --jit  default med 3204 min 3204  eager med 3036 min 2944  d -168  score 2122->125
+regexp               default med 6100 min 6080  eager med 5512 min 5512  d -588  score 2316->530
+regexp        --jit  default med 6272 min 6160  eager med 5760 min 5760  d -512  score 2401->517
+navier-stokes        default med 4160 min 4160  eager med 4032 min 4032  d -128  score 2804->2786
+navier-stokes --jit  default med 7244 min 7168  eager med 7128 min 6912  d -116  score 25111->22809
+earley-boyer         default med 6612 min 6608  eager med 6864 min 6732  d +252  score 3601->3745
+earley-boyer  --jit  default med 6852 min 6848  eager med 7092 min 6976  d +240  score 3665->3678
+splay                default med 31520 min 31388  eager med 31508 min 31320  d -12  score 4490->4757
+splay         --jit  default med 31592 min 31460  eager med 31564 min 31412  d -28  score 4677->4559
+
+[exited with code 0]
