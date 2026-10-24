@@ -226,6 +226,9 @@ pub(crate) struct ValueLayout;
 impl ValueLayout {
     pub(crate) const TAG_MASK: u64 = TAG_MASK;
     pub(crate) const INT_TAG: u64 = TAG_INT;
+    /// Tag and family bits that distinguish a direct ordinary-array record.
+    pub(crate) const DIRECT_ARRAY_TAG: u64 = TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT;
+    pub(crate) const HEAP_FAMILY_MASK: u64 = HEAP_FAMILY_MASK;
     pub(crate) const CANONICAL_NAN: u64 = CANONICAL_NAN;
     /// A tag field is the bits at and above this shift.
     pub(crate) const TAG_SHIFT: u32 = TAG_SHIFT;

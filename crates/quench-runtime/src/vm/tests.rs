@@ -397,6 +397,38 @@ fn equivalent_data_descriptor_transitions_share_one_shape() {
 }
 
 #[test]
+fn new_accessor_properties_reach_the_two_step_shape_in_one_add() {
+    let program = Engine::specialize("", "accessor-add.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.initialize(&program).unwrap();
+    vm.heap.retain_allocations_for_test();
+
+    let key = super::property_key::PropertyKey::string(vm.intern_atom("binding"));
+    let accessor = |getter, setter| super::PropertyAttributes {
+        writable: false,
+        enumerable: true,
+        configurable: false,
+        accessor: true,
+        getter: Some(getter),
+        setter,
+    };
+    let (first_getter, second_getter, setter) = (vm.object(), vm.object(), vm.object());
+    let two_step = vm.object();
+    vm.set_shape_property(two_step, key, Value::UNDEFINED).unwrap();
+    vm.set_property_attributes(two_step, key, accessor(first_getter, None));
+    let fused = vm.object();
+    vm.create_shape_accessor_property(fused, key, accessor(second_getter, None)).unwrap();
+
+    assert_eq!(vm.object_data(fused).unwrap().shape(), vm.object_data(two_step).unwrap().shape());
+    assert!(vm.property_attributes(fused, key) == Some(accessor(second_getter, None)));
+    assert!(vm.property_attributes(two_step, key) == Some(accessor(first_getter, None)));
+
+    let both = vm.object();
+    vm.create_shape_accessor_property(both, key, accessor(first_getter, Some(setter))).unwrap();
+    assert!(vm.property_attributes(both, key) == Some(accessor(first_getter, Some(setter))));
+}
+
+#[test]
 fn repeated_normal_closures_reuse_function_descriptor_shapes() {
     const CLOSURES: usize = 32;
 
@@ -13609,6 +13641,95 @@ fn js_jit_general_dispatch_speculates_number_relations_and_falls_back_exactly() 
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_reads_live_dense_array_elements_and_falls_back_exactly() {
+    let source = r#"
+      function readIndex(array, key) { return array[key]; }
+      const first = [10, 20];
+      const second = [30, 40];
+      for (let index = 0; index < 48; index++) {
+        const array = index % 2 === 0 ? first : second;
+        if (readIndex(array, 0) !== (index % 2 === 0 ? 10 : 30)) throw Error('alternating receiver');
+      }
+
+      const copy = first.slice();
+      copy[0] = 11;
+      if (readIndex(copy, 0) !== 11 || readIndex(first, 0) !== 10) throw Error('copy-on-write backing');
+      first[1] = 21;
+      if (readIndex(first, 1) !== 21) throw Error('live backing value');
+
+      let getterCalls = 0;
+      const inherited = [1, 2];
+      delete inherited[1];
+      Object.setPrototypeOf(inherited, { get 1() { getterCalls++; return 50; } });
+      if (readIndex(inherited, 1) !== 50 || getterCalls !== 1) throw Error('hole prototype getter');
+
+      let proxyCalls = 0;
+      const proxy = new Proxy([60], { get(target, key, receiver) {
+        if (key === '0') proxyCalls++;
+        return Reflect.get(target, key, receiver);
+      } });
+      if (readIndex(proxy, 0) !== 60 || proxyCalls !== 1) throw Error('proxy fallback');
+
+      let coercions = 0;
+      const key = { toString() { coercions++; return '0'; } };
+      if (readIndex(second, key) !== 30 || coercions !== 1) throw Error('key coercion fallback');
+
+      let accessorCalls = 0;
+      const accessor = [];
+      Object.defineProperty(accessor, 0, { get() { accessorCalls++; return 70; } });
+      if (readIndex(accessor, 0) !== 70 || accessorCalls !== 1) throw Error('accessor fallback');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-dense-array-index.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "readIndex")
+        })
+        .unwrap() as u32;
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("readIndex should use the general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let body = program.function(function as usize);
+    let get_index_pcs = body
+        .code
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, packed)| {
+            (super::dispatch_fast::decoded_instruction(body, *packed).op()
+                == crate::bytecode::Op::GetIndex)
+                .then_some(pc)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(get_index_pcs.len(), 1);
+    assert!(native.general_dispatch_pc_is_native(get_index_pcs[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
     let source = r#"
       const captured = { value: 2 };
@@ -13836,6 +13957,7 @@ fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
 
     let mut compiled = Vm::new(TestHost::default().with_test262());
     compiled.programs.enable_js_general_dispatch();
+    compiled.programs.enable_js_jit_diagnostics();
     compiled.programs.compile_general_baseline_when_hot();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
@@ -13854,6 +13976,105 @@ fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
         assert!(native.is_general_dispatch());
         assert!(native.native_entries() > 0);
     }
+    let call_sites = compiled
+        .programs
+        .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, caller)
+        .expect("diagnostics should track call sites for the compiled caller");
+    assert!(call_sites.iter().any(|(_, opcode, attempts, outcomes, direct_target, target_calls, _, _)| {
+        *opcode == crate::bytecode::Op::CallArray as u16
+            && *attempts > 0
+            && *direct_target == Some((super::program_store::ProgramId::MAIN.raw(), callee))
+            && *target_calls == *attempts
+            && outcomes[super::program_store::JsJitCallOutcome::PushFrame as usize] > 0
+    }));
+    let callee_call_sites = compiled
+        .programs
+        .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, callee)
+        .expect("diagnostics should track call sites for the compiled callee");
+    assert!(callee_call_sites.iter().any(|(_, opcode, attempts, outcomes, _, _, _, _)| {
+        *opcode == crate::bytecode::Op::Call as u16
+            && *attempts > 0
+            && outcomes[super::program_store::JsJitCallOutcome::Continue as usize] > 0
+    }));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_calls_compiled_numeric_callees_with_materialized_array_arguments() {
+    let padding = "padding = padding + 1;\n".repeat(80);
+    let source = format!(
+        "function add(left, right) {{ return left + right; }}\
+         function drive() {{ let padding = 0; {padding}\
+         const result = add(1, ...[padding]); return result + 1; }}\
+         var total = 0; for (let index = 0; index < 12000; index++) total = drive();\
+         if (total !== 82) throw Error('array call lost its result');"
+    );
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        &source,
+        "js-jit-call-array.js",
+    ))
+    .unwrap();
+    let function_id = |name: &str| {
+        program
+            .functions
+            .iter()
+            .position(|body| {
+                body.header()
+                    .name
+                    .or(body.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32
+    };
+    let add = function_id("add");
+    let drive = function_id("drive");
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let total_atom = interpreter.intern_atom("total");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, total_atom)
+        .unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+    let total_atom = compiled.intern_atom("total");
+    assert_eq!(
+        compiled
+            .own_property(compiled.realm.globals, total_atom)
+            .unwrap(),
+        expected
+    );
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, add)
+    else {
+        panic!("the numeric array-call target should compile");
+    };
+    assert!(native.native_entries() >= 128);
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, drive)
+    else {
+        panic!("the hot caller should compile after enough function entries");
+    };
+    assert!(native.is_general_dispatch());
+    let call_sites = compiled
+        .programs
+        .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, drive)
+        .expect("the compiled caller should have call-site diagnostics");
+    assert!(call_sites.iter().any(
+        |(_, opcode, attempts, outcomes, target, target_calls, _, _)| {
+            *opcode == crate::bytecode::Op::CallArray as u16
+                && *attempts > 0
+                && *target == Some((super::program_store::ProgramId::MAIN.raw(), add))
+                && *target_calls == *attempts
+                && outcomes[super::program_store::JsJitCallOutcome::Continue as usize] > 0
+        }
+    ));
 }
 
 #[test]
@@ -14141,10 +14362,10 @@ fn js_jit_general_baseline_waits_until_entries_pay_for_its_compile() {
         assert_eq!(vm.own_property(vm.realm.globals, name).unwrap(), expected);
         vm.programs.js_tier(super::program_store::ProgramId::MAIN, function)
     };
-    // Hot, but a short run has not paid for the compile; and a body this small saves less
-    // per entry than the baseline's entry costs, so no run pays (`general_promotion_due`).
+    // This body is too small to pay for the general baseline through entries. It must not
+    // enter GeneralPromotionPending, because that path has no backedges to accrue work.
     for calls in [48, 20_000] {
-        assert!(matches!(state(calls), Some(super::program_store::JsTierState::GeneralPromotionPending { .. })));
+        assert!(!matches!(state(calls), Some(super::program_store::JsTierState::GeneralPromotionPending { .. })));
     }
 }
 
@@ -15642,6 +15863,28 @@ fn object_assign_sees_prototype_setters_added_after_a_memoized_copy() {
 }
 
 #[test]
+fn environment_rest_gathers_nothing_from_too_few_values() {
+    // A captured rest parameter lives in the environment; with fewer values than the fixed
+    // parameters, it is empty (v2-web cbaf372c1 fixed an out-of-range slice here).
+    let source = r#"
+      function r(a, b, ...m) { const f = () => m; return f(); }
+      const seen = [];
+      for (let round = 0; round < 3; round++) {
+        seen.push(r(), r(1), r(1, 2), r(1, 2, 3, 4));
+      }
+      print(JSON.stringify(seen.slice(0, 4)) + ' ' + seen.every((rest, index) => rest.length === [0, 0, 0, 2][index % 4]));
+    "#;
+    let program = Engine::specialize(source, "environment-rest-too-few.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["[[],[],[],[3,4]] true"], "{mode:?}");
+    }
+}
+
+#[test]
 fn set_iteration_copies_only_while_the_intrinsics_iterate() {
     let source = r#"
       const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
@@ -15750,4 +15993,91 @@ fn plain_data_equality_proves_only_plain_data() {
         let row = vm.present_dense_elements(row, 0..3).unwrap().to_vec();
         assert_eq!(Some(vm.plain_data_equal(row[0], row[1])), row[2].as_bool(), "row {index}");
     }
+}
+
+#[test]
+fn array_holes_follow_prototype_chain_mutations() {
+    // Hole reads and stores consult a proof that the chain holds no index
+    // (`chain_holds_no_index`); every mutation below must retire or bypass it. Expected
+    // output is Node's (v22).
+    let source = r#"
+// Oracle: holes read through prototype chains under mutation.
+const out = [];
+const a = new Array(4); out.push(a[1]);
+Array.prototype[1] = "proto1"; out.push(a[1]); delete Array.prototype[1]; out.push(a[1]);
+Object.prototype[2] = "obj2"; out.push(a[2]); delete Object.prototype[2]; out.push(a[2]);
+Object.defineProperty(Array.prototype, 3, { get() { return "getter3"; }, configurable: true }); out.push(a[3]);
+a[3] = "set3"; out.push(a[3], Object.getOwnPropertyDescriptor(a, 3) === undefined);
+delete Array.prototype[3]; out.push(a[3]);
+Object.defineProperty(Object.prototype, 0, { set(v) { out.push("setter0:" + v); }, configurable: true });
+const b = new Array(2); b[0] = "x"; out.push(b.hasOwnProperty(0)); delete Object.prototype[0];
+b[0] = "y"; out.push(b[0]);
+Object.defineProperty(Array.prototype, 1, { value: "ro", writable: false, configurable: true });
+const c = []; c.length = 3; c[1] = "w"; out.push(c[1], c.hasOwnProperty(1)); delete Array.prototype[1];
+Array.prototype.length = 0; Array.prototype.push("pushed"); out.push(new Array(3)[0]); Array.prototype.length = 0;
+out.push(new Array(3)[0]);
+const p = new Proxy({}, { get(t, k) { return "proxy:" + String(k); } });
+const d = new Array(2); Object.setPrototypeOf(d, p); out.push(d[1]);
+Object.setPrototypeOf(d, Array.prototype); out.push(d[1]);
+const sp = []; sp[100000] = 1; const e = new Array(5); Object.setPrototypeOf(e, sp); out.push(e[100000], e[4]);
+for (let i = 0; i < 3; i++) { const f = new Array(3); out.push(f[i]); if (i === 0) Array.prototype[1] = "late"; }
+delete Array.prototype[1];
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "array-holes.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"[null,"proto1",null,"obj2",null,"getter3","getter3",true,null,"setter0:x",false,"y","ro",false,"pushed",null,"proxy:1",null,1,null,null,"late",null]"#]);
+}
+
+#[test]
+fn cached_accessor_reads_follow_getter_redefinitions() {
+    // A site's accessor entry keeps whether the holder's slot holds the getter
+    // (`AccessorFieldCache::getter_in_slot`); redefined, shadowed and own getters must still
+    // be the ones called. Expected output is Node's (v22).
+    let source = r#"
+const out = [];
+class E { constructor(k) { this._k = k; } get key() { return this._k; } }
+const items = [new E(1), new E(2), new E(3)];
+const read = (o) => o.key;
+for (let r = 0; r < 4; r++) {
+  let sum = 0; for (const it of items) sum += read(it); out.push(sum);
+  if (r === 0) Object.defineProperty(E.prototype, "key", { get() { return this._k * 10; }, configurable: true });
+  if (r === 1) Object.defineProperty(items[1], "key", { get() { return 100; }, configurable: true });
+  if (r === 2) Object.defineProperty(E.prototype, "key", { value: 7, configurable: true, writable: true });
+}
+// own accessors: each receiver of a shape keeps its own getter in the slot
+const mk = (v) => { const o = {}; Object.defineProperty(o, "g", { get() { return v; }, configurable: true, enumerable: true }); return o; };
+const own = [mk("a"), mk("b"), mk("c")]; const rg = (o) => o.g;
+for (let r = 0; r < 3; r++) { out.push(own.map(rg).join("")); if (r === 0) Object.defineProperty(own[0], "g", { get() { return "z"; }, configurable: true }); if (r === 1) Object.defineProperty(own[2], "g", { set(v) {}, configurable: true }); }
+// inherited through two levels, holder getter swapped by assignment to a setter-less accessor slot replacement
+class A { get v() { return "A"; } } class B extends A {} class C extends B {}
+const cs = [new C(), new C()]; const rv = (o) => o.v;
+for (let r = 0; r < 3; r++) { out.push(cs.map(rv).join("")); if (r === 0) Object.defineProperty(A.prototype, "v", { get() { return "A2"; }, configurable: true }); if (r === 1) Object.defineProperty(B.prototype, "v", { get() { return "B"; }, configurable: true }); }
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "accessor-reads.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"[6,60,140,114,"abc","zbc","zbc","AA","A2A2","BB"]"#]);
+}
+
+#[test]
+fn typeof_against_typeof_compares_like_the_names() {
+    // `typeof a === typeof b` and its other equality forms compare the names' indices
+    // (`typeof_test`); results and operand order match Node's (v22).
+    let source = r#"
+const vals = [1, 1.5, "s", true, null, undefined, {}, [], () => 1, Symbol("x"), 10n, NaN, function(){}, new Proxy({}, {}), new Proxy(function(){}, {})];
+const out = [];
+for (const a of vals) for (const b of vals) out.push(typeof a === typeof b ? 1 : 0, typeof a != typeof b ? 1 : 0, (typeof a == typeof b) + 0, (typeof a !== typeof b) + 0);
+let order = []; const t = { get x() { order.push("x"); return 1; }, get y() { order.push("y"); return "s"; } };
+out.push(typeof t.x === typeof t.y, order.join(""));
+out.push(typeof undeclaredName === typeof undefined, typeof undeclaredName !== typeof notDeclaredEither);
+if (typeof vals[0] === typeof vals[1]) out.push("if-same"); if (!(typeof vals[0] !== typeof vals[2])) out.push("bad"); else out.push("if-diff");
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "typeof-pairs.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"[1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,false,"xy",true,false,"if-same","if-diff"]"#]);
 }

@@ -24,11 +24,15 @@ struct JsJitCounters {
     promotions: u64,
     compile_attempts: u64,
     compile_successes: u64,
+    general_compile_attempts: u64,
+    general_compile_successes: u64,
+    general_compile_rejection_reason: Option<&'static str>,
     rejection_reason: Option<&'static str>,
     compile_ns: u64,
     native_entries: u64,
     field_cache_probes: u64,
     field_cache_hits: u64,
+    field_cache_sites: FxHashMap<u16, (u64, u64)>,
     field_store_cache_probes: u64,
     field_store_cache_hits: u64,
     field_return_candidate_entries: u64,
@@ -43,7 +47,58 @@ struct JsJitCounters {
     interpreter_inclusive_ns: u64,
     opcode_counts: Vec<(u16, u32)>,
     general_dispatch_opcode_counts: Vec<(u16, u64)>,
+    call_sites: Vec<JsJitCallSiteCounters>,
     code_bytes: usize,
+}
+
+#[derive(Default)]
+struct JsJitCallSiteCounters {
+    pc: u32,
+    opcode: u16,
+    attempts: u64,
+    direct_target: Option<(u32, u32)>,
+    direct_target_calls: u64,
+    alternate_target_calls: u64,
+    other_target_calls: u64,
+    outcomes: [u64; JsJitCallOutcome::COUNT],
+}
+
+#[derive(Clone, Copy)]
+#[repr(usize)]
+pub(super) enum JsJitCallOutcome {
+    Continue = 0,
+    TailCall = 1,
+    PushFrame = 2,
+    Return = 3,
+    Await = 4,
+    Yield = 5,
+    Error = 6,
+}
+
+impl JsJitCallOutcome {
+    const COUNT: usize = Self::Error as usize + 1;
+
+    const ALL: [Self; Self::COUNT] = [
+        Self::Continue,
+        Self::TailCall,
+        Self::PushFrame,
+        Self::Return,
+        Self::Await,
+        Self::Yield,
+        Self::Error,
+    ];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Continue => "continue",
+            Self::TailCall => "tail_call",
+            Self::PushFrame => "push_frame",
+            Self::Return => "return",
+            Self::Await => "await",
+            Self::Yield => "yield",
+            Self::Error => "error",
+        }
+    }
 }
 
 /// Prespecified looks for the Number-entry profile. Critical counts are the
@@ -100,15 +155,19 @@ fn general_promotion_due(entries: u32, instructions: usize) -> bool {
 /// baseline. An unpriced experiment still waits for 32 whole-function work
 /// units, matching the established general-tier entry floor.
 fn general_dispatch_work_due(work: u64, instructions: u64, priced: bool) -> bool {
+    work >= general_dispatch_work_required(instructions, priced)
+}
+
+fn general_dispatch_work_required(instructions: u64, priced: bool) -> u64 {
     let instructions = instructions.max(1);
     if !priced {
-        return work >= instructions.saturating_mul(u64::from(JS_JIT_GENERAL_PROMOTION_ENTRIES));
+        return instructions.saturating_mul(u64::from(JS_JIT_GENERAL_PROMOTION_ENTRIES));
     }
     let (saved, of) = JS_JIT_GENERAL_SAVED_SHARE;
-    work.saturating_mul(saved)
-        >= JS_JIT_GENERAL_COMPILE_FIXED_COST
-            .saturating_add(JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION.saturating_mul(instructions))
-            .saturating_mul(of)
+    JS_JIT_GENERAL_COMPILE_FIXED_COST
+        .saturating_add(JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION.saturating_mul(instructions))
+        .saturating_mul(of)
+        .div_ceil(saved.max(1))
 }
 
 fn accumulate_general_dispatch_work(accumulated_work: &mut u64, work: usize) {
@@ -727,7 +786,14 @@ impl Default for ProgramStore {
             js_jit_tracking_exhaustions: 0,
             js_jit_rejected_functions: 0,
             jit_code_cache: JitCodeCacheBudget::default(),
-            general_baseline_priced: true,
+            // TOD-191's correctness oracle may force hot candidates past the
+            // payback model so guarded exits can be tested independently of
+            // profitability. This is diagnostic-only and never set by score
+            // harnesses.
+            general_baseline_priced: !std::env::var_os(
+                "QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH",
+            )
+            .is_some_and(|value| value == "1"),
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
@@ -1630,14 +1696,14 @@ impl ProgramStore {
         self.js_jit_diagnostics.is_some()
     }
 
-    /// Records the counters `QUENCH_JS_JIT_STATS` enables, for a test to read.
-    #[cfg(test)]
-    pub(super) fn enable_js_jit_diagnostics(&mut self) {
-        self.js_jit_diagnostics.get_or_insert_with(FxHashMap::default);
-    }
-
     pub(super) fn js_jit_general_dispatch_enabled(&self) -> bool {
         self.js_jit_general_dispatch_enabled
+    }
+
+    /// Records the counters `QUENCH_JS_JIT_STATS` enables, for a test to read.
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn enable_js_jit_diagnostics(&mut self) {
+        self.js_jit_diagnostics.get_or_insert_with(FxHashMap::default);
     }
 
     pub(super) fn js_jit_dataview_float64_enabled(&self) -> bool {
@@ -1696,6 +1762,22 @@ impl ProgramStore {
     /// overhead. A loop-free body that cannot is not counted toward it at all.
     pub(super) fn general_baseline_may_pay(&self, instructions: usize) -> bool {
         !self.general_baseline_priced || general_saved_per_entry(instructions).is_some()
+    }
+
+    /// Whether the general baseline may ever take a body of `instructions` under `policy`:
+    /// the tier is switched on, the memory policy compiles JS tiers, and the body could
+    /// pay. An `acyclic` body pays only through its entries (`general_baseline_may_pay`);
+    /// one with loops may also pay through its backedge work (`general_dispatch_work_due`).
+    /// A function it may not take is neither claimed for the tier nor counted toward it.
+    pub(super) fn general_tier_admits(
+        &self,
+        instructions: usize,
+        acyclic: bool,
+        policy: crate::MemoryPolicy,
+    ) -> bool {
+        self.js_jit_general_dispatch_enabled
+            && super::compiled::js_function_tiers_compile(policy)
+            && (!acyclic || self.general_baseline_may_pay(instructions))
     }
 
     /// Compile a hot function's general baseline without pricing it, for tests of its
@@ -2144,6 +2226,31 @@ impl ProgramStore {
         }
     }
 
+    pub(super) fn record_js_jit_general_compile(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        elapsed_ns: u64,
+        code_bytes: usize,
+        installed: bool,
+        rejection: Option<&'static str>,
+    ) {
+        self.record_js_jit_compile(id, function, elapsed_ns, code_bytes, installed, rejection);
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.general_compile_attempts = counters.general_compile_attempts.saturating_add(1);
+            counters.general_compile_successes = counters
+                .general_compile_successes
+                .saturating_add(u64::from(installed));
+            if rejection.is_some() {
+                counters.general_compile_rejection_reason = rejection;
+            }
+        }
+    }
+
     pub(super) fn record_js_jit_rejection(
         &mut self,
         id: ProgramId,
@@ -2175,6 +2282,7 @@ impl ProgramStore {
         &mut self,
         id: ProgramId,
         function: u32,
+        cache_site: u16,
         hit: bool,
     ) {
         if let Some(counters) = self
@@ -2186,6 +2294,9 @@ impl ProgramStore {
             counters.field_cache_hits = counters
                 .field_cache_hits
                 .saturating_add(u64::from(hit));
+            let site = counters.field_cache_sites.entry(cache_site).or_default();
+            site.0 = site.0.saturating_add(1);
+            site.1 = site.1.saturating_add(u64::from(hit));
         }
     }
 
@@ -2308,6 +2419,107 @@ impl ProgramStore {
         }
     }
 
+    /// Count call instructions handled by a compiled function's VM islands.
+    /// Rows are bounded by that function's static Call/CallArray PCs and only
+    /// exist when the opt-in diagnostics map has been allocated.
+    pub(super) fn record_js_jit_call_site(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        pc: usize,
+        opcode: crate::bytecode::Op,
+        direct_target: Option<(u32, u32)>,
+        outcome: JsJitCallOutcome,
+    ) {
+        let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        else {
+            return;
+        };
+        let Ok(pc) = u32::try_from(pc) else {
+            return;
+        };
+        let key = (pc, opcode as u16);
+        let index = match counters
+            .call_sites
+            .binary_search_by_key(&key, |site| (site.pc, site.opcode))
+        {
+            Ok(index) => index,
+            Err(index) => {
+                counters.call_sites.insert(
+                    index,
+                    JsJitCallSiteCounters {
+                        pc,
+                        opcode: key.1,
+                        ..JsJitCallSiteCounters::default()
+                    },
+                );
+                index
+            }
+        };
+        let site = &mut counters.call_sites[index];
+        site.attempts = site.attempts.saturating_add(1);
+        match direct_target {
+            Some(target) => match site.direct_target {
+                None => {
+                    site.direct_target = Some(target);
+                    site.direct_target_calls = site.direct_target_calls.saturating_add(1);
+                }
+                Some(first) if first == target => {
+                    site.direct_target_calls = site.direct_target_calls.saturating_add(1);
+                }
+                Some(_) => {
+                    site.alternate_target_calls = site.alternate_target_calls.saturating_add(1);
+                }
+            },
+            None => {
+                site.other_target_calls = site.other_target_calls.saturating_add(1);
+            }
+        }
+        let outcome_count = &mut site.outcomes[outcome as usize];
+        *outcome_count = outcome_count.saturating_add(1);
+    }
+
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn js_jit_call_site_counts(
+        &self,
+        id: ProgramId,
+        function: u32,
+    ) -> Option<Vec<(
+        u32,
+        u16,
+        u64,
+        [u64; JsJitCallOutcome::COUNT],
+        Option<(u32, u32)>,
+        u64,
+        u64,
+        u64,
+    )>> {
+        self.js_jit_diagnostics
+            .as_ref()?
+            .get(&(id.raw(), function))
+            .map(|counters| {
+                counters
+                    .call_sites
+                    .iter()
+                    .map(|site| {
+                        (
+                            site.pc,
+                            site.opcode,
+                            site.attempts,
+                            site.outcomes,
+                            site.direct_target,
+                            site.direct_target_calls,
+                            site.alternate_target_calls,
+                            site.other_target_calls,
+                        )
+                    })
+                    .collect()
+            })
+    }
+
     pub(super) fn record_js_jit_fallback_entry(&mut self, id: ProgramId, function: u32) {
         if let Some(counters) = self
             .js_jit_diagnostics
@@ -2410,7 +2622,7 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            Option<&[crate::compile::liveness::RegisterSet]>,
+            Option<&crate::compile::liveness::RegisterMasks>,
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
@@ -2459,7 +2671,7 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            Option<&[crate::compile::liveness::RegisterSet]>,
+            Option<&crate::compile::liveness::RegisterMasks>,
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
@@ -2588,6 +2800,17 @@ impl ProgramStore {
     }
 }
 
+/// The diagnostics report's ratios are parts per million.
+const PARTS_PER_MILLION: u128 = 1_000_000;
+
+/// `part` of `whole` in parts per million, capped at the whole; zero of nothing is zero.
+fn parts_per_million(part: u64, whole: u64) -> u64 {
+    if whole == 0 {
+        return 0;
+    }
+    (u128::from(part) * PARTS_PER_MILLION / u128::from(whole)).min(PARTS_PER_MILLION) as u64
+}
+
 impl Drop for ProgramStore {
     fn drop(&mut self) {
         let Some(diagnostics) = &self.js_jit_diagnostics else {
@@ -2631,21 +2854,20 @@ impl Drop for ProgramStore {
                 .map(|entry| entry.residual.source_name.as_str())
                 .or_else(|| counters.source_name.as_deref())
                 .unwrap_or("");
-            let native_entry_coverage_ppm = if counters.entries == 0 {
-                0
-            } else {
-                (u128::from(counters.native_entries) * 1_000_000
-                    / u128::from(counters.entries))
-                    .min(1_000_000) as u64
-            };
+            let native_entry_coverage_ppm = parts_per_million(counters.native_entries, counters.entries);
             let total_entries = counters.entries.saturating_add(counters.lane_entries);
-            let all_entry_native_coverage_ppm = if total_entries == 0 {
-                0
-            } else {
-                (u128::from(counters.native_entries) * 1_000_000
-                    / u128::from(total_entries))
-                .min(1_000_000) as u64
-            };
+            let all_entry_native_coverage_ppm = parts_per_million(counters.native_entries, total_entries);
+            let general_dispatch_work = self
+                .js_general_dispatch_work
+                .as_ref()
+                .and_then(|work| work.get(program))
+                .and_then(|work| work.get(function))
+                .copied()
+                .unwrap_or(0);
+            let general_dispatch_work_required = general_dispatch_work_required(
+                u64::from(counters.instruction_count),
+                self.general_baseline_priced,
+            );
             let osr = entry
                 .and_then(|entry| entry.lane_views.derived(*function))
                 .map(super::dispatch_fast::LaneView::osr_diagnostics)
@@ -2663,9 +2885,15 @@ impl Drop for ProgramStore {
             } else {
                 let _ = write!(stderr, "null");
             }
+            let _ = write!(stderr, ",\"general_dispatch_rejection_reason\":");
+            if let Some(reason) = counters.general_compile_rejection_reason {
+                let _ = write_json_string(&mut stderr, reason);
+            } else {
+                let _ = write!(stderr, "null");
+            }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"opcodes\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"call_sites\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -2674,6 +2902,8 @@ impl Drop for ProgramStore {
                 counters.promotions,
                 counters.compile_attempts,
                 counters.compile_successes,
+                counters.general_compile_attempts,
+                counters.general_compile_successes,
                 counters.compile_ns,
                 counters.native_entries,
                 native_entry_coverage_ppm,
@@ -2692,6 +2922,8 @@ impl Drop for ProgramStore {
                 counters.fallback_entries,
                 counters.interpreter_completions,
                 counters.interpreter_inclusive_ns,
+                general_dispatch_work,
+                general_dispatch_work_required,
                 counters.guard_conditional_branches,
                 counters.guard_typeof_ops,
                 counters.guard_strict_comparisons,
@@ -2707,6 +2939,55 @@ impl Drop for ProgramStore {
                 osr.exits,
                 osr.widenings,
             );
+            for (site_index, site) in counters.call_sites.iter().enumerate() {
+                if site_index != 0 {
+                    let _ = write!(stderr, ",");
+                }
+                let opcode = crate::bytecode::Op::NAMES
+                    .get(usize::from(site.opcode))
+                    .copied()
+                    .unwrap_or("unknown");
+                let _ = write!(stderr, "{{\"pc\":{},\"opcode\":", site.pc);
+                let _ = write_json_string(&mut stderr, opcode);
+                let _ = write!(stderr, ",\"attempts\":{},\"direct_target\":", site.attempts);
+                if let Some((program, function)) = site.direct_target {
+                    let _ = write!(stderr, "{{\"program\":{program},\"function\":{function}}}");
+                } else {
+                    let _ = write!(stderr, "null");
+                }
+                let _ = write!(
+                    stderr,
+                    ",\"direct_target_calls\":{},\"alternate_target_calls\":{},\"other_target_calls\":{},\"outcomes\":{{",
+                    site.direct_target_calls,
+                    site.alternate_target_calls,
+                    site.other_target_calls,
+                );
+                for (outcome_index, (outcome, count)) in JsJitCallOutcome::ALL
+                    .into_iter()
+                    .zip(site.outcomes)
+                    .enumerate()
+                {
+                    if outcome_index != 0 {
+                        let _ = write!(stderr, ",");
+                    }
+                    let _ = write!(stderr, "\"{}\":{}", outcome.name(), count);
+                }
+                let _ = write!(stderr, "}}}}");
+            }
+            let _ = write!(stderr, "],\"field_cache_sites\":[");
+            let mut field_cache_sites: Vec<_> = counters.field_cache_sites.iter().collect();
+            field_cache_sites.sort_unstable_by_key(|(site, _)| **site);
+            for (index, (site, (probes, hits))) in field_cache_sites.iter().enumerate() {
+                if index != 0 {
+                    let _ = write!(stderr, ",");
+                }
+                let hit_ppm = parts_per_million(*hits, *probes);
+                let _ = write!(
+                    stderr,
+                    "{{\"cache_site\":{site},\"probes\":{probes},\"hits\":{hits},\"hit_rate_ppm\":{hit_ppm}}}"
+                );
+            }
+            let _ = write!(stderr, "],\"opcodes\":[");
             for (index, (opcode, count)) in counters.opcode_counts.iter().enumerate() {
                 if index != 0 {
                     let _ = write!(stderr, ",");
@@ -2886,10 +3167,11 @@ mod jit_code_cache_tests {
     fn general_dispatch_backedge_unpriced_mode_waits_for_work_floor() {
         let mut state = JsTierState::Hot { observations: 1, numeric: 0 };
         let mut work = 0;
-        super::accumulate_general_dispatch_work(&mut work, 31 * 64);
+        let required = super::general_dispatch_work_required(64, false);
+        super::accumulate_general_dispatch_work(&mut work, usize::try_from(required - 1).unwrap());
         assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 64, false));
         assert!(matches!(state, JsTierState::Hot { .. }));
-        super::accumulate_general_dispatch_work(&mut work, 64);
+        super::accumulate_general_dispatch_work(&mut work, 1);
         assert!(super::promote_general_dispatch_if_paid(&mut state, work, 64, false));
         assert!(matches!(state, JsTierState::GeneralCompileDue));
     }
@@ -2900,9 +3182,7 @@ mod jit_code_cache_tests {
         let mut work = 0;
         // 100 instructions cost the fixed and per-instruction compile cost, which the
         // saved share of observed bytecode work must cover.
-        let (saved, of) = super::JS_JIT_GENERAL_SAVED_SHARE;
-        let cost = super::JS_JIT_GENERAL_COMPILE_FIXED_COST + super::JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION * 100;
-        let paid = usize::try_from(cost * of / saved).unwrap();
+        let paid = usize::try_from(super::general_dispatch_work_required(100, true)).unwrap();
         super::accumulate_general_dispatch_work(&mut work, paid - 1);
         assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 100, true));
         super::accumulate_general_dispatch_work(&mut work, 1);

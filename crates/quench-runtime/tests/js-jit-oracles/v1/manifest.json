@@ -25,6 +25,7 @@
   ],
   "jit_environment": {
     "QUENCH_JS_JIT_GENERAL_DISPATCH": "1",
+    "QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH": "1",
     "QUENCH_JS_JIT_STATS": "1"
   },
   "fixtures": [

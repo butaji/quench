@@ -449,8 +449,9 @@ impl<H: Host> Vm<H> {
     fn kept_script(
         &mut self, source: &str, name: &str, goal: &str, origin: Option<(u32, u32)>,
     ) -> Option<crate::PreparedScript> {
-        let bytes = self.host.kept_compiled_program(name, &[self.specialization_part(), goal, source])?;
-        let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(source));
+        let entry = self.host.kept_compiled_program(name, &[self.specialization_part(), goal, source])?;
+        let (bytes, text) = crate::bytecode::split_kept_source(entry, source.len())
+            .unwrap_or_else(|entry| (entry, crate::bytecode::SourceText::Shared(std::sync::Arc::from(source))));
         let specialized = self.specialized;
         let mut kept = self.decode_cached_program(bytes, text, 0, name, specialized).ok()?;
         if let (Some(source), Some((line_offset, column_offset))) = (&mut kept.source, origin) {
@@ -519,8 +520,9 @@ impl<H: Host> Vm<H> {
         // text a user runs adds an entry; a store that fails (a full disk) keeps the cache
         // as it was, and costs only the compilation it would have saved.
         if let Some(goal) = &cache_key
-            && let Some(bytes) = self.encode_cached_program(&residual)
+            && let Some(mut bytes) = self.encode_cached_program(&residual)
         {
+            crate::bytecode::append_kept_source(&mut bytes, source);
             let mode = self.specialization_part();
             self.host.keep_compiled_program(name, &[mode, goal, source], &bytes);
             drop(bytes);
