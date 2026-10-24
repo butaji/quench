@@ -5492,11 +5492,6 @@ script_handler! {
             && runtime.programs.js_jit_general_dispatch_enabled()
             && unsafe { &*(*cx).code }.kind != crate::bytecode::ProgramKind::Wasm
         {
-            let loop_header = usize::try_from(site.region.header).unwrap_or(usize::MAX);
-            let loop_backedge = usize::try_from(site.region.backedge).unwrap_or(usize::MAX);
-            let loop_work = loop_backedge
-                .saturating_sub(loop_header)
-                .saturating_add(1);
             let (program_id, frame_id, code) = unsafe {
                 let context = &*cx;
                 (context.program, context.frame, &*context.code)
@@ -5508,7 +5503,9 @@ script_handler! {
             if runtime.programs.note_js_general_dispatch_backedge(
                 program_id,
                 function,
-                loop_work,
+                // Only the taken backedge is guaranteed to have executed;
+                // branches and `continue` can skip the rest of the region.
+                1,
                 instruction_count,
             ) {
                 // The shared whole-function CFG starts at this exact loop header
@@ -5526,11 +5523,11 @@ script_handler! {
         {
             next!(cx, r, header, Carried::script(cx))
         }
-        let Some(entry) = lane_loop_entry(cx, r, site) else {
+        let Some(mut entry) = lane_loop_entry(cx, r, site) else {
             next!(cx, r, header, Carried::script(cx))
         };
         // The tier's state is borrowed only here, so the dispatch below holds no borrow.
-        let continuation = lane_loop_run(cx, r, site, &entry);
+        let continuation = lane_loop_run(cx, r, site, &mut entry);
         match continuation {
             LoopContinuation::Jump => next!(cx, r, header, Carried::script(cx)),
             LoopContinuation::Resume(pc) => next!(cx, r, at(pc), Carried::script(cx)),
@@ -5559,7 +5556,7 @@ fn lane_loop_run<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     site: &LoopSite,
-    entry: &super::compiled::LoopEntry,
+    entry: &mut super::compiled::LoopEntry,
 ) -> LoopContinuation {
     use super::compiled::LoopOutcome;
     let mut tier = site.tier.borrow_mut();
@@ -5588,8 +5585,17 @@ fn lane_loop_run<H: Host>(
             captures: &captures,
             widened: &tier.widened,
         };
+        let track_backedges = unsafe { vm(cx) }
+            .programs
+            .js_jit_general_dispatch_enabled();
         tier.code =
-            super::compiled::compile_osr_region(&site.region, &observation, &unsafe { vm(cx) }.execution_interrupt, heap.memory_policy());
+            super::compiled::compile_osr_region(
+                &site.region,
+                &observation,
+                &unsafe { vm(cx) }.execution_interrupt,
+                heap.memory_policy(),
+                track_backedges,
+            );
         // SAFETY: as above; the observation's borrow of the heap has ended.
         unsafe { vm(cx) }.host.after_native_compilation();
         if site.diagnostics && tier.code.is_some() {
@@ -5628,6 +5634,50 @@ fn lane_loop_run<H: Host>(
                 site.widenings.set(site.widenings.get().saturating_add(1));
             }
             LoopOutcome::Terminated => {}
+        }
+    }
+    let general_dispatch_due = {
+        let runtime = unsafe { vm(cx) };
+        if runtime.programs.js_jit_general_dispatch_enabled() {
+            let backedges = usize::try_from(entry.backedge_count()).unwrap_or(usize::MAX);
+            // Every completed iteration executed at least its own backedge. The
+            // loop body's static span is not a sound work estimate when branches
+            // or `continue` paths skip instructions.
+            let work = backedges;
+            if work > 0 {
+                let context = unsafe { &*cx };
+                let function = runtime.frames[context.frame].function;
+                let instruction_count = unsafe { &*context.code }
+                    .function_get(function as usize)
+                    .map_or(0, |body| body.code.len());
+                runtime.programs.note_js_general_dispatch_backedge(
+                    context.program,
+                    function,
+                    work,
+                    instruction_count,
+                )
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    };
+    if general_dispatch_due {
+        match outcome {
+            LoopOutcome::Resume(pc) => return LoopContinuation::Exit(pc),
+            LoopOutcome::Exit(pc) => {
+                site.exits.set(site.exits.get().saturating_add(1));
+                return LoopContinuation::Exit(pc);
+            }
+            LoopOutcome::Widen(pc) => {
+                if let Some(widening) = code.widening(pc) {
+                    tier.widened.insert(widening);
+                }
+                tier.code = None;
+                return LoopContinuation::Exit(pc);
+            }
+            LoopOutcome::NotEntered(_) | LoopOutcome::Terminated => {}
         }
     }
     match outcome {

@@ -4407,7 +4407,7 @@ impl CompiledOsrRegion {
     pub(super) unsafe fn run(
         &self,
         registers: *mut crate::value::Value,
-        entry: &LoopEntry,
+        entry: &mut LoopEntry,
         interrupt: &crate::execution_interrupt::ExecutionInterrupt,
     ) -> LoopOutcome {
         let mut context = CallContext::interrupt_only(interrupt);
@@ -4419,7 +4419,7 @@ impl CompiledOsrRegion {
                 &mut context,
                 registers.addr() as u64,
                 0,
-                entry.words(),
+                entry.words_mut(),
                 &mut word,
                 NativeEntryMode::Resumable,
                 self.entry,
@@ -4490,6 +4490,7 @@ pub(super) fn compile_osr_region(
     observation: &Observation<'_>,
     interrupt: &crate::execution_interrupt::ExecutionInterrupt,
     policy: crate::MemoryPolicy,
+    track_backedges: bool,
 ) -> Option<CompiledOsrRegion> {
     let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?, false)?;
     let (function, widenings) = osr_loop::lower(
@@ -4497,6 +4498,7 @@ pub(super) fn compile_osr_region(
         observation,
         &*isa,
         poll_address(interrupt),
+        track_backedges,
     )?;
     let (_code, entry) = compile_and_publish_entry(function, &*isa, osr_loop::MAX_CODE_BYTES)?;
     Some(CompiledOsrRegion {
