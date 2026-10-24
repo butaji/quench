@@ -1341,7 +1341,25 @@ pub(super) fn compile_js_general_dispatch(
         .map(|_| builder.create_block())
         .collect();
     let mut general_dispatch_native_pcs = vec![0; instruction_count];
-    builder.ins().jump(blocks[0], &[]);
+    // Start from the caller's exact resume PC. The artifact is shared by normal
+    // function entry, call-return re-entry and hot-loop OSR; its canonical frame
+    // homes remain the same in all three cases.
+    let payload = builder.ins().load(
+        types::I64,
+        invariant(),
+        context,
+        std::mem::offset_of!(CallContext, adapter_payload) as i32,
+    );
+    let start_pc_address = builder.ins().iadd_imm_s(
+        payload,
+        std::mem::offset_of!(JsStepDispatch, start_pc) as i64,
+    );
+    let start_pc = builder
+        .ins()
+        .load(types::I64, MemFlagsData::trusted(), start_pc_address, 0);
+    builder
+        .ins()
+        .jump(continue_block, &[ir::BlockArg::Value(start_pc)]);
 
     let mut callout_signature = Signature::new(isa.default_call_conv());
     for _ in 0..4 {
@@ -4676,6 +4694,7 @@ struct JsStepDispatch {
     program_id: ProgramId,
     frame: usize,
     allow_inline_calls: bool,
+    start_pc: usize,
     native_registers: *mut Value,
     register_count: usize,
     native_locals: *mut Value,
@@ -4920,13 +4939,56 @@ unsafe extern "C" fn js_step_callout<H: Host>(
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
-            let step = vm.step(
-                &program,
-                dispatch.frame,
-                current_instruction,
-                &mut next,
-                dispatch.allow_inline_calls,
-            );
+            let step = if dispatch.allow_inline_calls && current_instruction.op() == Op::Call {
+                match vm.try_inline_user_call(
+                    &program,
+                    dispatch.frame,
+                    current_instruction,
+                    next,
+                ) {
+                    Some(step) => step,
+                    None => vm.step(
+                        &program,
+                        dispatch.frame,
+                        current_instruction,
+                        &mut next,
+                        dispatch.allow_inline_calls,
+                    ),
+                }
+            } else if current_instruction.op() == Op::LoadCapture {
+                if let Some(value) = vm.cached_direct_capture(
+                    dispatch.frame,
+                    current_instruction.capture_depth(),
+                    current_instruction.capture_slot(),
+                ) {
+                    let destination = vm.frames[dispatch.frame]
+                        .registers
+                        .get_mut(usize::from(current_instruction.result_register()))
+                        .ok_or_else(|| {
+                            JsError::validation(
+                                "native JS capture result register is invalid".into(),
+                            )
+                        })?;
+                    *destination = value;
+                    Ok(super::StepResult::Continue)
+                } else {
+                    vm.step(
+                        &program,
+                        dispatch.frame,
+                        current_instruction,
+                        &mut next,
+                        dispatch.allow_inline_calls,
+                    )
+                }
+            } else {
+                vm.step(
+                    &program,
+                    dispatch.frame,
+                    current_instruction,
+                    &mut next,
+                    dispatch.allow_inline_calls,
+                )
+            };
             match step {
                 Ok(super::StepResult::Continue) => {
                     if next >= body.code.len() {
@@ -10003,7 +10065,7 @@ impl<H: Host> Vm<H> {
         if allow_inline_calls
             && facts.general
             && let Some(outcome) = self.js_jit_general_dispatch_at_entry(
-                program, frame, true, false,
+                program, frame, 0, true, false,
             )
         {
             return match outcome {
@@ -10046,7 +10108,7 @@ impl<H: Host> Vm<H> {
         }
         if allow_inline_calls && (general_candidate || promote_general) {
             if let Some(outcome) = self.js_jit_general_dispatch_at_entry(
-                program, frame, true, promote_general,
+                program, frame, 0, true, promote_general,
             ) {
                 return match outcome {
                     JsNativeDispatchResult::Step(step) => JsTierFrameEntry::NativeStep(step),
@@ -10066,16 +10128,17 @@ impl<H: Host> Vm<H> {
         JsTierFrameEntry::Interpreter
     }
 
-    fn js_jit_general_dispatch_at_entry(
+    pub(super) fn js_jit_general_dispatch_at_entry(
         &mut self,
         program: &ResidualProgram,
         frame: usize,
+        start_pc: usize,
         allow_inline_calls: bool,
         promote: bool,
     ) -> Option<JsNativeDispatchResult> {
         if !self.js_tier_runs()
             || program.kind == crate::bytecode::ProgramKind::Wasm
-            || self.frames.get(frame)?.pc != 0
+            || start_pc >= program.function_get(self.frames.get(frame)?.function as usize)?.code.len()
         {
             return None;
         }
@@ -10141,6 +10204,7 @@ impl<H: Host> Vm<H> {
             program_id,
             frame,
             allow_inline_calls,
+            start_pc,
             native_registers: std::ptr::null_mut(),
             register_count: 0,
             native_locals: std::ptr::null_mut(),
@@ -10153,6 +10217,10 @@ impl<H: Host> Vm<H> {
             global_name_cache_hits: 0,
             outcome: None,
         };
+        // Native dispatch starts at the next unexecuted bytecode. Callouts
+        // overwrite this with the exact failing PC before invoking VM semantics.
+        self.frames[frame].pc = start_pc;
+        self.frames[frame].pc_is_resume = false;
         let interrupt = self.execution_interrupt.atomic_flag();
         let interrupt = interrupt as *const std::sync::atomic::AtomicBool;
         let poll_page = self.compiled_poll_page();
