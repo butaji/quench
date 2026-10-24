@@ -12093,6 +12093,8 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
     interpreter.execute(&program).unwrap();
 
     let mut compiled = Vm::new(TestHost::default());
+
+    compiled.programs.enable_js_general_dispatch();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
@@ -12158,6 +12160,8 @@ fn js_jit_general_dispatch_lowers_tagged_plain_local_accesses() {
     interpreter.execute(&program).unwrap();
 
     let mut compiled = Vm::new(TestHost::default());
+
+    compiled.programs.enable_js_general_dispatch();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
@@ -12213,6 +12217,8 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
     interpreter.execute(&program).unwrap();
 
     let mut compiled = Vm::new(TestHost::default());
+
+    compiled.programs.enable_js_general_dispatch();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
@@ -12267,6 +12273,8 @@ fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
     interpreter.execute(&program).unwrap();
 
     let mut compiled = Vm::new(TestHost::default());
+
+    compiled.programs.enable_js_general_dispatch();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
@@ -12354,6 +12362,7 @@ fn js_jit_rejected_functions_promote_to_general_dispatch_and_keep_frames() {
     let mut interpreter = Vm::new(TestHost::default());
     interpreter.execute(&program).unwrap();
     let mut vm = Vm::new(TestHost::default());
+    vm.programs.enable_js_general_dispatch();
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.programs.compile_general_baseline_when_hot();
     vm.execute(&program).unwrap();
@@ -12374,6 +12383,8 @@ fn js_jit_rejected_functions_promote_to_general_dispatch_and_keep_frames() {
     assert_eq!(actual, expected);
 
     let mut exhausted = Vm::new(TestHost::default());
+
+    exhausted.programs.enable_js_general_dispatch();
     exhausted.set_execution_mode(crate::ExecutionMode::Compiled);
     exhausted.programs.compile_general_baseline_when_hot();
     let exhausted_id = exhausted.programs.insert(program.clone()).unwrap();
