@@ -180,7 +180,7 @@ pub(crate) struct LoopRegion {
     tagged_constants: std::collections::BTreeMap<u16, Value>,
     /// The function's live registers before each instruction (`compile::liveness`), when
     /// liveness covers it; for an inlining region, by its own PCs (`Inlining`).
-    live: Option<Box<[crate::compile::liveness::RegisterSet]>>,
+    live: Option<crate::compile::liveness::RegisterMasks>,
     /// Where an inlining region's instructions come from, when the region inlines calls.
     pub(crate) inlining: Option<Box<Inlining>>,
 }
@@ -486,7 +486,7 @@ pub(crate) struct InlineCallee<'a> {
     pub(crate) params: u16,
     pub(crate) registers: u16,
     pub(crate) instructions: Vec<WideInstruction>,
-    pub(crate) live: &'a [RegisterSet],
+    pub(crate) live: &'a crate::compile::liveness::RegisterMasks,
 }
 
 /// The ops an inlined callee's instructions may be: those `admit` lowers, its `Return`, and
@@ -600,7 +600,8 @@ fn reachable(instructions: &[WideInstruction]) -> Vec<bool> {
 /// Whether `instruction` names `register` (a read or a write); an instruction `renamed`
 /// cannot rename names every register.
 fn mentions(instruction: WideInstruction, register: Register, sites: &[FieldSite]) -> bool {
-    if let (Op::GetField, Some(FieldLookup::Site(_))) = (instruction.op(), instruction.field_lookup()) {
+    // Only a GetField carries a field lookup immediate, so the op is checked first.
+    if instruction.op() == Op::GetField && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) {
         return instruction.result_register() == register
             || field_base(instruction, sites).is_none_or(|base| base.register_index() == Some(register));
     }
@@ -649,7 +650,7 @@ pub(super) fn inline_region<'a>(
     decoded: &[WideInstruction],
     constants: &[Value],
     sites: &[FieldSite],
-    live: &[RegisterSet],
+    live: &crate::compile::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
     resolve: &mut dyn FnMut(&[FieldUse]) -> Option<InlineCallee<'a>>,
@@ -663,7 +664,7 @@ pub(super) fn inline_region<'a>(
         .filter(|instruction| instruction.op().immediate_role() == ImmediateRole::JumpTarget)
         .map(|instruction| instruction.imm())
         .collect();
-    let mask = |pc: u32| live.get(pc as usize).copied();
+    let mask = |pc: u32| live.get(pc as usize);
     let caller_registers = function.registers;
     let mut total = u32::from(caller_registers);
     struct Site<'b> {
@@ -851,7 +852,7 @@ pub(super) fn inline_region<'a>(
         // A callee's live registers there, in the region, with the caller's live past the call.
         let after = mask(pc + 1)? & !(1 << site.result);
         let frame_mask = |callee_pc: usize| -> Option<RegisterSet> {
-            let own = site.callee.live.get(callee_pc).copied()?;
+            let own = site.callee.live.get(callee_pc)?;
             let mut set = after;
             for callee_register in 0..site.callee.registers {
                 if crate::compile::liveness::register_in(own, usize::from(callee_register)) {
@@ -900,7 +901,7 @@ pub(super) fn inline_region<'a>(
         total as usize,
         constants,
         sites,
-        Some(masks.into_boxed_slice()),
+        Some(crate::compile::liveness::RegisterMasks::new(masks)),
         header_live,
         header,
         &receivers,
@@ -949,7 +950,7 @@ impl LoopRegion {
         // An inlining region's liveness is by its own PCs, from the header.
         let index = if self.inlining.is_some() { (pc - self.header) as usize } else { pc as usize };
         live.get(index)
-            .is_none_or(|mask| !crate::compile::liveness::register_dead(*mask, usize::from(register)))
+            .is_none_or(|mask| !crate::compile::liveness::register_dead(mask, usize::from(register)))
     }
 
     /// The PC native code reports for leaving at region PC `pc`: the caller's, or an inlined
@@ -1230,7 +1231,7 @@ pub(super) fn region(
     decoded: &[WideInstruction],
     constants: &[Value],
     sites: &[FieldSite],
-    live: Option<&[crate::compile::liveness::RegisterSet]>,
+    live: Option<&crate::compile::liveness::RegisterMasks>,
     header: u32,
     backedge: u32,
 ) -> Result<LoopRegion, RegionRejection> {
@@ -1238,13 +1239,13 @@ pub(super) fn region(
     if start > end || end >= decoded.len() || end - start >= MAX_REGION_INSTRUCTIONS {
         return Err(RegionRejection::RegionTooLarge);
     }
-    let header_live = live.and_then(|live| live.get(start).copied());
+    let header_live = live.and_then(|live| live.get(start));
     admit_region(
         decoded[start..=end].to_vec(),
         usize::from(function.registers),
         constants,
         sites,
-        live.map(Box::from),
+        live.cloned(),
         header_live,
         header,
         &std::collections::BTreeSet::new(),
@@ -1261,7 +1262,7 @@ fn admit_region(
     registers: usize,
     constants: &[Value],
     sites: &[FieldSite],
-    live: Option<Box<[crate::compile::liveness::RegisterSet]>>,
+    live: Option<crate::compile::liveness::RegisterMasks>,
     header_live: Option<RegisterSet>,
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
