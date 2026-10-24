@@ -22,6 +22,8 @@ impl ProgramStore {
             jit_code_cache: _,
             js_jit_diagnostics: _,
             // Process configuration a restoring store reads again, and its diagnostics.
+            general_baseline_priced: _,
+            js_jit_general_dispatch_enabled: _,
             js_jit_dataview_float64_enabled: _,
             js_jit_dataview_float64_get_entries: _,
             js_jit_dataview_float64_set_entries: _,
