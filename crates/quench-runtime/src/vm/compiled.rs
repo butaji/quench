@@ -10204,7 +10204,11 @@ impl<H: Host> Vm<H> {
     ) -> (bool, bool) {
         let Some(body) = program
             .function_get(function as usize)
-            .filter(|body| facts.general && self.programs.general_baseline_may_pay(body.code.len()))
+            // A body without backward jumps can pay only through its entries; one with a loop
+            // can also pay through its backedge work (`note_js_general_dispatch_backedge`).
+            .filter(|body| {
+                facts.general && (!facts.general_acyclic || self.programs.general_baseline_may_pay(body.code.len()))
+            })
         else {
             return (false, false);
         };
