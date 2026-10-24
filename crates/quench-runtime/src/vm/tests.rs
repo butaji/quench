@@ -11633,7 +11633,9 @@ fn shared_osr_indexes_arrays_that_field_reads_give() {
             .and_then(std::cell::OnceCell::get)
             .expect("hot mix loop lane view")
             .osr_diagnostics();
-        assert_eq!(osr.admitted_sites, 1, "OSR analysis rejected the field-array loop under {policy:?}");
+        // Loop sites are analyzed only where the JavaScript tiers run (`JS_FUNCTION_TIERS`).
+        let analyzes = super::compiled::js_function_tiers_compile(policy);
+        assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-array loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
         assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field-array loop native code under {policy:?}");
     }
@@ -13642,14 +13644,18 @@ fn js_jit_general_dispatch_promotes_a_single_activation_hot_loop() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_prices_work_inside_compiled_osr_regions() {
+    // Each taken backedge counts one unit of work. The first call's loop runs well past the
+    // priced general-baseline floor for this small body (fixed plus per-instruction compile
+    // cost, over the saved share), wherever its native runs end; the second call's entry
+    // then compiles the due baseline. The handoff does not depend on the exact constants.
     let source = r#"
       function sum(count) {
         let total = 0;
         for (let index = 0; index < count; index++) total += index;
         return total;
       }
-      var result = sum(100000);
-      if (result !== 4999950000) throw Error('OSR priced handoff result');
+      var result = sum(1000000) + sum(1000000);
+      if (result !== 999999000000) throw Error('OSR priced handoff result');
     "#;
     let program = Engine::compile(crate::ExecutionRequest::script(
         source,
