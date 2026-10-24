@@ -35,20 +35,21 @@ No workload clears both gates in both phases. Sharp resize is closest on through
 
 Fresh 11-round reports also cover Next route matching and `Response.json()`,
 sharp metadata, plus longer Pino, WebSocket, and Zod runs. The extended route
-matcher measured 120,482 ops/s no-JIT and 111,111 JIT for Quench; Node measured
-349,650 / 769,231 and Bun 267,380 / 1,000,000. Extended `Response.json()` was
-20,517 no-JIT and 19,478 JIT for Quench, versus Node 59,524 / 127,551 and Bun
-746,269 / 1,250,000. Sharp metadata measured 5,411 no-JIT and 5,714 JIT for
-Quench, versus Node 6,127 / 6,831 and Bun 8,503 / 9,785. These extra scenarios
-also miss the speed gate. Reports live beside the main rows as
-`*-50k-11.json`, `*-50000-11.json`, `*-20000-11.json`, `*-10000-11.json`, and
-`sharp-metadata-*-11.json`.
+matcher measured 120,482 ops/s no-JIT and 114,548 JIT for Quench; Node measured
+349,650 / 1,020,408 and Bun 267,380 / 1,204,819. Extended `Response.json()`
+was 20,517 no-JIT and 20,636 JIT for Quench, versus Node 59,524 / 132,802 and
+Bun 746,269 / 1,351,351. Sharp metadata measured 5,411 no-JIT and 5,714 JIT
+for Quench, versus Node 6,127 / 6,831 and Bun 8,503 / 9,785. Extended Pino
+JIT measured 37,764 records/s for Quench, versus Node 314,465 and Bun 409,836.
+These extra scenarios also miss the speed gate. Reports live beside the main
+rows as `*-50k-11.json`, `*-100k-11.json`, `*-50000-11.json`,
+`*-20000-11.json`, `*-10000-11.json`, and `sharp-metadata-*-11.json`.
 
-Several short peer runs still have unreliable RSS samples despite the larger
-workload: Bun JIT ran for 40 ms on `Response.json()`, 50 ms on route matching,
-and 59 ms on Pino; Bun JIT Zod ran for 71 ms. Treat those RSS values as
-diagnostic and rerun at larger operation counts before using them for a gate.
-All Linux RSS measurements remain non-qualifying sampled `VmRSS` diagnostics.
+The longer JIT reruns put Bun's `Response.json()`, route matcher, and Pino
+samples at 74 ms, 83 ms, and 122 ms, respectively; Zod's 20,000-round Bun run
+was 71 ms. Those remove the earlier timer-floor artifact, but RSS remains
+diagnostic because Linux samples `VmRSS` every 50 ms. All Linux RSS
+measurements remain non-qualifying sampled diagnostics.
 
 ## Current JIT coverage evidence
 
