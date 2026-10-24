@@ -1521,8 +1521,6 @@ impl ProgramStore {
             .cloned()
     }
 
-    /// Retain one compiled root closure if the VM-wide tier budget permits
-    /// it. Active calls retain their own Rc through native return.
     /// Whether the code budget could still retain a Wasm tier artifact: a compile it could not
     /// keep is work thrown away (sqlite3-wasm `--jit`: hundreds of root compiles after the
     /// tier budget filled, 15 s of its first iteration).
@@ -1530,6 +1528,8 @@ impl ProgramStore {
         self.jit_code_cache.can_retain(JitArtifactKind::WasmTierRoot, JIT_MIN_ARTIFACT_BYTES)
     }
 
+    /// Retain one compiled root closure if the VM-wide tier budget permits
+    /// it. Active calls retain their own Rc through native return.
     pub(super) fn install_wasm_tier(
         &mut self,
         id: ProgramId,
