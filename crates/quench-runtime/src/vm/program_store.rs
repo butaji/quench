@@ -29,6 +29,8 @@ struct JsJitCounters {
     native_entries: u64,
     field_cache_probes: u64,
     field_cache_hits: u64,
+    field_store_cache_probes: u64,
+    field_store_cache_hits: u64,
     field_return_candidate_entries: u64,
     field_return_fixed_this_entries: u64,
     field_return_fast_entries: u64,
@@ -157,9 +159,12 @@ impl JitCodeCacheBudget {
 #[derive(Clone)]
 pub(super) enum JsTierState {
     Hot { observations: u8, numeric: u8 },
-    /// A hot function whose promotion observation had a non-numeric argument;
-    /// compile on its next numeric entry.
+    /// The numeric profile passed its look, so wait for a numeric entry before
+    /// compiling the specialized artifact.
     PromotionPending,
+    /// The numeric profile did not pass its first look; compile the tagged
+    /// semantics baseline without waiting for more profile observations.
+    GeneralPromotionPending,
     Rejected {
         entries: u64,
         reason: &'static str,
@@ -207,6 +212,7 @@ impl JitTierManager {
         function: u32,
         numeric: bool,
         first_entry_candidate: bool,
+        general_candidate: bool,
         compiled_functions: usize,
         can_track: bool,
     ) -> JsTierEntryDecision {
@@ -261,6 +267,10 @@ impl JitTierManager {
                         *state = JsTierState::PromotionPending;
                         false
                     }
+                } else if promotion == Some(false) && general_candidate {
+                    decision.promoted = true;
+                    *state = JsTierState::GeneralPromotionPending;
+                    false
                 } else {
                     if promotion == Some(false) && *observations == u8::MAX {
                         *state = JsTierState::Unsupported;
@@ -276,6 +286,7 @@ impl JitTierManager {
                     numeric
                 }
             }
+            JsTierState::GeneralPromotionPending => false,
             JsTierState::Rejected { .. }
             | JsTierState::Unsupported
             | JsTierState::Compiled(_) => false,
@@ -1442,15 +1453,6 @@ impl ProgramStore {
         self.entry(id)?.jit_tiers.js(function)
     }
 
-    /// Whether the JavaScript tier settled on not compiling `function`.
-    pub(super) fn js_tier_declined(&self, id: ProgramId, function: u32) -> bool {
-        self.entry(id)
-            .and_then(|entry| entry.jit_tiers.js(function))
-            .is_some_and(|state| {
-                matches!(state, JsTierState::Unsupported | JsTierState::Rejected { .. })
-            })
-    }
-
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {
         self.js_jit_diagnostics.is_some()
     }
@@ -1478,6 +1480,7 @@ impl ProgramStore {
         function: u32,
         numeric: bool,
         first_entry_candidate: bool,
+        general_candidate: bool,
     ) -> bool {
         let compiled_functions = self.jit_code_cache.js_functions;
         let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
@@ -1488,6 +1491,7 @@ impl ProgramStore {
             function,
             numeric,
             first_entry_candidate,
+            general_candidate,
             compiled_functions,
             can_track,
         );
@@ -1538,15 +1542,16 @@ impl ProgramStore {
             JsTierState::Hot { observations, .. } => {
                 *observations = observations.saturating_add(1);
                 if *observations >= JS_JIT_GENERAL_PROMOTION_ENTRIES {
-                    *state = JsTierState::PromotionPending;
+                    *state = JsTierState::GeneralPromotionPending;
                     promoted = true;
                 }
             }
-            JsTierState::PromotionPending => return true,
+            JsTierState::PromotionPending => return false,
+            JsTierState::GeneralPromotionPending => return true,
             JsTierState::Rejected { entries, .. } => {
                 *entries = entries.saturating_add(1);
                 if *entries >= u64::from(JS_JIT_GENERAL_PROMOTION_ENTRIES) {
-                    *state = JsTierState::PromotionPending;
+                    *state = JsTierState::GeneralPromotionPending;
                     promoted = true;
                 }
             }
@@ -1856,6 +1861,25 @@ impl ProgramStore {
             counters.field_cache_probes = counters.field_cache_probes.saturating_add(1);
             counters.field_cache_hits = counters
                 .field_cache_hits
+                .saturating_add(u64::from(hit));
+        }
+    }
+
+    pub(super) fn record_js_jit_field_store_cache_probe(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        hit: bool,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.field_store_cache_probes =
+                counters.field_store_cache_probes.saturating_add(1);
+            counters.field_store_cache_hits = counters
+                .field_store_cache_hits
                 .saturating_add(u64::from(hit));
         }
     }
@@ -2244,6 +2268,7 @@ impl Drop for ProgramStore {
                 .map(|tier| match tier {
                     JsTierState::Hot { .. } => "hot",
                     JsTierState::PromotionPending => "promotion-pending",
+                    JsTierState::GeneralPromotionPending => "general-promotion-pending",
                     JsTierState::Rejected { .. } => "unsupported",
                     JsTierState::Unsupported => "unsupported",
                     JsTierState::Compiled(_) => "compiled",
@@ -2300,7 +2325,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"opcodes\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"opcodes\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -2315,6 +2340,8 @@ impl Drop for ProgramStore {
                 all_entry_native_coverage_ppm,
                 counters.field_cache_probes,
                 counters.field_cache_hits,
+                counters.field_store_cache_probes,
+                counters.field_store_cache_hits,
                 counters.field_return_candidate_entries,
                 counters.field_return_fixed_this_entries,
                 counters.field_return_fast_entries,
@@ -2550,7 +2577,7 @@ mod jit_code_cache_tests {
         assert!(!wasm_tiers.js_insert(3, super::JsTierState::Unsupported));
         assert_eq!(wasm_tiers.wasm_values().count(), 1);
         assert_eq!(
-            wasm_tiers.note_js_entry(3, true, true, 0, true),
+            wasm_tiers.note_js_entry(3, true, true, false, 0, true),
             super::JsTierEntryDecision::default()
         );
     }
@@ -2558,7 +2585,7 @@ mod jit_code_cache_tests {
     #[test]
     fn jit_tier_manager_owns_frontend_promotion_transitions() {
         let mut js_tiers = super::JitTierManager::default();
-        let first = js_tiers.note_js_entry(1, true, true, 0, true);
+        let first = js_tiers.note_js_entry(1, true, true, false, 0, true);
         assert_eq!(
             first,
             super::JsTierEntryDecision {
