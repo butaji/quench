@@ -48,3 +48,41 @@ All 136 Node oracle scripts match. The runtime lib tests pass, 916 of 916.
 
 `tools/check-lane-tail-calls.sh` now also lists three trunk handlers:
 `lane_frame_construct`, `lane_push_frame_call` and `lane_tier_prologue`.
+
+### QuickJS and a 15-pair Bun confirmation (same df7e05eea build)
+
+QuickJS, 5 pairs (`board-df7e05eea-quickjs.txt`). Quench is ahead on every
+fixture, from 1.75× (NavierStokes) to 17× (RegExp).
+
+Bun with JIT off, 15 pairs (`board-df7e05eea-bun-15pairs.txt`):
+
+| Fixture | Ratio | Quench wins |
+|---|---:|---:|
+| Richards | 1.20 | 15/15 |
+| NavierStokes | 1.24 | 15/15 |
+
+These are the two thinnest margins in the suite.
+
+### Richards: where the instructions go
+
+`richards-handler-costs-df7e05eea.txt` lists callgrind self cost per handler,
+with recursion variants merged.
+
+| Handler | Share of total | Instructions per execution |
+|---|---:|---:|
+| `lane_script_call` | 25% | 154 |
+| `lane_get_field_own<this>` | 17% | 38 |
+| `lane_get_field_holder` | 10% | 70 |
+| fused `lane_get_field_sink_own` (three accesses) | 8% | 143 |
+| `lane_set_this_field_own` | 8% | 69 |
+
+At instruction level none of these has a single dominant waste:
+- **Calls:** callee-saved register saves take about 18 instructions per call. The
+  rest is the 11-word activation record and the cached-target checks.
+- **Field access:** a site-table entry load, a complemented-entry check, the
+  inline-or-arena slot select, and an arena address computation.
+
+Widening Richards substantially beyond 1.2× over Bun needs a structural change.
+Examples are inline caches held in the bytecode, or storage-kind facts carried by
+the cache entry. That is larger than a handler trim, and it overlaps TOD-187's
+generated handlers.
