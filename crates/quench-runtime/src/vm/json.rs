@@ -312,8 +312,31 @@ const JSON_EXACT_INTEGER_DIGITS: usize = 15;
 
 /// A code unit a JSON text is scanned in: a byte of an ASCII string, which is its UTF-16
 /// unit, or a UTF-16 unit.
+/// Whether a string's unescaped run ends at `unit`: its closing quote, an escape, or a
+/// control unit, which a JSON string may not hold unescaped.
+#[inline(always)]
+const fn ends_string_run(unit: u16) -> bool {
+    unit == JSON_QUOTE || unit == JSON_ESCAPE || unit < JSON_UNESCAPED_START
+}
+
+/// `ends_string_run` of every byte, so a byte source's run is scanned one load per unit.
+const STRING_RUN_ENDS: [bool; 1 << u8::BITS] = {
+    let mut ends = [false; 1 << u8::BITS];
+    let mut unit = 0;
+    while unit < ends.len() {
+        ends[unit] = ends_string_run(unit as u16);
+        unit += 1;
+    }
+    ends
+};
+
 trait JsonUnit: Copy {
     fn unit(self) -> u16;
+    /// `ends_string_run` of this unit.
+    #[inline(always)]
+    fn ends_string_run(self) -> bool {
+        ends_string_run(self.unit())
+    }
     /// `units` as a run of string units.
     fn run(units: &[Self]) -> Units<'_>;
 }
@@ -321,6 +344,10 @@ trait JsonUnit: Copy {
 impl JsonUnit for u8 {
     fn unit(self) -> u16 {
         u16::from(self)
+    }
+    #[inline(always)]
+    fn ends_string_run(self) -> bool {
+        STRING_RUN_ENDS[usize::from(self)]
     }
     fn run(units: &[u8]) -> Units<'_> {
         Units::Ascii(units)
@@ -648,10 +675,7 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
         self.expect(JSON_QUOTE as u8)?;
         let units = self.units;
         let start = self.index;
-        let run = units[start..].iter().position(|unit| {
-            let unit = unit.unit();
-            unit == JSON_QUOTE || unit == JSON_ESCAPE || unit < JSON_UNESCAPED_START
-        });
+        let run = units[start..].iter().position(|unit| unit.ends_string_run());
         if let Some(length) = run
             && units[start + length].unit() == JSON_QUOTE
         {
