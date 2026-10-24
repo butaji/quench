@@ -15653,3 +15653,90 @@ fn plain_data_equality_proves_only_plain_data() {
         assert_eq!(Some(vm.plain_data_equal(row[0], row[1])), row[2].as_bool(), "row {index}");
     }
 }
+
+#[test]
+fn array_holes_follow_prototype_chain_mutations() {
+    // Hole reads and stores consult a proof that the chain holds no index
+    // (`chain_holds_no_index`); every mutation below must retire or bypass it. Expected
+    // output is Node's (v22).
+    let source = r#"
+// Oracle: holes read through prototype chains under mutation.
+const out = [];
+const a = new Array(4); out.push(a[1]);
+Array.prototype[1] = "proto1"; out.push(a[1]); delete Array.prototype[1]; out.push(a[1]);
+Object.prototype[2] = "obj2"; out.push(a[2]); delete Object.prototype[2]; out.push(a[2]);
+Object.defineProperty(Array.prototype, 3, { get() { return "getter3"; }, configurable: true }); out.push(a[3]);
+a[3] = "set3"; out.push(a[3], Object.getOwnPropertyDescriptor(a, 3) === undefined);
+delete Array.prototype[3]; out.push(a[3]);
+Object.defineProperty(Object.prototype, 0, { set(v) { out.push("setter0:" + v); }, configurable: true });
+const b = new Array(2); b[0] = "x"; out.push(b.hasOwnProperty(0)); delete Object.prototype[0];
+b[0] = "y"; out.push(b[0]);
+Object.defineProperty(Array.prototype, 1, { value: "ro", writable: false, configurable: true });
+const c = []; c.length = 3; c[1] = "w"; out.push(c[1], c.hasOwnProperty(1)); delete Array.prototype[1];
+Array.prototype.length = 0; Array.prototype.push("pushed"); out.push(new Array(3)[0]); Array.prototype.length = 0;
+out.push(new Array(3)[0]);
+const p = new Proxy({}, { get(t, k) { return "proxy:" + String(k); } });
+const d = new Array(2); Object.setPrototypeOf(d, p); out.push(d[1]);
+Object.setPrototypeOf(d, Array.prototype); out.push(d[1]);
+const sp = []; sp[100000] = 1; const e = new Array(5); Object.setPrototypeOf(e, sp); out.push(e[100000], e[4]);
+for (let i = 0; i < 3; i++) { const f = new Array(3); out.push(f[i]); if (i === 0) Array.prototype[1] = "late"; }
+delete Array.prototype[1];
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "array-holes.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"[null,"proto1",null,"obj2",null,"getter3","getter3",true,null,"setter0:x",false,"y","ro",false,"pushed",null,"proxy:1",null,1,null,null,"late",null]"#]);
+}
+
+#[test]
+fn cached_accessor_reads_follow_getter_redefinitions() {
+    // A site's accessor entry keeps whether the holder's slot holds the getter
+    // (`AccessorFieldCache::getter_in_slot`); redefined, shadowed and own getters must still
+    // be the ones called. Expected output is Node's (v22).
+    let source = r#"
+const out = [];
+class E { constructor(k) { this._k = k; } get key() { return this._k; } }
+const items = [new E(1), new E(2), new E(3)];
+const read = (o) => o.key;
+for (let r = 0; r < 4; r++) {
+  let sum = 0; for (const it of items) sum += read(it); out.push(sum);
+  if (r === 0) Object.defineProperty(E.prototype, "key", { get() { return this._k * 10; }, configurable: true });
+  if (r === 1) Object.defineProperty(items[1], "key", { get() { return 100; }, configurable: true });
+  if (r === 2) Object.defineProperty(E.prototype, "key", { value: 7, configurable: true, writable: true });
+}
+// own accessors: each receiver of a shape keeps its own getter in the slot
+const mk = (v) => { const o = {}; Object.defineProperty(o, "g", { get() { return v; }, configurable: true, enumerable: true }); return o; };
+const own = [mk("a"), mk("b"), mk("c")]; const rg = (o) => o.g;
+for (let r = 0; r < 3; r++) { out.push(own.map(rg).join("")); if (r === 0) Object.defineProperty(own[0], "g", { get() { return "z"; }, configurable: true }); if (r === 1) Object.defineProperty(own[2], "g", { set(v) {}, configurable: true }); }
+// inherited through two levels, holder getter swapped by assignment to a setter-less accessor slot replacement
+class A { get v() { return "A"; } } class B extends A {} class C extends B {}
+const cs = [new C(), new C()]; const rv = (o) => o.v;
+for (let r = 0; r < 3; r++) { out.push(cs.map(rv).join("")); if (r === 0) Object.defineProperty(A.prototype, "v", { get() { return "A2"; }, configurable: true }); if (r === 1) Object.defineProperty(B.prototype, "v", { get() { return "B"; }, configurable: true }); }
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "accessor-reads.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"[6,60,140,114,"abc","zbc","zbc","AA","A2A2","BB"]"#]);
+}
+
+#[test]
+fn typeof_against_typeof_compares_like_the_names() {
+    // `typeof a === typeof b` and its other equality forms compare the names' indices
+    // (`typeof_test`); results and operand order match Node's (v22).
+    let source = r#"
+const vals = [1, 1.5, "s", true, null, undefined, {}, [], () => 1, Symbol("x"), 10n, NaN, function(){}, new Proxy({}, {}), new Proxy(function(){}, {})];
+const out = [];
+for (const a of vals) for (const b of vals) out.push(typeof a === typeof b ? 1 : 0, typeof a != typeof b ? 1 : 0, (typeof a == typeof b) + 0, (typeof a !== typeof b) + 0);
+let order = []; const t = { get x() { order.push("x"); return 1; }, get y() { order.push("y"); return "s"; } };
+out.push(typeof t.x === typeof t.y, order.join(""));
+out.push(typeof undeclaredName === typeof undefined, typeof undeclaredName !== typeof notDeclaredEither);
+if (typeof vals[0] === typeof vals[1]) out.push("if-same"); if (!(typeof vals[0] !== typeof vals[2])) out.push("bad"); else out.push("if-diff");
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "typeof-pairs.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"[1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,false,"xy",true,false,"if-same","if-diff"]"#]);
+}
