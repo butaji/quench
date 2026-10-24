@@ -10,20 +10,7 @@ pub(crate) mod esm_wasm;
 pub(crate) mod policy_projection;
 pub(crate) use commonjs::source_kind;
 
-thread_local! {
-    /// The import resolver, kept as `commonjs::with_commonjs_resolver` keeps the require one.
-    static IMPORT_RESOLVER: oxc_resolver::Resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
-        extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
-        main_files: vec!["index".into()],
-        condition_names: vec!["node".into(), "import".into(), "default".into()],
-        ..Default::default()
-    });
-}
-
-/// Runs `use_resolver` with the resolver of an ES module's imports.
-pub(crate) fn with_import_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver::Resolver) -> R) -> R {
-    IMPORT_RESOLVER.with(use_resolver)
-}
+pub(crate) use commonjs::with_import_resolver;
 
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
@@ -1093,15 +1080,11 @@ impl quench_runtime::Host for NodeHost {
     /// Splay 39800 -> 38988 KiB with the release before full collections).
     /// The allocator's free pages, which the collection's sweep just freed, leave with them
     /// (V8-v7 max RSS, static x86_64 unbolted, 2026-10-19: RegExp 6772-7044 -> 6664-6772 KiB,
-    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged). Only under a policy that
-    /// returns pages at collections (memory-first); every policy counts the collection for
-    /// the release before output (`resident_pages::note_collection`).
+    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged). At most once per the policy's
+    /// `MemoryPolicy::resident_release_interval`; every policy counts the collection for the
+    /// release before output (`resident_pages::release_at_collection`).
     fn at_collection_boundary(&mut self, policy: quench_runtime::MemoryPolicy) {
-        if policy.returns_pages_at_collections() {
-            crate::host::resident_pages::release_read_only_pages();
-            crate::host::resident_pages::release_free_heap_pages();
-        }
-        crate::host::resident_pages::note_collection();
+        crate::host::resident_pages::release_at_collection(policy);
     }
 
     /// The pages the program touched leave the resident set before the code generator's join
@@ -1111,14 +1094,14 @@ impl quench_runtime::Host for NodeHost {
     /// NavierStokes `--jit` under MemoryFirst, plain x86_64 build, 2026-10-22: max RSS
     /// 10.84-10.94 -> 8.80-8.89 MB, Score within noise).
     fn before_native_compilation(&mut self) {
-        crate::host::resident_pages::release_read_only_pages();
+        crate::host::resident_pages::release_at_native_compilation();
     }
 
     /// The code generator's pages, and the allocator's pages its scratch memory freed, leave
     /// the resident set before the program runs on (V8-v7 Crypto `--jit` under MemoryFirst,
     /// plain x86_64 build, 2026-10-22: max RSS 6.82-6.84 -> 5.91 MB with the release before).
     fn after_native_compilation(&mut self) {
-        crate::host::resident_pages::release_read_only_pages();
+        crate::host::resident_pages::release_at_native_compilation();
         crate::host::resident_pages::release_free_heap_pages();
     }
 
@@ -1712,22 +1695,12 @@ impl NodeHost {
         let path = match path {
             Some(path) => path,
             None => {
-                thread_local! {
-                    /// The import resolver, kept as `commonjs::with_commonjs_resolver` keeps
-                    /// the require one.
-                    static IMPORT_RESOLVER: oxc_resolver::Resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
-                        extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
-                        main_files: vec!["index".into()],
-                        condition_names: vec!["node".into(), "import".into(), "default".into()],
-                        ..Default::default()
-                    });
-                }
                 let resolution_specifier = if internal {
                     format!("./{specifier}")
                 } else {
                     specifier.to_owned()
                 };
-                let resolved = IMPORT_RESOLVER.with(|resolver| {
+                let resolved = with_import_resolver(|resolver| {
                     match commonjs::resolve_kept(resolver, |resolver| resolver.resolve(&base, &resolution_specifier)) {
                         Ok(resolution) => Ok(Some(resolution.full_path())),
                         Err(oxc_resolver::ResolveError::Specifier(_)) => Ok(None),
