@@ -12886,7 +12886,10 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
 fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
     let source = r#"
       const captured = { value: 2 };
-      function addCaptured(value) { return captured.value + value; }
+      function addCaptured(value) {
+        if (value === 63) $262.gc();
+        return captured.value + value;
+      }
       var result = 0;
       for (let index = 0; index < 64; index++) result = addCaptured(index);
       if (result !== 65) throw Error('interpreter island result');
@@ -12908,9 +12911,9 @@ fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
         })
         .unwrap() as u32;
 
-    let mut interpreter = Vm::new(TestHost::default());
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
     interpreter.execute(&program).unwrap();
-    let mut compiled = Vm::new(TestHost::default());
+    let mut compiled = Vm::new(TestHost::default().with_test262());
     compiled.programs.enable_js_general_dispatch();
     compiled.programs.compile_general_baseline_when_hot();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
