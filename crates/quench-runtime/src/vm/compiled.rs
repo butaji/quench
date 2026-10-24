@@ -924,9 +924,8 @@ pub(super) fn compile_js_numeric_region(
 /// denotations into Cranelift without creating a second interpreter.
 const MAX_JS_GENERAL_DISPATCH_BLOCKS: usize = 2048;
 
-fn js_general_dispatch_candidate(program: &ResidualProgram, function: &Function) -> bool {
-    !super::js_compiled::function_candidate(function, program)
-        && !function.code.is_empty()
+fn js_general_dispatch_candidate(_program: &ResidualProgram, function: &Function) -> bool {
+    !function.code.is_empty()
         && function.code.len() <= MAX_JS_GENERAL_DISPATCH_BLOCKS
         && function.code.iter().all(|packed| {
             let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
@@ -8982,9 +8981,9 @@ impl<H: Host> Vm<H> {
         !cfg!(quench_profiled) && self.execution_mode == ExecutionMode::Compiled
     }
 
-    /// Keep legacy specialized candidates framed as before. The general
-    /// dispatcher observes other bounded functions while they remain lane
-    /// eligible, and claims them only after the shared promotion threshold.
+    /// Keep usable legacy specialized candidates first. If that tier rejects a
+    /// bounded function, observe it for the complete-semantics dispatcher so
+    /// lane calls can promote it instead of remaining frameless forever.
     pub(super) fn js_tier_may_claim(
         &mut self,
         program: &ResidualProgram,
@@ -8997,20 +8996,22 @@ impl<H: Host> Vm<H> {
         let Some(body) = program.function_get(function as usize) else {
             return false;
         };
-        if super::js_compiled::function_candidate(body, program) {
-            return !self.programs.js_tier_declined(id, function)
-                || self.programs.js_jit_diagnostics_enabled();
+        let legacy_candidate = super::js_compiled::function_candidate(body, program);
+        if legacy_candidate && !self.programs.js_tier_declined(id, function) {
+            return true;
         }
         if !js_general_dispatch_candidate(program, body) {
-            return false;
+            return legacy_candidate && self.programs.js_jit_diagnostics_enabled();
         }
         match self.programs.js_tier(id, function) {
             Some(super::program_store::JsTierState::PromotionPending)
             | Some(super::program_store::JsTierState::Compiled(_)) => true,
-            Some(
-                super::program_store::JsTierState::Unsupported
-                | super::program_store::JsTierState::Rejected { .. },
-            ) => self.programs.js_jit_diagnostics_enabled(),
+            Some(super::program_store::JsTierState::Unsupported) => {
+                self.programs.js_jit_diagnostics_enabled()
+            }
+            Some(super::program_store::JsTierState::Rejected { .. }) => self
+                .programs
+                .note_js_general_dispatch_entry(id, function),
             Some(super::program_store::JsTierState::Hot { .. }) | None => self
                 .programs
                 .note_js_general_dispatch_entry(id, function),
@@ -9054,9 +9055,27 @@ impl<H: Host> Vm<H> {
             };
         }
         let function = self.frames[frame].function;
-        let general_candidate = program
-            .function_get(function as usize)
-            .is_some_and(|body| js_general_dispatch_candidate(program, body));
+        let general_candidate = program.function_get(function as usize).is_some_and(|body| {
+            if !js_general_dispatch_candidate(program, body) {
+                return false;
+            }
+            if !super::js_compiled::function_candidate(body, program) {
+                return true;
+            }
+            match self
+                .programs
+                .js_tier(self.frames[frame].program, function)
+            {
+                Some(
+                    super::program_store::JsTierState::PromotionPending
+                    | super::program_store::JsTierState::Rejected { .. },
+                ) => true,
+                Some(super::program_store::JsTierState::Compiled(compiled)) => {
+                    compiled.is_general_dispatch()
+                }
+                _ => false,
+            }
+        });
         if let Some((return_pc, return_register, value)) = self.js_jit_at_entry(program, frame) {
             // The frame's own register file: a lane frame call reaches here before
             // `active_registers` names the frame (`lane_enter_script_frame`).
