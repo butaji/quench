@@ -11201,6 +11201,7 @@ impl<H: Host> Vm<H> {
                         function.code.len() <= MAX_JIT_TIER_BYTECODES_PER_FUNCTION
                     })
             })
+            && self.programs.wasm_tier_has_room()
             && self.programs.note_wasm_tier_entry(program, id)
         {
             let tier = self
