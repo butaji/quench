@@ -129,7 +129,7 @@ pub(crate) fn poll(
     };
     let (pending_failures, started) = {
         let mut host = shared_state.borrow_mut();
-        super::client::expire_idle_sockets(&mut host);
+        super::client::maintain_agent_pools(&mut host);
         super::client::drain_pending(&mut host)
     };
     for (client, message) in pending_failures {
@@ -327,6 +327,13 @@ pub(crate) fn poll(
                     continue;
                 }
                 net_shared_vm::release_delivery(&mut shared_state.borrow_mut().tcp, socket);
+                // Nothing reads a free socket. Node's free-socket guard destroys one
+                // that receives bytes, because they would otherwise be parsed as the
+                // next exchange's response.
+                if super::client::destroy_free_socket(&mut shared_state.borrow_mut(), socket) {
+                    progressed = true;
+                    continue;
+                }
                 if shared_state.borrow().http.connections.contains_key(&socket) {
                     let dispatch = {
                         let mut host = shared_state.borrow_mut();
@@ -689,32 +696,13 @@ pub(crate) fn poll(
                 }
                 let client = shared_state.borrow_mut().http.clients.remove(&socket);
                 if let Some(mut client) = client {
-                    if client.reused && !client.response_parser.has_seen_data() {
-                        // The free socket was closed by the peer before it answered.
-                        // Node retries a reused socket once instead of surfacing a
-                        // stale ECONNRESET to the guest.
-                        if let Some(agent) = client.agent {
-                            if let Some(sockets) =
-                                shared_state.borrow_mut().http.agents.get_mut(&agent)
-                            {
-                                sockets.remove(&socket);
-                            }
-                        }
-                        shared_state.borrow_mut().http.remove_idle_socket(socket);
-                        net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
-                        client.reused = false;
-                        let retry = {
-                            let mut host = shared_state.borrow_mut();
-                            super::client::retry_client(&mut host, client)
-                        };
-                        match retry {
-                            Ok(()) => progressed = true,
-                            Err((client, message)) => {
-                                fail_client_exchange(runtime, program, client, &message)?;
-                                progressed = true;
-                            }
-                        }
-                        continue;
+                    // The socket is gone: drop its agent slot before any guest
+                    // callback can ask the pool for another one.
+                    if let Some(origin) = super::client::pooled_origin(&client) {
+                        shared_state
+                            .borrow_mut()
+                            .http
+                            .forget_socket(origin, socket);
                     }
                     match client.response_parser.finish() {
                         Ok(progress) => {
@@ -758,8 +746,9 @@ pub(crate) fn poll(
                     net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
                     progressed = true;
                 }
-                if shared_state.borrow_mut().http.remove_idle_socket(socket) {
-                    net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
+                // A peer that ends a free socket leaves nothing to fail: destroy it
+                // and give its slot back, as Node's free-socket guards do.
+                if super::client::destroy_free_socket(&mut shared_state.borrow_mut(), socket) {
                     progressed = true;
                 }
                 let (server_id, contexts) = {
@@ -806,7 +795,10 @@ pub(crate) fn poll(
                         .remove(&socket)
                         .map(|connection| connection.server);
                     let contexts = host.http.take_socket_responses(socket);
-                    host.http.remove_idle_socket(socket);
+                    // A close the pool never observed still releases its slot.
+                    if let Some(origin) = host.http.take_free_socket_by_id(socket) {
+                        host.http.forget_socket(&origin, socket);
+                    }
                     if let Some(server_id) = server_id {
                         if let Some(server) = host.http.servers.get_mut(&server_id) {
                             server.connections.remove(&socket);
@@ -916,33 +908,25 @@ pub(crate) fn poll(
                     (client, server_id, contexts)
                 };
                 let client_was_present = client.is_some();
-                if let Some(mut client) = client {
-                    if client.reused && !client.response_parser.has_seen_data() {
-                        if let Some(agent) = client.agent {
-                            if let Some(sockets) =
-                                shared_state.borrow_mut().http.agents.get_mut(&agent)
-                            {
-                                sockets.remove(&socket);
-                            }
-                        }
-                        net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
-                        client.reused = false;
-                        let retry = {
-                            let mut host = shared_state.borrow_mut();
-                            super::client::retry_client(&mut host, client)
-                        };
-                        if let Err((client, message)) = retry {
-                            fail_client_exchange(runtime, program, client, &message)?;
-                        }
-                    } else {
-                        fail_client_exchange(runtime, program, client, &message)?;
+                if let Some(client) = client {
+                    if let Some(origin) = super::client::pooled_origin(&client) {
+                        shared_state
+                            .borrow_mut()
+                            .http
+                            .forget_socket(origin, socket);
                     }
+                    // Node surfaces the transport failure of a reused socket to the
+                    // request (`ECONNRESET`, `reusedSocket === true`); it never
+                    // replays the request, which may not be idempotent.
+                    fail_client_exchange(runtime, program, client, &message)?;
                 }
-                shared_state.borrow_mut().http.remove_idle_socket(socket);
+                // A failed free socket has no exchange to fail: drop it.
+                let free_socket_destroyed =
+                    super::client::destroy_free_socket(&mut shared_state.borrow_mut(), socket);
                 for response in contexts {
                     retire_response(runtime, shared_state, response);
                 }
-                if server_id.is_some() {
+                if server_id.is_some() || free_socket_destroyed {
                     progressed = true;
                 } else if client_was_present {
                     progressed = true;
@@ -1222,9 +1206,8 @@ fn dispatch_client_upgrade(
     let upgraded = {
         let mut host = shared_state.borrow_mut();
         let client = host.http.clients.remove(&socket_id);
-        host.http.remove_idle_socket(socket_id);
-        for sockets in host.http.agents.values_mut() {
-            sockets.remove(&socket_id);
+        if let Some(origin) = client.as_ref().and_then(super::client::pooled_origin) {
+            host.http.forget_socket(origin, socket_id);
         }
         client
     };

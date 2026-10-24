@@ -986,43 +986,46 @@ pub(crate) fn agent_destroy(
     let aborted_clients = {
         let host = context.host_mut().shared_state();
         let mut guard = host.borrow_mut();
-        // A destroyed agent drops its free sockets too: they are owned, not in an
-        // exchange, so the loop below has no client record to abort for them.
-        guard.http.idle.retain(|(owner, _, _), _| *owner != agent);
-        let mut aborted_clients = Vec::new();
-        while let Some(index) = guard
+        // Node's `Agent.prototype.destroy` destroys every socket the agent owns,
+        // in an exchange or free. Requests the agent queued stay queued: closing
+        // each socket starts the next one on a fresh connection.
+        let origins = guard
             .http
-            .pending
-            .iter()
-            .position(|pending| pending.agent == agent)
-        {
-            if let Some(pending) = guard.http.pending.remove(index) {
-                aborted_clients.push(pending.client);
-            }
-        }
-        let Some(sockets) = guard.http.agents.remove(&agent) else {
-            return Ok(context.undefined());
-        };
-        for socket in sockets {
-            let response_is_complete = guard
+            .origins
+            .keys()
+            .filter(|origin| origin.agent == Some(agent))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut aborted_clients = Vec::new();
+        for origin in origins {
+            let sockets = guard
                 .http
-                .clients
-                .get(&socket)
-                .is_some_and(|client| client.response_parser.is_complete());
-            if response_is_complete {
-                // The poller has parsed the full response and may currently be
-                // emitting its head or body. Let that terminal transition finish;
-                // it will close the now-unowned socket after guest callbacks return.
-                continue;
+                .origins
+                .get_mut(&origin)
+                .map(|pool| std::mem::take(&mut pool.sockets))
+                .unwrap_or_default();
+            for socket in sockets {
+                let response_is_complete = guard
+                    .http
+                    .clients
+                    .get(&socket)
+                    .is_some_and(|client| client.response_parser.is_complete());
+                if response_is_complete {
+                    // The poller has parsed the full response and may currently be
+                    // emitting its head or body. Let that terminal transition finish;
+                    // it will close the now-unowned socket after guest callbacks return.
+                    continue;
+                }
+                net_shared_vm::close_socket(&mut guard.tcp, socket);
+                if let Some(client) = guard.http.clients.remove(&socket) {
+                    aborted_clients.push(client);
+                }
+                guard
+                    .http
+                    .responses
+                    .retain(|_, response| response.socket != socket);
             }
-            net_shared_vm::close_socket(&mut guard.tcp, socket);
-            if let Some(client) = guard.http.clients.remove(&socket) {
-                aborted_clients.push(client);
-            }
-            guard
-                .http
-                .responses
-                .retain(|_, response| response.socket != socket);
+            guard.http.origins.remove(&origin);
         }
         aborted_clients
     };

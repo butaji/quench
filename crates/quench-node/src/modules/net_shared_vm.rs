@@ -962,6 +962,15 @@ pub(crate) fn is_connected(transport: &Transport, socket: u64) -> bool {
     transport.sockets.contains_key(&socket)
 }
 
+/// Whether `socket` has delivered every byte the transport already read for it. A
+/// socket in another phase still owns a queued transport event.
+pub(crate) fn delivery_delivered(transport: &Transport, socket: u64) -> bool {
+    transport
+        .sockets
+        .get(&socket)
+        .is_some_and(|socket| matches!(socket.delivery, DeliveryPhase::Delivered))
+}
+
 pub(crate) fn end(transport: &mut Transport, socket: u64) -> Result<(), String> {
     if let Some(stream) = transport.sockets.get_mut(&socket) {
         stream.end_after_write = true;

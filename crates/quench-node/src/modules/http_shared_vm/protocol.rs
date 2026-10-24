@@ -44,15 +44,6 @@ pub(crate) fn response_keep_alive(version: &str, headers: &[(String, String)]) -
     keep_alive
 }
 
-/// Whether a request header list asks the server to close the connection.
-pub(crate) fn request_wants_close(headers: &[(String, String)]) -> bool {
-    headers
-        .iter()
-        .filter(|(name, _)| name.eq_ignore_ascii_case("connection"))
-        .flat_map(|(_, value)| value.split(','))
-        .any(|token| token.trim().eq_ignore_ascii_case("close"))
-}
-
 pub(crate) fn request(bytes: &[u8]) -> Option<RequestMessage> {
     let head = parse_head(bytes)?;
     let coding = request_transfer_coding(&head.headers);
@@ -126,12 +117,6 @@ impl ResponseParser {
 
     pub(crate) fn is_complete(&self) -> bool {
         matches!(self.state, ResponseState::Complete)
-    }
-
-    /// No response byte has been parsed, so a failed reused socket can be retried
-    /// without losing an observed response.
-    pub(crate) fn has_seen_data(&self) -> bool {
-        !self.pending.is_empty() || !matches!(self.state, ResponseState::Head)
     }
 
     pub(crate) fn pending_head_len(&self) -> usize {
@@ -449,7 +434,7 @@ fn decode_chunked(bytes: &[u8]) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{request, request_wants_close, response_keep_alive, ResponseParser};
+    use super::{request, response_keep_alive, ResponseParser};
 
     #[test]
     fn http_1_1_persists_unless_the_response_closes() {
@@ -480,27 +465,6 @@ mod tests {
             "1.0",
             &[("Connection".to_owned(), "close".to_owned())]
         ));
-    }
-
-    #[test]
-    fn request_close_header_is_detected() {
-        assert!(!request_wants_close(&[]));
-        assert!(request_wants_close(&[(
-            "Connection".to_owned(),
-            "close".to_owned()
-        )]));
-        assert!(request_wants_close(&[(
-            "connection".to_owned(),
-            "keep-alive, close".to_owned()
-        )]));
-    }
-
-    #[test]
-    fn a_parser_without_response_bytes_has_seen_no_data() {
-        let mut parser = ResponseParser::default();
-        assert!(!parser.has_seen_data());
-        parser.push(b"HTTP/1.1 ").unwrap();
-        assert!(parser.has_seen_data());
     }
 
     #[test]
