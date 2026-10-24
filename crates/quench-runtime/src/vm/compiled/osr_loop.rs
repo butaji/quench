@@ -962,8 +962,9 @@ fn definition(
     captures: &[Representation],
     observation: &Observation<'_>,
 ) -> Option<(Register, Representation)> {
-    let result = instruction.result_register();
-    if region.tagged.contains(&result) {
+    if let Some(result) = instruction.defined_register()
+        && region.tagged.contains(&result)
+    {
         return Some((result, Representation::Tagged));
     }
     let source = |operand: Operand| match operand.kind() {
