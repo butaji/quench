@@ -3059,6 +3059,45 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    /// A new accessor property, reaching the shape `set_shape_property` then
+    /// `set_property_attributes` would: the default data add, then the descriptor transition
+    /// of its slot, without looking the just-added slot up again or writing it twice.
+    /// Re-exports (`__createBinding`, `__export`) define these by the thousand.
+    pub(super) fn create_shape_accessor_property(
+        &mut self,
+        object: Value,
+        key: PropertyKey,
+        attributes: PropertyAttributes,
+    ) -> Result<(), JsError> {
+        debug_assert!(attributes.accessor, "an accessor property has accessor attributes");
+        let shape = self
+            .object_data(object)
+            .ok_or_else(|| JsError("property write on non-object".into()))?
+            .shape();
+        self.check_property_key_write(object, key, false)?;
+        let slot = u32::try_from(self.shapes[shape as usize].storage_len())
+            .expect("object property index exceeds u32");
+        let added = self.transition_data_property_shape(shape, key, DEFAULT_DATA_ATTRIBUTES);
+        let recorded = ShapeAttributes::record(attributes, &mut self.shape_accessors);
+        let next_shape = self.append_cached_shape_transition(
+            added,
+            ShapeTransition::Descriptor { slot, attributes: recorded },
+        );
+        let value = if recorded.slot_getter() {
+            attributes.getter.expect("a slot getter record has a getter")
+        } else {
+            Value::UNDEFINED
+        };
+        self.heap.property_add(object, value, next_shape);
+        if let PropertyKey::String(atom) = key
+            && self.method_caches_may_name(atom)
+        {
+            self.invalidate_method_caches_for_prototype_add(object, atom);
+        }
+        self.invalidate_method_caches_for_key(key);
+        Ok(())
+    }
+
     #[inline(always)]
     pub(super) fn set_field_cached(
         &mut self,
