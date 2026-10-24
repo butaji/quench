@@ -21,6 +21,23 @@ const JSON_HEX_LETTER_VALUE_START: u16 = 10;
 const JSON_BACKSPACE: u16 = b'\x08' as u16;
 const JSON_FORM_FEED: u16 = b'\x0C' as u16;
 const JSON_WHITESPACE: [u16; 4] = [b' ' as u16, b'\t' as u16, b'\n' as u16, b'\r' as u16];
+/// `JSON_WHITESPACE` as a bit per unit value, every one of which is below `u64::BITS`.
+const JSON_WHITESPACE_MASK: u64 = {
+    let mut mask = 0;
+    let mut index = 0;
+    while index < JSON_WHITESPACE.len() {
+        assert!((JSON_WHITESPACE[index] as u32) < u64::BITS);
+        mask |= 1 << JSON_WHITESPACE[index];
+        index += 1;
+    }
+    mask
+};
+
+/// Whether `unit` is one of `JSON_WHITESPACE`.
+#[inline(always)]
+fn is_json_whitespace(unit: u16) -> bool {
+    u32::from(unit) < u64::BITS && JSON_WHITESPACE_MASK >> unit & 1 != 0
+}
 
 enum JsonValue {
     Null,
@@ -295,8 +312,31 @@ const JSON_EXACT_INTEGER_DIGITS: usize = 15;
 
 /// A code unit a JSON text is scanned in: a byte of an ASCII string, which is its UTF-16
 /// unit, or a UTF-16 unit.
+/// Whether a string's unescaped run ends at `unit`: its closing quote, an escape, or a
+/// control unit, which a JSON string may not hold unescaped.
+#[inline(always)]
+const fn ends_string_run(unit: u16) -> bool {
+    unit == JSON_QUOTE || unit == JSON_ESCAPE || unit < JSON_UNESCAPED_START
+}
+
+/// `ends_string_run` of every byte, so a byte source's run is scanned one load per unit.
+const STRING_RUN_ENDS: [bool; 1 << u8::BITS] = {
+    let mut ends = [false; 1 << u8::BITS];
+    let mut unit = 0;
+    while unit < ends.len() {
+        ends[unit] = ends_string_run(unit as u16);
+        unit += 1;
+    }
+    ends
+};
+
 trait JsonUnit: Copy {
     fn unit(self) -> u16;
+    /// `ends_string_run` of this unit.
+    #[inline(always)]
+    fn ends_string_run(self) -> bool {
+        ends_string_run(self.unit())
+    }
     /// `units` as a run of string units.
     fn run(units: &[Self]) -> Units<'_>;
 }
@@ -304,6 +344,10 @@ trait JsonUnit: Copy {
 impl JsonUnit for u8 {
     fn unit(self) -> u16 {
         u16::from(self)
+    }
+    #[inline(always)]
+    fn ends_string_run(self) -> bool {
+        STRING_RUN_ENDS[usize::from(self)]
     }
     fn run(units: &[u8]) -> Units<'_> {
         Units::Ascii(units)
@@ -586,8 +630,6 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
     }
 
     fn value<B: JsonBuilder>(&mut self, builder: &mut B) -> Result<B::Value, JsonParseError> {
-        let _stack =
-            crate::stack::StackGuard::enter().map_err(|()| JsonParseError::StackExhausted)?;
         self.whitespace();
         let start = self.index;
         let primitive = match self.peek() {
@@ -631,10 +673,7 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
         self.expect(JSON_QUOTE as u8)?;
         let units = self.units;
         let start = self.index;
-        let run = units[start..].iter().position(|unit| {
-            let unit = unit.unit();
-            unit == JSON_QUOTE || unit == JSON_ESCAPE || unit < JSON_UNESCAPED_START
-        });
+        let run = units[start..].iter().position(|unit| unit.ends_string_run());
         if let Some(length) = run
             && units[start + length].unit() == JSON_QUOTE
         {
@@ -683,7 +722,14 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
         Ok(value)
     }
 
+    /// A nested value's parse recurses only through `array` and `object`, which therefore
+    /// hold the stack guard.
+    fn nesting_guard() -> Result<crate::stack::StackGuard, JsonParseError> {
+        crate::stack::StackGuard::enter().map_err(|()| JsonParseError::StackExhausted)
+    }
+
     fn array<B: JsonBuilder>(&mut self, builder: &mut B) -> Result<B::Value, JsonParseError> {
+        let _stack = Self::nesting_guard()?;
         self.expect(b'[')?;
         let mut values = Vec::new();
         self.whitespace();
@@ -701,6 +747,7 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
     }
 
     fn object<B: JsonBuilder>(&mut self, builder: &mut B) -> Result<B::Value, JsonParseError> {
+        let _stack = Self::nesting_guard()?;
         self.expect(b'{')?;
         let mut entries = Vec::new();
         self.whitespace();
@@ -793,12 +840,8 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
     }
 
     fn whitespace(&mut self) {
-        while self
-            .peek()
-            .is_some_and(|unit| JSON_WHITESPACE.contains(&unit))
-        {
-            self.index += 1;
-        }
+        let rest = &self.units[self.index..];
+        self.index += rest.iter().take_while(|unit| is_json_whitespace(unit.unit())).count();
     }
 
     fn expect(&mut self, expected: u8) -> Result<(), JsonParseError> {
@@ -856,10 +899,10 @@ impl<H: Host> Vm<H> {
         let units: &[u16] = &wide;
         if units
             .first()
-            .is_some_and(|unit| JSON_WHITESPACE.contains(unit))
+            .is_some_and(|unit| is_json_whitespace(*unit))
             || units
                 .last()
-                .is_some_and(|unit| JSON_WHITESPACE.contains(unit))
+                .is_some_and(|unit| is_json_whitespace(*unit))
         {
             return self.syntax_error_result(p, "Invalid raw JSON text");
         }
@@ -1851,7 +1894,7 @@ impl<H: Host> Vm<H> {
                     let key = self.heap.root_value(key_root).unwrap();
                     let object = self.heap.root_value(object_root).unwrap();
                     let descriptor = self.object_get_own_property_descriptor(p, &[object, key])?;
-                    if self.descriptor_flag(descriptor, "enumerable") {
+                    if self.descriptor_flag(descriptor, self.runtime_atoms.enumerable) {
                         let key = self.heap.root_value(key_root).unwrap();
                         if let Some(name) = self.heap.string(key).cloned() {
                             names.push(self.intern_js_atom(&name));

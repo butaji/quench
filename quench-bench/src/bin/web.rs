@@ -22,6 +22,74 @@ const MAX_LOAD_SECS: u64 = 120;
 const DEFAULT_TARGETS: &str = "quench/express,quench/fastify,quench/hono,node/express,node/fastify,node/hono,bun/elysia,bun/hono,bun/fastify";
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+/// The execution tier a board compares: every runtime without its JIT (the default, which
+/// existing evidence was measured in), or every runtime with it as shipped and Quench `--jit`.
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    NoJit,
+    Jit,
+}
+
+impl Mode {
+    fn parse(name: &str) -> Result<Self> {
+        match name {
+            "nojit" => Ok(Self::NoJit),
+            "jit" => Ok(Self::Jit),
+            _ => Err(format!("unknown mode {name}; expected nojit or jit").into()),
+        }
+    }
+    fn name(self) -> &'static str {
+        match self {
+            Self::NoJit => "nojit",
+            Self::Jit => "jit",
+        }
+    }
+    /// The arguments `runtime`'s server runs with, before its entry.
+    fn server_args(self, runtime: &str) -> &'static [&'static str] {
+        match (self, runtime) {
+            (Self::NoJit, "node") => &["--jitless"],
+            (Self::Jit, "quench") => &["--jit"],
+            _ => &[],
+        }
+    }
+    /// The environment `runtime`'s server runs with.
+    fn server_env(self, runtime: &str) -> &'static [(&'static str, &'static str)] {
+        match (self, runtime) {
+            (Self::NoJit, "bun") => &[("BUN_JSC_useJIT", "0")],
+            (Self::Jit, "bun") => &[("BUN_JSC_useJIT", "1")],
+            _ => &[],
+        }
+    }
+    /// Evidence that `bin` runs in this mode: Node's own `execArgv`, Bun's dumped `useJIT`
+    /// option, and Quench's acceptance of the flags its server runs with.
+    fn proof(self, runtime: &str, bin: &str, suite: &Path) -> Result<String> {
+        let args = self.server_args(runtime);
+        let env = self.server_env(runtime);
+        match runtime {
+            "node" => {
+                let probe = [args, &["-p", "process.execArgv.includes('--jitless')"]].concat();
+                let proof = output(bin, &probe, suite, env)?;
+                if proof.trim() != (self == Self::NoJit).to_string() {
+                    return Err(format!("Node {} proof missing: {proof}", self.name()).into());
+                }
+                Ok(proof)
+            }
+            "bun" => {
+                let proof = output(bin, &["-e", "0"], suite, &[env, &[("BUN_JSC_dumpOptions", "1")]].concat())?;
+                let expected = format!("useJIT={}", self == Self::Jit);
+                if !proof.contains(&expected) {
+                    return Err(format!("Bun {} proof missing {expected}", self.name()).into());
+                }
+                Ok(proof)
+            }
+            _ => {
+                output(bin, &[args, &["-e", "0"]].concat(), suite, env)?;
+                Ok(format!("quench-node {} accepted {args:?}", self.name()))
+            }
+        }
+    }
+}
 struct Server(Child);
 impl Drop for Server {
     fn drop(&mut self) {
@@ -201,6 +269,7 @@ fn sample(
     dir: &Path,
     binary: &str,
     runtime: &str,
+    mode: Mode,
     entry: &Path,
     load: &str,
     seconds: u64,
@@ -210,12 +279,8 @@ fn sample(
     }
     fs::create_dir(dir)?;
     let mut cmd = Command::new(binary);
-    if runtime == "node" {
-        cmd.arg("--jitless");
-    }
-    if runtime == "bun" {
-        cmd.env("BUN_JSC_useJIT", "0");
-    }
+    cmd.args(mode.server_args(runtime))
+        .envs(mode.server_env(runtime).iter().copied());
     let start = Instant::now();
     let mut server = Server(
         cmd.arg(entry)
@@ -326,6 +391,7 @@ fn run() -> Result<()> {
             "--targets",
             "--seconds",
             "--rounds",
+            "--mode",
         ]
         .contains(&key.as_str())
         {
@@ -375,6 +441,7 @@ fn run() -> Result<()> {
     if options.contains_key("--verify-only") {
         seconds = 0;
     }
+    let mode = Mode::parse(options.get("--mode").map(String::as_str).unwrap_or("nojit"))?;
     let targets: Vec<_> = options
         .get("--targets")
         .map(String::as_str)
@@ -399,37 +466,8 @@ fn run() -> Result<()> {
             let binary = executable(name)?;
             let bin = binary.to_str().ok_or("binary path not UTF8")?;
             let version = output(bin, &["--version"], &suite, &[])?;
-            let proof = match runtime {
-                "node" => output(
-                    bin,
-                    &[
-                        "--jitless",
-                        "-p",
-                        "console.log(process.execArgv.includes('--jitless'))",
-                    ],
-                    &suite,
-                    &[],
-                )?,
-                "bun" => {
-                    let proof = output(
-                        bin,
-                        &["-e", "0"],
-                        &suite,
-                        &[("BUN_JSC_useJIT", "0"), ("BUN_JSC_dumpOptions", "1")],
-                    )?;
-                    if !proof.contains("useJIT=false") {
-                        return Err("Bun no-JIT proof missing".into());
-                    }
-                    proof
-                }
-                _ => {
-                    "quench-node uses the default interpreted execution mode; no compiled-mode flag"
-                        .into()
-                }
-            };
-            Ok(
-                json!({"binary":binary,"sha256":hash(&binary)?,"version":version,"jit_proof":proof,"server_args":if runtime == "node" {vec!["--jitless"]} else {vec![]},"server_env":if runtime == "bun" {json!({"BUN_JSC_useJIT":"0"})} else {json!({})}}),
-            )
+            let proof = mode.proof(runtime, bin, &suite)?;
+            Ok(json!({"binary":binary,"sha256":hash(&binary)?,"version":version,"jit_proof":proof,"server_args":mode.server_args(runtime),"server_env":mode.server_env(runtime).iter().copied().collect::<BTreeMap<_, _>>()}))
         })();
         engines.insert(
             runtime,
@@ -446,7 +484,7 @@ fn run() -> Result<()> {
             .unwrap_or("bombardier"),
     )?;
     let runner = env::current_exe()?;
-    let mut report = json!({"runner":{"binary":runner,"sha256":hash(&runner)?},"verification_only":seconds==0,"upstream":UPSTREAM,"source":output("git", &["rev-parse","HEAD"], Path::new("."), &[])?,"source_status":output("git", &["status","--porcelain","--untracked-files=no"], Path::new("."), &[])?,"host":output("uname", &["-a"],Path::new("."),&[])?,"toolchain":output("rustc", &["--version"],Path::new("."),&[])?,"upstream_lock_sha256":hash(&suite.join("bun.lockb"))?,"cpu_limits":fs::read_to_string("/sys/fs/cgroup/cpu.max").ok(),"memory_limit":fs::read_to_string("/sys/fs/cgroup/memory.max").ok(),"load_generator":{"binary":load,"sha256":hash(&load)?,"version":output(load.to_str().unwrap(), &["--version"], &suite, &[])?},"seconds":seconds,"rounds":rounds,"engines":engines,"samples":[],"complete":false});
+    let mut report = json!({"runner":{"binary":runner,"sha256":hash(&runner)?},"verification_only":seconds==0,"upstream":UPSTREAM,"source":output("git", &["rev-parse","HEAD"], Path::new("."), &[])?,"source_status":output("git", &["status","--porcelain","--untracked-files=no"], Path::new("."), &[])?,"host":output("uname", &["-a"],Path::new("."),&[])?,"toolchain":output("rustc", &["--version"],Path::new("."),&[])?,"upstream_lock_sha256":hash(&suite.join("bun.lockb"))?,"cpu_limits":fs::read_to_string("/sys/fs/cgroup/cpu.max").ok(),"memory_limit":fs::read_to_string("/sys/fs/cgroup/memory.max").ok(),"load_generator":{"binary":load,"sha256":hash(&load)?,"version":output(load.to_str().unwrap(), &["--version"], &suite, &[])?},"mode":mode.name(),"seconds":seconds,"rounds":rounds,"engines":engines,"samples":[],"complete":false});
     let mut complete = true;
     for round in 0..rounds {
         for offset in 0..targets.len() {
@@ -481,6 +519,7 @@ fn run() -> Result<()> {
                     &dir,
                     binary,
                     runtime,
+                    mode,
                     &entry,
                     load.to_str().unwrap(),
                     seconds,

@@ -132,7 +132,7 @@ impl<H: Host> Vm<H> {
                     let object = self.heap.root_value(source).unwrap();
                     let name = self.heap.root_value(key).unwrap();
                     let descriptor = self.object_get_own_property_descriptor(p, &[object, name])?;
-                    if descriptor.is_undefined() || !self.descriptor_flag(descriptor, "enumerable")
+                    if descriptor.is_undefined() || !self.descriptor_flag(descriptor, self.runtime_atoms.enumerable)
                     {
                         continue;
                     }
@@ -458,7 +458,7 @@ impl<H: Host> Vm<H> {
                 next: reaction.next,
                 rejected: state == PromiseState::Rejected,
                 value,
-                execution_context: reaction.execution_context,
+                execution_context: reaction.execution_context.get(),
             }));
     }
 

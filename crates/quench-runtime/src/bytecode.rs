@@ -108,6 +108,17 @@ pub(crate) fn source_binding_name(name: &str) -> &str {
 pub(crate) fn local_name_requires_environment(name: &str) -> bool {
     name.starts_with('\0') && !name.starts_with(BLOCK_BINDING_MARKER)
 }
+/// The prefix of a class's home-object binding, which private brand checks and `super`
+/// resolve by name through the enclosing environments.
+pub(crate) const HOME_BINDING_PREFIX: &str = "\0quench:home:";
+/// Whether the runtime finds local `name` by name from outside its own activation, so a
+/// closure that never captures it may still read it: a home object (`HOME_BINDING_PREFIX`),
+/// or a compiler binding its function's environment declares (`declares_environment_atom`),
+/// which by-name loads of compiler bindings resolve.
+pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: bool) -> bool {
+    name.starts_with(HOME_BINDING_PREFIX)
+        || (declared_in_environment && local_name_requires_environment(name))
+}
 pub(crate) use control_flow::{ControlEdge, branch_table_entries, for_each_instruction_successor};
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
@@ -782,6 +793,7 @@ opcodes!(
     Move => Effect::PURE; layout Scalar; meaning Unused; js Move, @ Register, @ fields(ResultRegister, Register, Unused),
     Call => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
     CallArray => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
+    CallSpread => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
     CallKnown => CALL_EFFECT; layout CallWindow; flow Call, @ Returnable, @ fields(ResultRegister, FunctionIndex, Unused),
     CallMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call, @ Returnable, @ fields(ResultRegister, Register, Unused),
     CallThisMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call, @ Returnable, @ fields(ResultRegister, Unused, Unused),
@@ -1473,7 +1485,7 @@ pub(crate) struct SourcePosition {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RegisterRoots {
     covered: bool,
-    masks: std::cell::OnceCell<Box<[u64]>>,
+    masks: std::cell::OnceCell<Box<[crate::compile::liveness::RegisterSet]>>,
 }
 
 impl RegisterRoots {
@@ -1488,7 +1500,7 @@ impl RegisterRoots {
     /// The masks a collection derived so far; none until one finds the function running.
     #[cfg(feature = "profile-memory")]
     pub(crate) fn capacity_bytes(&self) -> usize {
-        self.masks.get().map_or(0, |masks| size_of_val::<[u64]>(masks))
+        self.masks.get().map_or(0, |masks| size_of_val::<[crate::compile::liveness::RegisterSet]>(masks))
     }
 }
 
@@ -1939,9 +1951,15 @@ impl Function {
     /// Whether the activation itself may read its implicit bindings through a name or scope
     /// operation, or must keep them for its kind of activation.
     fn activation_binding_reads(&self, atoms: &AtomTable) -> bool {
+        self.is_class_constructor || self.binding_reads_beside_class(atoms)
+    }
+
+    /// `activation_binding_reads` but for a class constructor's own kind: a base class
+    /// constructor's body that reaches none of its implicit bindings (`new.target`, `super`
+    /// and the like read hidden names) needs none to run frameless when constructed.
+    fn binding_reads_beside_class(&self, atoms: &AtomTable) -> bool {
         self.is_async
             || self.is_generator
-            || self.is_class_constructor
             || self.derived_constructor
             // A field initializer or static block keeps its instance's implicit bindings; an
             // arrow inside one (also `class_initializer`) binds none of its own.
@@ -2084,7 +2102,7 @@ impl Function {
             // (`activation_binding_reads`) or its home as a capture, as any closure reads one.
             // Ordinary but for a rest parameter, which a frameless activation gathers
             // (`CallEntry::Gathers`) and a plain frame does not.
-            let ordinary_with_rest = self.parent.is_some()
+            let registers_layout = self.parent.is_some()
                 && !self.derived_constructor
                 && self.self_binding_slot.is_none()
                 && !self.parameter_eval_arguments_error
@@ -2092,9 +2110,15 @@ impl Function {
                 && !self.is_generator
                 && !self.is_async
                 && promoted_parameters == usize::from(self.params)
-                && !self.activation_binding_reads(atoms)
                 // A plain activation makes no closure, whichever bindings it would see.
                 && !self.instructions().any(|instruction| instruction.op() == Op::MakeClosure);
+            let ordinary_with_rest = registers_layout && !self.activation_binding_reads(atoms);
+            // A base class constructor laid out as an ordinary function runs frameless when
+            // constructed (`lane_script_construct`); its calls, which throw, keep a frame.
+            let constructs_frameless = registers_layout
+                && self.is_class_constructor
+                && !self.rest
+                && !self.binding_reads_beside_class(atoms);
             let ordinary = ordinary_with_rest && !self.rest;
             // A field initializer is an ordinary method call on the instance whose
             // activation keeps its implicit bindings (`activation_binding_reads`); only the
@@ -2165,8 +2189,7 @@ impl Function {
                 live_parameters,
                 addresses_locals,
                 forwards_arguments,
-                registers_only: ordinary_with_rest
-                    && in_loop
+                registers_only: (ordinary_with_rest && in_loop || constructs_frameless)
                     && self.initial_register == InitialRegister::Undefined
                     && if self.arguments_slot.is_none() {
                         // A rest body's activation keeps every value passed
@@ -2932,7 +2955,8 @@ pub(crate) struct ProgramSource {
     pub(crate) column_offset: u32,
     /// `source_line_starts(text)`, indexed on the first line read: error source positions
     /// read a line per throw, which a scan from the top would make linear in the source.
-    pub(crate) line_starts: std::cell::OnceCell<Box<[u32]>>,
+    /// Shared, so a copy of the source (an error's captured call sites) copies no index.
+    pub(crate) line_starts: std::cell::OnceCell<std::sync::Arc<[u32]>>,
 }
 
 /// A static item at a fixed place in the executable image, from which a snapshot measures the
@@ -3073,6 +3097,15 @@ impl ProgramSource {
     }
 }
 
+/// The sizes of a program's inline-cache site tables (`ResidualProgram::cache_site_counts`):
+/// its field, method and object literal sites.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CacheSiteCounts {
+    pub(crate) fields: u16,
+    pub(crate) methods: usize,
+    pub(crate) objects: usize,
+}
+
 #[derive(Clone, Debug)]
 pub struct ResidualProgram {
     pub(crate) specialized: bool,
@@ -3099,6 +3132,9 @@ pub struct ResidualProgram {
     pub(crate) encoded_records: Option<std::rc::Rc<EncodedRecords>>,
     /// Whether the program is known to be valid (`ValidationProof`).
     pub(crate) validated: ValidationProof,
+    /// What each function's closures read of the environments they close over, when the
+    /// compiler derived it; without it a closure keeps its whole scope chain.
+    pub(crate) closure_reads: Option<std::rc::Rc<ClosureReads>>,
 }
 
 /// The encoded records of a decoded program's deferred functions (`binary::decode_program`):
@@ -3209,7 +3245,7 @@ impl ResidualProgram {
                     })
                     .function,
             };
-            // As `prime_loop_decoding` primes the functions of an installed program.
+            // As `ResidualProgram::prime_loop_decoding` primes an installed program's records.
             function.decoded.prime_loop(&function.code, &function.wide);
             std::rc::Rc::new(function)
         })
@@ -3238,13 +3274,13 @@ impl ResidualProgram {
     }
 
     /// The registers live at `pc` in `function`, when liveness covers it.
-    pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<u64> {
+    pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<crate::compile::liveness::RegisterSet> {
         self.register_root_masks(function)?.get(pc).copied()
     }
 
     /// `function`'s live register masks by pc, one past its last instruction included, when
     /// liveness covers it.
-    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&[u64]> {
+    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&[crate::compile::liveness::RegisterSet]> {
         let function = self.function_get(function as usize)?;
         if !function.register_roots.covered {
             return None;
@@ -3286,7 +3322,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 104;
+    pub const FORMAT_VERSION: u8 = 106;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
@@ -3368,6 +3404,28 @@ impl ResidualProgram {
 
     /// `encode_snapshot`'s bytes, sharing `atoms` (the restored VM's) and with `text` as the
     /// source; valid as the compiler output it was when written.
+    /// The sizes of the program's inline-cache site tables, which a VM lays out per program.
+    pub(crate) fn cache_site_counts(&self) -> CacheSiteCounts {
+        CacheSiteCounts {
+            fields: self.cache_sites,
+            methods: self.method_sites.len(),
+            objects: self.object_sites.len(),
+        }
+    }
+
+    /// Primes the loop decoding of every function record the program holds; a released
+    /// record primes as it compiles again (`ResidualProgram::function`).
+    pub(crate) fn prime_loop_decoding(&self) {
+        for function in self.functions.iter().filter_map(FunctionSlot::record) {
+            function.decoded.prime_loop(&function.code, &function.wide);
+        }
+    }
+
+    /// Checks `encode_snapshot`'s bytes as `decode_snapshot` would before decoding them.
+    pub(crate) fn verify_snapshot(bytes: &[u8]) -> Result<(), String> {
+        binary::verify_snapshot_program(bytes)
+    }
+
     pub(crate) fn decode_snapshot(
         bytes: KeptBytes,
         text: Option<SourceText>,
@@ -3393,6 +3451,8 @@ impl ResidualProgram {
     }
 }
 mod binary;
+mod closure_reads;
+pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
 pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis};
 mod disassemble;
 #[cfg(test)]

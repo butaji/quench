@@ -35,6 +35,7 @@ macro_rules! number_relations {
         pub(super) enum NumberRelation { $($relation),+ }
 
         impl NumberRelation {
+            #[inline(always)]
             pub(super) fn from_operator(op: u32) -> Option<Self> {
                 $(
                     if $(op == BinaryOperator::$operator as u32)||+ {
@@ -85,6 +86,7 @@ macro_rules! number_arithmetic {
         pub(super) enum NumberArithmetic { $($operation),+ }
 
         impl NumberArithmetic {
+            #[inline(always)]
             pub(super) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == BinaryOperator::$operator as u32 {
@@ -163,6 +165,7 @@ macro_rules! number_unary {
         pub(super) enum NumberUnary { $($operation),+ }
 
         impl NumberUnary {
+            #[inline(always)]
             pub(super) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == UnaryOperator::$operator as u32 {
@@ -241,6 +244,15 @@ macro_rules! number_bitwise {
         pub(super) enum NumberBitwise { $($operation),+ }
 
         impl NumberBitwise {
+            /// `from_operator` of a decoded operator, as one match.
+            #[inline(always)]
+            pub(super) fn from_binary_operator(operator: BinaryOperator) -> Option<Self> {
+                match operator {
+                    $(BinaryOperator::$operator => Some(Self::$operation),)+
+                    _ => None,
+                }
+            }
+
             pub(super) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == BinaryOperator::$operator as u32 {
@@ -331,9 +343,16 @@ fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) ->
     }
 }
 
+/// `operation` of int32 operands as a value: the int32 result as it is, but for a zero-fill
+/// shift above `i32::MAX`, which is the Number of its unsigned bits.
 #[inline(always)]
 fn number_bitwise_result(operation: NumberBitwise, left: i32, right: i32) -> Value {
-    Value::number(number_bitwise_f64_result(operation, left, right))
+    let bits = operation.apply(&mut I32BitwiseStage, left, right);
+    if operation == NumberBitwise::ShiftRightUnsigned && bits < 0 {
+        Value::number(f64::from(bits as u32))
+    } else {
+        Value::integer(bits)
+    }
 }
 
 struct NumberF64Stage;
@@ -696,12 +715,26 @@ pub(super) const BITWISE_AND: u32 = BinaryOperator::BitwiseAnd as u32;
 /// `None` for any other operand.
 #[inline(always)]
 pub(super) fn number_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+    if let Some(value) = bitwise_value_operator::<OP>(left, right) {
+        return Some(value);
+    }
     let (left, right) = Value::number_pair(left, right)?;
     Some(Value::number(numeric_number_result(
         numeric_binary_operator(OP)?,
         left,
         right,
     )))
+}
+
+/// A bitwise operator `OP` of two Numbers, each taken to int32 from its own representation
+/// (an integer as it is, a double by ToInt32), its result made as `number_bitwise_result`
+/// makes it, without the round trip through doubles `numeric_number_result` takes. `None`
+/// for any other operator, which folds away for a constant `OP`, and for other operands.
+#[inline(always)]
+fn bitwise_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+    let operation = NumberBitwise::from_binary_operator(numeric_binary_operator(OP)?)?;
+    let int32 = |value: Value| value.as_int().or_else(|| value.as_number().map(|number| number_to_u32(number) as i32));
+    Some(number_bitwise_result(operation, int32(left)?, int32(right)?))
 }
 
 /// Integer operator `OP` (`numeric_integer_result`) when both operands are integers;
@@ -766,9 +799,9 @@ fn numeric_integer_result(operator: BinaryOperator, left: i32, right: i32) -> Op
             }
         }
         BinaryOperator::Exponential => return None,
-        _ => number_bitwise_result(
-            NumberBitwise::from_operator(operator as u32)
-                .expect("numeric operator table contains supported bitwise operations"),
+        operator => number_bitwise_result(
+            NumberBitwise::from_binary_operator(operator)
+                .expect("numeric operator table only contains numeric operators"),
             left,
             right,
         ),

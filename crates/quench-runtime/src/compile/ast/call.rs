@@ -654,13 +654,18 @@ impl FunctionCompiler<'_, '_> {
         this: Register,
         values: &[Argument<'_>],
     ) -> Register {
-        let arguments = self.spread_arguments(values);
+        // `f(...iterable)`: the call iterates its one spread itself (`Op::CallSpread`), so
+        // an intact array passes its elements without an argument array.
+        let (op, arguments) = match values {
+            [Argument::SpreadElement(spread)] => (Op::CallSpread, self.expression(&spread.argument)),
+            _ => (Op::CallArray, self.spread_arguments(values)),
+        };
         let base = self.next_reg;
         let argument_array = self.reg();
         self.emit(Op::Move, argument_array, arguments, 0, 0);
         let result = self.reg();
         self.emit(
-            Op::CallArray,
+            op,
             result,
             callee,
             this,

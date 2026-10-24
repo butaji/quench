@@ -209,6 +209,7 @@ fn decoder_rejects_out_of_range_local_load() {
         replay: None,
         encoded_records: None,
             validated: Default::default(),
+            closure_reads: None,
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-local-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -296,6 +297,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         replay: None,
         encoded_records: None,
             validated: Default::default(),
+            closure_reads: None,
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-abi-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -403,6 +405,28 @@ fn instance_initializer_plan_survives_round_trip_and_rejects_invalid_owners() {
     invalid.functions[initializer as usize].parent = Some(owner as u32);
     assert!(invalid.validate().is_err());
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn closure_reads_survive_round_trip() {
+    // A cached program must trace its closures' environments as its compilation does.
+    let program = crate::Engine::specialize(
+        "function make() { const kept = {}, other = {}; const sibling = () => other; sibling(); return () => kept; }",
+        "closure-reads.js",
+    )
+    .unwrap();
+    let path = std::env::temp_dir().join(format!("quench-closure-reads-{}", std::process::id()));
+    program.write_binary(&path).unwrap();
+    let decoded = ResidualProgram::read_binary(&path).unwrap();
+    std::fs::remove_file(path).unwrap();
+    let demands = |program: &ResidualProgram| -> Vec<String> {
+        let reads = program.closure_reads.as_ref().expect("a compiled program has closure reads");
+        (0..program.functions.len() as u32)
+            .flat_map(|function| (1..=2).map(move |distance| (function, distance)))
+            .map(|(function, distance)| format!("{:?}", reads.demand(function, distance)))
+            .collect()
+    };
+    assert_eq!(demands(&decoded), demands(&program));
 }
 
 #[test]

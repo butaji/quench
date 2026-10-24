@@ -1694,6 +1694,7 @@ mod tests {
 
 
 
+    #[cfg(not(quench_profiled))]
     #[test]
     fn javascript_and_wasm_jit_share_one_vm_and_backend() {
         let script = crate::Engine::compile(crate::ExecutionRequest::script(

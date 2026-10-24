@@ -481,10 +481,49 @@ impl<H: Host> Vm<H> {
             .map(|value| self.array_relative_index(p, value, length))
             .transpose()?
             .unwrap_or(length);
+        if self.fill_plain_array_elements(object, start..end, value) {
+            return Ok(object);
+        }
         for index in start..end {
             self.set_index_mode(p, object, Value::number(index as f64), value, true)?;
         }
         Ok(object)
+    }
+
+    /// Stores `value` at every index of `indices`, all below the array's length, where each
+    /// Set is the plain element store: an extensible, unfrozen array whose elements carry
+    /// default attributes and whose prototypes hold no index (`prototypes_hold_no_index`), so
+    /// a present element is replaced and a hole defined in place. `false` leaves every index
+    /// to the generic Set, having stored none.
+    fn fill_plain_array_elements(
+        &mut self,
+        array: Value,
+        indices: std::ops::Range<usize>,
+        value: Value,
+    ) -> bool {
+        let Some(dense) = self.heap.array(array).map(|array| array.elements().len()) else {
+            return false;
+        };
+        let plain = self.object_data(array).is_some_and(|object| {
+            object.is_extensible()
+                && !object.is_frozen()
+                && !object.has_indexed_descriptors()
+                && !object.is_arguments_object()
+        }) && self.prototypes_hold_no_index(array);
+        if !plain {
+            return false;
+        }
+        let in_dense = indices.start..indices.end.min(dense);
+        if !in_dense.is_empty() {
+            let Some(array_object) = self.heap.array_store_mut(array, value) else {
+                unreachable!("matched an array above");
+            };
+            super::index::mutable_array_elements(array_object.elements_mut())[in_dense].fill(value);
+        }
+        for index in dense.max(indices.start)..indices.end {
+            self.store_validated_array_element(array, index, value);
+        }
+        true
     }
 
     pub(super) fn array_concat_native(
@@ -526,6 +565,14 @@ impl<H: Host> Vm<H> {
                 let length = vm.array_like_length(p, item)?;
                 if next.saturating_add(length) as f64 > MAX_SAFE_INTEGER {
                     return Err(vm.type_error(p, "array concat length exceeds safe integer".into()));
+                }
+                // Present own data elements read without observing anything, and append as
+                // the definitions would.
+                if let Some(values) = vm.present_dense_elements(item, 0..length).map(<[Value]>::to_vec)
+                    && vm.append_dense_definitions(target, next, &values)
+                {
+                    next += length;
+                    continue;
                 }
                 for index in 0..length {
                     let source_key = Value::number(index as f64);
@@ -596,6 +643,27 @@ impl<H: Host> Vm<H> {
         }
         let elements = object.elements().get(range)?;
         elements.iter().all(|value| !value.is_deleted()).then_some(elements)
+    }
+
+    /// CreateDataPropertyOrThrow of `values` at indices `start..` of `array`, a dense array
+    /// (`dense_array_length`) of length `start`: each definition appends a plain element,
+    /// whatever its prototypes hold, as a definition consults none. `false` leaves `array`
+    /// untouched.
+    pub(super) fn append_dense_definitions(&mut self, array: Value, start: usize, values: &[Value]) -> bool {
+        if self.dense_array_length(array) != Some(start)
+            || start.checked_add(values.len()).is_none_or(|end| end > MAX_ARRAY_LENGTH)
+        {
+            return false;
+        }
+        let Some(object) = self.heap.array_mut(array) else {
+            unreachable!("matched an array above");
+        };
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        let capacity = elements.capacity();
+        elements.extend_from_slice(values);
+        let grown = elements.capacity() - capacity;
+        self.heap.charge_payload_growth(grown * size_of::<Value>());
+        true
     }
 
     /// CreateDataPropertyOrThrow of `values` at indices `0..` of `array`, a dense array

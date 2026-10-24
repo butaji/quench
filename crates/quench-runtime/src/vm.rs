@@ -122,6 +122,7 @@ mod error;
 mod eval;
 mod fdlibm_math;
 mod field_cache;
+mod site_table;
 mod finalization;
 mod function;
 mod function_cache;
@@ -231,6 +232,9 @@ pub(crate) use value_serializer::{ReadHooks, WriteHooks};
 use wtf16::JsString;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod closure_retention_tests;
+#[derive(Clone)]
 pub(super) struct Frame {
     // Actual callable identity is distinct from the code ID and captured environment.
     context: CallContext,
@@ -731,6 +735,27 @@ const EMPTY_CACHE: FieldCache = FieldCache {
     holder: NO_FIELD_HOLDER,
     slot: 0,
 };
+/// Stored as `[receiver, holder, slot]` complemented against `EMPTY_CACHE`, which stores
+/// as zero words.
+impl site_table::SiteEntry for FieldCache {
+    type Stored = [u32; 3];
+    #[inline(always)]
+    fn store(self) -> [u32; 3] {
+        [
+            self.receiver ^ EMPTY_CACHE.receiver,
+            self.holder ^ EMPTY_CACHE.holder,
+            u32::from(self.slot ^ EMPTY_CACHE.slot),
+        ]
+    }
+    #[inline(always)]
+    fn load([receiver, holder, slot]: [u32; 3]) -> Self {
+        Self {
+            receiver: receiver ^ EMPTY_CACHE.receiver,
+            holder: holder ^ EMPTY_CACHE.holder,
+            slot: slot as u16 ^ EMPTY_CACHE.slot,
+        }
+    }
+}
 /// One cached property-add transition: an extensible ordinary object of `source_shape` whose
 /// prototype chain still has exactly `prototype_shapes[..prototype_depth]` gains `atom` at `slot`
 /// and moves to `target_shape`.
@@ -901,8 +926,8 @@ struct ProgramCacheLayout {
 }
 
 impl ProgramCacheLayout {
-    fn shared_uncached_field(field_base: usize, program: &ResidualProgram) -> Option<usize> {
-        (program.cache_sites > crate::bytecode::SHARED_UNCACHED_SITE)
+    fn shared_uncached_field(field_base: usize, field_sites: u16) -> Option<usize> {
+        (field_sites > crate::bytecode::SHARED_UNCACHED_SITE)
             .then(|| field_base + usize::from(crate::bytecode::SHARED_UNCACHED_SITE))
     }
 }
@@ -1050,6 +1075,11 @@ const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
 const STRING_CONCAT_CACHE_SIZE: usize = 64;
 /// Slots of `Vm::string_atoms`, a power of two.
 const STRING_ATOM_CACHE_SIZE: usize = 256;
+/// Slots of `Vm::recent_atom_strings`, a power of two: as many as `string_atoms` keeps the
+/// other way.
+const ATOM_STRING_CACHE_SIZE: usize = STRING_ATOM_CACHE_SIZE;
+/// An empty `Vm::recent_atom_strings` slot: no atom has this id.
+const NO_RECENT_ATOM: Atom = Atom::MAX;
 #[derive(Clone, Copy)]
 struct StringConcatCache {
     left: Value,
@@ -1749,6 +1779,10 @@ pub(crate) struct Vm<H> {
     /// The active program's materialized constants, kept by `set_active_program` and by
     /// constant installation. A program's constant buffer never moves once installed.
     active_constants: *const [Value],
+    /// The active program's field cache entries (`SiteTable::entries_from` of its
+    /// `field_base`), re-derived by `refresh_active_field_entries` whenever the active program
+    /// changes or the table grows: a site's entry is then one load from it.
+    active_field_entries: *const <FieldCache as site_table::SiteEntry>::Stored,
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
@@ -1761,6 +1795,7 @@ pub(crate) struct Vm<H> {
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
     plain_copy_shapes: shape_memo::PlainCopyShapeMemo,
+    plain_assign_shapes: shape_memo::PlainAssignShapeMemo,
     /// The final shapes of host records, by their names list (`create_embedding_record`).
     embedding_record_shapes: FxHashMap<usize, u32>,
     /// The geometry accessors typed array reads resolve to (`typed_array_geometry_read`).
@@ -1800,21 +1835,26 @@ pub(crate) struct Vm<H> {
     /// String values recently interned as property keys, and their atoms
     /// (`Vm::string_key_atom`); collection empties it.
     string_atoms: Option<Box<[(Value, Atom); STRING_ATOM_CACHE_SIZE]>>,
+    /// The strings `Vm::atom_string` recently made for atoms whose strings it does not keep
+    /// (`atom_strings`), by atom, direct-mapped; collection empties it, as `string_atoms`.
+    /// A program compiled at run time spells its property names with such atoms, and
+    /// `Object.keys` of its objects had made each key's string again on every call.
+    recent_atom_strings: Option<Box<[(Atom, Value); ATOM_STRING_CACHE_SIZE]>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
-    field_caches: Vec<FieldCache>,
+    field_caches: site_table::SiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
     /// Per cache site, the index of its `inherited_field_caches` entry, or
     /// `NO_INHERITED_FIELD`.
-    inherited_field_indices: Vec<u32>,
+    inherited_field_indices: site_table::SiteTable<u32>,
     inherited_field_caches: Vec<InheritedFieldCache>,
     /// Accessor reads by field-cache index (`AccessorFieldCache`), up to
     /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes a site, oldest first, as an inherited
     /// method's site sees one shape per subclass; cleared with the field caches.
     accessor_field_caches: FxHashMap<usize, Vec<AccessorFieldCache>>,
-    field_add_indices: Vec<u32>,
+    field_add_indices: site_table::SiteTable<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
-    megamorphic_field_indices: Vec<u32>,
+    megamorphic_field_indices: site_table::SiteTable<u32>,
     /// The cache sites whose per-site entries (`field_caches`, `megamorphic_field_indices`,
     /// `field_add_indices`, `inherited_field_indices`) were written since the last
     /// `invalidate_field_caches`, which then resets only those; `None` once they outnumber
@@ -1883,7 +1923,7 @@ pub(crate) struct Vm<H> {
     method_cache_atoms: u64,
     #[cfg(feature = "profile-aggregate")]
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
-    object_shapes: Vec<u32>,
+    object_shapes: site_table::SiteTable<u32>,
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
     // Weak identities; captured environments remain authoritative in function cells.
     function_values: FxHashMap<(ProgramId, u32), Vec<WeakHandle>>,
@@ -2529,7 +2569,7 @@ impl<H: Host> Vm<H> {
                     + frame.registers.capacity() * size_of::<Value>()
             })
             .sum();
-        let field_add_cache_bytes = self.field_add_indices.capacity() * size_of::<u32>()
+        let field_add_cache_bytes = self.field_add_indices.capacity_bytes()
             + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>();
         eprintln!(
             "{{\"kind\":\"quench-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"inline_property_values\":{inline_property_values},\"narrowable_inline_property_values\":{narrowable_inline_property_values},\"out_of_line_property_values\":{out_of_line_property_values},\"narrowable_out_of_line_property_values\":{narrowable_out_of_line_property_values},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"dense_array_values\":{dense_array_values},\"narrowable_dense_array_values\":{narrowable_dense_array_values},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"field_cache_sites\":{},\"field_cache_site_capacity\":{},\"active_field_caches\":{active_field_caches},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"field_cache_data_bytes\":{},\"megamorphic_field_index_bytes\":{},\"field_add_index_bytes\":{},\"field_add_set_bytes\":{},\"field_add_sets\":{},\"field_add_cache_entries\":{field_add_cache_entries},\"field_add_cache_depth_counts\":{field_add_cache_depth_counts:?},\"field_add_set_occupancy\":{field_add_set_occupancy:?},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
@@ -2537,15 +2577,15 @@ impl<H: Host> Vm<H> {
             self.shapes.capacity(),
             self.transitions.len(),
             self.transitions.bytes(),
-            self.field_caches.capacity() * size_of::<FieldCache>()
-                + self.megamorphic_field_indices.capacity() * size_of::<u32>()
+            self.field_caches.capacity_bytes()
+                + self.megamorphic_field_indices.capacity_bytes()
                 + field_add_cache_bytes,
             self.field_caches.len(),
             self.field_caches.capacity(),
             self.megamorphic_fields.len(),
-            self.field_caches.capacity() * size_of::<FieldCache>(),
-            self.megamorphic_field_indices.capacity() * size_of::<u32>(),
-            self.field_add_indices.capacity() * size_of::<u32>(),
+            self.field_caches.capacity_bytes(),
+            self.megamorphic_field_indices.capacity_bytes(),
+            self.field_add_indices.capacity_bytes(),
             self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>(),
             self.field_add_sets.len(),
             self.method_caches.capacity() * size_of::<[MethodCache; 2]>(),
@@ -2582,9 +2622,9 @@ impl<H: Host> Vm<H> {
         let transition_table_bytes = self.transitions.bytes();
         let descriptor_side_table_bytes = self.descriptors.capacity()
             * size_of::<((Value, property_key::PropertyKey), PropertyAttributes)>();
-        let cache_side_table_bytes = self.field_caches.capacity() * size_of::<FieldCache>()
-            + self.megamorphic_field_indices.capacity() * size_of::<u32>()
-            + self.field_add_indices.capacity() * size_of::<u32>()
+        let cache_side_table_bytes = self.field_caches.capacity_bytes()
+            + self.megamorphic_field_indices.capacity_bytes()
+            + self.field_add_indices.capacity_bytes()
             + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>()
             + self.method_caches.capacity() * size_of::<[MethodCache; 2]>();
         let atom_side_table_bytes = self.atoms.capacity() * (size_of::<Atom>() + 1)
@@ -2742,6 +2782,7 @@ impl<H: Host> Vm<H> {
         self.transitions.clear();
         self.shape_slot_memo.clear();
         self.plain_copy_shapes.clear();
+        self.plain_assign_shapes.clear();
         self.embedding_record_shapes.clear();
         self.function_name_shapes.clear();
         self.symbol_write_proofs.clear();
@@ -2769,6 +2810,7 @@ impl<H: Host> Vm<H> {
         self.well_known_symbols.clear();
         self.string_concats = None;
         self.string_atoms = None;
+        self.recent_atom_strings = None;
         *self.call_targets = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
         self.lane_stack.clear_script_targets();
         let atom_text = self.atom_text.clone();
@@ -2803,14 +2845,15 @@ impl<H: Host> Vm<H> {
             bound_this: self.intern_atom(BOUND_THIS_KEY),
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
         };
-        self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
+        self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.refresh_active_field_entries();
         self.field_cache_writes = Some(Vec::new());
-        Self::prime_loop_decoding(program);
+        program.prime_loop_decoding();
         self.inherited_field_caches.clear();
-        self.inherited_field_indices = vec![NO_INHERITED_FIELD; program.cache_sites as usize];
-        self.field_add_indices = vec![NO_FIELD_ADD_SET; program.cache_sites as usize];
+        self.inherited_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.field_add_sets.clear();
-        self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
+        self.megamorphic_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.megamorphic_fields.clear();
         self.length_atom = self.intern_atom("length");
         self.prototype_atom = self.intern_atom("prototype");
@@ -2819,7 +2862,7 @@ impl<H: Host> Vm<H> {
         self.method_caches = vec![[EMPTY_METHOD_CACHE; 2]; program.method_sites.len()];
         self.megamorphic_methods.clear();
         self.method_cache_atoms = 0;
-        self.object_shapes = vec![u32::MAX; program.object_sites.len()];
+        self.object_shapes = site_table::SiteTable::with_empty(program.object_sites.len());
         self.descriptors.clear();
         self.function_values.clear();
         self.wasm_exported_functions.clear();
@@ -2840,7 +2883,7 @@ impl<H: Host> Vm<H> {
         self.set_instanceof_has_instance_holder(Value::NULL);
         self.program_cache_layouts.clear();
         self.program_cache_layouts.push(ProgramCacheLayout {
-            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program),
+            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program.cache_sites),
             ..ProgramCacheLayout::default()
         });
         self.set_active_program(ProgramId::MAIN);
@@ -2934,49 +2977,29 @@ impl<H: Host> Vm<H> {
         Some(id)
     }
     /// Primes every looping function of an installed `program` to expand on first entry.
-    fn prime_loop_decoding(program: &ResidualProgram) {
-        // A released function primes as it compiles again (`ResidualProgram::function`).
-        for function in program.functions.iter().filter_map(crate::bytecode::FunctionSlot::record) {
-            function.decoded.prime_loop(&function.code, &function.wide);
-        }
+    fn append_program_cache_layout(&mut self, id: ProgramId, program: &ResidualProgram) {
+        program.prime_loop_decoding();
+        self.append_cache_layout(id, program.cache_site_counts());
     }
 
-    fn append_program_cache_layout(&mut self, id: ProgramId, program: &ResidualProgram) {
+    /// Lays out the cache tables of program `id`, with `sites` of each kind, after those of
+    /// the programs before it.
+    pub(super) fn append_cache_layout(&mut self, id: ProgramId, sites: crate::bytecode::CacheSiteCounts) {
         debug_assert_eq!(id.raw() as usize, self.program_cache_layouts.len());
-        Self::prime_loop_decoding(program);
         self.program_cache_layouts.push(ProgramCacheLayout {
-            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(
-                self.field_caches.len(),
-                program,
-            ),
+            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(self.field_caches.len(), sites.fields),
             field_base: self.field_caches.len(),
             method_base: self.method_caches.len(),
             object_base: self.object_shapes.len(),
         });
-        self.field_caches.resize(
-            self.field_caches.len() + usize::from(program.cache_sites),
-            EMPTY_CACHE,
-        );
-        self.megamorphic_field_indices.resize(
-            self.megamorphic_field_indices.len() + usize::from(program.cache_sites),
-            NO_MEGAMORPHIC_FIELD,
-        );
-        self.field_add_indices.resize(
-            self.field_add_indices.len() + usize::from(program.cache_sites),
-            NO_FIELD_ADD_SET,
-        );
-        self.inherited_field_indices.resize(
-            self.inherited_field_indices.len() + usize::from(program.cache_sites),
-            NO_INHERITED_FIELD,
-        );
-        self.method_caches.resize(
-            self.method_caches.len() + program.method_sites.len(),
-            [EMPTY_METHOD_CACHE; 2],
-        );
-        self.object_shapes.resize(
-            self.object_shapes.len() + program.object_sites.len(),
-            u32::MAX,
-        );
+        let fields = usize::from(sites.fields);
+        self.field_caches.extend_empty(fields);
+        self.refresh_active_field_entries();
+        self.megamorphic_field_indices.extend_empty(fields);
+        self.field_add_indices.extend_empty(fields);
+        self.inherited_field_indices.extend_empty(fields);
+        self.method_caches.resize(self.method_caches.len() + sites.methods, [EMPTY_METHOD_CACHE; 2]);
+        self.object_shapes.extend_empty(sites.objects);
     }
     /// Makes `program` the executing program and caches its layout, the projection every cache
     /// index reads. A program's layout is appended before the program can run.
@@ -2985,6 +3008,13 @@ impl<H: Host> Vm<H> {
         self.active_program = program;
         self.active_layout = self.program_cache_layouts[program.raw() as usize];
         self.active_constants = self.programs.constants(program);
+        self.refresh_active_field_entries();
+    }
+
+    /// Re-derive `active_field_entries` after the active program or the field cache table
+    /// changed.
+    pub(super) fn refresh_active_field_entries(&mut self) {
+        self.active_field_entries = self.field_caches.entries_from(self.active_layout.field_base);
     }
 
     /// Constant `index` of the active program.
