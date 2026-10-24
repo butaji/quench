@@ -4234,7 +4234,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
           const assertEncoding = (options, allowBuffer) => {\n\
             const encoding = typeof options === 'string' ? options : options?.encoding;\n\
             if (encoding && !(allowBuffer && encoding === 'buffer') && !Buffer.isEncoding(encoding)) {\n\
-              const error = new TypeError(`The argument '${encoding}' is an invalid encoding.`);\n\
+              const received = typeof encoding === 'string' ? `'${encoding}'` : String(encoding);\n\
+              const error = new TypeError(`The argument 'encoding' is invalid encoding. Received ${received}`);\n\
               error.code = 'ERR_INVALID_ARG_VALUE';\n\
               throw error;\n\
             }\n\
