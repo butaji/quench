@@ -22,6 +22,8 @@ impl ProgramStore {
             jit_code_cache: _,
             js_jit_diagnostics: _,
             // Process configuration a restoring store reads again, and its diagnostics.
+            general_baseline_priced: _,
+            js_jit_general_dispatch_enabled: _,
             js_jit_dataview_float64_enabled: _,
             js_jit_dataview_float64_get_entries: _,
             js_jit_dataview_float64_set_entries: _,
@@ -108,6 +110,13 @@ impl ProgramEntry {
         if let Some(source) = &residual.source {
             source.text.write_snapshot(writer);
         }
+        // The sizes a restored entry needs before its residual is decoded.
+        writer.len(residual.regexp_literal_sites.len());
+        writer.len(residual.functions.len());
+        let sites = residual.cache_site_counts();
+        writer.u16(sites.fields);
+        writer.len(sites.methods);
+        writer.len(sites.objects);
         writer.bytes(&residual.encode_snapshot());
         writer.values(constants);
         writer.len(const_arrays.len());
@@ -168,12 +177,16 @@ impl ProgramEntry {
         atoms: &Rc<crate::bytecode::AtomSequence>,
     ) -> SnapshotResult<Self> {
         let text = if reader.bool()? { Some(crate::bytecode::SourceText::read_snapshot(reader)?) } else { None };
+        let regexp_literal_sites = reader.len()?;
+        let functions = reader.len()?;
+        let sites = crate::bytecode::CacheSiteCounts { fields: reader.u16()?, methods: reader.len()?, objects: reader.len()? };
         let encoded_len = reader.len()?;
         let encoded_start = reader.position();
         reader.skip(encoded_len)?;
         let window = crate::snapshot::Window::new(bytes.clone(), encoded_start, encoded_len)?;
-        let residual = ResidualProgram::decode_snapshot(Rc::new(window), text, atoms)
+        ResidualProgram::verify_snapshot(window.as_ref().as_ref())
             .map_err(|error| SnapshotError(format!("snapshot program: {error}")))?;
+        let residual = Residual::encoded(sites, EncodedResidual { bytes: Rc::new(window), text, atoms: atoms.clone() });
         let constants = reader.values()?;
         let const_arrays = read_list(reader, |reader| Ok(if reader.bool()? { Some(crate::heap::ArrayElements::from(reader.values()?)) } else { None }))?;
         let function_sources = Snap::unsnap(reader)?;
@@ -200,12 +213,11 @@ impl ProgramEntry {
         let script_or_module = Snap::unsnap(reader)?;
         let reclaimable = reader.bool()?;
         let pass = reader.u64()?;
-        let residual = Rc::new(residual);
         Ok(Self {
-            regexp_literals: vec![None; residual.regexp_literal_sites.len()],
+            regexp_literals: vec![None; regexp_literal_sites],
             lane_views: super::LaneViews::default(),
             js_entry_facts: super::JsEntryFactsTable::default(),
-            lane_deferred: vec![std::cell::Cell::new(0); residual.functions.len()],
+            lane_deferred: vec![std::cell::Cell::new(0); functions],
             residual,
             wasm_signatures: None,
             constants,

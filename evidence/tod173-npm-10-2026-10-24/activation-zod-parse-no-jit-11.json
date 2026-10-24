@@ -1,0 +1,1491 @@
+{
+  "schema": 1,
+  "workload": "zod-parse",
+  "phase": "no-jit",
+  "runs": 11,
+  "qualificationReady": false,
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 5
+  },
+  "rssMeasurement": "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)",
+  "inputs": {
+    "workloadSha256": "4c0afdc77df325d0578039bcbce25a6513e6bebca44fee10845b1a1ba16e209d",
+    "packageLockSha256": "92dbfcb2312b42ddf55a8f0b06c40368544ca4b5e861782ead6770268da3c1b0",
+    "quenchBinarySha256": "ba13e9947e8de1864b8b07dfea5f031dd2e8c32a34c2f11b949f26691d7095f0",
+    "controlQuenchBinary": "/workspace/quench/work/v2-merged-pgo-control-production",
+    "controlQuenchBinarySha256": "5ee06f9c402dec175c602b4b8a5cccce2d8ba05b64e6804f26c3529db2b75825",
+    "nodeBinary": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "bunBinary": "/workspace/quench/work/bun-install/bin/bun"
+  },
+  "nodeVersion": "v24.19.0",
+  "bunVersion": "1.4.4",
+  "summary": {
+    "quench-interpreter": {
+      "medianOperationsPerSecond": 69384.21509106678,
+      "medianElapsedMs": 1153,
+      "medianMaximumRssBytes": 32034816
+    },
+    "quench-control": {
+      "medianOperationsPerSecond": 67453.62563237773,
+      "medianElapsedMs": 1186,
+      "medianMaximumRssBytes": 31739904
+    },
+    "node-jitless": {
+      "medianOperationsPerSecond": 174291.93899782136,
+      "medianElapsedMs": 459,
+      "medianMaximumRssBytes": 86462464
+    },
+    "bun-no-jit": {
+      "medianOperationsPerSecond": 126182.96529968454,
+      "medianElapsedMs": 634,
+      "medianMaximumRssBytes": 39227392
+    }
+  },
+  "output": {
+    "workload": "zod-parse",
+    "package": "zod@4.6.7",
+    "warmups": 1000,
+    "cases": [
+      "flat-parse",
+      "nested-array-parse",
+      "discriminated-union-parse",
+      "flat-safeParse-invalid"
+    ],
+    "bytes": 0,
+    "checksum": 480000
+  },
+  "samples": [
+    {
+      "engine": "quench-interpreter",
+      "round": 1,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1104,
+        "operationsPerSecond": 72463.76811594203
+      },
+      "maxRssBytes": 30699520,
+      "wallTimeMs": 1396.989337,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 1,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1489,
+        "operationsPerSecond": 53727.33378106111
+      },
+      "maxRssBytes": 30810112,
+      "wallTimeMs": 1792.876871,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/v2-merged-pgo-control-production",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 1,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 494,
+        "operationsPerSecond": 161943.3198380567
+      },
+      "maxRssBytes": 86695936,
+      "wallTimeMs": 623.577521,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 639,
+        "operationsPerSecond": 125195.61815336463
+      },
+      "maxRssBytes": 39182336,
+      "wallTimeMs": 714.344052,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 2,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1166,
+        "operationsPerSecond": 68610.6346483705
+      },
+      "maxRssBytes": 31735808,
+      "wallTimeMs": 1262.314798,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/v2-merged-pgo-control-production",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 2,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 452,
+        "operationsPerSecond": 176991.15044247787
+      },
+      "maxRssBytes": 87433216,
+      "wallTimeMs": 565.186867,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 659,
+        "operationsPerSecond": 121396.05462822458
+      },
+      "maxRssBytes": 39227392,
+      "wallTimeMs": 743.365815,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 2,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1153,
+        "operationsPerSecond": 69384.21509106678
+      },
+      "maxRssBytes": 32034816,
+      "wallTimeMs": 1248.91835,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 3,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 464,
+        "operationsPerSecond": 172413.7931034483
+      },
+      "maxRssBytes": 86450176,
+      "wallTimeMs": 582.807879,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 627,
+        "operationsPerSecond": 127591.70653907496
+      },
+      "maxRssBytes": 39223296,
+      "wallTimeMs": 703.357892,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 3,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1212,
+        "operationsPerSecond": 66006.600660066
+      },
+      "maxRssBytes": 31924224,
+      "wallTimeMs": 1320.969759,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 3,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1178,
+        "operationsPerSecond": 67911.71477079796
+      },
+      "maxRssBytes": 32059392,
+      "wallTimeMs": 1276.41872,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/v2-merged-pgo-control-production",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 606,
+        "operationsPerSecond": 132013.201320132
+      },
+      "maxRssBytes": 39317504,
+      "wallTimeMs": 680.567089,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 4,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1141,
+        "operationsPerSecond": 70113.93514460999
+      },
+      "maxRssBytes": 32165888,
+      "wallTimeMs": 1231.474894,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 4,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1202,
+        "operationsPerSecond": 66555.7404326123
+      },
+      "maxRssBytes": 32010240,
+      "wallTimeMs": 1296.670548,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/v2-merged-pgo-control-production",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 4,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 462,
+        "operationsPerSecond": 173160.17316017317
+      },
+      "maxRssBytes": 86396928,
+      "wallTimeMs": 587.380586,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 5,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1139,
+        "operationsPerSecond": 70237.05004389815
+      },
+      "maxRssBytes": 32215040,
+      "wallTimeMs": 1238.164695,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 5,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1109,
+        "operationsPerSecond": 72137.0604147881
+      },
+      "maxRssBytes": 31735808,
+      "wallTimeMs": 1199.789517,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/v2-merged-pgo-control-production",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 5,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 455,
+        "operationsPerSecond": 175824.17582417582
+      },
+      "maxRssBytes": 86544384,
+      "wallTimeMs": 582.984044,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 639,
+        "operationsPerSecond": 125195.61815336463
+      },
+      "maxRssBytes": 39235584,
+      "wallTimeMs": 725.929529,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 6,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1211,
+        "operationsPerSecond": 66061.10652353427
+      },
+      "maxRssBytes": 31588352,
+      "wallTimeMs": 1308.667053,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/v2-merged-pgo-control-production",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 6,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 471,
+        "operationsPerSecond": 169851.38004246284
+      },
+      "maxRssBytes": 86446080,
+      "wallTimeMs": 586.910431,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 6,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 654,
+        "operationsPerSecond": 122324.15902140673
+      },
+      "maxRssBytes": 39251968,
+      "wallTimeMs": 738.555269,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 6,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1235,
+        "operationsPerSecond": 64777.327935222675
+      },
+      "maxRssBytes": 31780864,
+      "wallTimeMs": 1332.595271,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 7,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 453,
+        "operationsPerSecond": 176600.44150110375
+      },
+      "maxRssBytes": 87494656,
+      "wallTimeMs": 568.310472,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 7,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 618,
+        "operationsPerSecond": 129449.83818770226
+      },
+      "maxRssBytes": 39198720,
+      "wallTimeMs": 695.615733,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 7,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1147,
+        "operationsPerSecond": 69747.16652136006
+      },
+      "maxRssBytes": 32014336,
+      "wallTimeMs": 1243.847548,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 7,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1189,
+        "operationsPerSecond": 67283.4314550042
+      },
+      "maxRssBytes": 31944704,
+      "wallTimeMs": 1282.959898,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/v2-merged-pgo-control-production",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 8,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 634,
+        "operationsPerSecond": 126182.96529968454
+      },
+      "maxRssBytes": 39227392,
+      "wallTimeMs": 709.984984,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 8,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1326,
+        "operationsPerSecond": 60331.82503770739
+      },
+      "maxRssBytes": 32067584,
+      "wallTimeMs": 1476.373548,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 8,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1135,
+        "operationsPerSecond": 70484.58149779735
+      },
+      "maxRssBytes": 32063488,
+      "wallTimeMs": 1233.030941,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/v2-merged-pgo-control-production",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 8,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 459,
+        "operationsPerSecond": 174291.93899782136
+      },
+      "maxRssBytes": 86388736,
+      "wallTimeMs": 578.271877,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 9,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1168,
+        "operationsPerSecond": 68493.1506849315
+      },
+      "maxRssBytes": 32043008,
+      "wallTimeMs": 1264.071915,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 9,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1168,
+        "operationsPerSecond": 68493.1506849315
+      },
+      "maxRssBytes": 31739904,
+      "wallTimeMs": 1262.1436,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/v2-merged-pgo-control-production",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 9,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 456,
+        "operationsPerSecond": 175438.59649122806
+      },
+      "maxRssBytes": 86462464,
+      "wallTimeMs": 573.386937,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 9,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 638,
+        "operationsPerSecond": 125391.84952978056
+      },
+      "maxRssBytes": 39284736,
+      "wallTimeMs": 714.896421,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 10,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1187,
+        "operationsPerSecond": 67396.79865206403
+      },
+      "maxRssBytes": 32063488,
+      "wallTimeMs": 1286.011149,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/v2-merged-pgo-control-production",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 10,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 474,
+        "operationsPerSecond": 168776.37130801688
+      },
+      "maxRssBytes": 80257024,
+      "wallTimeMs": 600.900116,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 10,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 632,
+        "operationsPerSecond": 126582.27848101266
+      },
+      "maxRssBytes": 39227392,
+      "wallTimeMs": 710.404313,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 10,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1204,
+        "operationsPerSecond": 66445.18272425249
+      },
+      "maxRssBytes": 32157696,
+      "wallTimeMs": 1302.599588,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 11,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 458,
+        "operationsPerSecond": 174672.48908296943
+      },
+      "maxRssBytes": 86466560,
+      "wallTimeMs": 583.567844,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 11,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 614,
+        "operationsPerSecond": 130293.15960912053
+      },
+      "maxRssBytes": 39297024,
+      "wallTimeMs": 687.505439,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 11,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1146,
+        "operationsPerSecond": 69808.02792321116
+      },
+      "maxRssBytes": 32010240,
+      "wallTimeMs": 1246.426848,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    },
+    {
+      "engine": "quench-control",
+      "round": 11,
+      "measurement": {
+        "workload": "zod-parse",
+        "package": "zod@4.6.7",
+        "rounds": 20000,
+        "warmups": 1000,
+        "cases": [
+          "flat-parse",
+          "nested-array-parse",
+          "discriminated-union-parse",
+          "flat-safeParse-invalid"
+        ],
+        "bytes": 0,
+        "checksum": 480000,
+        "elapsedMs": 1186,
+        "operationsPerSecond": 67453.62563237773
+      },
+      "maxRssBytes": 31629312,
+      "wallTimeMs": 1282.331707,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/work/v2-merged-pgo-control-production",
+        "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "20000",
+        "QUENCH_BENCH_WARMUPS": "1000"
+      }
+    }
+  ]
+}

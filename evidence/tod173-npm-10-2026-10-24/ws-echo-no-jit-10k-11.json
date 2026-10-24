@@ -1,0 +1,1098 @@
+{
+  "schema": 1,
+  "workload": "ws-echo",
+  "phase": "no-jit",
+  "runs": 11,
+  "qualificationReady": false,
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 5
+  },
+  "rssMeasurement": "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)",
+  "inputs": {
+    "workloadSha256": "06bb1e5e7c2605bd26a861410698de3f3699b47334f33e0f5196a83d07418587",
+    "packageLockSha256": "92dbfcb2312b42ddf55a8f0b06c40368544ca4b5e861782ead6770268da3c1b0",
+    "quenchBinarySha256": "5ee06f9c402dec175c602b4b8a5cccce2d8ba05b64e6804f26c3529db2b75825",
+    "nodeBinary": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "bunBinary": "/workspace/quench/work/bun-install/bin/bun"
+  },
+  "nodeVersion": "v24.19.0",
+  "bunVersion": "1.4.4",
+  "summary": {
+    "quench-interpreter": {
+      "medianOperationsPerSecond": 4498.42555105713,
+      "medianElapsedMs": 2223,
+      "medianMaximumRssBytes": 34029568
+    },
+    "node-jitless": {
+      "medianOperationsPerSecond": 15197.568389057751,
+      "medianElapsedMs": 658,
+      "medianMaximumRssBytes": 35663872
+    },
+    "bun-no-jit": {
+      "medianOperationsPerSecond": 61728.39506172839,
+      "medianElapsedMs": 162,
+      "medianMaximumRssBytes": 41078784
+    }
+  },
+  "output": {
+    "workload": "ws-echo",
+    "package": "ws@8.18.3",
+    "warmups": 500,
+    "cases": [
+      "client-server-upgrade",
+      "sequential-echo",
+      "binary-payload"
+    ],
+    "bytes": 428890,
+    "checksum": 827462
+  },
+  "samples": [
+    {
+      "engine": "quench-interpreter",
+      "round": 1,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 2249,
+        "operationsPerSecond": 4446.420631391729
+      },
+      "maxRssBytes": 34029568,
+      "wallTimeMs": 2438.749773,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 1,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 659,
+        "operationsPerSecond": 15174.506828528072
+      },
+      "maxRssBytes": 35684352,
+      "wallTimeMs": 774.642991,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 163,
+        "operationsPerSecond": 61349.69325153374
+      },
+      "maxRssBytes": 40980480,
+      "wallTimeMs": 200.899947,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 2,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 635,
+        "operationsPerSecond": 15748.031496062993
+      },
+      "maxRssBytes": 35614720,
+      "wallTimeMs": 744.33842,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 166,
+        "operationsPerSecond": 60240.96385542169
+      },
+      "maxRssBytes": 41099264,
+      "wallTimeMs": 208.19106,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 2,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 2123,
+        "operationsPerSecond": 4710.3155911446065
+      },
+      "maxRssBytes": 34025472,
+      "wallTimeMs": 2289.336938,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 157,
+        "operationsPerSecond": 63694.267515923566
+      },
+      "maxRssBytes": 41058304,
+      "wallTimeMs": 198.179671,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 3,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 2221,
+        "operationsPerSecond": 4502.4763619991
+      },
+      "maxRssBytes": 34029568,
+      "wallTimeMs": 2388.926095,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 3,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 680,
+        "operationsPerSecond": 14705.882352941177
+      },
+      "maxRssBytes": 35622912,
+      "wallTimeMs": 807.310233,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 4,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 2192,
+        "operationsPerSecond": 4562.043795620438
+      },
+      "maxRssBytes": 34029568,
+      "wallTimeMs": 2357.814109,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 4,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 688,
+        "operationsPerSecond": 14534.883720930233
+      },
+      "maxRssBytes": 35622912,
+      "wallTimeMs": 800.56185,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 156,
+        "operationsPerSecond": 64102.5641025641
+      },
+      "maxRssBytes": 41472000,
+      "wallTimeMs": 199.36367,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 5,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 658,
+        "operationsPerSecond": 15197.568389057751
+      },
+      "maxRssBytes": 35758080,
+      "wallTimeMs": 777.854495,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 161,
+        "operationsPerSecond": 62111.801242236026
+      },
+      "maxRssBytes": 41086976,
+      "wallTimeMs": 201.780468,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 5,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 2265,
+        "operationsPerSecond": 4415.0110375275935
+      },
+      "maxRssBytes": 34029568,
+      "wallTimeMs": 2432.35887,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 6,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 162,
+        "operationsPerSecond": 61728.39506172839
+      },
+      "maxRssBytes": 40996864,
+      "wallTimeMs": 204.527024,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 6,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 2122,
+        "operationsPerSecond": 4712.53534401508
+      },
+      "maxRssBytes": 34025472,
+      "wallTimeMs": 2278.909038,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 6,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 623,
+        "operationsPerSecond": 16051.364365971107
+      },
+      "maxRssBytes": 35676160,
+      "wallTimeMs": 731.925608,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 7,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 2166,
+        "operationsPerSecond": 4616.805170821792
+      },
+      "maxRssBytes": 34029568,
+      "wallTimeMs": 2323.195234,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 7,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 622,
+        "operationsPerSecond": 16077.170418006432
+      },
+      "maxRssBytes": 35663872,
+      "wallTimeMs": 731.598655,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 7,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 158,
+        "operationsPerSecond": 63291.13924050633
+      },
+      "maxRssBytes": 41144320,
+      "wallTimeMs": 201.460018,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 8,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 658,
+        "operationsPerSecond": 15197.568389057751
+      },
+      "maxRssBytes": 35778560,
+      "wallTimeMs": 774.006916,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 8,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 190,
+        "operationsPerSecond": 52631.57894736842
+      },
+      "maxRssBytes": 41385984,
+      "wallTimeMs": 241.779702,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 8,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 2223,
+        "operationsPerSecond": 4498.42555105713
+      },
+      "maxRssBytes": 34029568,
+      "wallTimeMs": 2376.877601,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 9,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 161,
+        "operationsPerSecond": 62111.801242236026
+      },
+      "maxRssBytes": 41021440,
+      "wallTimeMs": 198.922143,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 9,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 2259,
+        "operationsPerSecond": 4426.737494466578
+      },
+      "maxRssBytes": 34029568,
+      "wallTimeMs": 2454.547923,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 9,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 624,
+        "operationsPerSecond": 16025.641025641025
+      },
+      "maxRssBytes": 35647488,
+      "wallTimeMs": 734.753094,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 10,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 2229,
+        "operationsPerSecond": 4486.316733961417
+      },
+      "maxRssBytes": 34029568,
+      "wallTimeMs": 2391.012255,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 10,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 613,
+        "operationsPerSecond": 16313.21370309951
+      },
+      "maxRssBytes": 35684352,
+      "wallTimeMs": 720.654321,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 10,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 170,
+        "operationsPerSecond": 58823.529411764706
+      },
+      "maxRssBytes": 41066496,
+      "wallTimeMs": 212.077379,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 11,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 672,
+        "operationsPerSecond": 14880.952380952382
+      },
+      "maxRssBytes": 35631104,
+      "wallTimeMs": 797.845949,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 11,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 162,
+        "operationsPerSecond": 61728.39506172839
+      },
+      "maxRssBytes": 41078784,
+      "wallTimeMs": 201.95001,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun-install/bin/bun",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 11,
+      "measurement": {
+        "workload": "ws-echo",
+        "package": "ws@8.18.3",
+        "rounds": 10000,
+        "warmups": 500,
+        "cases": [
+          "client-server-upgrade",
+          "sequential-echo",
+          "binary-payload"
+        ],
+        "bytes": 428890,
+        "checksum": 827462,
+        "elapsedMs": 2342,
+        "operationsPerSecond": 4269.854824935952
+      },
+      "maxRssBytes": 34029568,
+      "wallTimeMs": 2503.315963,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/ws-echo.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "10000",
+        "QUENCH_BENCH_WARMUPS": "500"
+      }
+    }
+  ]
+}

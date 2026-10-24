@@ -290,7 +290,7 @@ impl<H: Host> Vm<H> {
         }
         Some(value)
     }
-    fn shape_slot_attributes(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
+    pub(super) fn shape_slot_attributes(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
         if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
             return Some(
                 index
@@ -527,9 +527,15 @@ impl<H: Host> Vm<H> {
     /// it: no element there, no index-keyed descriptor and no index name among its shape's
     /// keys.
     fn lacks_own_index(&self, holder: Value, index: usize) -> bool {
-        self.object_data(holder).is_some_and(|data| {
-            !data.has_indexed_descriptors() && !self.shape_has_index_key(data.shape())
-        }) && !self.own_element_present(holder, index)
+        self.object_data(holder).is_some_and(|data| self.object_lacks_own_index(holder, data, index))
+    }
+
+    /// `lacks_own_index` of a holder whose object `data` the caller has read.
+    #[inline(always)]
+    fn object_lacks_own_index(&self, holder: Value, data: &Object, index: usize) -> bool {
+        !data.has_indexed_descriptors()
+            && !self.shape_has_index_key(data.shape())
+            && !self.own_element_present(holder, index)
     }
 
     /// Whether any key of `shape` is an array-index name, memoized on the immutable shape
@@ -571,10 +577,15 @@ impl<H: Host> Vm<H> {
         let mut atom = None;
         let mut current = self.object_data(object).map(|data| data.proto());
         while let Some(holder) = current.filter(|value| !value.is_null()) {
-            if matches!(
-                self.heap.get(holder),
-                Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
-            ) {
+            // A direct object or array record is neither a Proxy nor a typed array, whose
+            // cells only a slot holds.
+            let record = holder.direct_object_index().is_some() || holder.direct_array_index().is_some();
+            if !record
+                && matches!(
+                    self.heap.get(holder),
+                    Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+                )
+            {
                 return false;
             }
             let Some(data) = self.object_data(holder) else {
@@ -583,7 +594,7 @@ impl<H: Host> Vm<H> {
             if data.is_module_namespace() {
                 return false;
             }
-            if !self.lacks_own_index(holder, index) {
+            if !self.object_lacks_own_index(holder, data, index) {
                 let atom = *atom.get_or_insert_with(|| self.lookup_array_index_atom(index));
                 if let Some(attributes) = self.own_index_attributes(holder, index, atom) {
                     return !attributes.accessor && attributes.writable;
@@ -818,6 +829,7 @@ impl<H: Host> Vm<H> {
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
         self.array_iteration_proof = None;
+        self.species_slot_proof.set(None);
         self.enumerable_keys.clear();
         self.field_add_sets.clear();
         self.megamorphic_fields.clear();
@@ -1270,8 +1282,11 @@ impl<H: Host> Vm<H> {
     /// The field cache entry of the active program's `site`.
     #[inline(always)]
     pub(super) fn field_cache_entry(&self, site: u16) -> FieldCache {
-        // SAFETY: the active program's layout reserves every compiler-emitted site.
-        unsafe { self.field_caches.get_unchecked(self.field_cache_index(site)) }
+        debug_assert_eq!(self.active_field_entries, self.field_caches.entries_from(self.active_cache_layout().field_base));
+        debug_assert!(self.field_cache_index(site) < self.field_caches.len());
+        // SAFETY: `active_field_entries` is re-derived whenever the active program or the
+        // table changes, and the active program's layout reserves every compiler-emitted site.
+        unsafe { super::site_table::SiteTable::<FieldCache>::load_from(self.active_field_entries, usize::from(site)) }
     }
 
     /// The value the field cache entry `cache` proves for the direct object `object`: its own
@@ -1320,7 +1335,7 @@ impl<H: Host> Vm<H> {
             return false;
         }
         // SAFETY: the active program's layout reserves every compiler-emitted site.
-        let cache = unsafe { self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        let cache = self.field_cache_entry(site);
         if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
             return false;
         }
@@ -1408,7 +1423,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         debug_assert!(self.lane_admits(p));
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
-        let hit = self.cached_ordinary_holder_field_value(self.field_cache_index(site), receiver)?;
+        let hit = self.ordinary_holder_entry_value(self.field_cache_entry(site), receiver)?;
         self.profile
             .field_cache_hit(usize::from(hit.tier), hit.depth);
         Some(hit.value)
@@ -1446,7 +1461,7 @@ impl<H: Host> Vm<H> {
         debug_assert!(self.lane_admits(p));
         let receiver = self.heap.object(object)?;
         // SAFETY: the active program's layout reserves every compiler-emitted site.
-        let cache = unsafe { self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        let cache = self.field_cache_entry(site);
         if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
             return None;
         }
@@ -1467,7 +1482,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         debug_assert!(self.lane_admits(p));
         let receiver = self.heap.object(object)?;
-        let hit = self.cached_ordinary_holder_field_value(self.field_cache_index(site), receiver)?;
+        let hit = self.ordinary_holder_entry_value(self.field_cache_entry(site), receiver)?;
         self.profile
             .field_cache_hit(usize::from(hit.tier), hit.depth);
         Some(hit.value)
@@ -1933,7 +1948,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn string_prototype_field_hit(&self, site: u16) -> Option<Value> {
         let prototype = self.heap.object_record(self.string_proto)?;
         // SAFETY: the active program's layout reserves every compiler-emitted site.
-        let cache = unsafe { self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        let cache = self.field_cache_entry(site);
         // An entry records only a non-dictionary shape, which the exact shape matches only
         // outside dictionary storage; a polymorphic site's other entries take the walk.
         (cache.holder == NO_FIELD_HOLDER && cache.receiver == prototype.exact_shape())
@@ -2012,7 +2027,12 @@ impl<H: Host> Vm<H> {
         receiver: &Object,
     ) -> Option<FieldCacheHit> {
         // SAFETY: the active program's layout reserves every compiler-emitted site.
-        let cache = unsafe { self.field_caches.get_unchecked(site) };
+        self.ordinary_holder_entry_value(unsafe { self.field_caches.get_unchecked(site) }, receiver)
+    }
+
+    /// `cached_ordinary_holder_field_value` of the site entry `cache`.
+    #[inline(always)]
+    fn ordinary_holder_entry_value(&self, cache: FieldCache, receiver: &Object) -> Option<FieldCacheHit> {
         if cache.holder == NO_FIELD_HOLDER || cache.receiver != receiver.exact_shape() {
             return None;
         }
@@ -3788,6 +3808,10 @@ impl<H: Host> Vm<H> {
     pub(super) fn transition_property_shape(&mut self, shape: u32, key: PropertyKey) -> u32 {
         self.transition_data_property_shape(shape, key, DEFAULT_DATA_ATTRIBUTES)
     }
+    /// Out of line and of plain values: a lane construct that inlined it would otherwise pass
+    /// the transition it builds by its stack address, which keeps the construct's dispatch
+    /// from being a sibling call (`tools/check-lane-tail-calls.sh`).
+    #[inline(never)]
     pub(super) fn transition_data_property_shape(
         &mut self,
         shape: u32,

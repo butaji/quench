@@ -35,6 +35,7 @@ macro_rules! number_relations {
         pub(super) enum NumberRelation { $($relation),+ }
 
         impl NumberRelation {
+            #[inline(always)]
             pub(super) fn from_operator(op: u32) -> Option<Self> {
                 $(
                     if $(op == BinaryOperator::$operator as u32)||+ {
@@ -85,6 +86,7 @@ macro_rules! number_arithmetic {
         pub(super) enum NumberArithmetic { $($operation),+ }
 
         impl NumberArithmetic {
+            #[inline(always)]
             pub(super) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == BinaryOperator::$operator as u32 {
@@ -163,6 +165,7 @@ macro_rules! number_unary {
         pub(super) enum NumberUnary { $($operation),+ }
 
         impl NumberUnary {
+            #[inline(always)]
             pub(super) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == UnaryOperator::$operator as u32 {
@@ -197,6 +200,28 @@ macro_rules! number_unary {
 number_unary! {
     Plus => UnaryPlus, plus;
     Negate => UnaryNegation, negate;
+}
+
+/// A stage supplies predicate operations for the shared JavaScript Number ToBoolean
+/// denotation. Interpreter and codegen stages use the same nonzero-and-not-NaN formula.
+pub(super) trait NumberTruthinessStage<T> {
+    type Predicate;
+
+    fn zero(&mut self) -> T;
+    fn equal(&mut self, left: T, right: T) -> Self::Predicate;
+    fn not_equal(&mut self, left: T, right: T) -> Self::Predicate;
+    fn and(&mut self, left: Self::Predicate, right: Self::Predicate) -> Self::Predicate;
+}
+
+#[inline(always)]
+pub(super) fn number_truthiness<T: Copy, S: NumberTruthinessStage<T>>(
+    stage: &mut S,
+    value: T,
+) -> S::Predicate {
+    let zero = stage.zero();
+    let nonzero = stage.not_equal(value, zero);
+    let not_nan = stage.equal(value, value);
+    stage.and(nonzero, not_nan)
 }
 
 /// The int32 operations used by JavaScript bitwise expressions. Keeping their
@@ -367,6 +392,35 @@ impl NumberUnaryStage<f64> for NumberF64Stage {
     }
 }
 
+impl NumberTruthinessStage<f64> for NumberF64Stage {
+    type Predicate = bool;
+
+    #[inline(always)]
+    fn zero(&mut self) -> f64 {
+        0.0
+    }
+
+    #[inline(always)]
+    fn equal(&mut self, left: f64, right: f64) -> Self::Predicate {
+        left == right
+    }
+
+    #[inline(always)]
+    fn not_equal(&mut self, left: f64, right: f64) -> Self::Predicate {
+        left != right
+    }
+
+    #[inline(always)]
+    fn and(&mut self, left: Self::Predicate, right: Self::Predicate) -> Self::Predicate {
+        left && right
+    }
+}
+
+#[inline(always)]
+pub(crate) fn number_is_truthy(value: f64) -> bool {
+    number_truthiness(&mut NumberF64Stage, value)
+}
+
 #[inline(always)]
 pub(super) fn number_unary_result(operator: u32, value: f64) -> Option<f64> {
     Some(NumberUnary::from_operator(operator)?.apply(&mut NumberF64Stage, value))
@@ -509,7 +563,7 @@ fn numeric_number_result(operator: BinaryOperator, left: f64, right: f64) -> f64
 
 #[cfg(test)]
 mod numeric_instruction_tests {
-    use super::{NumberArithmetic, NumberBitwise, NumberUnary, Op};
+    use super::{NumberArithmetic, NumberBitwise, NumberUnary, Op, number_is_truthy};
     use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
     #[test]
@@ -600,6 +654,21 @@ mod numeric_instruction_tests {
             None
         );
     }
+
+    #[test]
+    fn number_to_boolean_uses_nonzero_and_not_nan_for_both_signs_and_infinities() {
+        for (value, expected) in [
+            (0.0, false),
+            (-0.0, false),
+            (f64::NAN, false),
+            (f64::INFINITY, true),
+            (f64::NEG_INFINITY, true),
+            (f64::MIN_POSITIVE, true),
+            (-1.0, true),
+        ] {
+            assert_eq!(number_is_truthy(value), expected);
+        }
+    }
 }
 
 #[inline(always)]
@@ -646,12 +715,26 @@ pub(super) const BITWISE_AND: u32 = BinaryOperator::BitwiseAnd as u32;
 /// `None` for any other operand.
 #[inline(always)]
 pub(super) fn number_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+    if let Some(value) = bitwise_value_operator::<OP>(left, right) {
+        return Some(value);
+    }
     let (left, right) = Value::number_pair(left, right)?;
     Some(Value::number(numeric_number_result(
         numeric_binary_operator(OP)?,
         left,
         right,
     )))
+}
+
+/// A bitwise operator `OP` of two Numbers, each taken to int32 from its own representation
+/// (an integer as it is, a double by ToInt32), its result made as `number_bitwise_result`
+/// makes it, without the round trip through doubles `numeric_number_result` takes. `None`
+/// for any other operator, which folds away for a constant `OP`, and for other operands.
+#[inline(always)]
+fn bitwise_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+    let operation = NumberBitwise::from_binary_operator(numeric_binary_operator(OP)?)?;
+    let int32 = |value: Value| value.as_int().or_else(|| value.as_number().map(|number| number_to_u32(number) as i32));
+    Some(number_bitwise_result(operation, int32(left)?, int32(right)?))
 }
 
 /// Integer operator `OP` (`numeric_integer_result`) when both operands are integers;

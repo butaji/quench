@@ -1120,6 +1120,20 @@ mod tests {
     }
 
     #[test]
+    /// A field initializer that makes a function runs inline in the constructor, whose
+    /// arguments then stay in frame slots, whether its parameters bind directly or apart.
+    fn constructors_whose_fields_make_functions_keep_valid_layouts() {
+        assert_output_in_execution_modes(
+            r#"
+            class Direct { read = () => this.v; constructor(v) { this.v = v; } }
+            class Apart { make = function () { return 1; }; constructor(v = 2, { w } = { w: 3 }) { this.v = v + w; } }
+            print(new Direct(4).read()); print(new Apart().v + new Apart().make());
+            "#,
+            &["4", "6"],
+        );
+    }
+
+    #[test]
     fn regression_instance_initializers_precede_defaults_in_the_class_scope() {
         assert_output_in_execution_modes(
             r#"

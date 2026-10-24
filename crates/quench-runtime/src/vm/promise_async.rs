@@ -24,10 +24,18 @@ impl<H: Host> Vm<H> {
         else {
             return;
         };
-        for (register, value) in frame.registers.iter_mut().enumerate() {
-            if register >= u64::BITS as usize || mask & (1 << register) == 0 {
-                *value = Value::UNDEFINED;
-            }
+        // The mask covers the first `RegisterSet::BITS` registers; every later one is dead.
+        type RegisterSet = crate::compile::liveness::RegisterSet;
+        let covered = frame.registers.len().min(RegisterSet::BITS as usize);
+        let (low, high) = frame.registers.split_at_mut(covered);
+        high.fill(Value::UNDEFINED);
+        let mut dead = !mask & RegisterSet::MAX.checked_shr(RegisterSet::BITS - covered as u32).unwrap_or(0);
+        // Dead registers come in runs (a statement's temporaries), each cleared as one span.
+        while dead != 0 {
+            let start = dead.trailing_zeros();
+            let end = start + (dead >> start).trailing_ones();
+            low[start as usize..end as usize].fill(Value::UNDEFINED);
+            dead &= RegisterSet::MAX.checked_shl(end).unwrap_or(0);
         }
     }
 

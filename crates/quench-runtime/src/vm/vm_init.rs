@@ -94,6 +94,7 @@ impl<H: Host> Vm<H> {
             lane_returned: None,
             active_layout: Default::default(),
             active_constants: &[],
+            active_field_entries: std::ptr::null(),
             active_program: ProgramId::MAIN,
             #[cfg(feature = "profile-aggregate")]
             profile: Profile::default(),
@@ -109,6 +110,7 @@ impl<H: Host> Vm<H> {
             symbol_load_proofs: Default::default(),
             private_site_homes: Default::default(),
             array_iteration_proof: None,
+            species_slot_proof: Default::default(),
             enumerable_keys: Default::default(),
             shape_attribute_memo: Default::default(),
             name_atom_memo: Default::default(),

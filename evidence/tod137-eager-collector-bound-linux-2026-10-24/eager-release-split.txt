@@ -1,0 +1,7 @@
+richards             default 2948/1492  eager -220 (-15%)  norel +768 (+2%)  eager_norel +512 (-5%)
+crypto               default 3588/2506  eager -316 (-50%)  norel +236 (+3%)  eager_norel +140 (-24%)
+raytrace             default 3144/2148  eager -260 (-94%)  norel +552 (+28%)  eager_norel +416 (-79%)
+regexp               default 6096/2391  eager -520 (-78%)  norel +384 (+14%)  eager_norel -48 (-45%)
+deltablue            default 3208/1290  eager -432 (-86%)  norel +300 (+7%)  eager_norel +384 (-60%)
+
+[exited with code 0]
