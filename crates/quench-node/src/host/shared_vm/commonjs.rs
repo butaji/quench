@@ -1938,9 +1938,9 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Vfs => node_library_module(context, "vfs.js", "vfs.js"),
         BuiltinModule::Net => crate::modules::net_shared_vm::module(context),
         BuiltinModule::Http => crate::modules::http_shared_vm::module(context),
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         BuiltinModule::Os => node_library_module(context, "os.js", "os.js"),
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(unix))]
         BuiltinModule::Os => crate::modules::os_shared_vm::module(context),
         BuiltinModule::Buffer => crate::modules::buffer_shared_vm::module(context),
         BuiltinModule::Stream => node_library_module(context, "stream.js", "stream.js"),

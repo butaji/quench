@@ -99,7 +99,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "_kill", kill)?;
     #[cfg(target_os = "linux")]
     {
-        let signals = super::os_shared_vm::signal_constants(context)?;
+        let signals =
+            super::os_shared_vm::signal_constants(context, super::process_signals_state::SIGNALS)?;
         let data = context.array_rooted(&[process, signals])?;
         let operation = context
             .host_function_with_data(crate::host::shared_vm::operation("processKill"), data)?;

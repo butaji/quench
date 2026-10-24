@@ -148,7 +148,7 @@ pub(crate) mod encoding_binding_shared_vm;
 
 pub(crate) mod crypto_key_shared_vm;
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 pub(crate) mod os_binding_shared_vm;
 
 pub(crate) mod cli_options;

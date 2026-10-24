@@ -375,9 +375,10 @@ fn build_internal_binding(
     context: &mut NativeContext<'_, NodeHost>, name: &str,
 ) -> Result<RootId, RootedError> {
     match name {
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         "os" => return super::os_binding_shared_vm::os_binding(context),
-        #[cfg(target_os = "linux")]
+        // Node's `lib/os.js` reads `getTempDir` from this binding at load time.
+        #[cfg(unix)]
         "credentials" => return super::os_binding_shared_vm::credentials_binding(context),
         "fs" => return super::fs_directory_shared_vm::binding(context),
         "errors" => return super::node_errors_shared_vm::binding(context),
@@ -445,7 +446,7 @@ fn build_internal_binding(
             let binding = context.object_rooted()?;
             let fs = super::fs_shared_vm::fs_constants(context)?;
             put(context, binding, "fs", fs)?;
-            #[cfg(target_os = "linux")]
+            #[cfg(unix)]
             {
                 let os = super::os_binding_shared_vm::constants(context)?;
                 put(context, binding, "os", os)?;

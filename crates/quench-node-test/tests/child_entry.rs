@@ -8464,7 +8464,7 @@ fn process_memory_constraints_respect_inherited_data_limits() {
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[test]
 fn os_memory_functions_report_native_values_names_and_primitive_conversion() {
     compare_node_stream_source(
@@ -8487,7 +8487,7 @@ console.log(JSON.stringify(out));
     );
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[test]
 fn os_tmpdir_uses_live_nonempty_environment_precedence_and_removes_one_slash() {
     compare_node_stream_source(
@@ -8505,7 +8505,7 @@ console.log(JSON.stringify(out));
     );
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[test]
 fn os_canonical_exports_reflection_constants_and_stable_host_values_match_node() {
     compare_node_stream_source(
@@ -8528,7 +8528,7 @@ console.log(JSON.stringify(out));
     );
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[test]
 fn os_user_info_reads_account_records_and_native_encodings_without_public_hooks() {
     compare_node_stream_source(
@@ -8553,7 +8553,7 @@ console.log(JSON.stringify(out));
     );
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[test]
 fn os_priority_validation_native_system_errors_and_process_effects_match_node() {
     compare_node_stream_source(

@@ -4,7 +4,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(unix))]
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
     for name in [
@@ -51,7 +51,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     #[cfg(target_os = "linux")]
     {
         let constants = context.null_object_rooted()?;
-        let signals = signal_constants(context)?;
+        let signals = signal_constants(context, super::process_signals_state::SIGNALS)?;
         set(context, constants, "signals", signals)?;
         set(context, module, "constants", constants)?;
     }
@@ -245,12 +245,13 @@ fn set_number(
 }
 
 /// Public and captured-private projections derive from the OS signal owner.
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 pub(crate) fn signal_constants(
     context: &mut NativeContext<'_, NodeHost>,
+    inventory: &[(&str, libc::c_int)],
 ) -> Result<RootId, RootedError> {
     let signals = context.null_object_rooted()?;
-    for (name, number) in super::process_signals_state::SIGNALS {
+    for (name, number) in inventory {
         let key = context.string_rooted(name);
         let value = context.number(f64::from(*number));
         context.define_data_property_rooted(signals, key, value, false, true, false)?;
@@ -266,5 +267,5 @@ pub(crate) fn freemem_operation(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    Ok(context.number(crate::modules::os_facts::memory_info().available as f64))
+    Ok(context.number(crate::modules::os_facts::free_memory_bytes() as f64))
 }
