@@ -4154,7 +4154,8 @@ pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
 }
 
 /// Whether the JavaScript function tiers (the per-function tier and the general-dispatch
-/// tier) compile under each memory policy (`MemoryPolicy` order). Memory-first compiles
+/// tier, and the loop tier's site analysis) compile under each memory policy (`MemoryPolicy`
+/// order). Memory-first compiles
 /// none, on the owner's direction that it may trade Score for memory under `--jit` (TOD-123).
 /// Under memory-first their code and regalloc2 state set the `--jit` peaks: the general-dispatch
 /// tier took V8-v7 Crypto `--jit` from 3220 to 5496 KiB (median, bolted static x86_64). With
