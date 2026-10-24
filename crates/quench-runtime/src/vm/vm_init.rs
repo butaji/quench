@@ -109,6 +109,7 @@ impl<H: Host> Vm<H> {
             symbol_load_proofs: Default::default(),
             private_site_homes: Default::default(),
             array_iteration_proof: None,
+            species_slot_proof: Default::default(),
             enumerable_keys: Default::default(),
             shape_attribute_memo: Default::default(),
             name_atom_memo: Default::default(),
