@@ -34,10 +34,16 @@ fn direct_array_record_base_resolves_the_current_live_array_value() {
         .array_elements(array)
         .expect("array elements")
         .as_ptr();
+    // Keep a second owner so `make_mut` must exercise its copy-on-write path.
+    let shared_backing = heap
+        .array_elements(array)
+        .expect("array elements")
+        .clone();
     heap.array_elements_mut(array)
         .expect("array elements")
         .make_mut()
         .push(Value::integer(9));
+    assert_eq!(shared_backing.as_ptr(), before);
     assert_eq!(heap.array_record_base(), Some(base));
     let after = heap
         .array_elements(array)
