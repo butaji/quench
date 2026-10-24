@@ -58,6 +58,42 @@ pub(super) enum NumberRelationDomain {
     Float64,
 }
 
+/// The shared word written by a compiled region when it hands execution back to the lane.
+/// Region-specific metadata stays in the owning tier; this layout carries only the handoff
+/// kind and its PC or entry-miss payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RegionExit {
+    EntryMiss(u32),
+    Resume(u32),
+    Fallback(u32),
+    Recompile(u32),
+}
+
+impl RegionExit {
+    const KIND_SHIFT: u32 = u32::BITS;
+    const PAYLOAD_MASK: u64 = u32::MAX as u64;
+
+    pub(super) const fn encode(self) -> u64 {
+        let (kind, payload) = match self {
+            Self::EntryMiss(payload) => (0, payload),
+            Self::Resume(pc) => (1, pc),
+            Self::Fallback(pc) => (2, pc),
+            Self::Recompile(pc) => (3, pc),
+        };
+        ((kind as u64) << Self::KIND_SHIFT) | payload as u64
+    }
+
+    pub(super) const fn decode(word: u64) -> Self {
+        let payload = (word & Self::PAYLOAD_MASK) as u32;
+        match word >> Self::KIND_SHIFT {
+            1 => Self::Resume(payload),
+            2 => Self::Fallback(payload),
+            3 => Self::Recompile(payload),
+            _ => Self::EntryMiss(payload),
+        }
+    }
+}
+
 /// Emit a Number relation using the same relation dispatch as the interpreter.
 /// The domain selects its Cranelift condition codes; the operation mapping is shared.
 pub(super) fn emit_number_relation(
@@ -10073,6 +10109,18 @@ const VOID_RESULT_CONSTANT: usize = 1;
 mod tests {
     use super::*;
     use crate::bytecode::Op;
+
+    #[test]
+    fn region_exit_words_round_trip_each_shared_handoff() {
+        for exit in [
+            RegionExit::EntryMiss(u32::MAX),
+            RegionExit::Resume(17),
+            RegionExit::Fallback(29),
+            RegionExit::Recompile(41),
+        ] {
+            assert_eq!(RegionExit::decode(exit.encode()), exit);
+        }
+    }
 
     fn memcpy_leaf_context(
         cache: &mut EmscriptenMemcpyCache,
