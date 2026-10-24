@@ -3501,6 +3501,15 @@ script_handler! {
 }
 
 script_handler! {
+    /// `Unary` of `UNARY_TYPEOF_INDEX`, chosen when the view was derived
+    /// (`specialize_register_operands`): the index of `typeof`'s name, which runs no guest code.
+    fn lane_typeof_index<>(cx, r, ip, i, view) {
+        r.set(i.a, unsafe { vm(cx) }.typeof_index_value(r.get(i.b)));
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// `Unary`: logical not and `typeof` of any value, and the numeric operators of a
     /// Number, run no guest code; any other operand takes the general path.
     fn lane_unary<>(cx, r, ip, i, view) {
@@ -15094,8 +15103,15 @@ fn specialize_register_operands<H: Host>(
     };
     let forward_test = lane_jump_binary_false::<H, false> as Handler as *const ();
     let backward_test = lane_jump_binary_false::<H, true> as Handler as *const ();
+    let unary = lane_unary::<H> as Handler as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {
         let record = &mut records[pc];
+        if record.handler == unary {
+            if instruction.imm() == crate::bytecode::UNARY_TYPEOF_INDEX {
+                record.handler = lane_typeof_index::<H> as Handler as *const ();
+            }
+            continue;
+        }
         if ![binary, get_index, forward_test, backward_test].contains(&record.handler) {
             continue;
         }
