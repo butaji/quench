@@ -8337,6 +8337,39 @@ impl<H: Host> Vm<H> {
         [set, set | 1].into_iter().find(|index| self.script_call_holds(*index, callee))
     }
 
+    /// Keep the current closure's target cached but change its entry after
+    /// specialized-tier rejection. Its next call then uses the ordinary frame
+    /// handoff, which owns the generic dispatch registers, locals and recovery.
+    fn route_active_script_target_to_frame(
+        &mut self,
+        program: ProgramId,
+        function: u32,
+    ) -> bool {
+        if self.active_program != program {
+            return false;
+        }
+        let callee = self.lane_stack.activations.last().and_then(|activation| {
+            (activation.function == function).then_some(&activation.kind).and_then(|kind| {
+                match kind {
+                    ActivationKind::Script(script) => Some(script.callee),
+                    ActivationKind::Wasm(_) => None,
+                }
+            })
+        });
+        let Some(callee) = callee else {
+            return false;
+        };
+        let Some(index) = self.script_call_index(callee) else {
+            return false;
+        };
+        let target = &mut self.lane_stack.script_targets.entries[index];
+        if target.program != program || target.function != function {
+            return false;
+        }
+        target.entry = CallEntry::Frame;
+        true
+    }
+
     /// Whether `LaneStack::script_targets` entry `index` holds `callee`'s target for this
     /// generation and the running program.
     #[inline(always)]
@@ -8482,7 +8515,7 @@ impl<H: Host> Vm<H> {
                 .lane_view_any(program, function)
                 .is_some_and(|view| unsafe { &*view }.environment_window.is_some());
         // Across programs only a plain or keeping activation runs frameless: an environment
-        // activation, or a construction, leaves its calls a frame.
+        // activation or a construction leaves its calls a frame.
         let view = if !(plan.registers_only || environment)
             || cross && environment
             || numeric
@@ -10878,7 +10911,10 @@ fn lane_tier_enter<H: Host>(
         }
         return Some(entered);
     }
-    if !vm.js_tier_may_claim(code, program, function)
+    if vm.js_tier_requires_general_frame_entry(code, program, function) {
+        let routed = vm.route_active_script_target_to_frame(program, function);
+        debug_assert!(routed, "generic tier transition must update its active call target");
+    } else if !vm.js_tier_may_claim(code, program, function)
         && let Some(own) = own
     {
         own.release_from_tier();

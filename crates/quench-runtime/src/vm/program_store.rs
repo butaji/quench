@@ -2029,6 +2029,7 @@ impl ProgramStore {
         id: ProgramId,
         function: u32,
         compiled: Option<Rc<super::compiled::CompiledJsFunction>>,
+        general_fallback_after_codegen_rejection: bool,
     ) -> bool {
         let Some(entry) = self.entry(id) else {
             return false;
@@ -2036,12 +2037,19 @@ impl ProgramStore {
         if entry.jit_tiers.is_wasm() {
             return false;
         }
+        let compilation_succeeded = compiled.is_some();
         let compiled = compiled.filter(|compiled| {
             self.jit_code_cache
                 .retain(JitArtifactKind::JsFunction, compiled.mapped_bytes())
         });
         if let Some(entry) = self.entry_mut(id) {
-            let tier = compiled.map_or(JsTierState::Unsupported, JsTierState::Compiled);
+            let tier = match compiled {
+                Some(compiled) => JsTierState::Compiled(compiled),
+                None if general_fallback_after_codegen_rejection && !compilation_succeeded => {
+                    JsTierState::GeneralPromotionPending
+                }
+                None => JsTierState::Unsupported,
+            };
             if let Some(state) = entry.jit_tiers.js_mut(function) {
                 *state = tier;
             } else {
