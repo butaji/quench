@@ -1491,13 +1491,14 @@ impl<H: Host> Vm<H> {
                 // interpreter until the next function entry.
                 let program_id = self.frames[frame].program;
                 let function_id = self.frames[frame].function;
-                let should_try_general = match self.programs.js_tier(program_id, function_id) {
-                    Some(super::program_store::JsTierState::Compiled(compiled)) => {
-                        compiled.is_general_dispatch()
-                    }
-                    Some(super::program_store::JsTierState::GeneralCompileDue) => true,
-                    _ => false,
-                };
+                let should_try_general = self.programs.js_jit_general_dispatch_enabled()
+                    && match self.programs.js_tier(program_id, function_id) {
+                        Some(super::program_store::JsTierState::Compiled(compiled)) => {
+                            compiled.is_general_dispatch()
+                        }
+                        Some(super::program_store::JsTierState::GeneralCompileDue) => true,
+                        _ => false,
+                    };
                 if should_try_general
                     && let Some(outcome) = self.js_jit_general_dispatch_at_entry(
                         p,
