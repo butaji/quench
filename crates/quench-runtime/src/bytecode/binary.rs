@@ -489,7 +489,7 @@ fn decode_program(
             input.take(crate::wasm::V128_BYTES)?.try_into().unwrap(),
         )),
         0 => Ok(Constant::Number(f64::from_bits(input.u64()?))),
-        1 => Ok(Constant::String(input.string()?)),
+        1 => Ok(Constant::String(input.string()?.into())),
         7 => Ok(Constant::StringUnits(input.u16s()?)),
         6 => Ok(Constant::BigInt(input
             .string()?

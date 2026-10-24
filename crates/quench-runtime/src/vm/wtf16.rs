@@ -810,6 +810,15 @@ impl JsString {
         )))
     }
 
+    /// `text` as a string, sharing its allocation when it is stored that way: ASCII text too
+    /// long to sit inline (`FlatUnits::Ascii`).
+    pub(crate) fn from_shared_text(text: &Rc<str>) -> Self {
+        if text.is_ascii() && text.len() > SHORT_ASCII_CAPACITY {
+            return Self::from_flat(FlatUnits::Ascii(Rc::clone(text)));
+        }
+        Self::from_str(text)
+    }
+
     #[inline]
     pub(crate) fn units(&self) -> Units<'_> {
         self.flat().view()

@@ -165,7 +165,9 @@ const NO_RESULT_FLAGS: Register = 0;
 #[derive(Clone, Debug)]
 pub enum Constant {
     Number(f64),
-    String(String),
+    /// Shared with the heap strings materialized from it (`JsString::from_shared_text`), so a
+    /// long literal's text is held once.
+    String(std::rc::Rc<str>),
     StringUnits(Vec<u16>),
     BigInt(num_bigint::BigInt),
     WasmBits64(u64),

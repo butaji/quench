@@ -6,7 +6,7 @@ impl FunctionCompiler<'_, '_> {
             self.optional_static_get(&value.object, value.property.name.as_str())
         } else if matches!(&value.object, Expression::Super(_)) {
             let base = self.expression(&value.object);
-            let key = self.literal(Constant::String(value.property.name.to_string()));
+            let key = self.literal(Constant::String(value.property.name.as_str().into()));
             let receiver = self.reg();
             self.emit(Op::LoadThis, receiver, 0, 0, 0);
             self.super_get(base, key, receiver)
@@ -181,7 +181,7 @@ impl FunctionCompiler<'_, '_> {
                     let (_, _, jump) = self.emit_optional_prefix(receiver);
                     self.patch_instruction(jump, self.code.len() as u32);
                 }
-                let key = self.literal(Constant::String(member.property.name.to_string()));
+                let key = self.literal(Constant::String(member.property.name.as_str().into()));
                 Some((receiver, key))
             }
             ChainElement::ComputedMemberExpression(member) => {

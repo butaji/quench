@@ -141,7 +141,7 @@ impl FunctionCompiler<'_, '_> {
             }
             Expression::StaticMemberExpression(member) => {
                 let target = self.expression(&member.object);
-                let key = self.literal(Constant::String(member.property.name.to_string()));
+                let key = self.literal(Constant::String(member.property.name.as_str().into()));
                 (target, key)
             }
             Expression::ComputedMemberExpression(member) => {
