@@ -10131,8 +10131,12 @@ impl<H: Host> Vm<H> {
         program_id: ProgramId,
         function: u32,
         facts: &super::js_compiled::JsEntryFacts,
+        frame: Option<usize>,
     ) -> (bool, bool) {
         let Some(body) = program.function_get(function as usize).filter(|_| facts.general) else {
+            if let Some(frame) = frame {
+                self.frames[frame].js_general_dispatch_work_tracking = false;
+            }
             return (false, false);
         };
         let state = self.programs.js_tier(program_id, function);
@@ -10150,12 +10154,30 @@ impl<H: Host> Vm<H> {
                 || general_state
                 || matches!(state, Some(super::program_store::JsTierState::Compiled(compiled)) if compiled.is_general_dispatch()));
         if !general_candidate {
+            if let Some(frame) = frame {
+                self.frames[frame].js_general_dispatch_work_tracking = false;
+            }
             return (false, false);
         }
         // A legacy candidate is observed only once its numeric profile has declined.
         let observes = !facts.candidate || general_state;
         // The tier manager prices the baseline against the entries so far.
         let due = observes && self.programs.note_js_general_dispatch_entry(program_id, function, body.code.len(), self.memory_policy());
+        if let Some(frame) = frame {
+            let state = self.programs.js_tier(program_id, function);
+            self.frames[frame].js_general_dispatch_work_tracking = self
+                .programs
+                .js_jit_general_dispatch_enabled()
+                && matches!(
+                    state,
+                    Some(
+                        super::program_store::JsTierState::Hot { .. }
+                            | super::program_store::JsTierState::Rejected { .. }
+                            | super::program_store::JsTierState::GeneralPromotionPending { .. }
+                            | super::program_store::JsTierState::Unsupported
+                    )
+                );
+        }
         (true, due)
     }
 
@@ -10205,7 +10227,7 @@ impl<H: Host> Vm<H> {
                     instructions,
                 );
             } else if let Some(facts) = self.programs.js_entry_facts(id, function) {
-                self.js_tier_note_general_entry(program, id, function, &facts);
+                self.js_tier_note_general_entry(program, id, function, &facts, None);
             }
             self.programs.record_js_jit_fallback_entry(id, function);
         }
@@ -10285,7 +10307,7 @@ impl<H: Host> Vm<H> {
             })
         });
         let (general_candidate, mut promote_general) =
-            self.js_tier_note_general_entry(program, program_id, function, &facts);
+            self.js_tier_note_general_entry(program, program_id, function, &facts, Some(frame));
         let mut specialized_guard_miss = false;
         let compiled_entry = entry.as_ref().and_then(|entry| {
             self.js_jit_at_entry(program, entry, &mut specialized_guard_miss)
@@ -10399,6 +10421,8 @@ impl<H: Host> Vm<H> {
                 compiled
             }
         }?;
+
+        self.frames[frame].js_general_dispatch_work_tracking = false;
 
         let mut dispatch = JsStepDispatch {
             program_id,

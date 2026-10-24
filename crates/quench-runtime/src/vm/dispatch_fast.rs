@@ -5500,7 +5500,7 @@ script_handler! {
             let instruction_count = code
                 .function_get(function as usize)
                 .map_or(0, |body| body.code.len());
-            if runtime.programs.note_js_general_dispatch_backedge(
+            if runtime.programs.note_js_general_dispatch_work(
                 program_id,
                 function,
                 // Only the taken backedge is guaranteed to have executed;
@@ -5650,7 +5650,7 @@ fn lane_loop_run<H: Host>(
                 let instruction_count = unsafe { &*context.code }
                     .function_get(function as usize)
                     .map_or(0, |body| body.code.len());
-                runtime.programs.note_js_general_dispatch_backedge(
+                runtime.programs.note_js_general_dispatch_work(
                     context.program,
                     function,
                     work,
