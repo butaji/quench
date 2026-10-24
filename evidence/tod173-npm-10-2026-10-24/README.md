@@ -54,6 +54,21 @@ All Linux RSS measurements remain non-qualifying sampled `VmRSS` diagnostics.
 
 `QUENCH_JS_JIT_STATS=1` on the same production binary found 0 native entries across 58 React functions and 214 Zod functions. Pino had 26,219 native entries, all from one `diagnostics_channel` getter, and one successful compile; its hot `logRequest` function remained unsupported. Detailed per-function counters are in `jit-coverage-react-zod-pino.json`. This points to broader effectful field/call compilation as the common throughput blocker.
 
+## Rejected activation-copy candidate
+
+I screened a production PGO change that avoids copying promoted parameters into
+local slots that activation setup immediately resets. The runtime suite passed
+908/908 tests. Eleven paired rounds showed small, inconsistent changes: React
+improved 2.5% no-JIT and 4.3% JIT versus the saved `v2-merged` control (8/11
+rounds faster in each mode), while Zod was flat (1.000× no-JIT, 0.998× JIT)
+and Pino lost 4.1% no-JIT and was flat in JIT. Candidate/control RSS ratios
+ranged from 0.994× to 1.011×. The broad change was reverted because it missed
+the ≥2% practical cutoff on Zod and Pino and did not close any package gap.
+Candidate binary SHA-256 was
+`ba13e9947e8de1864b8b07dfea5f031dd2e8c32a34c2f11b949f26691d7095f0`; control
+SHA-256 was `5ee06f9c402dec175c602b4b8a5cccce2d8ba05b64e6804f26c3529db2b75825`.
+The six paired reports beginning with `activation-` are in this directory.
+
 ## Raw reports
 
 All package and phase reports are the `*-no-jit-11.json` and `*-jit-11.json` files in this directory.
