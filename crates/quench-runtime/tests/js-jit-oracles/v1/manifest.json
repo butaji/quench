@@ -79,22 +79,24 @@
     {
       "id": "field-changing-receiver",
       "path": "field-changing-receiver.js",
-      "sha256": "0848e12e5507c2559215548cf2187296a06d3c0635fd5af8f419bb8d74d55fc7",
+      "sha256": "0910f64d8f0e0ec3693f9df9d9f95c774d123f600e5f45205a3411e0dae47394",
       "native_functions": [
         "readValue"
       ],
       "denotations": [
         "current receiver checked at each call",
         "dynamic values from same-shape objects",
-        "polymorphic receiver shape fallback"
+        "polymorphic receiver shape fallback",
+        "inherited data read after prototype mutation"
       ],
       "guard_misses": [
         "receiver shapes differ",
-        "mutated field values remain current"
+        "mutated field values remain current",
+        "prototype holder changes after warmup"
       ],
       "expected": {
         "exit_code": 0,
-        "stdout": "[101,9,13,34]\n",
+        "stdout": "{\"values\":[101,9,13,34],\"inheritedValue\":89}\n",
         "stderr": ""
       }
     },
