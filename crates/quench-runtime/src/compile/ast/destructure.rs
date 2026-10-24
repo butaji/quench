@@ -298,7 +298,7 @@ impl FunctionCompiler<'_, '_> {
                             let atom = self.owner.atom(property.binding.name.as_str());
                             self.resolve_assignment_name(atom);
                             excluded.push(
-                                self.literal(Constant::String(property.binding.name.to_string())),
+                                self.literal(Constant::String(property.binding.name.as_str().into())),
                             );
                             let cache = self.owner.cache_site();
                             self.emit(
@@ -331,7 +331,7 @@ impl FunctionCompiler<'_, '_> {
                                 let atom = self.owner.atom(name);
                                 let reference =
                                     self.prepare_maybe_default_reference(&property.binding);
-                                excluded.push(self.literal(Constant::String(name.to_owned())));
+                                excluded.push(self.literal(Constant::String(name.into())));
                                 let cache = self.owner.cache_site();
                                 self.emit(
                                     Op::GetField,
@@ -434,7 +434,7 @@ impl FunctionCompiler<'_, '_> {
                 if matches!(&member.object, Expression::Super(_)) {
                     let base = self.expression(&member.object);
                     let receiver = self.load_this_value();
-                    let key = self.literal(Constant::String(member.property.name.to_string()));
+                    let key = self.literal(Constant::String(member.property.name.as_str().into()));
                     AssignmentReference::SuperField {
                         base,
                         key,
@@ -659,7 +659,7 @@ impl FunctionCompiler<'_, '_> {
                         self.bind_pattern_with_reference(&property.value, dst, reference);
                         continue;
                     } else if let Some(key) = Self::binding_key(&property.key) {
-                        excluded.push(self.literal(Constant::String(key.to_owned())));
+                        excluded.push(self.literal(Constant::String(key.into())));
                         let atom = self.owner.atom(key);
                         let reference = self.resolve_binding_pattern(&property.value);
                         let cache = self.owner.cache_site();
