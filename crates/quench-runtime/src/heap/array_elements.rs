@@ -29,9 +29,27 @@ static EMPTY: Header = Header {
 /// The smallest capacity a growing backing takes, as `Vec` grows from empty.
 const MIN_GROWN_CAPACITY: usize = 4;
 
+#[repr(transparent)]
 pub(crate) struct ArrayElements {
     header: NonNull<Header>,
 }
+
+/// Offsets for the native read-only array view. These are derived beside the fields they
+/// describe so native code does not maintain a second copy of the storage layout.
+#[cfg(test)]
+pub(super) const NATIVE_HEADER_POINTER_OFFSET: usize =
+    std::mem::offset_of!(ArrayElements, header);
+#[cfg(test)]
+pub(super) const NATIVE_HEADER_LENGTH_OFFSET: usize = std::mem::offset_of!(Header, len);
+#[cfg(test)]
+pub(super) const NATIVE_HEADER_VALUES_OFFSET: usize = VALUES_OFFSET;
+
+#[cfg(test)]
+const _: () = assert!(NATIVE_HEADER_POINTER_OFFSET == 0);
+#[cfg(test)]
+const _: () = assert!(NATIVE_HEADER_LENGTH_OFFSET + size_of::<u32>() <= size_of::<Header>());
+#[cfg(test)]
+const _: () = assert!(NATIVE_HEADER_VALUES_OFFSET >= size_of::<Header>());
 
 /// An `ArrayElements` that no other array shares (`ArrayElements::make_mut`): the only view
 /// through which values change.
@@ -389,6 +407,68 @@ impl Extend<Value> for UniqueElements {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_layout_matches_header_and_dense_backing() {
+        assert_eq!(
+            NATIVE_HEADER_POINTER_OFFSET,
+            std::mem::offset_of!(ArrayElements, header)
+        );
+        assert_eq!(
+            NATIVE_HEADER_LENGTH_OFFSET,
+            std::mem::offset_of!(Header, len)
+        );
+        assert_eq!(NATIVE_HEADER_VALUES_OFFSET, std::mem::size_of::<Header>());
+        assert_eq!(
+            NATIVE_HEADER_VALUES_OFFSET % std::mem::align_of::<Value>(),
+            0
+        );
+        assert!(
+            NATIVE_HEADER_LENGTH_OFFSET + std::mem::size_of::<u32>()
+                <= NATIVE_HEADER_VALUES_OFFSET
+        );
+
+        let empty = ArrayElements::new();
+        let empty_values = unsafe {
+            empty
+                .header
+                .as_ptr()
+                .cast::<u8>()
+                .add(NATIVE_HEADER_VALUES_OFFSET)
+                .cast::<Value>()
+                .cast_const()
+        };
+        assert_eq!(empty_values, (&*empty).as_ptr());
+        assert_eq!(empty.len(), 0);
+
+        let values = [Value::integer(7), Value::integer(9)];
+        let dense = ArrayElements::from(values);
+        let current_values = unsafe {
+            dense
+                .header
+                .as_ptr()
+                .cast::<u8>()
+                .add(NATIVE_HEADER_VALUES_OFFSET)
+                .cast::<Value>()
+                .cast_const()
+        };
+        assert_eq!(current_values, (&*dense).as_ptr());
+        // The header pointer belongs to this ArrayElements value; re-reading it observes the
+        // new header/backing after copy-on-write mutation.
+        let mut shared = dense.clone();
+        shared.make_mut().push(Value::integer(11));
+        let current_values = unsafe {
+            shared
+                .header
+                .as_ptr()
+                .cast::<u8>()
+                .add(NATIVE_HEADER_VALUES_OFFSET)
+                .cast::<Value>()
+                .cast_const()
+        };
+        assert_eq!(current_values, (&*shared).as_ptr());
+        assert_eq!(shared.len(), 3);
+    }
 
     #[test]
     fn shared_backings_copy_on_write_and_empty_arrays_allocate_nothing() {
