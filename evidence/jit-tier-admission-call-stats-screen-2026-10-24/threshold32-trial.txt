@@ -1,0 +1,14 @@
+Source base: e0aab847f (fresh v2-merged merge)
+Temporary change: LOOP_TIER_THRESHOLD 1000 -> 32; reverted.
+Focused test: js_jit_general_dispatch_promotes_a_single_activation_hot_loop
+Outcome: FAILED as expected by the existing assertion; tier=GeneralCompileDue.
+Observed QUENCH_JS_JIT_STATS for sum:
+  instruction_count=9
+  osr admitted_sites=1, compile_attempts=1, compile_successes=1
+  native_region_runs=1
+  general_dispatch_work=1048, required=288
+  general_dispatch_compile_attempts=0, successes=0
+  tier remained GeneralCompileDue when the single activation returned
+  the generic rejection_reason came from an earlier specialized-tier attempt
+Post-revert runtime library suite: 953 passed, 0 failed.
+No score comparison was run for this rejected source state.

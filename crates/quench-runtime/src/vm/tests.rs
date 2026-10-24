@@ -13742,20 +13742,101 @@ fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
         .programs
         .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, caller)
         .expect("diagnostics should track call sites for the compiled caller");
-    assert!(call_sites.iter().any(|(_, opcode, attempts, outcomes)| {
+    assert!(call_sites.iter().any(|(_, opcode, attempts, outcomes, direct_target, target_calls, _, _)| {
         *opcode == crate::bytecode::Op::CallArray as u16
             && *attempts > 0
+            && *direct_target == Some((super::program_store::ProgramId::MAIN.raw(), callee))
+            && *target_calls == *attempts
             && outcomes[super::program_store::JsJitCallOutcome::PushFrame as usize] > 0
     }));
     let callee_call_sites = compiled
         .programs
         .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, callee)
         .expect("diagnostics should track call sites for the compiled callee");
-    assert!(callee_call_sites.iter().any(|(_, opcode, attempts, outcomes)| {
+    assert!(callee_call_sites.iter().any(|(_, opcode, attempts, outcomes, _, _, _, _)| {
         *opcode == crate::bytecode::Op::Call as u16
             && *attempts > 0
             && outcomes[super::program_store::JsJitCallOutcome::Continue as usize] > 0
     }));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_calls_compiled_numeric_callees_with_materialized_array_arguments() {
+    let padding = "padding = padding + 1;\n".repeat(80);
+    let source = format!(
+        "function add(left, right) {{ return left + right; }}\
+         function drive() {{ let padding = 0; {padding}\
+         const result = add(1, ...[padding]); return result + 1; }}\
+         var total = 0; for (let index = 0; index < 12000; index++) total = drive();\
+         if (total !== 82) throw Error('array call lost its result');"
+    );
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        &source,
+        "js-jit-call-array.js",
+    ))
+    .unwrap();
+    let function_id = |name: &str| {
+        program
+            .functions
+            .iter()
+            .position(|body| {
+                body.header()
+                    .name
+                    .or(body.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32
+    };
+    let add = function_id("add");
+    let drive = function_id("drive");
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let total_atom = interpreter.intern_atom("total");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, total_atom)
+        .unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+    let total_atom = compiled.intern_atom("total");
+    assert_eq!(
+        compiled
+            .own_property(compiled.realm.globals, total_atom)
+            .unwrap(),
+        expected
+    );
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, add)
+    else {
+        panic!("the numeric array-call target should compile");
+    };
+    assert!(native.native_entries() >= 128);
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, drive)
+    else {
+        panic!("the hot caller should compile after enough function entries");
+    };
+    assert!(native.is_general_dispatch());
+    let call_sites = compiled
+        .programs
+        .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, drive)
+        .expect("the compiled caller should have call-site diagnostics");
+    assert!(call_sites.iter().any(
+        |(_, opcode, attempts, outcomes, target, target_calls, _, _)| {
+            *opcode == crate::bytecode::Op::CallArray as u16
+                && *attempts > 0
+                && *target == Some((super::program_store::ProgramId::MAIN.raw(), add))
+                && *target_calls == *attempts
+                && outcomes[super::program_store::JsJitCallOutcome::Continue as usize] > 0
+        }
+    ));
 }
 
 #[test]
