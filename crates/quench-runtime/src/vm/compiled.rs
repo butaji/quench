@@ -989,6 +989,50 @@ fn js_tagged_operand_supported(
     }
 }
 
+/// Compute ToBoolean for values whose truthiness is encoded without a heap
+/// lookup. Strings, BigInts, and objects take the VM path at the same PC.
+fn emit_js_tagged_truthiness(
+    builder: &mut FunctionBuilder<'_>,
+    bits: ir::Value,
+    fallback: ir::Block,
+) -> ir::Value {
+    let is_true = builder
+        .ins()
+        .icmp_imm_u(IntCC::Equal, bits, Value::TRUE.to_bits() as i64);
+    let is_false = builder
+        .ins()
+        .icmp_imm_u(IntCC::Equal, bits, Value::FALSE.to_bits() as i64);
+    let is_null = builder
+        .ins()
+        .icmp_imm_u(IntCC::Equal, bits, Value::NULL.to_bits() as i64);
+    let is_undefined = builder
+        .ins()
+        .icmp_imm_u(IntCC::Equal, bits, Value::UNDEFINED.to_bits() as i64);
+    let known_primitive = builder.ins().bor(is_true, is_false);
+    let known_primitive = builder.ins().bor(known_primitive, is_null);
+    let known_primitive = builder.ins().bor(known_primitive, is_undefined);
+
+    let known_block = builder.create_block();
+    let number_block = builder.create_block();
+    let join = builder.create_block();
+    builder.append_block_param(join, types::I8);
+    builder.ins().brif(known_primitive, known_block, &[], number_block, &[]);
+
+    builder.switch_to_block(known_block);
+    builder.ins().jump(join, &[ir::BlockArg::Value(is_true)]);
+
+    builder.switch_to_block(number_block);
+    let number = emit_js_tagged_number(builder, bits, fallback);
+    let truthy = emit_number_truthiness(builder, number);
+    builder.ins().jump(join, &[ir::BlockArg::Value(truthy)]);
+
+    builder.seal_block(known_block);
+    builder.seal_block(number_block);
+    builder.seal_block(join);
+    builder.switch_to_block(join);
+    builder.block_params(join)[0]
+}
+
 /// Unbox a tagged JavaScript Number, branching to the current instruction's
 /// VM fallback for every other value. The representation keeps all tags in
 /// NaN space, with integer Numbers identified by `INT_TAG`.
@@ -1116,6 +1160,18 @@ fn emit_js_step_fallback(
         continue_block,
         &[ir::BlockArg::Value(next_pc)],
     );
+}
+
+enum JsGeneralBranch {
+    ToBoolean {
+        source: u16,
+        take_when_truthy: bool,
+    },
+    NumberFalse {
+        operator: u32,
+        left: Operand,
+        right: Operand,
+    },
 }
 
 pub(super) fn compile_js_general_dispatch(
@@ -1288,6 +1344,107 @@ pub(super) fn compile_js_general_dispatch(
             false
         };
         if direct {
+            continue;
+        }
+
+        let direct_branch = match instruction.op() {
+            Op::JumpFalse | Op::JumpTrue => register_offset(instruction.register_a()).map(
+                |_| JsGeneralBranch::ToBoolean {
+                    source: instruction.register_a(),
+                    take_when_truthy: instruction.op() == Op::JumpTrue,
+                },
+            ),
+            Op::JumpBinaryFalse => {
+                let operator = instruction.binary_operator_field();
+                let left = instruction.operand_b();
+                let right = instruction.operand_c();
+                (super::operations::NumberRelation::from_operator(operator).is_some()
+                    && js_tagged_operand_supported(program, left, &register_offset)
+                    && js_tagged_operand_supported(program, right, &register_offset))
+                .then_some(JsGeneralBranch::NumberFalse {
+                    operator,
+                    left,
+                    right,
+                })
+            }
+            _ => None,
+        };
+        if let (Some(next), Some(target), Some(direct_branch)) = (
+            next,
+            usize::try_from(instruction.jump_target()).ok(),
+            direct_branch,
+        ) && target > pc
+            && let Some(target_block) = blocks.get(target).copied()
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+        {
+            let fallback = builder.create_block();
+            let branch = match direct_branch {
+                JsGeneralBranch::ToBoolean {
+                    source,
+                    take_when_truthy,
+                } => {
+                    let source = register_offset(source).expect("prevalidated branch register");
+                    let bits = builder.ins().load(
+                        types::I64,
+                        MemFlagsData::trusted(),
+                        arguments,
+                        source,
+                    );
+                    let truthy = emit_js_tagged_truthiness(&mut builder, bits, fallback);
+                    if take_when_truthy {
+                        truthy
+                    } else {
+                        builder.ins().icmp_imm_u(IntCC::Equal, truthy, 0)
+                    }
+                }
+                JsGeneralBranch::NumberFalse {
+                    operator,
+                    left,
+                    right,
+                } => {
+                    let left = read_js_tagged_operand(
+                        &mut builder,
+                        program,
+                        left,
+                        arguments,
+                        &register_offset,
+                    )
+                    .expect("prevalidated JS relation operand");
+                    let left = emit_js_tagged_number(&mut builder, left, fallback);
+                    let right = read_js_tagged_operand(
+                        &mut builder,
+                        program,
+                        right,
+                        arguments,
+                        &register_offset,
+                    )
+                    .expect("prevalidated JS relation operand");
+                    let right = emit_js_tagged_number(&mut builder, right, fallback);
+                    let holds = emit_number_relation(
+                        &mut builder,
+                        operator,
+                        left,
+                        right,
+                        NumberRelationDomain::Float64,
+                    )
+                    .expect("prevalidated JavaScript numeric relation");
+                    builder.ins().icmp_imm_u(IntCC::Equal, holds, 0)
+                }
+            };
+            builder.ins().brif(branch, target_block, &[], next, &[]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(
+                &mut builder,
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            );
             continue;
         }
 
