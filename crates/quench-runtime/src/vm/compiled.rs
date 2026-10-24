@@ -52,48 +52,131 @@ pub(super) use osr_loop::{
     FieldReceiver, LoopEntry, LoopOutcome, LoopRegion, Observation, RegionRejection, Widening,
 };
 
+#[derive(Clone, Copy)]
+pub(super) enum NumberRelationDomain {
+    Int32,
+    Float64,
+}
+
+/// The shared word written by a compiled region when it hands execution back to the lane.
+/// Region-specific metadata stays in the owning tier; this layout carries only the handoff
+/// kind and its PC or entry-miss payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RegionExit {
+    EntryMiss(u32),
+    Resume(u32),
+    Fallback(u32),
+    Recompile(u32),
+}
+
+impl RegionExit {
+    const KIND_SHIFT: u32 = u32::BITS;
+    const PAYLOAD_MASK: u64 = u32::MAX as u64;
+
+    pub(super) const fn encode(self) -> u64 {
+        let (kind, payload) = match self {
+            Self::EntryMiss(payload) => (0, payload),
+            Self::Resume(pc) => (1, pc),
+            Self::Fallback(pc) => (2, pc),
+            Self::Recompile(pc) => (3, pc),
+        };
+        ((kind as u64) << Self::KIND_SHIFT) | payload as u64
+    }
+
+    pub(super) const fn decode(word: u64) -> Self {
+        let payload = (word & Self::PAYLOAD_MASK) as u32;
+        match word >> Self::KIND_SHIFT {
+            1 => Self::Resume(payload),
+            2 => Self::Fallback(payload),
+            3 => Self::Recompile(payload),
+            _ => Self::EntryMiss(payload),
+        }
+    }
+}
+
 /// Emit a Number relation using the same relation dispatch as the interpreter.
-/// Only the stage-specific Cranelift condition codes live here.
+/// The domain selects its Cranelift condition codes; the operation mapping is shared.
 pub(super) fn emit_number_relation(
     builder: &mut FunctionBuilder<'_>,
     operator: u32,
     left: ir::Value,
     right: ir::Value,
+    domain: NumberRelationDomain,
 ) -> Option<ir::Value> {
     struct Emit<'a, 'f> {
         builder: &'a mut FunctionBuilder<'f>,
+        domain: NumberRelationDomain,
     }
 
     impl crate::vm::operations::NumberRelationStage<ir::Value> for Emit<'_, '_> {
         type Output = ir::Value;
 
         fn equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fcmp(FloatCC::Equal, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => self.builder.ins().icmp(IntCC::Equal, left, right),
+                NumberRelationDomain::Float64 => {
+                    self.builder.ins().fcmp(FloatCC::Equal, left, right)
+                }
+            }
         }
         fn not_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fcmp(FloatCC::NotEqual, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => self.builder.ins().icmp(IntCC::NotEqual, left, right),
+                NumberRelationDomain::Float64 => {
+                    self.builder.ins().fcmp(FloatCC::NotEqual, left, right)
+                }
+            }
         }
         fn less_than(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fcmp(FloatCC::LessThan, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => {
+                    self.builder.ins().icmp(IntCC::SignedLessThan, left, right)
+                }
+                NumberRelationDomain::Float64 => {
+                    self.builder.ins().fcmp(FloatCC::LessThan, left, right)
+                }
+            }
         }
         fn less_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder
-                .ins()
-                .fcmp(FloatCC::LessThanOrEqual, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => self
+                    .builder
+                    .ins()
+                    .icmp(IntCC::SignedLessThanOrEqual, left, right),
+                NumberRelationDomain::Float64 => self
+                    .builder
+                    .ins()
+                    .fcmp(FloatCC::LessThanOrEqual, left, right),
+            }
         }
         fn greater_than(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fcmp(FloatCC::GreaterThan, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => self
+                    .builder
+                    .ins()
+                    .icmp(IntCC::SignedGreaterThan, left, right),
+                NumberRelationDomain::Float64 => {
+                    self.builder.ins().fcmp(FloatCC::GreaterThan, left, right)
+                }
+            }
         }
         fn greater_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder
-                .ins()
-                .fcmp(FloatCC::GreaterThanOrEqual, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => self
+                    .builder
+                    .ins()
+                    .icmp(IntCC::SignedGreaterThanOrEqual, left, right),
+                NumberRelationDomain::Float64 => self
+                    .builder
+                    .ins()
+                    .fcmp(FloatCC::GreaterThanOrEqual, left, right),
+            }
         }
     }
 
     Some(
         crate::vm::operations::NumberRelation::from_operator(operator)?.apply(
-            &mut Emit { builder },
+            &mut Emit { builder, domain },
             left,
             right,
         ),
@@ -166,7 +249,99 @@ fn emit_f64_entry_return(
     builder.ins().return_(&[status]);
 }
 
-pub(super) fn emit_number_bitwise_operation(
+fn read_js_numeric_operand(
+    program: &ResidualProgram,
+    body: &mut Body<'_>,
+    operand: Operand,
+    registers: &[bool],
+) -> Option<ir::Value> {
+    match operand.kind()? {
+        OperandKind::Register => {
+            let register = operand.register_index()?;
+            registers
+                .get(usize::from(register))
+                .copied()
+                .filter(|initialized| *initialized)?;
+            Some(body.read(register, crate::WasmType::F64))
+        }
+        OperandKind::Constant => {
+            let crate::bytecode::Constant::Number(value) =
+                program.constants.get(usize::from(operand.payload()))?
+            else {
+                return None;
+            };
+            Some(
+                body.builder
+                    .ins()
+                    .f64const(Ieee64::with_bits(value.to_bits())),
+            )
+        }
+        OperandKind::Field | OperandKind::Local => None,
+    }
+}
+
+/// An acyclic bytecode graph and its predecessors. JS numeric regions may
+/// merge register state through the shared `Body` SSA variables; local-state
+/// branches stay rejected until local slots have an equivalent SSA view.
+fn js_numeric_control_flow(function: &Function) -> Option<(Vec<bool>, Vec<Vec<usize>>)> {
+    if function.code.is_empty() {
+        return None;
+    }
+    let length = function.code.len();
+    let mut reachable = vec![false; length];
+    let mut predecessors = vec![Vec::new(); length];
+    let mut pending = vec![0_usize];
+    while let Some(pc) = pending.pop() {
+        if reachable[pc] {
+            continue;
+        }
+        reachable[pc] = true;
+        let packed = function.code[pc];
+        if packed.is_wide() {
+            return None;
+        }
+        let instruction = packed.as_wide();
+        match instruction.op().control_flow_layout() {
+            ControlFlowLayout::Jump if instruction.op() == crate::bytecode::Op::Jump => {}
+            ControlFlowLayout::ConditionalJump
+                if instruction.op() == crate::bytecode::Op::JumpBinaryFalse => {}
+            ControlFlowLayout::Terminal | ControlFlowLayout::Fallthrough => {}
+            ControlFlowLayout::Jump
+            | ControlFlowLayout::ConditionalJump
+            | ControlFlowLayout::BranchTable
+            | ControlFlowLayout::Call => return None,
+        }
+        let mut successors = Vec::with_capacity(2);
+        crate::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
+            successors.push(successor);
+        });
+        for successor in successors {
+            if successor <= pc || successor >= length {
+                return None;
+            }
+            predecessors[successor].push(pc);
+            pending.push(successor);
+        }
+    }
+    let has_join = (0..length).any(|pc| reachable[pc] && predecessors[pc].len() > 1);
+    let has_branch = function.code.iter().enumerate().any(|(pc, packed)| {
+        reachable[pc]
+            && packed.as_wide().op().control_flow_layout() == ControlFlowLayout::ConditionalJump
+    });
+    let has_local_state = function.code.iter().enumerate().any(|(pc, packed)| {
+        reachable[pc]
+            && matches!(
+                packed.as_wide().op().js_denotation(),
+                JsDenotation::PlainLocalLoad | JsDenotation::PlainLocalStore
+            )
+    });
+    if (has_join || has_branch) && has_local_state {
+        return None;
+    }
+    Some((reachable, predecessors))
+}
+
+pub(super) fn emit_number_bitwise_bits(
     builder: &mut FunctionBuilder<'_>,
     operation: crate::vm::operations::NumberBitwise,
     left: ir::Value,
@@ -202,7 +377,16 @@ pub(super) fn emit_number_bitwise_operation(
         }
     }
 
-    let bits = operation.apply(&mut Emit { builder }, left, right);
+    operation.apply(&mut Emit { builder }, left, right)
+}
+
+pub(super) fn emit_number_bitwise_operation(
+    builder: &mut FunctionBuilder<'_>,
+    operation: crate::vm::operations::NumberBitwise,
+    left: ir::Value,
+    right: ir::Value,
+) -> ir::Value {
+    let bits = emit_number_bitwise_bits(builder, operation, left, right);
     if operation == crate::vm::operations::NumberBitwise::ShiftRightUnsigned {
         let unsigned = builder.ins().uextend(types::I64, bits);
         builder.ins().fcvt_from_uint(types::F64, unsigned)
@@ -223,6 +407,7 @@ pub(super) fn compile_js_numeric_region(
     int32_bitwise: bool,
 ) -> Option<super::js_compiled::JsJitArtifact> {
     let function = program.function_get(function_id as usize)?;
+    let (reachable, predecessors) = js_numeric_control_flow(function)?;
     let params = usize::from(function.params);
     let isa = super::jit_backend::target_isa("speed", true)?;
 
@@ -236,6 +421,10 @@ pub(super) fn compile_js_numeric_region(
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     builder.seal_block(entry);
+    let blocks: Vec<_> = reachable
+        .iter()
+        .map(|reachable| reachable.then(|| builder.create_block()))
+        .collect();
     let parameters = builder.block_params(entry).to_vec();
     let context = parameters[0];
     let arguments = parameters[3];
@@ -260,13 +449,77 @@ pub(super) fn compile_js_numeric_region(
         body.write(index as u16, crate::WasmType::F64, value);
         *initialized = true;
     }
+    let entry_registers = registers;
+    let mut initialized_after: Vec<Option<Vec<bool>>> = vec![None; function.code.len()];
+    body.builder.ins().jump(blocks[0]?, &[]);
 
     let mut returned = false;
     for (pc, packed) in function.code.iter().copied().enumerate() {
-        if returned || packed.is_wide() {
+        if !reachable[pc] {
+            continue;
+        }
+        if packed.is_wide() {
             return None;
         }
+        let block = blocks[pc]?;
+        body.builder.switch_to_block(block);
+        body.builder.seal_block(block);
+        let mut registers = if pc == 0 {
+            entry_registers.clone()
+        } else {
+            let mut incoming: Option<Vec<bool>> = None;
+            for predecessor in &predecessors[pc] {
+                let predecessor_state = initialized_after[*predecessor].as_ref()?.clone();
+                if let Some(incoming) = &mut incoming {
+                    for (initialized, predecessor_initialized) in
+                        incoming.iter_mut().zip(predecessor_state)
+                    {
+                        *initialized &= predecessor_initialized;
+                    }
+                } else {
+                    incoming = Some(predecessor_state);
+                }
+            }
+            incoming?
+        };
         let instruction = packed.as_wide();
+        match instruction.op().control_flow_layout() {
+            ControlFlowLayout::Jump => {
+                let target = usize::try_from(instruction.jump_target()).ok()?;
+                initialized_after[pc] = Some(registers);
+                body.builder.ins().jump(blocks[target]?, &[]);
+                continue;
+            }
+            ControlFlowLayout::ConditionalJump => {
+                if instruction.op() != crate::bytecode::Op::JumpBinaryFalse
+                    || instruction.result_flags() != 0
+                {
+                    return None;
+                }
+                let read_operand = |body: &mut Body<'_>, operand: Operand, registers: &[bool]| {
+                    read_js_numeric_operand(program, body, operand, registers)
+                };
+                let left = read_operand(&mut body, instruction.operand_b(), &registers)?;
+                let right = read_operand(&mut body, instruction.operand_c(), &registers)?;
+                let relation = emit_number_relation(
+                    &mut body.builder,
+                    instruction.binary_operator_field(),
+                    left,
+                    right,
+                    NumberRelationDomain::Float64,
+                )?;
+                let target = usize::try_from(instruction.jump_target()).ok()?;
+                let fallthrough = pc.checked_add(1)?;
+                initialized_after[pc] = Some(registers);
+                body.builder
+                    .ins()
+                    .brif(relation, blocks[fallthrough]?, &[], blocks[target]?, &[]);
+                continue;
+            }
+            ControlFlowLayout::Terminal | ControlFlowLayout::Fallthrough => {}
+            ControlFlowLayout::Call | ControlFlowLayout::BranchTable => return None,
+        }
+        let mut terminal = false;
         let result = match instruction.op().js_denotation() {
             JsDenotation::GetField => {
                 let inputs = numeric_field_inputs?;
@@ -419,9 +672,11 @@ pub(super) fn compile_js_numeric_region(
                 if instruction.returns_from_frame() {
                     emit_f64_entry_return(&mut body.builder, result_pointer, value);
                     returned = true;
-                    break;
+                    terminal = true;
+                    None
+                } else {
+                    Some(value)
                 }
-                Some(value)
             }
             JsDenotation::NumericBinary => {
                 if instruction.numeric_local_target().is_some()
@@ -430,34 +685,18 @@ pub(super) fn compile_js_numeric_region(
                 {
                     return None;
                 }
-                let read_operand =
-                    |body: &mut Body<'_>, operand: Operand, registers: &[bool]| match operand
-                        .kind()?
-                    {
-                        OperandKind::Register => {
-                            let register = operand.register_index()?;
-                            if *registers.get(usize::from(register))? {
-                                Some(body.read(register, crate::WasmType::F64))
-                            } else {
-                                None
-                            }
-                        }
-                        OperandKind::Constant => {
-                            let Constant::Number(value) =
-                                program.constants.get(usize::from(operand.payload()))?
-                            else {
-                                return None;
-                            };
-                            Some(
-                                body.builder
-                                    .ins()
-                                    .f64const(Ieee64::with_bits(value.to_bits())),
-                            )
-                        }
-                        OperandKind::Field | OperandKind::Local => None,
-                    };
-                let left = read_operand(&mut body, instruction.operand_b(), &registers)?;
-                let right = read_operand(&mut body, instruction.operand_c(), &registers)?;
+                let left = read_js_numeric_operand(
+                    program,
+                    &mut body,
+                    instruction.operand_b(),
+                    &registers,
+                )?;
+                let right = read_js_numeric_operand(
+                    program,
+                    &mut body,
+                    instruction.operand_c(),
+                    &registers,
+                )?;
                 let op = instruction.binary_operator();
                 let arithmetic = super::operations::NumberArithmetic::from_js_instruction(
                     instruction.op(),
@@ -484,12 +723,14 @@ pub(super) fn compile_js_numeric_region(
                 if instruction.returns_from_frame() {
                     emit_f64_entry_return(&mut body.builder, result_pointer, value);
                     returned = true;
-                    break;
+                    terminal = true;
+                    None
+                } else {
+                    Some(value)
                 }
-                Some(value)
             }
             JsDenotation::Return => {
-                if instruction.result_flags() != 0 || pc + 1 != function.code.len() {
+                if instruction.result_flags() != 0 {
                     return None;
                 }
                 let register = instruction.register_a();
@@ -499,6 +740,7 @@ pub(super) fn compile_js_numeric_region(
                 let value = body.read(register, crate::WasmType::F64);
                 emit_f64_entry_return(&mut body.builder, result_pointer, value);
                 returned = true;
+                terminal = true;
                 None
             }
             JsDenotation::Unsupported => return None,
@@ -508,11 +750,20 @@ pub(super) fn compile_js_numeric_region(
             body.write(destination as u16, crate::WasmType::F64, value);
             *registers.get_mut(destination)? = true;
         }
+        if !terminal {
+            if instruction.op().control_flow_layout() != ControlFlowLayout::Fallthrough {
+                return None;
+            }
+            let next = pc.checked_add(1)?;
+            initialized_after[pc] = Some(registers);
+            body.builder.ins().jump(blocks[next]?, &[]);
+        }
     }
     if !returned {
         return None;
     }
 
+    body.builder.seal_all_blocks();
     let Body { builder, .. } = body;
     builder.finalize(isa.frontend_config());
     let code = compile_native_function(
@@ -2971,9 +3222,13 @@ fn compile_native_function<T>(
     publish: impl FnOnce(&[u8]) -> Option<T>,
 ) -> Option<T> {
     let mut context = cranelift_codegen::Context::for_function(function);
-    let compiled = context
-        .compile(isa, &mut cranelift_codegen::control::ControlPlane::default())
-        .ok()?;
+    let compiled = match context.compile(
+        isa,
+        &mut cranelift_codegen::control::ControlPlane::default(),
+    ) {
+        Ok(compiled) => compiled,
+        Err(_) => return None,
+    };
     if !compiled.buffer.relocs().is_empty() {
         return None;
     }
@@ -3909,21 +4164,13 @@ fn direct_access(op: Op) -> bool {
 }
 
 fn successors(function: &Function, pc: usize, instruction: WideInstruction) -> Vec<usize> {
-    match instruction.op().control_flow_layout() {
-        ControlFlowLayout::Jump => vec![instruction.jump_target() as usize],
-        ControlFlowLayout::ConditionalJump => vec![instruction.jump_target() as usize, pc + 1],
-        ControlFlowLayout::BranchTable => crate::bytecode::branch_table_entries(pc, instruction)
-            .filter(|entry| *entry < function.code.len())
-            .collect(),
-        ControlFlowLayout::Terminal => vec![],
-        ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => {
-            if instruction.returns_from_frame() {
-                vec![]
-            } else {
-                vec![pc + 1]
-            }
+    let mut successors = Vec::with_capacity(2);
+    crate::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
+        if successor < function.code.len() {
+            successors.push(successor);
         }
-    }
+    });
+    successors
 }
 
 /// The analysis context shared by every function of a program.
@@ -9862,6 +10109,18 @@ const VOID_RESULT_CONSTANT: usize = 1;
 mod tests {
     use super::*;
     use crate::bytecode::Op;
+
+    #[test]
+    fn region_exit_words_round_trip_each_shared_handoff() {
+        for exit in [
+            RegionExit::EntryMiss(u32::MAX),
+            RegionExit::Resume(17),
+            RegionExit::Fallback(29),
+            RegionExit::Recompile(41),
+        ] {
+            assert_eq!(RegionExit::decode(exit.encode()), exit);
+        }
+    }
 
     fn memcpy_leaf_context(
         cache: &mut EmscriptenMemcpyCache,
