@@ -102,6 +102,40 @@ fn register_promotion_admits_statement_level_and_nested_writes() {
 }
 
 #[test]
+fn statement_level_compound_writes_compile_like_statements() {
+    // Each part of a statement-level comma sequence, conditional or logical expression runs
+    // after the earlier parts' reads are consumed, so its writes make no other read of the
+    // local take a copy (`clobbered_locals`), as separate statements' do not: a minified
+    // loop body copies no more locals than its statements would.
+    let copies = |body: &str| {
+        let source = format!(
+            "function f(p) {{ var i, d = 1, q = 3, r = 4; for (i = 0; i < 4; i++) {body} return d + q + r + p; }}"
+        );
+        let program = Engine::specialize(&source, "sequence-writes.js").unwrap();
+        program.compile_released();
+        program.validate().unwrap();
+        let function = &program.functions[1];
+        let promoted: Vec<_> = function.local_registers.iter().map(|local| local.register).collect();
+        function
+            .code
+            .iter()
+            .filter(|instruction| instruction.op() == Op::Move && promoted.contains(&instruction.b()))
+            .count()
+    };
+    let statements = copies("{ d = d + (q >>> 3 ^ q << 2); q = r; r = d | 0; }");
+    for folded in [
+        "d = d + (q >>> 3 ^ q << 2), q = r, r = d | 0;",
+        "(d = d + (q >>> 3 ^ q << 2), q = r), r = d | 0;",
+        "i < 9 ? (d = d + (q >>> 3 ^ q << 2), q = r, r = d | 0) : 0;",
+        "i < 9 && (d = d + (q >>> 3 ^ q << 2), q = r, r = d | 0);",
+    ] {
+        assert_eq!(copies(folded), statements, "{folded}");
+    }
+    // A write nested in an operand still makes the held read copy.
+    assert!(copies("d = d + (q ^ (q = r) << 2), r = d | 0;") > statements);
+}
+
+#[test]
 fn validator_rejects_a_promoted_binding_read_through_its_local_slot() {
     let mut program = Engine::specialize(
         "function read(value) { return value + 1; }",
