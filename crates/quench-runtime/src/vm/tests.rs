@@ -12687,6 +12687,74 @@ fn js_jit_general_dispatch_lowers_tagged_plain_local_accesses() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_lowers_return_to_the_shared_frame_dispatcher() {
+    let source = r#"
+      const shared = { identity: 1 };
+      function choose(condition, first, second) {
+        if (condition) return first;
+        return second;
+      }
+      for (let index = 0; index < 64; index++) {
+        const result = choose(index % 2 === 0, shared, shared);
+        if (result !== shared) throw Error('return identity changed');
+      }
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-return.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|body| {
+            body.header()
+                .name
+                .or(body.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "choose")
+        })
+        .unwrap() as u32;
+    let body = program.function_get(function as usize).unwrap();
+    let return_pcs = body
+        .code
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, packed)| {
+            (super::dispatch_fast::decoded_instruction(body, *packed)
+                .op()
+                .js_denotation()
+                == crate::bytecode::JsDenotation::Return)
+                .then_some(pc)
+        })
+        .collect::<Vec<_>>();
+    assert!(return_pcs.len() >= 2);
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("choose should use the shared general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    for pc in return_pcs {
+        assert!(
+            native.general_dispatch_pc_is_native(pc),
+            "Return at bytecode PC {pc} should complete through the shared frame dispatcher"
+        );
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly() {
     let source = r#"
       function combine(left, right) {
