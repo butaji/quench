@@ -247,6 +247,9 @@ pub(super) struct Frame {
     pc: usize,
     /// Whether pc is a saved continuation after a call rather than the executing operation.
     pc_is_resume: bool,
+    /// Skip one function-entry tier attempt after a native continuation stopped
+    /// on an already-executed backedge to PC zero.
+    pub(super) js_jit_skip_entry_once: bool,
     source_field: Option<(usize, crate::bytecode::FieldPart)>,
     // The current operation's lexical projection, independent of the PC
     // published for GC roots or saved as the continuation after a call.
@@ -333,6 +336,7 @@ impl Frame {
             function: 0,
             pc: 0,
             pc_is_resume: true,
+            js_jit_skip_entry_once: false,
             source_field: None,
             binding_site_pc: None,
             env: Value::NULL,
@@ -372,6 +376,7 @@ impl Frame {
         function: &crate::bytecode::Function,
         arguments: &[Value],
     ) {
+        self.js_jit_skip_entry_once = false;
         let initial = function.initial_register.value();
         let count = usize::from(function.registers);
         let (base, parameters) = match function.parameter_registers {
@@ -419,6 +424,7 @@ impl Frame {
     /// on that fill, so it is always cleared.
     #[inline(always)]
     fn prepare_registers_for(&mut self, function: &crate::bytecode::Function) {
+        self.js_jit_skip_entry_once = false;
         let register_count = usize::from(function.registers);
         if !function.register_roots.covered()
             || function.is_generator
