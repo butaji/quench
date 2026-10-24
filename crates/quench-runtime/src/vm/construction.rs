@@ -148,9 +148,7 @@ impl<H: Host> Vm<H> {
     /// Other dynamic atoms grow with guest input, so their strings stay collectable.
     pub(super) fn atom_string(&mut self, atom: Atom) -> Value {
         let keep = (atom as usize) < self.atom_text.len() || atom == self.runtime_atoms.empty;
-        let value = self.atom_string_kept(atom, keep);
-        self.note_string_atom(value, atom);
-        value
+        self.atom_string_kept(atom, keep)
     }
 
     /// `atom`'s string, kept for the next request when `keep` holds. Program atoms are kept
