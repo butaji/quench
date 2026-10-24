@@ -12357,7 +12357,7 @@ fn js_jit_general_dispatch_lowers_tagged_plain_local_accesses() {
 fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly() {
     let source = r#"
       function combine(left, right) {
-        try { return left + right; }
+        try { const result = left + right; return result; }
         catch (error) { return error instanceof TypeError; }
       }
       function negate(value) {
@@ -12368,13 +12368,21 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
         try { return +value; }
         catch (error) { return error instanceof TypeError; }
       }
+      function multiply(left, right) {
+        try { const result = left * right; return result; }
+        catch (error) { return error instanceof TypeError; }
+      }
       for (let index = 0; index < 48; index++) {
         if (combine(index, 0.5) !== index + 0.5) throw Error('number result');
         if (negate(index) !== -index) throw Error('unary minus');
         if (positive(index) !== index) throw Error('unary plus');
+        if (multiply(index, 2) !== index * 2) throw Error('integer multiply');
       }
+      if (combine(-2, -3) !== -5) throw Error('negative integer add');
       if (!Object.is(combine(-0, -0), -0)) throw Error('negative zero');
       if (combine(2147483647, 1) !== 2147483648) throw Error('integer boundary');
+      if (!Object.is(multiply(0, -1), -0)) throw Error('integer multiply negative zero');
+      if (multiply(50000, 50000) !== 2500000000) throw Error('integer multiply overflow');
       if (combine('left', 'right') !== 'leftright') throw Error('string fallback');
       if (combine(Symbol('value'), 1) !== true) throw Error('throw fallback');
       if (!Number.isNaN(combine(NaN, 1))) throw Error('NaN result');
@@ -12400,7 +12408,7 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
 
-    for name in ["combine", "negate", "positive"] {
+    for name in ["combine", "negate", "positive", "multiply"] {
         let function = program
             .functions
             .iter()
@@ -12420,6 +12428,49 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
         };
         assert!(native.is_general_dispatch());
         assert!(native.native_entries() > 0);
+    }
+
+    for (name, operator) in [
+        ("combine", oxc_ast::ast::BinaryOperator::Addition as u32),
+        (
+            "multiply",
+            oxc_ast::ast::BinaryOperator::Multiplication as u32,
+        ),
+    ] {
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let body = program.function(function as usize);
+        let native_pcs = body
+            .code
+            .iter()
+            .enumerate()
+            .filter_map(|(pc, packed)| {
+                let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+                (instruction.op().js_denotation()
+                    == crate::bytecode::JsDenotation::NumericBinary
+                    && instruction.binary_operator() == operator)
+                    .then_some(pc)
+            })
+            .collect::<Vec<_>>();
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should have a general JavaScript artifact");
+        };
+        assert!(!native_pcs.is_empty());
+        assert!(native_pcs
+            .into_iter()
+            .all(|pc| native.general_dispatch_pc_is_native(pc)));
     }
 }
 
