@@ -119,7 +119,7 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: bool)
     name.starts_with(HOME_BINDING_PREFIX)
         || (declared_in_environment && local_name_requires_environment(name))
 }
-pub(crate) use control_flow::{ControlEdge, branch_table_entries};
+pub(crate) use control_flow::{ControlEdge, branch_table_entries, for_each_instruction_successor};
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;

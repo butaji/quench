@@ -16,6 +16,29 @@ pub(crate) fn branch_table_entries(
     pc + 1..=pc + 1 + instruction.imm() as usize
 }
 
+/// Visit the ordinary instruction successors from the opcode's generated control-flow
+/// layout. Exception handlers are separate edges owned by `Function::for_each_successor`.
+pub(crate) fn for_each_instruction_successor(
+    pc: usize,
+    instruction: WideInstruction,
+    mut successor: impl FnMut(usize),
+) {
+    match instruction.op().control_flow_layout() {
+        ControlFlowLayout::Jump => successor(instruction.jump_target() as usize),
+        ControlFlowLayout::ConditionalJump => {
+            successor(pc + 1);
+            successor(instruction.jump_target() as usize);
+        }
+        ControlFlowLayout::BranchTable => {
+            branch_table_entries(pc, instruction).for_each(successor)
+        }
+        ControlFlowLayout::Terminal => {}
+        ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
+            if instruction.returns_from_frame() => {}
+        ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => successor(pc + 1),
+    }
+}
+
 pub(super) fn is_bounded(function: &Function) -> bool {
     let code = &function.code;
     let mut reachable = vec![false; code.len()];
@@ -81,23 +104,9 @@ impl Function {
         instruction: WideInstruction,
         mut successor: impl FnMut(usize, ControlEdge),
     ) {
-        match instruction.op().control_flow_layout() {
-            ControlFlowLayout::Jump => {
-                successor(instruction.jump_target() as usize, ControlEdge::Normal)
-            }
-            ControlFlowLayout::ConditionalJump => {
-                successor(pc + 1, ControlEdge::Normal);
-                successor(instruction.jump_target() as usize, ControlEdge::Normal);
-            }
-            ControlFlowLayout::BranchTable => branch_table_entries(pc, instruction)
-                .for_each(|entry| successor(entry, ControlEdge::Normal)),
-            ControlFlowLayout::Terminal => {}
-            ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
-                if instruction.returns_from_frame() => {}
-            ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => {
-                successor(pc + 1, ControlEdge::Normal)
-            }
-        }
+        for_each_instruction_successor(pc, instruction, |target| {
+            successor(target, ControlEdge::Normal)
+        });
         for handler in &self.handlers {
             if pc as u32 >= handler.start && (pc as u32) < handler.end {
                 successor(handler.target as usize, ControlEdge::Handler);
