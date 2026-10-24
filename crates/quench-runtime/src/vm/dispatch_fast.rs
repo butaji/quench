@@ -2290,7 +2290,7 @@ lane_handler! {
     fn lane_general_step<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         if !vm.lane_stack.activations.is_empty() {
-            return exit(ip);
+            return lane_step_beside_activations(cx, r, ip);
         }
         // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
         // active view, which is the running frame's.
@@ -2313,6 +2313,52 @@ lane_handler! {
         // The step may allocate, which can make a collection due.
         note_allocation(vm);
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+/// `lane_general_step` within a frameless activation: a value step (`Vm::value_step`) of
+/// the activation's registers, made beside the activations as a native runs beside them
+/// (`DeferredLaneCall`), so guest code it reaches makes them frames first; its result lands
+/// in the running function's registers then. Any other step takes the general path.
+#[cold]
+#[inline(never)]
+fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip) -> Ip {
+    let vm = unsafe { vm(cx) };
+    let Some(function) = vm.lane_stack.activations.last().map(|activation| activation.function) else {
+        return exit(ip);
+    };
+    // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
+    // innermost activation's view.
+    let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+    let body = code.function(function as usize);
+    let instruction = decoded_instruction(body, body.code[pc]);
+    if !matches!(instruction.op(), Op::ToPropertyKey | Op::GetIterator | Op::AppendArray) {
+        return exit(ip);
+    }
+    let [a, b] = super::dispatch::value_step_operands(instruction).map(|register| register.map(|register| r.get(register)));
+    vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc });
+    let result = vm.value_step(code, instruction, a, b);
+    // The step may allocate, which can make a collection due.
+    note_allocation(vm);
+    let unobserved = vm.lane_deferred.take().is_some();
+    match result {
+        Ok(value) => {
+            // Guest code the step ran made the activations frames, whose registers these are.
+            let r = unsafe { (*cx).registers };
+            if let Some(value) = value {
+                r.set(instruction.result_register(), value);
+            }
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
+        Err(error) => {
+            // The general path raises it from the frames its activations become.
+            if unobserved {
+                vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc });
+                vm.materialize_deferred_lane();
+            }
+            vm.lane_raised = Some(error);
+            exit(ip)
+        }
     }
 }
 
@@ -15467,6 +15513,20 @@ impl<H: Host> Vm<H> {
             );
             ip = next.map_addr(|address| address & !EXIT_TAG);
             if next.addr() & EXIT_TAG != 0 {
+                #[cfg(feature = "profile-lane-exits")]
+                if let Some(activation) = self.lane_stack.activations.last() {
+                    // SAFETY: the context's program outlives the run; `ip` is a record of
+                    // the innermost activation's view.
+                    let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+                    if let Some(body) = code.function_get(activation.function as usize) {
+                        super::lane_exits::record_detail(format!(
+                            "exit in activation {:?} {} @{:?} pc={pc}",
+                            body.instructions().nth(pc).map(|instruction| instruction.op()),
+                            body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+                            body.source_span.map(|span| span.start),
+                        ));
+                    }
+                }
                 self.materialize_lane_activations(cx);
                 LANE_CONTEXT.with(|current| current.set(outer));
                 // An enclosing run of this VM keeps a raised floor raised.
