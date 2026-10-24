@@ -94,8 +94,9 @@ RUSTFLAGS="$repo_rustflags -Cprofile-generate=$data_dir" \
     CARGO_TARGET_DIR="$instrumented_dir" cargo build --profile "$profile" -p quench-node
 instrumented="$instrumented_dir/$profile/quench-node"
 
-# A fixed pool of profiles merged in place as programs exit keeps the raw data small.
-export LLVM_PROFILE_FILE="$data_dir/quench-%4m.profraw"
+# One raw profile per process: Darwin's runtime does not reliably merge concurrent
+# writers into a shared pool file here (llvm-profdata then reports "too much profile data").
+export LLVM_PROFILE_FILE="$data_dir/quench-%p.profraw"
 drivers_dir="$target_dir/pgo-curriculum"
 rm -rf "$drivers_dir"
 mkdir -p "$drivers_dir"
