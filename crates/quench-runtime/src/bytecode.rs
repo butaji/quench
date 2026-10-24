@@ -2947,12 +2947,73 @@ impl ProgramKind {
 }
 
 /// The source text a program retains for diagnostics and `Function.prototype.toString`: its
-/// own copy, or static host text (an embedded library) the compiled source wrapped.
+/// own copy, static host text (an embedded library) the compiled source wrapped, or the text
+/// its compile-cache entry keeps after its encoding (`binary::append_kept_source`), read in
+/// place from the host's mapping.
 #[derive(Clone, Debug)]
 pub(crate) enum SourceText {
     Shared(std::sync::Arc<str>),
     Static(&'static str),
+    Kept(KeptText),
 }
+
+/// Text inside kept bytes: valid UTF-8, checked when made (`KeptText::new`).
+#[derive(Clone)]
+pub(crate) struct KeptText {
+    bytes: KeptBytes,
+    range: std::ops::Range<usize>,
+}
+
+impl KeptText {
+    /// The text `range` of `bytes` holds, if it is UTF-8.
+    pub(crate) fn new(bytes: KeptBytes, range: std::ops::Range<usize>) -> Option<Self> {
+        std::str::from_utf8((*bytes).as_ref().get(range.clone())?).ok()?;
+        Some(Self { bytes, range })
+    }
+}
+
+impl std::ops::Deref for KeptText {
+    type Target = str;
+    fn deref(&self) -> &str {
+        // SAFETY: `new` checked that the range holds UTF-8, and kept bytes never change.
+        unsafe { std::str::from_utf8_unchecked(&(*self.bytes).as_ref()[self.range.clone()]) }
+    }
+}
+
+impl std::fmt::Debug for KeptText {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("KeptText").field("len", &self.range.len()).finish()
+    }
+}
+
+/// The first `len` bytes of kept bytes: a compile-cache entry's encoding, without the source
+/// text after it.
+struct KeptPrefix {
+    bytes: KeptBytes,
+    len: usize,
+}
+
+impl AsRef<[u8]> for KeptPrefix {
+    fn as_ref(&self) -> &[u8] {
+        &(*self.bytes).as_ref()[..self.len]
+    }
+}
+
+/// A compile-cache entry split into its encoding and the source text
+/// `binary::append_kept_source` kept after it, when it keeps `source_len` bytes of text whose
+/// checksum holds; the entry itself otherwise.
+pub(crate) fn split_kept_source(entry: KeptBytes, source_len: usize) -> Result<(KeptBytes, SourceText), KeptBytes> {
+    let Some(range) = binary::kept_source_range((*entry).as_ref()).filter(|range| range.len() == source_len) else {
+        return Err(entry);
+    };
+    let Some(text) = KeptText::new(entry.clone(), range.clone()) else {
+        return Err(entry);
+    };
+    let encoding: KeptBytes = std::rc::Rc::new(KeptPrefix { bytes: entry, len: range.start });
+    Ok((encoding, SourceText::Kept(text)))
+}
+
+pub(crate) use binary::append_kept_source;
 
 impl std::ops::Deref for SourceText {
     type Target = str;
@@ -2960,6 +3021,7 @@ impl std::ops::Deref for SourceText {
         match self {
             Self::Shared(text) => text,
             Self::Static(text) => text,
+            Self::Kept(text) => text,
         }
     }
 }
@@ -2991,9 +3053,10 @@ const SNAPSHOT_TEXT_EDGE: usize = 32;
 impl SourceText {
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         match self {
-            Self::Shared(text) => {
+            // A snapshot outlives the entry's mapping, so it keeps its own copy of kept text.
+            Self::Shared(_) | Self::Kept(_) => {
                 writer.u8(0);
-                writer.str(text);
+                writer.str(self);
             }
             Self::Static(text) => {
                 writer.u8(1);
