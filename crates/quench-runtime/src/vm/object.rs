@@ -1282,8 +1282,11 @@ impl<H: Host> Vm<H> {
     /// The field cache entry of the active program's `site`.
     #[inline(always)]
     pub(super) fn field_cache_entry(&self, site: u16) -> FieldCache {
-        // SAFETY: the active program's layout reserves every compiler-emitted site.
-        unsafe { self.field_caches.get_unchecked(self.field_cache_index(site)) }
+        debug_assert_eq!(self.active_field_entries, self.field_caches.entries_from(self.active_cache_layout().field_base));
+        debug_assert!(self.field_cache_index(site) < self.field_caches.len());
+        // SAFETY: `active_field_entries` is re-derived whenever the active program or the
+        // table changes, and the active program's layout reserves every compiler-emitted site.
+        unsafe { super::site_table::SiteTable::<FieldCache>::load_from(self.active_field_entries, usize::from(site)) }
     }
 
     /// The value the field cache entry `cache` proves for the direct object `object`: its own
@@ -1332,7 +1335,7 @@ impl<H: Host> Vm<H> {
             return false;
         }
         // SAFETY: the active program's layout reserves every compiler-emitted site.
-        let cache = unsafe { self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        let cache = self.field_cache_entry(site);
         if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
             return false;
         }
@@ -1420,7 +1423,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         debug_assert!(self.lane_admits(p));
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
-        let hit = self.cached_ordinary_holder_field_value(self.field_cache_index(site), receiver)?;
+        let hit = self.ordinary_holder_entry_value(self.field_cache_entry(site), receiver)?;
         self.profile
             .field_cache_hit(usize::from(hit.tier), hit.depth);
         Some(hit.value)
@@ -1458,7 +1461,7 @@ impl<H: Host> Vm<H> {
         debug_assert!(self.lane_admits(p));
         let receiver = self.heap.object(object)?;
         // SAFETY: the active program's layout reserves every compiler-emitted site.
-        let cache = unsafe { self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        let cache = self.field_cache_entry(site);
         if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
             return None;
         }
@@ -1479,7 +1482,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         debug_assert!(self.lane_admits(p));
         let receiver = self.heap.object(object)?;
-        let hit = self.cached_ordinary_holder_field_value(self.field_cache_index(site), receiver)?;
+        let hit = self.ordinary_holder_entry_value(self.field_cache_entry(site), receiver)?;
         self.profile
             .field_cache_hit(usize::from(hit.tier), hit.depth);
         Some(hit.value)
@@ -1945,7 +1948,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn string_prototype_field_hit(&self, site: u16) -> Option<Value> {
         let prototype = self.heap.object_record(self.string_proto)?;
         // SAFETY: the active program's layout reserves every compiler-emitted site.
-        let cache = unsafe { self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        let cache = self.field_cache_entry(site);
         // An entry records only a non-dictionary shape, which the exact shape matches only
         // outside dictionary storage; a polymorphic site's other entries take the walk.
         (cache.holder == NO_FIELD_HOLDER && cache.receiver == prototype.exact_shape())
@@ -2024,7 +2027,12 @@ impl<H: Host> Vm<H> {
         receiver: &Object,
     ) -> Option<FieldCacheHit> {
         // SAFETY: the active program's layout reserves every compiler-emitted site.
-        let cache = unsafe { self.field_caches.get_unchecked(site) };
+        self.ordinary_holder_entry_value(unsafe { self.field_caches.get_unchecked(site) }, receiver)
+    }
+
+    /// `cached_ordinary_holder_field_value` of the site entry `cache`.
+    #[inline(always)]
+    fn ordinary_holder_entry_value(&self, cache: FieldCache, receiver: &Object) -> Option<FieldCacheHit> {
         if cache.holder == NO_FIELD_HOLDER || cache.receiver != receiver.exact_shape() {
             return None;
         }
@@ -3800,6 +3808,10 @@ impl<H: Host> Vm<H> {
     pub(super) fn transition_property_shape(&mut self, shape: u32, key: PropertyKey) -> u32 {
         self.transition_data_property_shape(shape, key, DEFAULT_DATA_ATTRIBUTES)
     }
+    /// Out of line and of plain values: a lane construct that inlined it would otherwise pass
+    /// the transition it builds by its stack address, which keeps the construct's dispatch
+    /// from being a sibling call (`tools/check-lane-tail-calls.sh`).
+    #[inline(never)]
     pub(super) fn transition_data_property_shape(
         &mut self,
         shape: u32,

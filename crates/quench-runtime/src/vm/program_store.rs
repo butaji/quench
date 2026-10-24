@@ -27,6 +27,8 @@ struct JsJitCounters {
     rejection_reason: Option<&'static str>,
     compile_ns: u64,
     native_entries: u64,
+    field_cache_probes: u64,
+    field_cache_hits: u64,
     field_return_candidate_entries: u64,
     field_return_fixed_this_entries: u64,
     field_return_fast_entries: u64,
@@ -48,6 +50,10 @@ struct JsJitCounters {
 /// under a stationary Bernoulli model; it is not a VM-wide multiple-test bound.
 pub(super) const JS_JIT_PROMOTION_LOOKS: [(u8, u8); 4] =
     [(32, 31), (64, 59), (128, 113), (255, 219)];
+/// The general tagged-dispatch baseline compiles after a fixed number of
+/// function entries; unlike the optimizing tier, it does not require numeric
+/// arguments or a bytecode-shape candidate.
+const JS_JIT_GENERAL_PROMOTION_ENTRIES: u8 = 32;
 const JS_JIT_MAX_FUNCTIONS: usize = 64;
 const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 256;
 const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
@@ -373,8 +379,55 @@ impl JitTierManager {
     }
 }
 
+/// A program's residual: decoded, or a restored snapshot's encoding that its first use
+/// decodes. A snapshot holds every builtin a preload loaded, and a process runs few of
+/// them, so a restore decodes none: their checksums held when the snapshot was read.
+struct Residual {
+    /// The program's cache site counts, known before it is decoded.
+    sites: crate::bytecode::CacheSiteCounts,
+    decoded: std::cell::OnceCell<Rc<ResidualProgram>>,
+    encoded: std::cell::Cell<Option<Box<EncodedResidual>>>,
+}
+
+/// What decoding a restored program needs (`ResidualProgram::decode_snapshot`).
+struct EncodedResidual {
+    bytes: crate::KeptBytes,
+    text: Option<crate::bytecode::SourceText>,
+    atoms: Rc<crate::bytecode::AtomSequence>,
+}
+
+impl Residual {
+    fn decoded(program: Rc<ResidualProgram>) -> Self {
+        Self {
+            sites: program.cache_site_counts(),
+            decoded: std::cell::OnceCell::from(program),
+            encoded: std::cell::Cell::new(None),
+        }
+    }
+
+    fn encoded(sites: crate::bytecode::CacheSiteCounts, encoded: EncodedResidual) -> Self {
+        Self { sites, decoded: std::cell::OnceCell::new(), encoded: std::cell::Cell::new(Some(Box::new(encoded))) }
+    }
+}
+
+impl std::ops::Deref for Residual {
+    type Target = Rc<ResidualProgram>;
+
+    fn deref(&self) -> &Rc<ResidualProgram> {
+        self.decoded.get_or_init(|| {
+            let EncodedResidual { bytes, text, atoms } =
+                *self.encoded.take().expect("a residual is decoded or holds its encoding");
+            let program = ResidualProgram::decode_snapshot(bytes, text, &atoms)
+                .expect("a snapshot program whose checksum held decodes");
+            debug_assert_eq!(program.cache_site_counts(), self.sites);
+            program.prime_loop_decoding();
+            Rc::new(program)
+        })
+    }
+}
+
 struct ProgramEntry {
-    residual: Rc<ResidualProgram>,
+    residual: Residual,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
     constants: Vec<Value>,
     const_arrays: Vec<Option<crate::heap::ArrayElements>>,
@@ -883,7 +936,7 @@ impl ProgramStore {
         let lane_deferred = vec![std::cell::Cell::new(0); program.functions.len()];
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.programs.push(Some(ProgramEntry {
-            residual: program,
+            residual: Residual::decoded(program),
             wasm_signatures: None,
             constants: Vec::new(),
             const_arrays: Vec::new(),
@@ -1115,7 +1168,7 @@ impl ProgramStore {
     /// Every live program's compiled form.
     #[cfg(feature = "profile-memory")]
     pub(crate) fn residuals(&self) -> impl Iterator<Item = &ResidualProgram> {
-        self.programs.iter().flatten().map(|entry| &*entry.residual)
+        self.programs.iter().flatten().map(|entry| &**entry.residual)
     }
 
     pub(crate) fn module_environment(&self, id: ProgramId) -> Option<Value> {
@@ -1158,9 +1211,14 @@ impl ProgramStore {
         })
     }
 
+    /// The cache site counts of program `id`, which a restored program knows undecoded.
+    pub(crate) fn cache_site_counts(&self, id: ProgramId) -> Option<crate::bytecode::CacheSiteCounts> {
+        Some(self.entry(id)?.residual.sites)
+    }
+
     /// Borrows the residual without the reference-count traffic of `get`.
     pub(crate) fn residual(&self, id: ProgramId) -> Option<&ResidualProgram> {
-        self.entry(id).map(|entry| &*entry.residual)
+        self.entry(id).map(|entry| &**entry.residual)
     }
 
     pub(crate) fn get(&self, id: ProgramId) -> Option<Rc<ResidualProgram>> {
@@ -1440,6 +1498,64 @@ impl ProgramStore {
             self.record_js_jit_promotion(id, function);
         }
         decision.compile
+    }
+
+    /// Promote any ordinary JS function to the complete-semantics native
+    /// dispatch baseline after it is hot. The existing tier record and shared
+    /// code-cache budget remain the single owners for both baseline and
+    /// specialized artifacts.
+    pub(super) fn note_js_general_dispatch_entry(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+    ) -> bool {
+        let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
+        let Some(entry) = self.entry_mut(id) else {
+            return false;
+        };
+        if entry.jit_tiers.is_wasm() {
+            return false;
+        }
+        let mut promoted = false;
+        let Some(state) = entry.jit_tiers.js_mut(function) else {
+            if !can_track {
+                return false;
+            }
+            let tracked = entry.jit_tiers.js_insert(
+                function,
+                JsTierState::Hot {
+                    observations: 1,
+                    numeric: 0,
+                },
+            );
+            debug_assert!(tracked);
+            if tracked {
+                self.js_jit_tracked_functions += 1;
+            }
+            return false;
+        };
+        match state {
+            JsTierState::Hot { observations, .. } => {
+                *observations = observations.saturating_add(1);
+                if *observations >= JS_JIT_GENERAL_PROMOTION_ENTRIES {
+                    *state = JsTierState::PromotionPending;
+                    promoted = true;
+                }
+            }
+            JsTierState::PromotionPending => return true,
+            JsTierState::Rejected { entries, .. } => {
+                *entries = entries.saturating_add(1);
+                if *entries >= u64::from(JS_JIT_GENERAL_PROMOTION_ENTRIES) {
+                    *state = JsTierState::PromotionPending;
+                    promoted = true;
+                }
+            }
+            JsTierState::Compiled(_) | JsTierState::Unsupported => return false,
+        }
+        if promoted {
+            self.record_js_jit_promotion(id, function);
+        }
+        promoted
     }
 
     /// Memoize an unsupported bytecode shape separately from tier candidates.
@@ -1726,6 +1842,24 @@ impl ProgramStore {
         }
     }
 
+    pub(super) fn record_js_jit_field_cache_probe(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        hit: bool,
+    ) {
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.field_cache_probes = counters.field_cache_probes.saturating_add(1);
+            counters.field_cache_hits = counters
+                .field_cache_hits
+                .saturating_add(u64::from(hit));
+        }
+    }
+
     pub(super) fn record_js_jit_field_return_candidate(
         &mut self,
         id: ProgramId,
@@ -1915,7 +2049,7 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            Option<&[u64]>,
+            Option<&[crate::compile::liveness::RegisterSet]>,
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
@@ -1963,7 +2097,7 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            Option<&[u64]>,
+            Option<&[crate::compile::liveness::RegisterSet]>,
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
@@ -2166,7 +2300,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"opcodes\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"opcodes\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -2179,6 +2313,8 @@ impl Drop for ProgramStore {
                 counters.native_entries,
                 native_entry_coverage_ppm,
                 all_entry_native_coverage_ppm,
+                counters.field_cache_probes,
+                counters.field_cache_hits,
                 counters.field_return_candidate_entries,
                 counters.field_return_fixed_this_entries,
                 counters.field_return_fast_entries,

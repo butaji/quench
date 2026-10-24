@@ -78,6 +78,14 @@ impl<'a> EnvironmentDemand<'a> {
         };
         slots.iter().map(|&(_, slot)| slot).chain(named.iter().copied())
     }
+
+    /// How many slots `slot_iter` yields.
+    pub(crate) fn slot_count(&self) -> usize {
+        match *self {
+            Self::Whole => 0,
+            Self::Slots { slots, named_slots, .. } => slots.len() + named_slots.len(),
+        }
+    }
 }
 
 impl ClosureReads {

@@ -311,6 +311,7 @@ impl<H: Host> Vm<H> {
             lane_returned,
             active_layout: _,
             active_constants: _,
+            active_field_entries: _,
             active_program: _,
             profile: _,
             shapes,
@@ -684,8 +685,10 @@ impl<H: Host> Vm<H> {
         self.field_cache_writes = Some(Vec::new());
         for index in 0..self.programs.len() {
             let id = ProgramId::from_raw(index as u32);
-            match self.programs.get(id) {
-                Some(program) => self.append_program_cache_layout(id, &program),
+            // A restored program's layout comes from its recorded site counts: decoding it
+            // waits for its first use, which primes its loops.
+            match self.programs.cache_site_counts(id) {
+                Some(sites) => self.append_cache_layout(id, sites),
                 None => self.program_cache_layouts.push(ProgramCacheLayout {
                     field_base: self.field_caches.len(),
                     method_base: self.method_caches.len(),

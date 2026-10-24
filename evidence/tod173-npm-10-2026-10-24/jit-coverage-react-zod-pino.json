@@ -1,0 +1,418 @@
+{
+  "react": {
+    "phase": "jit",
+    "functions": 58,
+    "totals": {
+      "entries": 6304,
+      "lane_entries": 5285,
+      "native_entries": 0,
+      "fallback_entries": 15663238,
+      "compile_attempts": 5,
+      "compile_successes": 0
+    },
+    "top_fallbacks": [
+      {
+        "function_name": "push",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/react-dom/cjs/react-dom-server-legacy.node.production.js",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 5134500,
+        "status": "unsupported",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "pushComponentStack",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/react-dom/cjs/react-dom-server-legacy.node.production.js",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 2037000,
+        "status": "unsupported",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "renderNodeDestructive",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/react-dom/cjs/react-dom-server-legacy.node.production.js",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 2031750,
+        "status": "unsupported",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "escapeTextForBrowser",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/react-dom/cjs/react-dom-server-legacy.node.production.js",
+        "entries": 7,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 1023751,
+        "status": "unsupported",
+        "rejection_reason": "unsupported-lowering-shape-or-codegen-failure"
+      },
+      {
+        "function_name": "getChildFormatContext",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/react-dom/cjs/react-dom-server-legacy.node.production.js",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 1018500,
+        "status": "unsupported",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "pushInnerHTML",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/react-dom/cjs/react-dom-server-legacy.node.production.js",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 1018500,
+        "status": "unsupported",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "startChunkForTag",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/react-dom/cjs/react-dom-server-legacy.node.production.js",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 1018500,
+        "status": "unsupported",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "endChunkForTag",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/react-dom/cjs/react-dom-server-legacy.node.production.js",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 1018500,
+        "status": "unsupported",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "pushTreeContext",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/react-dom/cjs/react-dom-server-legacy.node.production.js",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 1013250,
+        "status": "unsupported",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "isAttributeNameSafe",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/react-dom/cjs/react-dom-server-legacy.node.production.js",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 136500,
+        "status": "unsupported",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "pushStringAttribute",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/react-dom/cjs/react-dom-server-legacy.node.production.js",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 126000,
+        "status": "unsupported",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "createFormatContext",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/react-dom/cjs/react-dom-server-legacy.node.production.js",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 10500,
+        "status": "unsupported",
+        "rejection_reason": null
+      }
+    ],
+    "top_native_entries": []
+  },
+  "zod": {
+    "phase": "jit",
+    "functions": 214,
+    "totals": {
+      "entries": 1222,
+      "lane_entries": 64305,
+      "native_entries": 0,
+      "fallback_entries": 105434,
+      "compile_attempts": 3,
+      "compile_successes": 0
+    },
+    "top_fallbacks": [
+      {
+        "function_name": "unwrapMessage",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 52500,
+        "status": "unsupported",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "handleArrayResult",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/zod/v4/core/schemas.cjs",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 26250,
+        "status": "unsupported",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "getTypeName",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/en.cjs",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 21000,
+        "status": "unsupported",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "operations",
+        "source_name": "/workspace/quench/tests/npm-perf/workloads/zod-parse.cjs",
+        "entries": 32,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 5250,
+        "status": "unsupported",
+        "rejection_reason": "unsupported-lowering-shape-or-codegen-failure"
+      },
+      {
+        "function_name": "",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/zod/v4/locales/index.cjs",
+        "entries": 63,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 63,
+        "status": "hot",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "_ensureDefaultLocale",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs",
+        "entries": 32,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 38,
+        "status": "unsupported",
+        "rejection_reason": "unsupported-lowering-shape-or-codegen-failure"
+      },
+      {
+        "function_name": "get",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs",
+        "entries": 32,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 32,
+        "status": "unsupported",
+        "rejection_reason": "unsupported-lowering-shape-or-codegen-failure"
+      },
+      {
+        "function_name": "get value",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/zod/v4/core/util.cjs",
+        "entries": 20,
+        "lane_entries": 5246,
+        "native_entries": 0,
+        "fallback_entries": 20,
+        "status": "hot",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "settle",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/zod/v4/core/memoizer.cjs",
+        "entries": 19,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 19,
+        "status": "hot",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "snapshotChecks",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/zod/v4/core/api.cjs",
+        "entries": 12,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 12,
+        "status": "hot",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "_ensureDefaultMemoizer",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs",
+        "entries": 9,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 9,
+        "status": "hot",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "clone",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/zod/v4/classic/schemas.cjs",
+        "entries": 9,
+        "lane_entries": 8,
+        "native_entries": 0,
+        "fallback_entries": 9,
+        "status": "hot",
+        "rejection_reason": null
+      }
+    ],
+    "top_native_entries": []
+  },
+  "pino": {
+    "phase": "jit",
+    "functions": 56,
+    "totals": {
+      "entries": 26992,
+      "lane_entries": 62931,
+      "native_entries": 26219,
+      "fallback_entries": 16263,
+      "compile_attempts": 2,
+      "compile_successes": 1
+    },
+    "top_fallbacks": [
+      {
+        "function_name": "parsePath",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/@pinojs/redact/index.js",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 10504,
+        "status": "unsupported",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "logRequest",
+        "source_name": "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs",
+        "entries": 32,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 5250,
+        "status": "unsupported",
+        "rejection_reason": "unsupported-lowering-shape-or-codegen-failure"
+      },
+      {
+        "function_name": "getExpectedArgumentLength",
+        "source_name": "/workspace/quench/target/production/node/lib/internal/errors.js",
+        "entries": 255,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 263,
+        "status": "unsupported",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "copyPrototype",
+        "source_name": "/workspace/quench/target/production/node/lib/internal/per_context/primordials.js",
+        "entries": 53,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 53,
+        "status": "hot",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "copyPropsRenamed",
+        "source_name": "/workspace/quench/target/production/node/lib/internal/per_context/primordials.js",
+        "entries": 44,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 44,
+        "status": "hot",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "get hasSubscribers",
+        "source_name": "node:diagnostics_channel/channel.js",
+        "entries": 26250,
+        "lane_entries": 26180,
+        "native_entries": 26219,
+        "fallback_entries": 31,
+        "status": "compiled",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "get",
+        "source_name": "node:buffer/install-global.js",
+        "entries": 14,
+        "lane_entries": 5237,
+        "native_entries": 0,
+        "fallback_entries": 14,
+        "status": "hot",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "get hasSubscribers",
+        "source_name": "node:diagnostics_channel/channel.js",
+        "entries": 14,
+        "lane_entries": 5236,
+        "native_entries": 0,
+        "fallback_entries": 14,
+        "status": "hot",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "LOG",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/pino/lib/tools.js",
+        "entries": 0,
+        "lane_entries": 5235,
+        "native_entries": 0,
+        "fallback_entries": 13,
+        "status": "lane-only",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "compareLevel",
+        "source_name": "/workspace/quench/tests/npm-perf/node_modules/pino/lib/levels.js",
+        "entries": 6,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 6,
+        "status": "hot",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "channel",
+        "source_name": "node:diagnostics_channel/channel.js",
+        "entries": 6,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 6,
+        "status": "hot",
+        "rejection_reason": null
+      },
+      {
+        "function_name": "ownMember",
+        "source_name": "/workspace/quench/target/production/node/lib/internal/webidl.js",
+        "entries": 5,
+        "lane_entries": 0,
+        "native_entries": 0,
+        "fallback_entries": 5,
+        "status": "hot",
+        "rejection_reason": null
+      }
+    ],
+    "top_native_entries": [
+      {
+        "function_name": "get hasSubscribers",
+        "source_name": "node:diagnostics_channel/channel.js",
+        "entries": 26250,
+        "lane_entries": 26180,
+        "native_entries": 26219,
+        "fallback_entries": 31,
+        "status": "compiled",
+        "rejection_reason": null
+      }
+    ]
+  }
+}

@@ -138,3 +138,9 @@ rm -rf "$data_dir"
 CARGO_TARGET_DIR="$target_dir" cargo build --profile "$profile" -p quench-node \
     --config "build.rustflags=[\"-Cprofile-use=$profdata\", \"-Cllvm-args=-disable-icp\"]"
 printf 'PGO build: %s\n' "$target_dir/$profile/quench-node"
+# Profile-guided inlining decides which lane handlers form their dispatch as a sibling jump
+# (`tools/check-lane-tail-calls.sh`); a profile that keeps symbols reports the ones that do not.
+if nm "$target_dir/$profile/quench-node" 2>/dev/null | grep dispatch_fast >/dev/null; then
+    printf 'Lane handlers dispatching with a call:\n'
+    tools/check-lane-tail-calls.sh "$target_dir/$profile/quench-node" || true
+fi

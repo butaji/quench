@@ -11137,7 +11137,8 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
         })
         .unwrap();
 
-    // Each policy compiles the loop at its own optimization level (`LOOP_TIER_OPT_LEVELS`).
+    // Each policy compiles the loop at its own optimization level, or not at all
+    // (`LOOP_TIER_OPT_LEVELS`); the result is the same either way.
     for policy in crate::MemoryPolicy::ALL {
         let compiled_output = Rc::new(RefCell::new(Vec::new()));
         let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
@@ -11156,7 +11157,8 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
             .expect("hot sum loop lane view");
         let osr = view.osr_diagnostics();
         assert_eq!(osr.admitted_sites, 1, "OSR analysis rejected the field loop under {policy:?}");
-        assert_eq!(osr.currently_compiled_sites, 1, "field loop did not compile natively under {policy:?}");
+        let compiles = super::compiled::loop_tier_compiles(policy);
+        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field loop native code under {policy:?}");
     }
 }
 
@@ -11296,6 +11298,89 @@ fn shared_osr_compiles_numeric_truthiness_branches() {
     if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
         assert!(diagnostics.compile_successes > 0, "loop OSR compilation did not succeed");
         assert!(diagnostics.native_region_runs > 0, "loop OSR code never ran");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function seed() { return 0; }
+          function countNull(value) {
+            let count = seed();
+            let hits = 0;
+            let current = value;
+            while (count < 4) {
+              if (current === null) {
+                hits++;
+                current = value;
+              } else {
+                current = null;
+              }
+              count++;
+            }
+            return current === null ? hits + 10 : hits;
+          }
+          let result = 0;
+          for (let call = 0; call < 400; call++) {
+            result += countNull(call % 2 ? null : {});
+          }
+          print(result);
+          print(countNull(undefined));
+          print(countNull({}));
+        "#,
+        "osr-strict-null-identity.js",
+    ))
+    .unwrap();
+    let _disassembly = program.disassemble();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "countNull")
+        })
+        .expect("strict null loop function");
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
+    interpreter.execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["3200", "2", "2"]);
+
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["3200", "2", "2"]);
+
+    let views = vm
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot strict null loop lane view");
+    let diagnostics = view.osr_diagnostics();
+    assert_eq!(
+        diagnostics.currently_compiled_sites,
+        1,
+        "OSR diagnostics: plain={}, admitted={}, attempts={}, successes={}, native={}, rejects={:?}",
+        diagnostics.plain_backward_jump_sites,
+        diagnostics.admitted_sites,
+        diagnostics.compile_attempts,
+        diagnostics.compile_successes,
+        diagnostics.native_region_runs,
+        diagnostics.analysis_rejections,
+    );
+    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+        assert!(
+            diagnostics.native_region_runs > 0,
+            "native OSR region never ran; diagnostics: {:?}",
+            diagnostics.analysis_rejections
+        );
     }
 }
 
@@ -11948,6 +12033,193 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
         assert!(!programs.note_js_function_entry(id, function, false, false));
     }
     assert_eq!(programs.js_jit_tracked_function_count(), 256);
+}
+
+#[cfg(not(quench_profiled))]
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
+    let source = r#"
+      function read(target, key) {
+        try { return target[key]; } catch (error) { return error; }
+      }
+      function write(target, key, value) {
+        try { target[key] = value; return target[key]; } catch (error) { return error; }
+      }
+      function readFixed(target) {
+        try { return target.fallback; } catch (error) { return error; }
+      }
+      function readFixedGetter(target) {
+        try { return target.value; } catch (error) { return error; }
+      }
+      let getterCalls = 0;
+      const marker = {};
+      const target = {
+        get value() { getterCalls++; return getterCalls; },
+        get throwing() { throw marker; },
+        fallback: 0
+      };
+      for (let index = 1; index <= 48; index++) {
+        if (read(target, 'value') !== index * 2 - 1) throw Error('getter result');
+        if (write(target, 'fallback', index) !== index) throw Error('dynamic write result');
+        if (readFixed(target) !== index) throw Error('cached field result');
+        if (readFixedGetter(target) !== index * 2) throw Error('cached getter result');
+      }
+      if (getterCalls !== 96 || target.fallback !== 48) throw Error('dynamic property effects');
+      if (read(target, 'throwing') !== marker) throw Error('caught getter throw');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-general.js"))
+        .unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    for name in ["read", "write", "readFixed", "readFixedGetter"] {
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should use the general JavaScript dispatch compiler");
+        };
+        assert!(native.is_general_dispatch(), "{name} should not need a source shape");
+        assert!(native.native_entries() > 0, "{name} should enter its native CFG");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly() {
+    let source = r#"
+      function combine(left, right) {
+        try { return left + right; }
+        catch (error) { return error instanceof TypeError; }
+      }
+      function negate(value) {
+        try { return -value; }
+        catch (error) { return error instanceof TypeError; }
+      }
+      function positive(value) {
+        try { return +value; }
+        catch (error) { return error instanceof TypeError; }
+      }
+      for (let index = 0; index < 48; index++) {
+        if (combine(index, 0.5) !== index + 0.5) throw Error('number result');
+        if (negate(index) !== -index) throw Error('unary minus');
+        if (positive(index) !== index) throw Error('unary plus');
+      }
+      if (!Object.is(combine(-0, -0), -0)) throw Error('negative zero');
+      if (combine(2147483647, 1) !== 2147483648) throw Error('integer boundary');
+      if (combine('left', 'right') !== 'leftright') throw Error('string fallback');
+      if (combine(Symbol('value'), 1) !== true) throw Error('throw fallback');
+      if (!Number.isNaN(combine(NaN, 1))) throw Error('NaN result');
+      if (!Object.is(negate(0), -0) || !Object.is(negate(-0), 0)) {
+        throw Error('unary zero signs');
+      }
+      if (negate(Symbol('value')) !== true || positive(Symbol('value')) !== true) {
+        throw Error('unary throw fallback');
+      }
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-arithmetic.js",
+    ))
+    .unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    for name in ["combine", "negate", "positive"] {
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should use the general JavaScript dispatch compiler");
+        };
+        assert!(native.is_general_dispatch());
+        assert!(native.native_entries() > 0);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
+    let source = r#"
+      function sum(values) {
+        let total = 0;
+        let index = 0;
+        while (index < values.length) {
+          try { total += values[index]; }
+          catch (error) { total += 0; }
+          index++;
+        }
+        return total;
+      }
+      var result = 0;
+      for (let run = 0; run < 48; run++) result = sum([1, 2, 3, 4]);
+      if (result !== 10) throw Error('loop result');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-loop.js",
+    ))
+    .unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "sum")
+        })
+        .unwrap() as u32;
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("loop function should use the general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let name = compiled.intern_atom("result");
+    let result = compiled.own_property(compiled.realm.globals, name).unwrap();
+    assert_eq!(result, Value::number(10.0));
 }
 
 #[cfg(not(quench_profiled))]
