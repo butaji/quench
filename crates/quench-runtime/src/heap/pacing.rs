@@ -70,6 +70,11 @@ pub(super) struct GenerationalPacing {
     /// Growth of live weight (cells, records and payload) since the last full collection, as
     /// a share of what it kept, that makes the next collection full; zero disables it.
     pub(super) weight_growth: Ratio,
+    /// Growth of the young budget with smoothed survival (capped at `survival_limit`): the
+    /// budget is `young_budget × (SURVIVAL_SCALE + survival_growth × survival) / SURVIVAL_SCALE`.
+    /// A program whose young allocations survive collects them less often; one whose
+    /// allocations die keeps its budget. Zero keeps the budget as `young` sets it.
+    pub(super) survival_growth: u32,
 }
 
 /// Fixed-point scale of the survival estimate.
@@ -158,8 +163,12 @@ impl GenerationalPacing {
                 / outcome.allocated as u64) as u32;
             state.survival = (state.survival + survival) / 2;
         }
+        let survival = u64::from(state.survival.min(self.survival_limit));
+        let grown = self.young_budget(outcome.live) as u64
+            * (u64::from(SURVIVAL_SCALE) + u64::from(self.survival_growth) * survival)
+            / u64::from(SURVIVAL_SCALE);
         let young = NextCollection {
-            threshold: self.young_budget(outcome.live),
+            threshold: usize::try_from(grown).unwrap_or(usize::MAX),
             full: self.full_due(outcome.live_after_full, outcome.live, outcome.since_full, state.cap_backoff)
                 || self.weight_growth_due(outcome.live_weight_after_full, outcome.live_weight),
         };
@@ -241,6 +250,7 @@ impl GenerationalPacing {
             full_only_headroom: ratio("QUENCH_GC_FULL_ONLY", self.full_only_headroom),
             probe_interval: read("QUENCH_GC_PROBE_INTERVAL", self.probe_interval as usize) as u32,
             weight_growth: ratio("QUENCH_GC_WEIGHT_GROWTH", self.weight_growth),
+            survival_growth: read("QUENCH_GC_SURVIVAL_GROWTH", self.survival_growth as usize) as u32,
         }
     }
 }
@@ -346,6 +356,7 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
+    survival_growth: 0,
 };
 
 /// Memory-first pacing on the owner's direction of 2026-10-17 (TOD-123), selected by
@@ -382,6 +393,7 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
+    survival_growth: 0,
 };
 
 /// The fewest allocations between collections under memory-first, whatever survived: the
