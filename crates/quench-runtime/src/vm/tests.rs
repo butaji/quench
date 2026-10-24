@@ -12931,7 +12931,10 @@ fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
 #[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_reenters_callers_at_the_resume_pc() {
     let source = r#"
-      function callee(value) { return value + 1; }
+      function callee(value) {
+        try { return value + 1; }
+        catch (error) { return 0; }
+      }
       function caller(value) { return callee(value) + 2; }
       var result = 0;
       for (let index = 0; index < 48; index++) result = caller(index);
@@ -12950,6 +12953,16 @@ fn js_jit_general_dispatch_reenters_callers_at_the_resume_pc() {
                 .name
                 .or(body.header().inferred_name)
                 .is_some_and(|atom| &program.atoms[atom as usize] == "caller")
+        })
+        .unwrap() as u32;
+    let callee = program
+        .functions
+        .iter()
+        .position(|body| {
+            body.header()
+                .name
+                .or(body.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "callee")
         })
         .unwrap() as u32;
 
@@ -12973,6 +12986,14 @@ fn js_jit_general_dispatch_reenters_callers_at_the_resume_pc() {
     };
     assert!(native.is_general_dispatch());
     assert!(native.native_entries() > 0);
+    let Some(super::program_store::JsTierState::Compiled(native_callee)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, callee)
+    else {
+        panic!("ordinary calls from native code should tier their eligible callee");
+    };
+    assert!(native_callee.is_general_dispatch());
+    assert!(native_callee.native_entries() > 0);
     let caller_body = program.function_get(caller as usize).unwrap();
     let (return_pc, return_register) = caller_body
         .code
@@ -13036,6 +13057,74 @@ fn js_jit_general_dispatch_reenters_callers_at_the_resume_pc() {
         .unwrap();
     assert_eq!(result, expected);
     assert_eq!(result, Value::number(50.0));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
+    let source = r#"
+      const marker = {};
+      function callee(object, shouldThrow) {
+        $262.gc();
+        if (shouldThrow) throw marker;
+        return object.value;
+      }
+      function caller(shouldThrow) {
+        const live = { value: 40 };
+        try { return callee(live, shouldThrow) + 2; }
+        catch (error) { return error === marker ? live.value + 2 : -1; }
+      }
+      var result = 0;
+      for (let index = 0; index < 48; index++) result = caller(index === 47);
+      if (result !== 42) throw Error('call continuation lost result or live object');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-call-continuation.js",
+    ))
+    .unwrap();
+    let function_id = |name: &str| {
+        program
+            .functions
+            .iter()
+            .position(|body| {
+                body.header()
+                    .name
+                    .or(body.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32
+    };
+    let caller = function_id("caller");
+    let callee = function_id("callee");
+
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let result_atom = interpreter.intern_atom("result");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, result_atom)
+        .unwrap();
+
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+    let actual = compiled
+        .own_property(compiled.realm.globals, result_atom)
+        .unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(actual, Value::number(42.0));
+    for function in [caller, callee] {
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("call continuation function {function} should compile");
+        };
+        assert!(native.is_general_dispatch());
+        assert!(native.native_entries() > 0);
+    }
 }
 
 #[test]
