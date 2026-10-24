@@ -860,7 +860,10 @@ pub(super) fn compile_js_numeric_region(
                 terminal = true;
                 None
             }
-            JsDenotation::Noop | JsDenotation::Jump | JsDenotation::Unsupported => return None,
+            JsDenotation::FieldStore
+            | JsDenotation::Noop
+            | JsDenotation::Jump
+            | JsDenotation::Unsupported => return None,
         };
         if let Some(value) = result {
             let destination = usize::from(instruction.result_register());
@@ -4287,6 +4290,43 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     )
                 };
                 native_registers.copy_from_slice(&frame.registers);
+                frame.pc = next_pc;
+                frame.pc_is_resume = true;
+                return Ok(JsCalloutStep::Continue(next_pc));
+            }
+        }
+
+        if instruction.op().js_denotation() == JsDenotation::FieldStore
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && next_pc < body.code.len()
+            && let (Some(receiver), Some(value)) = (
+                vm.frames[dispatch.frame]
+                    .registers
+                    .get(usize::from(instruction.register_b()))
+                    .copied(),
+                vm.frames[dispatch.frame]
+                    .registers
+                    .get(usize::from(instruction.register_a()))
+                    .copied(),
+            )
+        {
+            let hit = vm.cached_field_store_hit(
+                &program,
+                receiver,
+                instruction.atom_index(),
+                value,
+                instruction.cache_site_index(),
+            );
+            if vm.programs.js_jit_diagnostics_enabled() {
+                vm.programs.record_js_jit_field_store_cache_probe(
+                    dispatch.program_id,
+                    vm.frames[dispatch.frame].function,
+                    hit,
+                );
+            }
+            if hit {
+                let frame = &mut vm.frames[dispatch.frame];
                 frame.pc = next_pc;
                 frame.pc_is_resume = true;
                 return Ok(JsCalloutStep::Continue(next_pc));
