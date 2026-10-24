@@ -109,7 +109,7 @@ impl<H: Host> Vm<H> {
         values.extend(
             strings
                 .into_iter()
-                .map(|atom| self.heap.alloc_string(self.atom_value(atom))),
+                .map(|atom| self.atom_string(atom)),
         );
         values.extend(symbols);
         values
@@ -183,7 +183,7 @@ impl<H: Host> Vm<H> {
                 )?;
                 if !extensible
                     || (!descriptor.is_undefined()
-                        && !self.descriptor_flag(descriptor, "configurable"))
+                        && !self.descriptor_flag(descriptor, self.runtime_atoms.configurable))
                 {
                     required.push(*key);
                 }
@@ -390,10 +390,16 @@ impl<H: Host> Vm<H> {
         let memoizes = excluded.is_empty()
             && self.shapes[target_shape as usize].storage_len() == 0
             && !target_data.was_used_as_prototype();
-        if memoizes
-            && kind == PropertyCopyKind::CreateDataProperty
-            && let Some(shape) = self.plain_copy_shapes.get(target_shape, source_shape)
-        {
+        let epoch = crate::heap::prototype_layout_epoch();
+        let memoized = match kind {
+            PropertyCopyKind::CreateDataProperty => self.plain_copy_shapes.get(target_shape, source_shape),
+            PropertyCopyKind::Set => self
+                .plain_assign_shapes
+                .get(target_shape, (source_shape, target_proto))
+                .filter(|&(_, proved)| proved == epoch)
+                .map(|(shape, _)| shape),
+        };
+        if memoizes && let Some(shape) = memoized {
             let Some(values) = slots
                 .iter()
                 .map(|(_, slot)| self.heap.property_get(data, *slot as usize))
@@ -475,6 +481,10 @@ impl<H: Host> Vm<H> {
         }
         if memoizes && let Some(shape) = self.object_data(target).map(Object::shape) {
             self.plain_copy_shapes.record(target_shape, source_shape, shape);
+            // The target is no prototype, so its adds left the epoch the chain was proved under.
+            if kind == PropertyCopyKind::Set && epoch == crate::heap::prototype_layout_epoch() {
+                self.plain_assign_shapes.record(target_shape, (source_shape, target_proto), (shape, epoch));
+            }
         }
         true
     }

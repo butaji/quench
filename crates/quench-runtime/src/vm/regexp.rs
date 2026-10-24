@@ -2268,7 +2268,17 @@ impl<H: Host> Vm<H> {
         frame: usize,
         site_index: usize,
     ) -> Result<Value, JsError> {
-        let program = self.frames[frame].program;
+        self.regexp_literal_of(p, self.frames[frame].program, site_index)
+    }
+
+    /// The new RegExp object regular expression literal site `site_index` of `p`, the
+    /// residual of `program`, evaluates to.
+    pub(super) fn regexp_literal_of(
+        &mut self,
+        p: &ResidualProgram,
+        program: ProgramId,
+        site_index: usize,
+    ) -> Result<Value, JsError> {
         let site = p
             .regexp_literal_sites
             .get(site_index)
@@ -2613,6 +2623,15 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
+        // A search the prefilter excludes fails as the matcher's would: `null` from exec and
+        // `false` from test, and a global or sticky regexp's `lastIndex` reset through the
+        // slot `regexp_match_from` stores through.
+        if let Some(stateful) = self.regexp_prefilter_rejects(receiver, subject, last_index) {
+            if stateful {
+                self.heap.property_set(receiver, slot, Value::number(0.0));
+            }
+            return Some(Ok(if native == Native::RegExpExec { Value::NULL } else { Value::FALSE }));
+        }
         let arguments = [subject];
         if native == Native::RegExpExec {
             return Some(self.regexp_steady_exec(p, receiver, subject, slot, last_index, result_used));
@@ -2692,6 +2711,26 @@ impl<H: Host> Vm<H> {
             return Ok(Value::UNDEFINED);
         }
         self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched))
+    }
+
+    /// Whether `regexp_match_from`'s search of `subject` from `last_index` is one its
+    /// compiled regexp's prefilter excludes (`Regex::excludes_search`), decided where neither
+    /// conversion has an effect: a flat string subject and a Number `lastIndex`. `Some`
+    /// carries whether the regexp is global or sticky; `None` leaves the read to the general
+    /// path.
+    fn regexp_prefilter_rejects(&self, receiver: Value, subject: Value, last_index: Value) -> Option<bool> {
+        let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
+            return None;
+        };
+        let regex = meta.matcher.0.get()?;
+        let input = self.heap.string(subject)?;
+        let units = input.existing_flat()?;
+        let last_index = regexp_to_length(last_index.as_number()?);
+        let stateful = meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
+        let start = if stateful { last_index } else { 0 };
+        let length = input.len();
+        ((stateful && start > length) || regex.excludes_search(length, start, units.unit(start)))
+            .then_some(stateful)
     }
 
     pub(super) fn regexp_builtin_exec(

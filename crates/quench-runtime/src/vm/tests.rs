@@ -1435,8 +1435,9 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
       Object.setPrototypeOf(inherited, prototype);
       print(inherited.answer);
       print(inherited.getAnswer());
-      var deleted = { answer: 5 };
+      var deleted = { answer: 5, other: 6 };
       delete deleted.answer;
+      delete deleted.other;
       deleted.answer = 7;
       print(deleted.answer);
     "#;
@@ -1640,6 +1641,36 @@ fn a_deletion_keeps_a_shared_shape_until_vacated_slots_outnumber_properties() {
         Some(super::DictionaryTrigger::DeletionPattern)
     );
     assert_eq!(output.borrow().as_slice(), ["14 false a,c"]);
+}
+
+#[test]
+fn deleting_the_last_added_property_returns_to_the_earlier_shape() {
+    let source = r#"
+      var base = { a: 1 };
+      var stack = { a: 1 };
+      for (var id = 1; id <= 64; id++) { stack[id] = id; stack["k" + id] = id; delete stack["k" + id]; delete stack[id]; }
+      print([Object.keys(stack), stack.a, "k1" in stack].join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "deletion-rollback.js").unwrap();
+    let shapes_before = vm.shapes.len();
+    vm.execute(&program).unwrap();
+    let global = vm.realm.globals;
+    let shape_of = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        let object = vm.own_property(global, atom).expect("global binding exists");
+        vm.object_data(object).expect("object value").shape()
+    };
+    // Each key is deleted while it is the last one added: the object is back on the shape
+    // it started with, and no deletion forked a shape of its own.
+    assert_eq!(shape_of(&mut vm, "stack"), shape_of(&mut vm, "base"));
+    let deletions = vm.shapes[shapes_before..]
+        .iter()
+        .filter(|shape| matches!(shape.transition, super::ShapeTransition::Delete { .. }))
+        .count();
+    assert_eq!(deletions, 0);
+    assert_eq!(output.borrow().as_slice(), ["a 1 false"]);
 }
 
 #[test]
@@ -4681,25 +4712,13 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
         .heap
         .alloc(crate::heap::Cell::Error("suspended scope".into()));
     let held_atom = vm.intern_atom("held");
-    let continuation = Continuation {
-        context: super::activation::CallContext::Internal,
-        reflected_parameters: 0,
-        original_arguments: vec![original],
-        program: super::program_store::ProgramId::MAIN,
-        active_iterators: vec![],
-        with_objects: vec![scope],
-        function: 0,
-        pc: 0,
-        env: live,
-        this: Value::UNDEFINED,
-        locals: vec![],
-        dynamic_bindings: vec![(held_atom, held)],
-        registers: vec![],
-        completion: Completion::Yield(Value::UNDEFINED),
-        captured: false,
-        resume_register: None,
-        promise: Value::UNDEFINED,
-    };
+    let mut frame = Box::new(super::Frame::empty(super::program_store::ProgramId::MAIN, 0));
+    frame.original_arguments = vec![original];
+    frame.with_objects = vec![scope];
+    frame.env = live;
+    frame.dynamic_bindings = vec![(held_atom, held)];
+    let continuation =
+        Continuation::suspend(frame, Completion::Yield(Value::UNDEFINED), None, Value::UNDEFINED);
     let state = vm.heap.alloc(crate::heap::Cell::AwaitState(Box::new(
         crate::heap::AwaitState {
             continuation: Some(Box::new(continuation)),
@@ -4719,7 +4738,7 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
         Some(state) => state.continuation.take(),
         _ => panic!("await state"),
     };
-    assert_eq!(take(&mut vm).unwrap().original_arguments, [original]);
+    assert_eq!(take(&mut vm).unwrap().frame.original_arguments, [original]);
     assert!(take(&mut vm).is_none());
     vm.collect_now(&program);
     assert!(!vm.heap.is_live(live));
@@ -6495,9 +6514,11 @@ fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
                         assert!(
                             matches!(vm.heap.get(proxy),Some(super::Cell::Proxy {target,handler,..}) if target.is_null()&&handler.is_null())
                         );
-                        keys.into_iter()
-                            .map(|value| vm.heap.weak_handle(value).unwrap())
-                            .collect::<Vec<_>>()
+                        // A key a program spells is its shared atom string (`Vm::atom_string`),
+                        // kept with the program; the symbol key is the proxy target's own.
+                        let first = vm.intern_atom("first");
+                        assert_eq!(keys[0], vm.atom_string(first));
+                        vec![vm.heap.weak_handle(keys[1]).unwrap()]
                     }
                     Err(error) => {
                         let atom = vm.intern_atom("kind");
@@ -7006,7 +7027,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 .map(|v| vm.heap.weak_handle(*v).unwrap())
                 .collect::<Vec<_>>();
             let atom = vm.intern_atom("binding");
-            let mut frame = super::Frame {
+            let frame = super::Frame {
                 context: CallContext::Internal,
                 reflected_parameters: 0,
                 original_arguments: vec![],
@@ -7033,17 +7054,11 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 js_jit_interpreter_started: None,
                 fixed_this: false,
             };
-            let continuation = Continuation::from_frame(
-                &mut frame,
+            let continuation = Continuation::suspend(
+                Box::new(frame),
                 completion(completion_value),
                 Some(0),
                 promise,
-            );
-            assert!(
-                frame.locals.is_empty()
-                    && frame.dynamic_bindings.is_empty()
-                    && frame.registers.is_empty()
-                    && frame.active_iterators.is_empty()
             );
             let roots = vm.heap.root_count_for_test();
             let owner = if generator {
@@ -7112,7 +7127,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
             };
             assert_eq!(resumed.completion, completion(completion_value));
             assert_eq!(resumed.promise, promise);
-            let resumed = resumed.into_frame(0);
+            let resumed = resumed.resume(0);
             assert_eq!(resumed.locals, [local]);
             assert_eq!(resumed.dynamic_bindings, [(atom, binding)]);
             assert_eq!(resumed.registers, [register, iterator, Value::FALSE]);
@@ -10595,6 +10610,53 @@ fn js_jit_compiles_straight_line_plain_local_temporaries() {
     ));
 }
 
+/// A function the tier claims stays a frameless lane target: its activations start at the
+/// tier prologue (`lane_tier_prologue`), which enters the compiled body and completes the
+/// activation at its `Return`.
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_enters_compiled_callees_from_frameless_lane_activations() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function add(left, right) { return left + right; }
+          function drive(count) {
+            let sum = 0;
+            for (let index = 0; index < count; index++) sum = add(sum, index);
+            return sum;
+          }
+          for (let round = 0; round < 4; round++) {
+            if (drive(200) !== 19900) throw Error('frameless tier result');
+          }
+        "#,
+        "js-jit-frameless-entry.js",
+    ))
+    .unwrap();
+    let add = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|atom| &program.atoms[atom as usize] == "add")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, add)
+    else {
+        panic!("the numeric callee should be compiled");
+    };
+    assert!(
+        compiled.native_entries() >= 500,
+        "the lane's frameless calls should enter native code, got {}",
+        compiled.native_entries()
+    );
+}
+
 #[test]
 #[cfg(not(quench_profiled))]
 fn js_jit_compiles_forward_numeric_decision_trees() {
@@ -11081,23 +11143,29 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
         })
         .unwrap();
 
-    let compiled_output = Rc::new(RefCell::new(Vec::new()));
-    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
-    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-    compiled.execute(&program).unwrap();
+    // Each policy compiles the loop at its own optimization level, or not at all
+    // (`LOOP_TIER_OPT_LEVELS`); the result is the same either way.
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
 
-    assert_eq!(compiled_output.borrow().as_slice(), ["4999500000"]);
-    let views = compiled
-        .programs
-        .lane_views(super::program_store::ProgramId::MAIN)
-        .expect("main program lane views");
-    let view = views
-        .get(function_id)
-        .and_then(std::cell::OnceCell::get)
-        .expect("hot sum loop lane view");
-    let osr = view.osr_diagnostics();
-    assert_eq!(osr.admitted_sites, 1, "OSR analysis rejected the field loop");
-    assert_eq!(osr.currently_compiled_sites, 1, "field loop did not compile natively");
+        assert_eq!(compiled_output.borrow().as_slice(), ["4999500000"], "{policy:?}");
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let view = views
+            .get(function_id)
+            .and_then(std::cell::OnceCell::get)
+            .expect("hot sum loop lane view");
+        let osr = view.osr_diagnostics();
+        assert_eq!(osr.admitted_sites, 1, "OSR analysis rejected the field loop under {policy:?}");
+        let compiles = super::compiled::loop_tier_compiles(policy);
+        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field loop native code under {policy:?}");
+    }
 }
 
 #[test]
@@ -11973,6 +12041,7 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
     assert_eq!(programs.js_jit_tracked_function_count(), 256);
 }
 
+#[cfg(not(quench_profiled))]
 #[test]
 #[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
@@ -12169,6 +12238,7 @@ fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
     assert_eq!(result, Value::number(10.0));
 }
 
+#[cfg(not(quench_profiled))]
 #[test]
 fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
     let program = Engine::compile(crate::ExecutionRequest::script(
@@ -13513,4 +13583,180 @@ fn fused_field_reads_of_promoted_locals_see_undefined_before_assignment() {
     let program = Engine::specialize(source, "fused-read-before-assignment.js").unwrap();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["TypeError,TypeError,TypeError"]);
+}
+
+#[test]
+fn absent_index_reads_of_ordinary_objects_still_see_every_holder_on_the_chain() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      const plain = { length: 3 };
+      for (let i = 0; i < 3; i++) check(plain[i], undefined, 'plain miss');
+      check(Array.from(plain, (_, i) => i * 2).join(), '0,2,4', 'array-like from');
+      check(Object.create({ 7: 'p' })[7], 'p', 'prototype property');
+      check(Object.create(['a', 'b'])[1], 'b', 'array prototype');
+      check(Object.create(new String('xy'))[1], 'y', 'string wrapper prototype');
+      check(Object.create(new Uint8Array([4, 5]))[1], 5, 'typed array prototype');
+      const getter = {}; Object.defineProperty(getter, 9, { get() { return 'g'; } });
+      check(Object.create(getter)[9], 'g', 'inherited getter');
+      check((function () { return Object.create(arguments)[0]; })('arg'), 'arg', 'arguments prototype');
+      const proxied = Object.create(new Proxy({}, { get: (_, key) => 'proxy ' + key }));
+      check(proxied[3], 'proxy 3', 'proxy prototype');
+      Object.prototype[11] = 'shared';
+      check({}[11], 'shared', 'Object.prototype index');
+      delete Object.prototype[11];
+      check({}[11], undefined, 'deleted Object.prototype index');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "absent-index.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "absent-index.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn array_fill_stores_plainly_only_where_no_prototype_claims_the_index() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      check(Array(5).fill(7).join(), '7,7,7,7,7', 'holes');
+      check([1, 2, 3, 4].fill(0, 1, -1).join(), '1,0,0,4', 'range');
+      const seen = [];
+      const proto = Object.create(Array.prototype);
+      Object.defineProperty(proto, 2, { set(value) { seen.push(value); }, configurable: true });
+      const holed = Object.setPrototypeOf([1, , , 4], proto);
+      holed.fill(9);
+      check(seen.join(), '9', 'inherited setter');
+      check(Object.keys(holed).join(), '0,1,3', 'setter index stays a hole');
+      Object.prototype[1] = 'shared';
+      Object.defineProperty(Object.prototype, 1, { value: 'readonly', writable: false, configurable: true });
+      const blocked = Array(3);
+      let blockedThrew = false;
+      try { blocked.fill(5); } catch (e) { blockedThrew = e instanceof TypeError; }
+      check(blockedThrew, true, 'read-only inherited index throws');
+      check(blocked.hasOwnProperty(1), false, 'read-only inherited index stays a hole');
+      check(blocked[0], 5, 'indices before it store');
+      delete Object.prototype[1];
+      let threw = false;
+      try { Object.freeze([1, 2]).fill(0); } catch (e) { threw = e instanceof TypeError; }
+      check(threw, true, 'frozen');
+      threw = false;
+      try { Object.seal(Array(2)).fill(0); } catch (e) { threw = e instanceof TypeError; }
+      check(threw, true, 'sealed holes');
+      check(Object.seal([1, 2]).fill(3).join(), '3,3', 'sealed present');
+      check(Array.prototype.fill.call({ length: 2 }, 1)[1], 1, 'array-like');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "array-fill.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "array-fill.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn define_property_keeps_its_values_through_collections_its_conversions_run() {
+    let source = r#"
+      const churn = () => { let keep = []; for (let i = 0; i < 8000; i++) keep.push({ i, s: 'x' + i }); return keep.length; };
+      const results = [];
+      for (let round = 0; round < 6; round++) {
+        const key = { toString() { churn(); return 'k' + round; } };
+        const descriptor = {
+          get enumerable() { churn(); return true; },
+          get get() { churn(); const marker = { round }; return () => marker.round; },
+        };
+        const target = Object.defineProperty({}, key, descriptor);
+        results.push(target['k' + round]);
+        if (!Object.getOwnPropertyDescriptor(target, 'k' + round).enumerable) throw Error('enumerable lost');
+        const reflected = {};
+        if (!Reflect.defineProperty(reflected, key, { get value() { churn(); return [round]; }, writable: true })) throw Error('reflect');
+        if (reflected['k' + round][0] !== round) throw Error('value lost');
+      }
+      if (results.join() !== Array.from({ length: 6 }, (_, i) => i).join()) throw Error('getter results ' + results);
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "define-roots.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "define-roots.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn object_assign_sees_prototype_setters_added_after_a_memoized_copy() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      const proto = {};
+      const src = { a: 1, b: 2 };
+      for (let i = 0; i < 4; i++) check(Object.assign(Object.create(proto), src).a, 1, 'primed');
+      let hits = 0;
+      Object.defineProperty(proto, 'a', { set(value) { hits += value; }, configurable: true });
+      const target = Object.assign(Object.create(proto), src);
+      check(hits, 1, 'setter called');
+      check(Object.prototype.hasOwnProperty.call(target, 'a'), false, 'setter kept the key off the target');
+      check(target.b, 2, 'other key copied');
+      delete proto.a;
+      Object.defineProperty(proto, 'b', { value: 0, writable: false, configurable: true });
+      let threw = false;
+      try { Object.assign(Object.create(proto), src); } catch (error) { threw = error instanceof TypeError; }
+      check(threw, true, 'read-only inherited key throws');
+      delete proto.b;
+      check(Object.assign(Object.create(proto), src).b, 2, 'plain again');
+      Object.defineProperty(Object.prototype, 'a', { set(value) { hits += 10 * value; }, configurable: true });
+      Object.assign({}, src);
+      check(hits, 11, 'Object.prototype setter');
+      delete Object.prototype.a;
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "assign-memo.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "assign-memo.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn set_iteration_copies_only_while_the_intrinsics_iterate() {
+    let source = r#"
+      const check = (actual, expected, label) => { if (actual !== expected) throw Error(label + ': ' + actual); };
+      const show = (values) => values.map(String).join(',');
+      const set = new Set([1, 2, 3]);
+      set.delete(2);
+      check(show([...set]), '1,3', 'spread skips deleted entries');
+      check(show(Array.from(set)), '1,3', 'Array.from');
+      const live = new Set([1, 2, 3]);
+      check(show(Array.from(live, (v) => { if (v === 1) { live.delete(2); live.add(9); } return v; })), '1,3,9', 'live map');
+      class Sub extends Set { *[Symbol.iterator]() { yield 'sub'; } }
+      check(show([...new Sub([1])]), 'sub', 'subclass iterator');
+      const own = new Set([1]);
+      own[Symbol.iterator] = function* () { yield 'own'; };
+      check(show(Array.from(own)), 'own', 'own iterator');
+      class Arr extends Array {}
+      const made = Arr.from(new Set([5, 6]));
+      check(made instanceof Arr && show(made), '5,6', 'subclass target');
+      const proto = Object.getPrototypeOf(new Set()[Symbol.iterator]());
+      const next = proto.next;
+      proto.next = function () { const step = next.call(this); if (!step.done) step.value = 'p' + step.value; return step; };
+      check(show([...new Set([1, 2])]), 'p1,p2', 'patched next spread');
+      check(show(Array.from(new Set([1, 2]))), 'p1,p2', 'patched next Array.from');
+      check(show(Array.from(new Set([1, 2]), (v) => v)), 'p1,p2', 'patched next mapped');
+      check(show([...new Set(new Set([1]))]), 'pp1', 'patched next in Set constructor');
+      proto.next = next;
+      const method = Set.prototype[Symbol.iterator];
+      Set.prototype[Symbol.iterator] = function* () { yield 'proto'; };
+      check(show(Array.from(new Set([1]))), 'proto', 'patched @@iterator');
+      Set.prototype[Symbol.iterator] = method;
+      check(Math.max(...new Set([4, 7])), 7, 'spread call');
+      check(show([...new Set([3, 3, -0, NaN, NaN])]), '3,0,NaN', 'Set constructor canonicalizes');
+      check(Object.is([...new Set([-0])][0], 0), true, 'Set constructor stores -0 as +0');
+      const add = Set.prototype.add;
+      let added = 0;
+      Set.prototype.add = function (value) { added++; return add.call(this, value); };
+      check(new Set([1, 2]).size + added, 4, 'patched add');
+      Set.prototype.add = add;
+      const map = new Map([[1, 'a'], [1, 'b'], [-0, 'z'], [[2], 'c']]);
+      check(map.get(1) + map.get(0) + map.size, 'bz3', 'Map constructor');
+      check(new Map([[1]]).get(1), undefined, 'short entry');
+      Array.prototype[1] = 'inherited';
+      check(new Map([[1]]).get(1), 'inherited', 'short entry reads the prototype');
+      delete Array.prototype[1];
+      const entry = [5];
+      Object.defineProperty(entry, 1, { get() { return 'got'; } });
+      check(new Map([entry]).get(5), 'got', 'entry getter');
+      let threw = false;
+      try { new Map([1]); } catch (error) { threw = error instanceof TypeError; }
+      check(threw, true, 'non-object entry');
+      check(new Map(new Map([[7, 8]])).get(7), 8, 'Map from Map');
+      check(new Map(Object.entries({ k: 1 })).get('k'), 1, 'Map from entries');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "set-iteration.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "set-iteration.js").unwrap()] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
 }

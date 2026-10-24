@@ -14,6 +14,8 @@ mod cell;
 mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
+mod environment_trace;
+pub(crate) use environment_trace::{ClosureReadSource, EnvironmentTrace};
 mod external;
 mod memory_stats;
 pub use memory_stats::HeapMemoryComposition;
@@ -31,7 +33,7 @@ pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub(crate) use cell::*;
 pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
-pub(crate) use collection_entries::CollectionEntries;
+pub(crate) use collection_entries::{CollectionEntries, CollectionEntry};
 use external::array_payload_bytes;
 use records::{
     ArrayRecordSpace, AwaitRecordSpace, FunctionRecordSpace, IteratorRecordSpace, V128RecordSpace,
@@ -53,7 +55,17 @@ const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_
 // A sparse element is an index and a value in a hash table, at least this many dense slots;
 // a sparse array whose elements fill as many slots as its length turns dense.
 const SPARSE_ENTRY_SLOTS: usize = size_of::<(usize, Value)>() / size_of::<Value>();
+
+/// Whether `present` elements of an array of `length` fill as many dense slots as its
+/// length, so dense storage takes no more words than sparse entries would.
+fn dense_storage_fits(present: usize, length: usize) -> bool {
+    present.saturating_mul(SPARSE_ENTRY_SLOTS) >= length
+}
 pub use pacing::MemoryPolicy;
+/// The prototypes `Heap::mark_prototype` remembers: an ordinary object's and an array's,
+/// whose allocations alternate (array literals and objects in one request handler), so one
+/// remembered prototype would look the other up on nearly every allocation.
+const MARKED_PROTOTYPE_WAYS: usize = 2;
 #[inline(always)]
 fn payload_unit() -> usize {
     #[cfg(feature = "gc-tuning")]
@@ -414,6 +426,11 @@ pub(crate) struct Heap {
     uncharged_payload_bytes: usize,
     /// What the last full collection kept, which the generational pacing grows from.
     live_after_full: usize,
+    /// What the full collection that last traced closure environments through their reads
+    /// kept (`EnvironmentTrace`); `None` before one has. Slots it cleared stay cleared, so a
+    /// later one finds only what was captured since: it runs again once the live set has
+    /// grown by `ENVIRONMENT_TRIM_GROWTH` of that.
+    live_at_environment_trim: Option<usize>,
     /// The next collection traces the whole heap.
     full_due: bool,
     /// Selects the pacing table (`MemoryPolicy::pacing`); reset keeps it.
@@ -434,10 +451,10 @@ pub(crate) struct Heap {
     threshold: usize,
     total_allocations: u64,
     collections: u64,
-    /// The prototype `mark_prototype` marked last, which keeps its mark for life: an
-    /// allocation with the same prototype needs no lookup. A collection may free it and
-    /// reuse its handle, so each one forgets it.
-    marked_prototype: Option<Value>,
+    /// The prototypes `mark_prototype` marked last, most recent first, which keep their
+    /// mark for life: an allocation with one of them needs no lookup. A collection may free
+    /// one and reuse its handle, so each one forgets them.
+    marked_prototypes: [Option<Value>; MARKED_PROTOTYPE_WAYS],
     peak_live: usize,
     peak_survivors: usize,
     max_threshold: usize,
@@ -762,6 +779,11 @@ struct SparseElements {
     values: FxHashMap<usize, Value>,
     length: usize,
 }
+/// How much the live set grows past what the last environment-trimming full collection kept
+/// before another trims (`Heap::live_at_environment_trim`): one live set, so what closures
+/// over-capture since can at most double what a trimmed heap holds.
+const ENVIRONMENT_TRIM_GROWTH: pacing::Ratio = pacing::Ratio::new(1, 1);
+
 impl Heap {
     pub fn new() -> Self {
         Self {
@@ -939,7 +961,7 @@ impl Heap {
 
     #[inline(always)]
     pub(crate) fn mark_prototype(&mut self, prototype: Value) {
-        if self.marked_prototype != Some(prototype) {
+        if !self.marked_prototypes.contains(&Some(prototype)) {
             self.mark_new_prototype(prototype);
         }
     }
@@ -955,11 +977,51 @@ impl Heap {
         };
         if let Some(object) = object {
             object.mark_as_prototype();
-            self.marked_prototype = Some(prototype);
+            self.marked_prototypes.rotate_right(1);
+            self.marked_prototypes[0] = Some(prototype);
         }
     }
 
+    /// Allocates `cell`. An array, whose kind a call site's literal cell fixes, takes its
+    /// record directly (`alloc_array`) without the dispatch on the cell's kind.
+    #[inline(always)]
     pub fn alloc(&mut self, cell: Cell) -> Value {
+        match cell {
+            Cell::Array { object } if !cfg!(feature = "profile-aggregate") => self.alloc_array(object),
+            cell => self.alloc_cell(cell),
+        }
+    }
+
+    /// `alloc(Cell::Array { object })`: an array record while one is free, charged as any
+    /// allocation (`charge_allocation`) for its element storage.
+    fn alloc_array(&mut self, object: ArrayObject) -> Value {
+        self.mark_prototype(object.proto());
+        self.charge_allocation(array_payload_bytes(&object), 0);
+        match self.array_records.try_insert(object) {
+            Ok(record_id) => {
+                let value = Value::direct_array(record_id);
+                #[cfg(feature = "profile-memory")]
+                self.profile_allocation(value);
+                value
+            }
+            Err(object) => self.alloc_in_slot(Cell::Array { object }, self.tracks_young_cells()),
+        }
+    }
+
+    /// The allocation ledger's charge for one cell owning `payload` bytes beyond its slot, of
+    /// which `external` are external buffers.
+    #[inline(always)]
+    fn charge_allocation(&mut self, payload: usize, external: usize) {
+        self.charge_materialized_text();
+        let weight = 1 + payload / payload_unit();
+        self.payload_bytes = self.payload_bytes.saturating_add(payload);
+        self.allocations += weight;
+        self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
+        self.total_allocations += 1;
+        self.charge_external_growth(external);
+    }
+
+    fn alloc_cell(&mut self, cell: Cell) -> Value {
         if let Some(object) = cell.object() { self.mark_prototype(object.proto()); }
         #[cfg(feature = "profile-aggregate")]
         {
@@ -973,15 +1035,8 @@ impl Heap {
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
             self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
         }
-        self.charge_materialized_text();
-        let payload = cell.payload_bytes();
-        let weight = 1 + payload / payload_unit();
-        self.payload_bytes = self.payload_bytes.saturating_add(payload);
-        self.allocations += weight;
-        self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
+        self.charge_allocation(cell.payload_bytes(), cell.external_bytes());
         let track_young = self.tracks_young_cells();
-        self.total_allocations += 1;
-        self.charge_external_growth(cell.external_bytes());
         let cell = match cell {
             Cell::Object(object) => match self.object_records.try_insert(object) {
                 Ok(record_id) => {
@@ -1578,6 +1633,7 @@ impl Heap {
         self.allocations = 0;
         self.allocations_since_full = 0;
         self.live_after_full = 0;
+        self.live_at_environment_trim = None;
         self.full_due = false;
         self.pacing_state = pacing::PacingState::default();
         self.live_weight_after_previous = 0;
@@ -1702,11 +1758,18 @@ impl Heap {
     }
     #[cfg(test)]
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
-        self.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, true)
+        self.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, None, true)
     }
     /// Whether a collection requested as `full` traces and sweeps the whole heap. Records
     /// and legacy cells share one generation rule: survivors stay marked (old), the write
     /// barriers log old owners they write, and a minor traces roots and that log only.
+    /// Whether this full collection traces closure environments through their reads
+    /// (`live_at_environment_trim`).
+    fn environment_trim_due(&self) -> bool {
+        self.live_at_environment_trim.is_none_or(|trimmed| {
+            self.live_after_full >= trimmed.saturating_add(ENVIRONMENT_TRIM_GROWTH.of(trimmed))
+        })
+    }
     pub(crate) fn collection_is_full(&self, full: bool) -> bool {
         full
     }
@@ -1716,6 +1779,7 @@ impl Heap {
         roots: impl IntoIterator<Item = Value>,
         mut object_roots: impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
+        closure_reads: Option<&dyn ClosureReadSource>,
         full: bool,
     ) -> Vec<(Value, Value)> {
         let full = self.collection_is_full(full);
@@ -1732,7 +1796,7 @@ impl Heap {
         // observed here and when it is reported rather than on every allocation.
         self.peak_live = self.peak_live.max(self.live_slots());
         self.collections += 1;
-        self.marked_prototype = None;
+        self.marked_prototypes = [None; MARKED_PROTOTYPE_WAYS];
         #[cfg(feature = "profile-aggregate")]
         let allocations_between_collections = self.allocations as u64;
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
@@ -1801,6 +1865,13 @@ impl Heap {
             self.gc_profile.roots += work.len() as u64;
             self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
         }
+        // A full collection traces closure environments through what closures can read, once
+        // the live set has grown since the last that did: environments over-captured since
+        // then are what grew it, and slots cleared before stay cleared. Between them the
+        // trace's per-environment state would only add to each full collection's peak
+        // (V8-v7 max RSS +50 to +156 KiB on most fixtures when every full collection traced).
+        let trims_environments = full && self.environment_trim_due();
+        let mut environments = EnvironmentTrace::new(closure_reads.filter(|_| trims_environments));
         {
             let mut ephemerons = weak::EphemeronWork::default();
             if !full {
@@ -1840,18 +1911,20 @@ impl Heap {
                 parallel_object_roots,
                 &mut ephemerons,
                 GcTraceKind::Collection,
+                &mut environments,
             );
         }
         #[cfg(debug_assertions)]
         {
             if full {
-                self.debug_verify_full(&verify_roots, &mut object_roots);
+                self.debug_verify_full(&verify_roots, &mut object_roots, closure_reads.filter(|_| trims_environments));
             } else {
                 let mut pinned = verify_old_records.unwrap_or_default();
                 pinned.extend(verify_remembered_records);
                 self.debug_verify_minor(&verify_roots, &pinned, &mut object_roots);
             }
         }
+        self.clear_unread_environment_slots(environments);
         let finalization_jobs = self.prune_weak_entries(full);
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
@@ -2108,6 +2181,9 @@ impl Heap {
             self.live_after_full = live;
             self.live_weight_after_full = live_weight;
         }
+        if trims_environments && closure_reads.is_some() {
+            self.live_at_environment_trim = Some(live);
+        }
         let next = self.pacing().plan(
             &mut self.pacing_state,
             pacing::CollectionOutcome {
@@ -2319,9 +2395,8 @@ impl Heap {
                     if Self::marked(&self.marks, index_usize) {
                         promoted += 1;
                     } else if let Some(cell) = slot.cell.take() {
+                        // Its mark bit is already clear: the test above found it so.
                         reclaim(properties, index_usize, cell);
-                        self.marks[index_usize / 64]
-                            .fetch_and(!(1 << (index_usize % 64)), Ordering::Relaxed);
                     }
                 }
                 self.young.clear();
@@ -2350,17 +2425,20 @@ impl Heap {
         parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
         ephemerons: &mut weak::EphemeronWork,
         trace_kind: GcTraceKind,
+        environments: &mut EnvironmentTrace<'_>,
     ) {
         if self.has_direct_records() {
-            self.mark_work(work, object_roots, ephemerons, trace_kind);
+            self.mark_work(work, object_roots, ephemerons, trace_kind, environments);
             return;
         }
         if self.slots.len() < PARALLEL_MARK_MINIMUM_SLOTS {
-            self.mark_work(work, object_roots, ephemerons, trace_kind);
+            self.mark_work(work, object_roots, ephemerons, trace_kind, environments);
             return;
         }
+        // Without function records, closures are boxed cells (`Cell::Function`), whose
+        // environments the parallel trace marks whole.
         let Some(pool) = parallel_mark_pool() else {
-            self.mark_work(work, object_roots, ephemerons, trace_kind);
+            self.mark_work(work, object_roots, ephemerons, trace_kind, environments);
             return;
         };
 
@@ -2510,6 +2588,7 @@ impl Heap {
         &mut self,
         roots: &[Value],
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+        closure_reads: Option<&dyn ClosureReadSource>,
     ) {
         let parallel_marks = Self::snapshot_marks(&self.marks);
         let parallel_record_marks = self.snapshot_record_marks();
@@ -2526,6 +2605,7 @@ impl Heap {
             object_roots,
             &mut ephemerons,
             GcTraceKind::VerifyFull,
+            &mut EnvironmentTrace::new(closure_reads),
         );
         let sequential_marks = Self::snapshot_marks(&self.marks);
         let sequential_record_marks = self.snapshot_record_marks();
@@ -2577,6 +2657,7 @@ impl Heap {
             object_roots,
             &mut ephemerons,
             GcTraceKind::VerifyFull,
+            &mut EnvironmentTrace::new(None),
         );
         let verified_record_marks = self.snapshot_record_marks();
         let marked = |marks: &[u64], id: RecordId| {
@@ -2620,9 +2701,18 @@ impl Heap {
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         ephemerons: &mut weak::EphemeronWork,
         trace_kind: GcTraceKind,
+        environments: &mut EnvironmentTrace<'_>,
     ) {
         let mut last_proto = Value::UNDEFINED;
-        while let Some(value) = work.pop() {
+        loop {
+            if work.is_empty() {
+                if !environments.has_pending() {
+                    break;
+                }
+                self.trace_environment_edges(environments, work);
+                continue;
+            }
+            let value = work.pop().expect("work is not empty");
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.work_items += 1;
@@ -2706,6 +2796,7 @@ impl Heap {
                     trace_kind,
                     &mut last_proto,
                 );
+                environments.closure(function.env, &function.kind, work);
                 let mark_bits = mark_bits!(self);
                 ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
             } else if let Some(record_id) = value.direct_iterator_index() {
@@ -2790,7 +2881,16 @@ impl Heap {
                 let Some(slot) = self.slots.get_mut(index) else {
                     continue;
                 };
-                if slot.cell.is_none() || !Self::mark_serial(&self.marks, index) {
+                if slot.cell.is_none() {
+                    continue;
+                }
+                // A full collection traces environments by what their readers read.
+                if let Some(Cell::Environment { function, .. }) = &slot.cell
+                    && environments.whole(value, index as u32, *function)
+                {
+                    continue;
+                }
+                if !Self::mark_serial(&self.marks, index) {
                     continue;
                 }
                 let cell = slot.cell.as_ref().unwrap();
@@ -2915,7 +3015,7 @@ impl Heap {
         // Dense storage of the whole length takes no more words than the elements hold. Holes
         // in the dense prefix are not elements; counting them would promote an array whose
         // writes only grow its length, doubling its storage at every far write.
-        let fills = |count: usize| count.saturating_add(sparse_count).saturating_mul(SPARSE_ENTRY_SLOTS) >= length;
+        let fills = |count: usize| dense_storage_fits(count.saturating_add(sparse_count), length);
         let dense = self.array_elements(array);
         let dense_enough = fills(dense.map_or(0, |dense| dense.len()))
             && fills(dense.map_or(0, |dense| dense.iter().filter(|value| !value.is_deleted()).count()));
@@ -3598,7 +3698,8 @@ impl Heap {
             trace_kind,
             last_proto,
         );
-        work.extend([function.env, function.realm]);
+        // The environment edge is the caller's (`EnvironmentTrace::closure`).
+        work.push(function.realm);
     }
     pub(super) fn cell_kind(cell: &Cell) -> CellKind {
         match cell {

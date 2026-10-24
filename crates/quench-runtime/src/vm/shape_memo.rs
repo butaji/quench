@@ -75,6 +75,10 @@ pub(super) type ShapeAttributeMemo = ShapeMemo<u32, Option<super::ShapeAttribute
 /// The shape an empty object of a shape reaches by a plain copy (`Vm::copy_plain_properties`)
 /// of a source of the keyed shape: its enumerable data properties added in order.
 pub(super) type PlainCopyShapeMemo = ShapeMemo<u32, u32>;
+/// `PlainCopyShapeMemo` for `Set` (`Object.assign`): keyed also by the target's prototype,
+/// whose chain the copy proved intercepts none of the keys, and valid while the
+/// `prototype_layout_epoch` it was proved under holds.
+pub(super) type PlainAssignShapeMemo = ShapeMemo<(u32, super::Value), (u32, u64)>;
 
 impl<K: Copy + Eq + Hash, V: Copy> Default for ShapeMemo<K, V> {
     fn default() -> Self {

@@ -157,7 +157,7 @@ pub(crate) struct LoopRegion {
     tagged_constants: std::collections::BTreeMap<u16, Value>,
     /// The function's live registers before each instruction (`compile::liveness`), when
     /// liveness covers it.
-    live: Option<Box<[u64]>>,
+    live: Option<Box<[crate::compile::liveness::RegisterSet]>>,
 }
 
 /// Why a backward jump was excluded from OSR before native code generation.
@@ -280,8 +280,8 @@ impl LoopRegion {
         let Some(live) = &self.live else {
             return true;
         };
-        let bit = u32::from(register);
-        bit >= u64::BITS || live.get(pc as usize).is_none_or(|mask| mask & (1 << bit) != 0)
+        live.get(pc as usize)
+            .is_none_or(|mask| !crate::compile::liveness::register_dead(*mask, usize::from(register)))
     }
 }
 
@@ -463,7 +463,7 @@ pub(super) fn region(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[Value],
-    live: Option<&[u64]>,
+    live: Option<&[crate::compile::liveness::RegisterSet]>,
     header: u32,
     backedge: u32,
 ) -> Result<LoopRegion, RegionRejection> {
@@ -962,8 +962,9 @@ fn definition(
     captures: &[Representation],
     observation: &Observation<'_>,
 ) -> Option<(Register, Representation)> {
-    let result = instruction.result_register();
-    if region.tagged.contains(&result) {
+    if let Some(result) = instruction.defined_register()
+        && region.tagged.contains(&result)
+    {
         return Some((result, Representation::Tagged));
     }
     let source = |operand: Operand| match operand.kind() {

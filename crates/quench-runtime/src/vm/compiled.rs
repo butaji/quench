@@ -1389,11 +1389,10 @@ pub(super) fn compile_js_general_dispatch(
             }
             _ => None,
         };
-        if let (Some(next), Some(target), Some(direct_branch)) = (
-            next,
-            usize::try_from(instruction.jump_target()).ok(),
-            direct_branch,
-        ) && target > pc
+        // Only a recognized branch has a jump target to read.
+        if let (Some(next), Some(direct_branch)) = (next, direct_branch)
+            && let Ok(target) = usize::try_from(instruction.jump_target())
+            && target > pc
             && let Some(target_block) = blocks.get(target).copied()
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
@@ -1468,15 +1467,15 @@ pub(super) fn compile_js_general_dispatch(
             continue;
         }
 
-        let unary = super::operations::NumberUnary::from_js_instruction(
-            instruction.op(),
-            instruction.unary_operator(),
-        );
-        let unary_source = register_offset(instruction.register_b());
-        let unary_destination = register_offset(instruction.result_register());
+        // The operator and registers are read only once the op is a numeric unary.
         if instruction.op().js_denotation() == JsDenotation::NumericUnary
-            && let (Some(next), Some(unary), Some(source), Some(destination)) =
-                (next, unary, unary_source, unary_destination)
+            && let Some(next) = next
+            && let Some(unary) = super::operations::NumberUnary::from_js_instruction(
+                instruction.op(),
+                instruction.unary_operator(),
+            )
+            && let Some(source) = register_offset(instruction.register_b())
+            && let Some(destination) = register_offset(instruction.result_register())
             && instruction.numeric_local_target().is_none()
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
@@ -1513,22 +1512,31 @@ pub(super) fn compile_js_general_dispatch(
             continue;
         }
 
-        let arithmetic = super::operations::NumberArithmetic::from_js_instruction(
-            instruction.op(),
-            instruction.binary_operator(),
-        );
-        let left_operand = instruction.operand_b();
-        let right_operand = instruction.operand_c();
-        let numeric_result = instruction.op().js_denotation() == JsDenotation::NumericBinary
+        // The operator is read only once the op is a numeric binary.
+        let numeric_binary = instruction.op().js_denotation() == JsDenotation::NumericBinary;
+        let arithmetic = numeric_binary
+            .then(|| {
+                super::operations::NumberArithmetic::from_js_instruction(
+                    instruction.op(),
+                    instruction.binary_operator(),
+                )
+            })
+            .flatten();
+        let operands = numeric_binary.then(|| (instruction.operand_b(), instruction.operand_c()));
+        let numeric_result = numeric_binary
             && arithmetic.is_some()
             && instruction.numeric_local_target().is_none()
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && !instruction.writes_current_this()
             && register_offset(instruction.result_register()).is_some()
-            && js_tagged_operand_supported(program, left_operand, &register_offset)
-            && js_tagged_operand_supported(program, right_operand, &register_offset);
-        if let (true, Some(next), Some(arithmetic)) = (numeric_result, next, arithmetic) {
+            && operands.is_some_and(|(left, right)| {
+                js_tagged_operand_supported(program, left, &register_offset)
+                    && js_tagged_operand_supported(program, right, &register_offset)
+            });
+        if let (true, Some(next), Some(arithmetic), Some((left_operand, right_operand))) =
+            (numeric_result, next, arithmetic, operands)
+        {
             let fallback = builder.create_block();
             let left_bits = read_js_tagged_operand(
                 &mut builder,
@@ -4003,11 +4011,30 @@ pub(super) fn analyze_osr_region(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[crate::value::Value],
-    live: Option<&[u64]>,
+    live: Option<&[crate::compile::liveness::RegisterSet]>,
     header: u32,
     backedge: u32,
 ) -> Result<LoopRegion, RegionRejection> {
     osr_loop::region(function, decoded, constants, live, header, backedge)
+}
+
+/// The Cranelift optimization level the loop tier compiles regions at under each memory
+/// policy (`MemoryPolicy` order), or none when it compiles no region. A loop region's
+/// compilation is the largest transient allocation of a `--jit` run: regalloc2's state and
+/// the code pages of the compiler and of the region.
+///
+/// Memory-first compiles no loop region, on the owner's direction of 2026-10-24 (TOD-123:
+/// memory-first may trade Score for memory under `--jit`). The per-function tier, which this
+/// leaves running, kept Richards, RayTrace and EarleyBoyer `--jit` below their interpreted
+/// peaks. NavierStokes `--jit` peaked at 7468 KiB compiled and 3988 interpreted, Crypto at
+/// 4000 and 3128 (static BOLT x86_64, memory-first, median of 5, 2026-10-24). Compiling at
+/// `none`, without the e-graph pass, saved only 576 KiB on Crypto and 648 on NavierStokes
+/// (`tod137-loop-tier-opt-level-…`). Throughput compiles at `speed`.
+const LOOP_TIER_OPT_LEVELS: [Option<&str>; crate::MemoryPolicy::ALL.len()] = [Some("speed"), None];
+
+/// Whether the loop tier compiles regions under `policy` (`LOOP_TIER_OPT_LEVELS`).
+pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
+    LOOP_TIER_OPT_LEVELS[policy as usize].is_some()
 }
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
@@ -4015,8 +4042,9 @@ pub(super) fn compile_osr_region(
     region: &LoopRegion,
     observation: &Observation<'_>,
     interrupt: &crate::execution_interrupt::ExecutionInterrupt,
+    policy: crate::MemoryPolicy,
 ) -> Option<CompiledOsrRegion> {
-    let isa = super::jit_backend::target_isa("speed", false)?;
+    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?, false)?;
     let (function, widenings) = osr_loop::lower(
         region,
         observation,
@@ -4603,6 +4631,19 @@ impl CompiledJsFunction {
             #[cfg(test)]
             native_entries: std::cell::Cell::new(0),
         })
+    }
+
+    /// Whether a call runs the body on its Number arguments alone, with no receiver,
+    /// captures or field reads to assemble and no string result to build
+    /// (`js_jit_compiled_call`).
+    fn direct_callable(&self) -> bool {
+        self.field_argument().is_none()
+            && self.numeric_field_inputs().is_empty()
+            && !self.is_capture_number()
+            && self.capture_arguments().is_empty()
+            && !self.is_string_transform()
+            && !self.is_string_hash_loop()
+            && !self.is_field_reject()
     }
 
     pub(super) fn params(&self) -> usize {
@@ -9094,6 +9135,68 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The JavaScript tier at the entry of a frameless lane activation of `function`, as
+    /// `js_tier_frame_entry` is at a frame's: with the native result, the PC of the
+    /// instruction the activation continues at, its register and the value to write there;
+    /// else `None`, and the activation runs from its entry. `parameters` are the
+    /// activation's parameter registers, `this` its receiver where the function binds its
+    /// own, and `env` the closure's environment, which its captures walk.
+    pub(super) fn js_tier_activation_entry(
+        &mut self,
+        program: &ResidualProgram,
+        id: ProgramId,
+        function: u32,
+        parameters: &[Value],
+        this: Option<Value>,
+        env: Value,
+    ) -> Option<(usize, crate::bytecode::Register, Value)> {
+        // A compiled body that reads only its parameters runs as a direct call does
+        // (`js_jit_compiled_call`); the activation completes at its `Return` with the result.
+        if let Some(value) = self.js_jit_compiled_call(program, (id, function), false, parameters) {
+            let body = program.function_get(function as usize)?;
+            let last_pc = body.code.len().checked_sub(1)?;
+            let terminal = body.code.get(last_pc)?.as_wide();
+            if terminal.op() == Op::Return {
+                return Some((last_pc, terminal.register_a(), value));
+            }
+        }
+        let entry = TierEntry {
+            program: id,
+            function,
+            this,
+            parameters: parameters.iter().copied().collect(),
+            captures: TierCaptures::Environment(env),
+            allocates: false,
+        };
+        let entered = self.js_jit_at_entry(program, &entry);
+        if entered.is_none() {
+            self.programs.record_js_jit_fallback_entry(id, function);
+        }
+        entered
+    }
+
+    /// The capture at `depth` and `slot` of the activation an entry reads.
+    fn tier_capture(&mut self, captures: TierCaptures, depth: u16, slot: u16) -> Option<Value> {
+        match captures {
+            TierCaptures::Frame(frame) => self.cached_direct_capture(frame, depth, slot),
+            TierCaptures::Environment(env) => {
+                // A frameless activation's function has no environment of its own
+                // (`lane_load_capture_walk`).
+                let (slots, root) = self.walked_capture_slots(env, false, depth)?;
+                // SAFETY: as `Vm::walked_capture_slots`; nothing collects before the read.
+                self.owned_capture(unsafe { &*slots }, root, slot)
+            }
+        }
+    }
+
+    /// `tier_capture`, and for a frame the root bindings `jit_owned_capture` also reads.
+    fn tier_owned_capture(&mut self, captures: TierCaptures, depth: u16, slot: u16) -> Option<Value> {
+        match captures {
+            TierCaptures::Frame(frame) => self.jit_owned_capture(frame, depth, slot),
+            TierCaptures::Environment(_) => self.tier_capture(captures, depth, slot),
+        }
+    }
+
     /// The JavaScript tier at the entry of `frame`, an initialized frame at PC zero, made
     /// wherever a frame is entered: the general loop, and the lane's in-place frame calls
     /// (`lane_frame_call`). With the native result written to its return register, the PC
@@ -9119,31 +9222,23 @@ impl<H: Host> Vm<H> {
             };
         }
         let function = self.frames[frame].function;
-        let general_candidate = program.function_get(function as usize).is_some_and(|body| {
-            if !js_general_dispatch_candidate(program, body) {
-                return false;
-            }
-            if !super::js_compiled::function_candidate(body, program) {
-                return true;
-            }
-            if !js_general_dispatch_acyclic_candidate(program, body) {
-                return false;
-            }
-            match self
-                .programs
-                .js_tier(self.frames[frame].program, function)
-            {
-                Some(
-                    super::program_store::JsTierState::GeneralPromotionPending
-                    | super::program_store::JsTierState::Rejected { .. },
-                ) => true,
-                Some(super::program_store::JsTierState::Compiled(compiled)) => {
-                    compiled.is_general_dispatch()
-                }
-                _ => false,
-            }
+        let general_candidate = program
+            .function_get(function as usize)
+            .is_some_and(|body| js_general_dispatch_candidate(program, body));
+        let entry = self.frames.get(frame).filter(|record| record.pc == 0).and_then(|record| {
+            let params = program.function_get(record.function as usize)?.params;
+            Some(TierEntry {
+                program: record.program,
+                function: record.function,
+                this: record.fixed_this.then_some(record.this),
+                parameters: record.registers.iter().copied().take(usize::from(params)).collect(),
+                captures: TierCaptures::Frame(frame),
+                allocates: true,
+            })
         });
-        if let Some((return_pc, return_register, value)) = self.js_jit_at_entry(program, frame) {
+        if let Some((return_pc, return_register, value)) =
+            entry.and_then(|entry| self.js_jit_at_entry(program, &entry))
+        {
             // The frame's own register file: a lane frame call reaches here before
             // `active_registers` names the frame (`lane_enter_script_frame`).
             self.frames[frame].registers[usize::from(return_register)] = value;
@@ -9264,17 +9359,14 @@ impl<H: Host> Vm<H> {
     fn js_jit_numeric_find_at_entry(
         &mut self,
         program: &ResidualProgram,
-        frame: usize,
+        activation: &TierEntry,
         candidate: super::js_compiled::JsJitNumericFind,
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
         const MAX_STEPS: usize = 256;
-        let program_id = self.frames.get(frame)?.program;
-        let function_id = self.frames.get(frame)?.function;
-        if !self.frames[frame].fixed_this {
-            return None;
-        }
+        let (program_id, function_id) = (activation.program, activation.function);
+        let receiver = activation.this?;
         let (key_value, index_value, hash_value) = {
-            let arguments = self.frames[frame].registers.get(..3)?;
+            let arguments = activation.parameters.get(..3)?;
             (arguments[0], arguments[1], arguments[2])
         };
         if key_value.as_number().is_none() || index_value.as_int().is_none() {
@@ -9283,7 +9375,6 @@ impl<H: Host> Vm<H> {
         let Some(key_hash) = hash_value.as_number() else {
             return None;
         };
-        let receiver = self.frames[frame].this;
         let array = match self.cached_field_hit(program, receiver, candidate.list_cache) {
             super::object::FieldCacheProbe::Hit(value) => value,
             super::object::FieldCacheProbe::Ineligible => {
@@ -9339,8 +9430,8 @@ impl<H: Host> Vm<H> {
                 let equals_function = if let Some(equals_function) = cached_equals_function {
                     equals_function
                 } else {
-                    let equals = self.jit_owned_capture(
-                        frame,
+                    let equals = self.tier_owned_capture(
+                        activation.captures,
                         candidate.equals_depth,
                         candidate.equals_slot,
                     )?;
@@ -9402,15 +9493,12 @@ impl<H: Host> Vm<H> {
     pub(super) fn js_jit_at_entry(
         &mut self,
         program: &ResidualProgram,
-        frame: usize,
+        entry: &TierEntry,
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
-        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm
-            || self.frames.get(frame)?.pc != 0
-        {
+        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm {
             return None;
         }
-        let program_id = self.frames[frame].program;
-        let function_id = self.frames[frame].function;
+        let (program_id, function_id) = (entry.program, entry.function);
         let function = program.function_get(function_id as usize)?;
         let facts = self.programs.js_entry_facts(program_id, function_id)?;
         // Most entries are of functions no entry path can claim; diagnostics still count them.
@@ -9419,14 +9507,14 @@ impl<H: Host> Vm<H> {
         }
         let numeric_find_candidate = facts.numeric_find.filter(|_| jit_numeric_find_enabled());
         if let Some(candidate) = numeric_find_candidate
-            && let Some(result) = self.js_jit_numeric_find_at_entry(program, frame, candidate)
+            && let Some(result) = self.js_jit_numeric_find_at_entry(program, entry, candidate)
         {
             return Some(result);
         }
         let field_increment_candidate = facts.field_increment;
         let mut field_increment_diagnostic_entry_recorded = false;
         if let Some(candidate) = field_increment_candidate {
-            let fixed_this = self.frames[frame].fixed_this;
+            let fixed_this = entry.this.is_some();
             if self.programs.js_jit_diagnostics_enabled() {
                 self.programs.record_js_jit_entry(
                     program_id,
@@ -9441,10 +9529,10 @@ impl<H: Host> Vm<H> {
                 );
                 field_increment_diagnostic_entry_recorded = true;
             }
-            if fixed_this
+            if let Some(receiver) = entry.this
                 && self.cached_field_increment_hit(
                     program,
-                    self.frames[frame].this,
+                    receiver,
                     candidate.atom,
                     candidate.read_cache_site,
                     candidate.write_cache_site,
@@ -9466,7 +9554,7 @@ impl<H: Host> Vm<H> {
             facts.field_return;
         let mut field_return_diagnostic_entry_recorded = field_increment_diagnostic_entry_recorded;
         if let Some(candidate) = field_return_candidate {
-            let fixed_this = self.frames[frame].fixed_this;
+            let fixed_this = entry.this.is_some();
             if self.programs.js_jit_diagnostics_enabled() {
                 self.programs.record_js_jit_entry(
                     program_id,
@@ -9481,8 +9569,7 @@ impl<H: Host> Vm<H> {
                 );
                 field_return_diagnostic_entry_recorded = true;
             }
-            if fixed_this {
-                let receiver = self.frames[frame].this;
+            if let Some(receiver) = entry.this {
                 if let super::object::FieldCacheProbe::Hit(value) =
                     self.cached_field_hit(program, receiver, candidate.cache_site)
                 {
@@ -9541,12 +9628,12 @@ impl<H: Host> Vm<H> {
             capture_arguments.extend(candidate);
         }
         let capture_number = capture_argument.and_then(|capture| {
-            self.cached_direct_capture(frame, capture.depth, capture.slot)
+            self.tier_capture(entry.captures, capture.depth, capture.slot)
                 .and_then(Value::as_number)
         });
 
         let params = usize::from(function.params);
-        let registers = self.frames[frame].registers.get(..params)?.to_vec();
+        let registers = entry.parameters.get(..params)?.to_vec();
         let first_argument = registers.first().copied();
         let mut numeric_field_inputs: smallvec::SmallVec<
             [super::js_compiled::JsJitNumericFieldInput; 4],
@@ -9594,7 +9681,7 @@ impl<H: Host> Vm<H> {
         }
         let mut capture_values: smallvec::SmallVec<[f64; 4]> = smallvec::SmallVec::new();
         let captures_numeric = capture_arguments.iter().all(|capture| {
-            self.cached_direct_capture(frame, capture.depth, capture.slot)
+            self.tier_capture(entry.captures, capture.depth, capture.slot)
                 .and_then(Value::as_number)
                 .is_some_and(|value| {
                     capture_values.push(value);
@@ -9610,11 +9697,11 @@ impl<H: Host> Vm<H> {
             for input in numeric_field_inputs.iter().copied() {
                 let receiver = match input.receiver {
                     super::js_compiled::JsJitFieldReceiver::This => {
-                        if !self.frames[frame].fixed_this {
+                        let Some(receiver) = entry.this else {
                             numeric = false;
                             break;
-                        }
-                        self.frames[frame].this
+                        };
+                        receiver
                     }
                     super::js_compiled::JsJitFieldReceiver::Parameter(parameter) => {
                         let Some(receiver) = registers.get(usize::from(parameter)).copied() else {
@@ -9625,7 +9712,7 @@ impl<H: Host> Vm<H> {
                     }
                     super::js_compiled::JsJitFieldReceiver::Capture { capture, .. } => {
                         let Some(receiver) =
-                            self.cached_direct_capture(frame, capture.depth, capture.slot)
+                            self.tier_capture(entry.captures, capture.depth, capture.slot)
                         else {
                             numeric = false;
                             break;
@@ -9726,7 +9813,9 @@ impl<H: Host> Vm<H> {
             Some(compiled) => compiled.string_transform_kind(),
             None => facts.string_transform,
         };
+        // Its result allocates a string, which no lane activation may (`TierEntry::allocates`).
         let string_transform = string_transform_kind
+            .filter(|_| entry.allocates)
             .filter(|kind| self.js_jit_string_transform_guard(*kind))
             .filter(|_| {
                 first_argument.is_some_and(|value| self.heap.is_string(value))
@@ -10049,59 +10138,11 @@ impl<H: Host> Vm<H> {
                 super::program_store::JsTierState::Compiled(compiled) => compiled.as_ref(),
                 _ => return None,
             };
-            // Direct calls have no callee frame from which to reload lexical
-            // captures. Those artifacts must use the ordinary frame-entry path,
-            // where the capture guards and ABI values are assembled together.
-            if compiled.field_argument().is_some()
-                || !compiled.numeric_field_inputs().is_empty()
-                || compiled.is_capture_number()
-                || !compiled.capture_arguments().is_empty()
-                || compiled.is_string_transform()
-                || compiled.is_string_hash_loop()
-                || compiled.is_field_reject()
-            {
-                return None;
-            }
             let params = usize::from(function.params);
-            if compiled.params() != params || arguments.len() < params {
+            if !compiled.direct_callable() || compiled.params() != params || arguments.len() < params {
                 return None;
             }
-            let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
-            for argument in arguments.iter().take(params) {
-                numeric_arguments.push(argument.as_number()?);
-            }
-            if compiled.requires_signed_int32_arguments()
-                && !numeric_arguments
-                    .iter()
-                    .all(|value| super::js_compiled::is_i32_number(*value))
-            {
-                return None;
-            }
-            if compiled.is_int32_identity()
-                && !numeric_arguments
-                    .first()
-                    .is_some_and(|value| super::js_compiled::is_i32_number(*value))
-            {
-                return None;
-            }
-            compiled
-                .call(&numeric_arguments, interrupt, poll_page)
-                .and_then(|result| match result {
-                    CompiledJsResult::Number(value) => {
-                        Some(CompiledJsCallResult::Value(Value::number(value)))
-                    }
-                    CompiledJsResult::Int32Identity { value, .. } => {
-                        Some(CompiledJsCallResult::Value(Value::number(value)))
-                    }
-                    CompiledJsResult::Boolean(value) => Some(CompiledJsCallResult::Value(
-                        if value { Value::TRUE } else { Value::FALSE },
-                    )),
-                    CompiledJsResult::StringReturnPc(return_pc) => compiled
-                        .string_constant_for_return(return_pc)
-                        .map(CompiledJsCallResult::ReturnConstant),
-                    CompiledJsResult::StringTransform(_, _)
-                    | CompiledJsResult::FieldReject { .. } => None,
-                })
+            direct_call(compiled, &arguments[..params], interrupt, poll_page)
         };
         if diagnostics {
             programs.record_js_jit_entry(program_id, function_id, true, function.params);
@@ -10113,6 +10154,60 @@ impl<H: Host> Vm<H> {
                 programs.constant(program_id, constant as usize)
             }
         }
+    }
+
+    /// The direct run of `function`'s compiled body a frameless activation keeps
+    /// (`LaneView::tier_direct`): where its body reads only its parameters
+    /// (`CompiledJsFunction::direct_callable`) and ends in a `Return`, which its result
+    /// completes. Diagnostics count every entry through `js_jit_compiled_call` instead.
+    pub(super) fn direct_tier_entry(
+        &self,
+        program: &ResidualProgram,
+        id: ProgramId,
+        function: u32,
+    ) -> Option<DirectTierEntry> {
+        if self.programs.js_jit_diagnostics_enabled() {
+            return None;
+        }
+        let super::program_store::JsTierState::Compiled(compiled) = self.programs.js_tier_ref(id, function)? else {
+            return None;
+        };
+        let body = program.function_get(function as usize)?;
+        let params = usize::from(body.params);
+        (compiled.direct_callable() && compiled.params() == params).then_some(())?;
+        let return_pc = body.code.len().checked_sub(1)?;
+        let terminal = body.code.get(return_pc)?.as_wide();
+        (terminal.op() == Op::Return).then_some(())?;
+        Some(DirectTierEntry {
+            compiled: Rc::downgrade(compiled),
+            params,
+            return_pc,
+            return_register: terminal.register_a(),
+        })
+    }
+
+    /// Runs `entry` on a frameless activation's `parameters`, as `js_jit_compiled_call` runs
+    /// the body: the `Return` to continue at, its register and the result; `None` where an
+    /// argument is no Number the body's guards admit, or the tier retired the artifact.
+    pub(super) fn run_direct_tier_entry(
+        &mut self,
+        entry: &DirectTierEntry,
+        id: ProgramId,
+        parameters: &[Value],
+    ) -> Option<(usize, crate::bytecode::Register, Value)> {
+        let compiled = entry.compiled.upgrade()?;
+        let poll_page = self.compiled_poll_page();
+        let result = direct_call(
+            &compiled,
+            parameters.get(..entry.params)?,
+            self.execution_interrupt.atomic_flag(),
+            poll_page,
+        )?;
+        let value = match result {
+            CompiledJsCallResult::Value(value) => value,
+            CompiledJsCallResult::ReturnConstant(constant) => self.programs.constant(id, constant as usize)?,
+        };
+        Some((entry.return_pc, entry.return_register, value))
     }
 
     /// Compile every function of `program` that has a compiled denotation,
@@ -11456,6 +11551,84 @@ const INTEGER_TAG: u64 = crate::value::INTEGER_TAG_BITS;
 
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
+
+/// `compiled`'s body run directly on `arguments`, its parameters, when each is a Number
+/// its guards admit: the call a known callee makes without a frame (`js_jit_compiled_call`).
+fn direct_call(
+    compiled: &CompiledJsFunction,
+    arguments: &[Value],
+    interrupt: &std::sync::atomic::AtomicBool,
+    poll_page: Option<(usize, usize)>,
+) -> Option<CompiledJsCallResult> {
+    let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
+    for argument in arguments {
+        numeric_arguments.push(argument.as_number()?);
+    }
+    if compiled.requires_signed_int32_arguments()
+        && !numeric_arguments.iter().all(|value| super::js_compiled::is_i32_number(*value))
+    {
+        return None;
+    }
+    if compiled.is_int32_identity()
+        && !numeric_arguments.first().is_some_and(|value| super::js_compiled::is_i32_number(*value))
+    {
+        return None;
+    }
+    match compiled.call(&numeric_arguments, interrupt, poll_page)? {
+        CompiledJsResult::Number(value) | CompiledJsResult::Int32Identity { value, .. } => {
+            Some(CompiledJsCallResult::Value(Value::number(value)))
+        }
+        CompiledJsResult::Boolean(value) => {
+            Some(CompiledJsCallResult::Value(if value { Value::TRUE } else { Value::FALSE }))
+        }
+        CompiledJsResult::StringReturnPc(return_pc) => {
+            compiled.string_constant_for_return(return_pc).map(CompiledJsCallResult::ReturnConstant)
+        }
+        CompiledJsResult::StringTransform(_, _) | CompiledJsResult::FieldReject { .. } => None,
+    }
+}
+
+/// A compiled body a frameless activation runs directly (`Vm::direct_tier_entry`): the
+/// artifact, held weakly so that the tier retiring it ends the direct run, its parameter
+/// count, and the `Return` its result completes.
+pub(super) struct DirectTierEntry {
+    compiled: std::rc::Weak<CompiledJsFunction>,
+    params: usize,
+    return_pc: usize,
+    return_register: crate::bytecode::Register,
+}
+
+impl DirectTierEntry {
+    /// Whether the tier retired the artifact.
+    pub(super) fn retired(&self) -> bool {
+        self.compiled.strong_count() == 0
+    }
+}
+
+/// What the JavaScript tier reads of an activation it enters at PC zero: a VM frame's
+/// (`Vm::js_tier_frame_entry`) or a frameless lane activation's
+/// (`Vm::js_tier_activation_entry`). Either way a native result continues the same
+/// activation, so the tier never decides how a function is called.
+pub(super) struct TierEntry {
+    program: ProgramId,
+    function: u32,
+    /// The receiver, where the function binds its own (`Frame::fixed_this`).
+    this: Option<Value>,
+    /// The activation's parameter registers.
+    parameters: smallvec::SmallVec<[Value; 8]>,
+    captures: TierCaptures,
+    /// Whether a native result may allocate: not in a lane activation, where nothing collects.
+    allocates: bool,
+}
+
+/// Where an entry's captures are read.
+#[derive(Clone, Copy)]
+pub(super) enum TierCaptures {
+    /// Through the frame's environment and capture cache.
+    Frame(usize),
+    /// Through the closure's environment.
+    Environment(Value),
+}
 
 #[cfg(test)]
 mod tests {

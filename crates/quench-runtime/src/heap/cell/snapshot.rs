@@ -273,8 +273,8 @@ fn write_module_source(writer: &mut Writer, module: &crate::ModuleSource) {
 fn read_module_source(reader: &mut Reader<'_>) -> SnapshotResult<crate::ModuleSource> {
     Ok(crate::ModuleSource {
         name: reader.string()?,
-        source: reader.string()?,
-        original_bytes: if reader.bool()? { Some(reader.bytes()?.to_vec()) } else { None },
+        source: reader.string()?.into(),
+        original_bytes: if reader.bool()? { Some(reader.bytes()?.into()) } else { None },
     })
 }
 
@@ -475,15 +475,15 @@ impl crate::heap::PromiseCell {
             writer.value(reaction.on_fulfilled);
             writer.value(reaction.on_rejected);
             writer.value(reaction.next);
-            writer.bool(reaction.execution_context.is_some());
-            if let Some(context) = reaction.execution_context {
+            writer.bool(reaction.execution_context.get().is_some());
+            if let Some(context) = reaction.execution_context.get() {
                 writer.u64(context.0);
             }
         }
         promise_rejection::write(writer, *rejection);
         writer.u64(rejection_id.map_or(0, std::num::NonZeroU64::get));
-        writer.bool(host_context.is_some());
-        if let Some(context) = host_context {
+        writer.bool(host_context.get().is_some());
+        if let Some(context) = host_context.get() {
             writer.u64(context.0);
         }
         Ok(())
@@ -498,12 +498,12 @@ impl crate::heap::PromiseCell {
                 on_fulfilled: reader.value()?,
                 on_rejected: reader.value()?,
                 next: reader.value()?,
-                execution_context: if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None },
+                execution_context: if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None }.into(),
             })
         })?;
         let rejection = promise_rejection::read(reader)?;
         let rejection_id = std::num::NonZeroU64::new(reader.u64()?);
-        let host_context = if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None };
+        let host_context = if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None }.into();
         Ok(Self {
             object,
             record: crate::heap::PromiseRecord {
@@ -923,7 +923,7 @@ impl EnvironmentScopeRef {
 
 // A suspended generator or iterator helper: its saved activation is plain data, whose program
 // counter names the same instruction of the same function record once restored.
-use crate::vm::activation::{AsyncGeneratorOperation, AsyncGeneratorRequest, CallContext, Completion, Continuation, GeneratorRecord};
+use crate::vm::activation::{AsyncGeneratorOperation, AsyncGeneratorRequest, CallContext, Completion, GeneratorRecord};
 
 snapshot_enum!(async_generator_operation: AsyncGeneratorOperation { Next, Return, Throw });
 snapshot_enum!(iterator_zip_mode: IteratorZipMode { Shortest, Longest, Strict });
@@ -949,11 +949,7 @@ snap_via_enum! {
 snap_struct!(AsyncGeneratorRequest { operation, promise, value });
 snap_struct!(crate::vm::ActiveIterator { iterator, done });
 snap_struct!(GeneratorRecord { continuation, realm, done, running, requests });
-snap_struct!(Continuation {
-    context, reflected_parameters, original_arguments, program, function, pc, env, this, locals,
-    dynamic_bindings, registers, active_iterators, with_objects, completion, captured,
-    resume_register, promise,
-});
+
 
 /// `CallContext` tags, in declaration order.
 mod call_context_tag {

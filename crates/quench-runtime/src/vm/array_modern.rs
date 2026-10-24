@@ -263,7 +263,20 @@ impl<H: Host> Vm<H> {
                     map_this,
                 );
             }
+            // Constructing the intrinsic Array (or no constructor) runs no guest code, so the
+            // source still iterates as `iterator_method` found it; filling an empty dense array
+            // with intact iteration values is then the protocol without its objects.
+            let intrinsic_target = !self.is_constructable(p, constructor)
+                || self.is_current_realm_native(constructor, Native::Array);
             let target = self.array_from_target(p, constructor, None, target_kind)?;
+            if mapfn.is_none()
+                && intrinsic_target
+                && self.dense_array_length(target) == Some(0)
+                && let Some(values) = self.intact_iteration_values(source)
+                && self.append_literal_elements(target, &values)
+            {
+                return Ok(target);
+            }
             let root = self.heap.root(target);
             let outcome = (|| {
                 let iterator = self.call_value(p, iterator_method, source, &[])?;
@@ -273,11 +286,16 @@ impl<H: Host> Vm<H> {
                     );
                 }
                 let iterator_root = self.heap.root(iterator);
+                let mut next_root = None;
                 let outcome = (|| {
+                    // GetIteratorFromMethod reads `next` once; every step calls that method.
+                    let next = self.get_property(p, iterator, self.runtime_atoms.next)?;
+                    let next = *next_root.insert(self.heap.root(next));
                     let mut index = 0;
                     loop {
                         let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
-                        let Some(mut value) = self.iterator_step_value(p, iterator)? else {
+                        let Some(mut value) = self.rooted_iterator_step_value(p, iterator_root, next)?
+                        else {
                             break;
                         };
                         if let Some(mapfn) = mapfn {
@@ -301,7 +319,9 @@ impl<H: Host> Vm<H> {
                     self.set_array_like_length(p, target, index)
                         .map(|()| target)
                 })();
-                self.heap.release_root(iterator_root);
+                for root in [Some(iterator_root), next_root].into_iter().flatten() {
+                    self.heap.release_root(root);
+                }
                 outcome
             })();
             self.heap.release_root(root);
@@ -742,17 +762,20 @@ impl<H: Host> Vm<H> {
     /// property, so the definition always succeeds and is the element store itself. Other
     /// receivers take the full DefineOwnProperty path.
     fn create_plain_array_element(&mut self, target: Value, index: usize, value: Value) -> bool {
-        let plain = self.heap.array(target).is_some()
-            && index < MAX_ARRAY_LENGTH
-            && self.object_data(target).is_some_and(|object| {
-                object.is_extensible()
-                    && !object.has_indexed_descriptors()
-                    && !object.is_arguments_object()
-            })
-            && self
-                .descriptors
-                .get(&(target, PropertyKey::string(self.length_atom)))
-                .is_none_or(|length| length.writable);
+        let Some(object) = self.heap.array(target) else {
+            return false;
+        };
+        // An array's `length` keeps non-default attributes only as a recorded descriptor.
+        let length_descriptor = object.has_length_descriptor();
+        let plain = index < MAX_ARRAY_LENGTH
+            && object.is_extensible()
+            && !object.has_indexed_descriptors()
+            && !object.is_arguments_object()
+            && (!length_descriptor
+                || self
+                    .descriptors
+                    .get(&(target, PropertyKey::string(self.length_atom)))
+                    .is_none_or(|length| length.writable));
         plain && self.set_array_element(target, index, value)
     }
 
