@@ -4393,8 +4393,8 @@ pub(super) struct JsEntryFacts {
     pub(super) enters: bool,
     /// Whether the function is a specialized tier candidate (`function_candidate`).
     pub(super) candidate: bool,
-    /// Whether the general baseline admits it (`js_general_dispatch_candidate`), and
-    /// without backward jumps (`js_general_dispatch_acyclic_candidate`).
+    /// Whether the general baseline admits it, and without backward jumps
+    /// (`js_general_dispatch_shape`).
     pub(super) general: bool,
     pub(super) general_acyclic: bool,
 }
@@ -4405,8 +4405,8 @@ impl JsEntryFacts {
         let field_increment = cached_this_field_increment_candidate(program, function);
         let field_return = cached_this_field_return_candidate(function);
         let candidate = function_candidate(function, program);
-        let general = super::compiled::js_general_dispatch_candidate(program, function);
-        let general_acyclic = general && super::compiled::js_general_dispatch_acyclic_candidate(program, function);
+        let shape = super::compiled::js_general_dispatch_shape(function);
+        let (general, general_acyclic) = (shape.is_some(), shape == Some(true));
         let enters = candidate || numeric_find.is_some() || field_increment.is_some() || field_return.is_some();
         // The other facts are read only past the candidate check an entering function passes.
         if !enters {

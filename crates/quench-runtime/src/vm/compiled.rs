@@ -935,15 +935,7 @@ const JS_GENERAL_RETURN_STATUS_BASE: u32 =
 const _: () = assert!(JS_GENERAL_RETURN_STATUS_BASE > TERMINATED_STATUS as u32);
 
 pub(super) fn js_general_dispatch_candidate(_program: &ResidualProgram, function: &Function) -> bool {
-    !function.code.is_empty()
-        && function.code.len() <= MAX_JS_GENERAL_DISPATCH_BLOCKS
-        && function.code.iter().all(|packed| {
-            let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-            !matches!(
-                instruction.op(),
-                Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-            ) || usize::try_from(instruction.jump_target()).is_ok()
-        })
+    js_general_dispatch_shape(function).is_some()
 }
 
 /// Preserve OSR as the owner of legacy hot-loop promotion. The generic
@@ -951,17 +943,28 @@ pub(super) fn js_general_dispatch_candidate(_program: &ResidualProgram, function
 /// this predicate only selects the earlier fallback for rejected/profiled
 /// legacy candidates.
 pub(super) fn js_general_dispatch_acyclic_candidate(
-    program: &ResidualProgram,
+    _program: &ResidualProgram,
     function: &Function,
 ) -> bool {
-    js_general_dispatch_candidate(program, function)
-        && function.code.iter().enumerate().all(|(pc, packed)| {
-            let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-            !matches!(
-                instruction.op(),
-                Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-            ) || usize::try_from(instruction.jump_target()).is_ok_and(|target| target > pc)
-        })
+    js_general_dispatch_shape(function) == Some(true)
+}
+
+/// Whether the general baseline admits `function` (a bounded body whose jumps all have
+/// targets) and, if so, whether it is acyclic (every jump goes forward): one pass over
+/// the bytecode for both facts.
+pub(super) fn js_general_dispatch_shape(function: &Function) -> Option<bool> {
+    if function.code.is_empty() || function.code.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
+        return None;
+    }
+    let mut acyclic = true;
+    for (pc, packed) in function.code.iter().enumerate() {
+        let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+        if matches!(instruction.op(), Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse) {
+            let target = usize::try_from(instruction.jump_target()).ok()?;
+            acyclic &= target > pc;
+        }
+    }
+    Some(acyclic)
 }
 
 fn read_js_tagged_operand(
@@ -9894,7 +9897,22 @@ impl<H: Host> Vm<H> {
         // Keep bounded candidates on a frame entry until the shared tier has
         // settled. Lane target caches otherwise preserve a frameless route
         // across the later promotion and no longer consult tiering.
-        facts.candidate || facts.general
+        facts.candidate || self.js_general_tier_takes(program, function, &facts)
+    }
+
+    /// Whether the general baseline may take `function`: a general candidate the tier admits
+    /// (`ProgramStore::general_tier_admits`). Every general-tier path on entry asks this
+    /// first, so a function it may not take costs those paths nothing.
+    fn js_general_tier_takes(
+        &self,
+        program: &ResidualProgram,
+        function: u32,
+        facts: &super::js_compiled::JsEntryFacts,
+    ) -> bool {
+        facts.general
+            && program.function_get(function as usize).is_some_and(|body| {
+                self.programs.general_tier_admits(body.code.len(), self.memory_policy())
+            })
     }
 
     /// Whether the general tier holds `function`: pending, due or compiled.
@@ -9934,7 +9952,7 @@ impl<H: Host> Vm<H> {
     ) -> (bool, bool) {
         let Some(body) = program
             .function_get(function as usize)
-            .filter(|body| facts.general && self.programs.general_baseline_may_pay(body.code.len()))
+            .filter(|_| self.js_general_tier_takes(program, function, facts))
         else {
             return (false, false);
         };
@@ -10061,12 +10079,13 @@ impl<H: Host> Vm<H> {
         let Some(facts) = self
             .programs
             .js_entry_facts(program_id, function)
-            .filter(|facts| facts.enters || facts.general || self.programs.js_jit_diagnostics_enabled())
+            .filter(|facts| facts.enters || self.programs.js_jit_diagnostics_enabled() || self.js_general_tier_takes(program, function, facts))
         else {
             return JsTierFrameEntry::Interpreter;
         };
+        let general = self.js_general_tier_takes(program, function, &facts);
         if allow_inline_calls
-            && facts.general
+            && general
             && let Some(outcome) = self.js_jit_general_dispatch_at_entry(
                 program, frame, 0, true, false,
             )

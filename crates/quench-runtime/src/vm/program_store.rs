@@ -1692,6 +1692,16 @@ impl ProgramStore {
         !self.general_baseline_priced || general_saved_per_entry(instructions).is_some()
     }
 
+    /// Whether the general baseline may ever take a body of `instructions` under `policy`:
+    /// the tier is switched on, the memory policy compiles JS tiers, and the body could
+    /// pay (`general_baseline_may_pay`). A function it may not take is neither claimed for
+    /// the tier nor counted toward it.
+    pub(super) fn general_tier_admits(&self, instructions: usize, policy: crate::MemoryPolicy) -> bool {
+        self.js_jit_general_dispatch_enabled
+            && super::compiled::js_function_tiers_compile(policy)
+            && self.general_baseline_may_pay(instructions)
+    }
+
     /// Compile a hot function's general baseline without pricing it, for tests of its
     /// semantics.
     #[cfg(all(test, not(quench_profiled)))]
