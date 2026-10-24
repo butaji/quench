@@ -4421,6 +4421,21 @@ pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
     LOOP_TIER_OPT_LEVELS[policy as usize].is_some()
 }
 
+/// Whether the general-dispatch tier compiles whole functions under each memory policy
+/// (`MemoryPolicy` order). Its functions are the largest the JavaScript tiers compile, and
+/// regalloc2's state for one set memory-first's peak, as a loop region's did
+/// (`LOOP_TIER_OPT_LEVELS`): V8-v7 Crypto `--jit` peaked at the end of its run while one
+/// compiled (static BOLT x86_64, memory-first: 3220 -> 5496 KiB median once the tier
+/// landed, 2026-10-24). Memory-first compiles none, on the owner's direction that it may
+/// trade Score for memory under `--jit` (TOD-123).
+const GENERAL_DISPATCH_TIER: [bool; crate::MemoryPolicy::ALL.len()] = [true, false];
+
+/// Whether the general-dispatch tier compiles functions under `policy`
+/// (`GENERAL_DISPATCH_TIER`).
+pub(super) fn general_dispatch_compiles(policy: crate::MemoryPolicy) -> bool {
+    GENERAL_DISPATCH_TIER[policy as usize]
+}
+
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
 pub(super) fn compile_osr_region(
     region: &LoopRegion,
@@ -9845,7 +9860,7 @@ impl<H: Host> Vm<H> {
         // A legacy candidate is observed only once its numeric profile has declined.
         let observes = !facts.candidate || general_state;
         // The tier manager prices the baseline against the entries so far.
-        let due = observes && self.programs.note_js_general_dispatch_entry(program_id, function, body.code.len());
+        let due = observes && self.programs.note_js_general_dispatch_entry(program_id, function, body.code.len(), self.memory_policy());
         (true, due)
     }
 
