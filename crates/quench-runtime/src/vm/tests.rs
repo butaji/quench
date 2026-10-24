@@ -11977,6 +11977,12 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
       function write(target, key, value) {
         try { target[key] = value; return target[key]; } catch (error) { return error; }
       }
+      function readFixed(target) {
+        try { return target.fallback; } catch (error) { return error; }
+      }
+      function readFixedGetter(target) {
+        try { return target.value; } catch (error) { return error; }
+      }
       let getterCalls = 0;
       const marker = {};
       const target = {
@@ -11985,10 +11991,12 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
         fallback: 0
       };
       for (let index = 1; index <= 48; index++) {
-        if (read(target, 'value') !== index) throw Error('getter result');
+        if (read(target, 'value') !== index * 2 - 1) throw Error('getter result');
         if (write(target, 'fallback', index) !== index) throw Error('dynamic write result');
+        if (readFixed(target) !== index) throw Error('cached field result');
+        if (readFixedGetter(target) !== index * 2) throw Error('cached getter result');
       }
-      if (getterCalls !== 48 || target.fallback !== 48) throw Error('dynamic property effects');
+      if (getterCalls !== 96 || target.fallback !== 48) throw Error('dynamic property effects');
       if (read(target, 'throwing') !== marker) throw Error('caught getter throw');
     "#;
     let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-general.js"))
@@ -12000,7 +12008,7 @@ fn js_jit_general_dispatch_runs_dynamic_properties_with_shared_vm_semantics() {
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
 
-    for name in ["read", "write"] {
+    for name in ["read", "write", "readFixed", "readFixedGetter"] {
         let function = program
             .functions
             .iter()
