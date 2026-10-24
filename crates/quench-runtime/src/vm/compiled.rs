@@ -499,7 +499,7 @@ pub(super) fn compile_js_numeric_region(
     let function = program.function_get(function_id as usize)?;
     let (reachable, predecessors) = js_numeric_control_flow(function)?;
     let params = usize::from(function.params);
-    let isa = super::jit_backend::target_isa("speed", true)?;
+    let isa = super::jit_backend::target_isa("speed")?;
 
     let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
     let name = UserFuncName::user(0x5155_454e, function_id);
@@ -1311,7 +1311,7 @@ pub(super) fn compile_js_general_dispatch(
         return Err("bytecode-candidate-rejected");
     }
 
-    let isa = super::jit_backend::target_isa("speed", true)
+    let isa = super::jit_backend::target_isa("speed")
         .ok_or("target-isa-unavailable")?;
     let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
     let name = UserFuncName::user(0x5155_454e, function_id);
@@ -4491,7 +4491,7 @@ pub(super) fn compile_osr_region(
     interrupt: &crate::execution_interrupt::ExecutionInterrupt,
     policy: crate::MemoryPolicy,
 ) -> Option<CompiledOsrRegion> {
-    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?, false)?;
+    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?)?;
     let (function, widenings) = osr_loop::lower(
         region,
         observation,
@@ -9932,7 +9932,10 @@ impl<H: Host> Vm<H> {
         function: u32,
         facts: &super::js_compiled::JsEntryFacts,
     ) -> (bool, bool) {
-        let Some(body) = program.function_get(function as usize).filter(|_| facts.general) else {
+        let Some(body) = program
+            .function_get(function as usize)
+            .filter(|body| facts.general && self.programs.general_baseline_may_pay(body.code.len()))
+        else {
             return (false, false);
         };
         let state = self.programs.js_tier(program_id, function);
@@ -11342,7 +11345,7 @@ impl<H: Host> Vm<H> {
         if diagnostics_enabled {
             eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
         }
-        let isa = super::jit_backend::target_isa(opt_level, false)?;
+        let isa = super::jit_backend::target_isa(opt_level)?;
         // The full plan of a callable function, derived again where needed.
         let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
         let mut reference_site_ids = vec![Vec::new(); count];

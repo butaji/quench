@@ -13395,13 +13395,11 @@ fn js_jit_general_baseline_waits_until_entries_pay_for_its_compile() {
         assert_eq!(vm.own_property(vm.realm.globals, name).unwrap(), expected);
         vm.programs.js_tier(super::program_store::ProgramId::MAIN, function)
     };
-    // Hot, but a short run has not paid for the compile.
-    assert!(matches!(state(48), Some(super::program_store::JsTierState::GeneralPromotionPending { .. })));
-    // A long run has.
-    let Some(super::program_store::JsTierState::Compiled(native)) = state(16_000) else {
-        panic!("the general baseline compiles once its entries pay for it");
-    };
-    assert!(native.is_general_dispatch());
+    // Hot, but a short run has not paid for the compile; and a body this small saves less
+    // per entry than the baseline's entry costs, so no run pays (`general_promotion_due`).
+    for calls in [48, 20_000] {
+        assert!(matches!(state(calls), Some(super::program_store::JsTierState::GeneralPromotionPending { .. })));
+    }
 }
 
 #[cfg(not(quench_profiled))]
