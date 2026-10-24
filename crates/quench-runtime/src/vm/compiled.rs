@@ -358,7 +358,12 @@ fn js_numeric_control_flow(function: &Function) -> Option<(Vec<bool>, Vec<Vec<us
         match instruction.op().control_flow_layout() {
             ControlFlowLayout::Jump if instruction.op() == crate::bytecode::Op::Jump => {}
             ControlFlowLayout::ConditionalJump
-                if instruction.op() == crate::bytecode::Op::JumpBinaryFalse => {}
+                if matches!(
+                    instruction.op(),
+                    crate::bytecode::Op::JumpBinaryFalse
+                        | crate::bytecode::Op::JumpFalse
+                        | crate::bytecode::Op::JumpTrue
+                ) => {}
             ControlFlowLayout::Terminal | ControlFlowLayout::Fallthrough => {}
             ControlFlowLayout::Jump
             | ControlFlowLayout::ConditionalJump
@@ -447,6 +452,14 @@ pub(super) fn emit_number_bitwise_operation(
     } else {
         builder.ins().fcvt_from_sint(types::F64, bits)
     }
+}
+
+/// Emit JavaScript ToBoolean for a Number after the caller has proved its value is numeric.
+fn emit_number_truthiness(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+    let zero = builder.ins().f64const(Ieee64::with_bits(0.0_f64.to_bits()));
+    let nonzero = builder.ins().fcmp(FloatCC::NotEqual, number, zero);
+    let not_nan = builder.ins().fcmp(FloatCC::Equal, number, number);
+    builder.ins().band(nonzero, not_nan)
 }
 
 /// Compile a JS numeric function-entry region with the same register views used by Wasm and
@@ -545,29 +558,56 @@ pub(super) fn compile_js_numeric_region(
                 continue;
             }
             ControlFlowLayout::ConditionalJump => {
-                if instruction.op() != crate::bytecode::Op::JumpBinaryFalse
-                    || instruction.result_flags() != 0
-                {
+                if instruction.result_flags() != 0 {
                     return None;
                 }
-                let read_operand = |body: &mut Body<'_>, operand: Operand, registers: &[bool]| {
-                    read_js_numeric_operand(program, body, operand, registers)
+                let (condition, jump_when) = match instruction.op() {
+                    crate::bytecode::Op::JumpBinaryFalse => {
+                        let left = read_js_numeric_operand(
+                            program,
+                            &mut body,
+                            instruction.operand_b(),
+                            &registers,
+                        )?;
+                        let right = read_js_numeric_operand(
+                            program,
+                            &mut body,
+                            instruction.operand_c(),
+                            &registers,
+                        )?;
+                        let relation = emit_number_relation(
+                            &mut body.builder,
+                            instruction.binary_operator_field(),
+                            left,
+                            right,
+                            NumberRelationDomain::Float64,
+                        )?;
+                        (relation, false)
+                    }
+                    crate::bytecode::Op::JumpFalse | crate::bytecode::Op::JumpTrue => {
+                        let register = usize::from(instruction.register_a());
+                        if !*registers.get(register)? {
+                            return None;
+                        }
+                        let value = body.read(register as u16, crate::WasmType::F64);
+                        let truthy = emit_number_truthiness(&mut body.builder, value);
+                        let jump_when = instruction.op() == crate::bytecode::Op::JumpTrue;
+                        (truthy, jump_when)
+                    }
+                    _ => return None,
                 };
-                let left = read_operand(&mut body, instruction.operand_b(), &registers)?;
-                let right = read_operand(&mut body, instruction.operand_c(), &registers)?;
-                let relation = emit_number_relation(
-                    &mut body.builder,
-                    instruction.binary_operator_field(),
-                    left,
-                    right,
-                    NumberRelationDomain::Float64,
-                )?;
                 let target = usize::try_from(instruction.jump_target()).ok()?;
                 let fallthrough = pc.checked_add(1)?;
                 initialized_after[pc] = Some(registers);
-                body.builder
-                    .ins()
-                    .brif(relation, blocks[fallthrough]?, &[], blocks[target]?, &[]);
+                if jump_when {
+                    body.builder
+                        .ins()
+                        .brif(condition, blocks[target]?, &[], blocks[fallthrough]?, &[]);
+                } else {
+                    body.builder
+                        .ins()
+                        .brif(condition, blocks[fallthrough]?, &[], blocks[target]?, &[]);
+                }
                 continue;
             }
             ControlFlowLayout::Terminal | ControlFlowLayout::Fallthrough => {}
