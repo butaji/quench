@@ -299,7 +299,7 @@ impl<H: Host> Vm<H> {
         }
         match self.heap.get(value) {
             Some(Cell::Function(_)) => return Ok("function () { [native code] }".into()),
-            _ if let Some(value) = self.heap.string(value)  => return Ok(value.to_string()),
+            _ if let Some(value) = self.heap.string(value)  => return Ok(value.to_host_owned()),
             Some(Cell::Error(value)) => return Ok(value.clone()),
             Some(Cell::BigInt(value)) => return Ok(value.to_string()),
             Some(Cell::Symbol(_)) => {

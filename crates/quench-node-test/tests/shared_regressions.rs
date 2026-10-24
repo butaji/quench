@@ -51,6 +51,49 @@ console.log('strict-assert-aliases: ok');
     assert_eq!(quench.stdout, node.stdout);
 }
 
+/// A lane read of a global name whose site cached the binding must raise once the global
+/// object's property is deleted, as the binding's [[Get]] on an absent name does
+/// (7c042285b): Node's global object reaches the miss path the runtime CLI's does not.
+#[test]
+fn deleted_global_read_in_a_warmed_function_raises_reference_error() {
+    let source = r#"
+globalThis.LateGlobal = 1;
+function read() { try { return LateGlobal; } catch (error) { return error.name; } }
+for (let i = 0; i < 20; i++) read();
+delete globalThis.LateGlobal;
+console.log(String(read()));
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    assert_eq!(String::from_utf8_lossy(&node.stdout).trim(), "ReferenceError");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
+/// A base class constructor runs frameless when constructed; its plain calls keep taking a
+/// frame, whose call raises the TypeError, however often the class was constructed first.
+#[test]
+fn warmed_class_constructor_still_rejects_calls_without_new() {
+    let source = r#"
+class A { #e; x = 1; constructor(a) { this.#e = a; } get e() { return this.#e; } }
+let sum = 0;
+for (let i = 0; i < 50; i++) sum += new A(i).e + new A(i).x;
+function call(f) { return f(1); }
+const errors = [];
+for (let i = 0; i < 50; i++) { try { call(A); errors.push('none'); } catch (error) { errors.push(error.name); } }
+class R { constructor(o) { if (o) return o; } }
+const marker = {};
+console.log(sum, errors[0], errors[49], new R(marker) === marker, new R(0) instanceof R);
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    assert_eq!(String::from_utf8_lossy(&node.stdout).trim(), "1275 TypeError TypeError true true");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
 #[test]
 fn strict_call_followed_by_return_of_another_register_matches_node() {
     let source = r#"

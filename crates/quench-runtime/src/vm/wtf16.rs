@@ -330,7 +330,10 @@ impl<'a> Units<'a> {
         }
         let last = self.len() - search.len();
         if let (Self::Ascii(haystack), Units::Ascii(needle)) = (self, search) {
-            return (start..=last).find(|index| haystack[*index..*index + needle.len()] == *needle);
+            if start > last {
+                return None;
+            }
+            return memchr::memmem::find(&haystack[start..], needle).map(|offset| start + offset);
         }
         let first = search.at(0);
         (start..=last).find(|index| {
@@ -521,6 +524,15 @@ impl JsStringInner {
             if matches!((*slot).as_deref(), Some(Aside::Rope(..))) {
                 *slot = None;
             }
+        }
+    }
+
+    /// A flat `Wide` string's host text, if `host` has made it.
+    fn cached_host(&self) -> Option<&str> {
+        // SAFETY: a shared read; a `Host` is never replaced once written (`host`).
+        match unsafe { (*self.aside.get()).as_deref() } {
+            Some(Aside::Host(host)) => Some(host),
+            Some(Aside::Rope(..)) | None => None,
         }
     }
 
@@ -893,6 +905,24 @@ impl JsString {
         }
     }
 
+    /// `host_string` as an owned copy. A `Wide` string with no cached host text is
+    /// transcoded straight into the copy, so a one-off conversion (a script source handed
+    /// to the compiler) leaves no second copy on the string.
+    pub(crate) fn to_host_owned(&self) -> String {
+        match (self.flat(), &self.repr) {
+            (wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_)), Repr::Shared(inner)) => {
+                inner.cached_host().map_or_else(
+                    || {
+                        let Units::Wide(units) = wide.view() else { unreachable!("wide units") };
+                        String::from_utf16_lossy(units)
+                    },
+                    str::to_owned,
+                )
+            }
+            _ => self.host_string().to_owned(),
+        }
+    }
+
     /// The string as host text: its own units when ASCII, lossy UTF-8 made once otherwise.
     pub(crate) fn host_string(&self) -> &str {
         match self.flat() {
@@ -951,9 +981,23 @@ impl JsString {
         }
     }
 
+    /// The string's unit storage and host text, each as (address, bytes), for the memory
+    /// report. It reads the string as it is: a rope not yet flattened reports its own node,
+    /// whose halves are strings of their own, and is not flattened to be measured (that
+    /// kept a flat copy for the string's life, so a report inflated the memory it reported).
     pub(crate) fn memory_parts(&self) -> ((usize, usize), Option<(usize, usize)>) {
         const RC_HEADER_BYTES: usize = 2 * std::mem::size_of::<usize>();
-        let unit_storage = match self.flat() {
+        let Some(flat) = self.existing_flat() else {
+            let Repr::Shared(inner) = &self.repr else {
+                unreachable!("a flat representation always has flat units");
+            };
+            let node = (
+                Rc::as_ptr(inner) as usize,
+                RC_HEADER_BYTES + std::mem::size_of::<JsStringInner>(),
+            );
+            return (node, None);
+        };
+        let unit_storage = match flat {
             // Inline units live in the string's own allocation.
             FlatUnits::Short(text) => (text.bytes.as_ptr() as usize, 0),
             FlatUnits::Ascii(text) => (
@@ -992,7 +1036,20 @@ impl JsString {
             return;
         }
         let short = |piece: &Self| piece.len() <= ROPE_LEAF_MAX_UNITS;
+        // Two flat pieces the policy below joins: one copy of each, straight into the joined
+        // storage when both are ASCII (a template literal's pieces, a key built from parts,
+        // a rope's last leaf and the text appended to it).
         let joined = |left: &Self, right: &Self| {
+            if let (Some(Units::Ascii(head)), Some(Units::Ascii(tail))) =
+                (left.existing_flat().map(FlatUnits::view), right.existing_flat().map(FlatUnits::view))
+            {
+                let units = FlatUnits::ascii_with(head.len() + tail.len(), |bytes| {
+                    let (start, end) = bytes.split_at_mut(head.len());
+                    start.write_copy_of_slice(head);
+                    end.write_copy_of_slice(tail);
+                });
+                return Self { repr: Repr::Flat(units) };
+            }
             let mut flat = JsStringBuilder::default();
             flat.append(left);
             flat.append(right);
@@ -1002,6 +1059,15 @@ impl JsString {
         let rope = |left: &Self, right: &Self| {
             Self::shared(JsStringInner::concat(left.node(), right.node()))
         };
+        // A flattened rope joins as the flat text it holds.
+        if self.existing_flat().is_some()
+            && text.existing_flat().is_some()
+            && short(text)
+            && self.len() <= FLAT_PREFIX_MAX_UNITS
+        {
+            *self = joined(self, text);
+            return;
+        }
         // The QuickJS policy: a short flat piece joins the flat side it meets, whether that
         // is the other operand or the facing half of a rope operand.
         *self = match (self.rope_halves(), text.rope_halves()) {

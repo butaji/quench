@@ -47,3 +47,52 @@ sweeps compare only within a few percent. Decisions use paired medians or callgr
 ## Re-baselined sweep at `711e270e` (2026-10-23, new host kernel)
 
 The host moved from kernel fc-v140 to `6.18.44-fc-v153` (still Intel Xeon @ 2.10 GHz, 4 vCPU) and runs about 15% slower (the same binary scores 19.8 vs 23.2 on hash-map), so the Bun rows above no longer pair with new Quench runs. `scores-711e270e-host2.txt` pairs quench `711e270e` (v2-merged `d836ef374` merged in) with Bun 1.4.2 `BUN_JSC_useJIT=0` re-run on the same host, one round each, run alone. **Score geomean 0.817 of Bun no-JIT; max RSS geomean 1.44× smaller.** At or above 1.2× Bun on score: json-parse-inspector 1.26, hash-map 1.21 and the Wasm tests except argon2 (sqlite3 2.14, zlib 3.27, HashSet 3.91, gcc-loops 4.15, quicksort 3.17, tsf 2.55). At or above 1.2× smaller RSS: 22/34; RSS losses: postcss-wtb 0.93, doxbee-promise 0.87, babel-wtb 0.98. Furthest behind on score: argon2-wasm 0.23, doxbee-async 0.25, web-ssr 0.34, doxbee-promise 0.37, json-stringify 0.42, async-fs 0.45, sync-fs 0.47.
+
+## Paired sweep at 740c3c6c1 (2026-10-23)
+
+Quench (`quench-node`, release, HEAD 740c3c6c1) and Bun (`BUN_JSC_useJIT=0`) run back to
+back on each test (`psweep.sh`: one `rsscmp.py` call per test), so host throughput drift
+affects both sides of each ratio alike. Host: Linux 6.18.44-fc-v153, Xeon 2.10GHz, 4 vCPU.
+Raw rows: `paired-740c3c6c-raw.txt`; ratios: `paired-740c3c6c-ratios.txt`.
+
+Geomean score 0.790× Bun no-JIT, max RSS 1.53× smaller; 7/34 tests at ≥1.2× score
+(stanford-crypto-sha256 and the six Wasm tests other than argon2), 25/34 at ≥1.2× smaller RSS.
+The lowest score ratios are argon2-wasm 0.23, web-ssr 0.32, doxbee-async 0.34,
+bigint-noble-ed25519 0.36, chai 0.38, validatorjs 0.39, doxbee-promise 0.41, async-fs 0.42.
+RSS is above Bun on babel-wtb, postcss-wtb (0.95) and doxbee-promise (0.92).
+
+## Paired sweep at 2e17be07a (2026-10-24)
+
+Same method and host as the 740c3c6c1 sweep (`psweep.sh`, quench and Bun `BUN_JSC_useJIT=0`
+back to back per test; Linux 6.18.44-fc-v153, Xeon 2.10GHz, 4 vCPU). Raw rows:
+`paired-2e17be07-raw.txt`; ratios with the previous sweep's beside them:
+`paired-2e17be07-ratios.txt`.
+
+Geomean score 0.788× Bun no-JIT (was 0.790), max RSS 1.59× smaller (was 1.53); 6/34 tests at
+≥1.2× score, 26/34 at ≥1.2× smaller RSS. Gains since 740c3c6c1: chai 0.38 → 0.56 and RSS
+1.21 → 1.84, validatorjs 0.39 → 0.45, postcss 0.52 → 0.63 and RSS 0.95 → 1.12, babel RSS
+0.95 → 1.09, doxbee-promise RSS 0.92 → 1.02, bigint 0.36 → 0.51, prettier 0.66 → 0.76,
+esprima-next 0.73 → 0.89, json-stringify 0.47 → 0.54. The stanford-crypto tests and hash-map
+fell (sha256 1.23 → 0.79, pbkdf2 1.10 → 0.70, aes 0.93 → 0.69, hash-map 1.08 → 0.88): the
+merge of origin/v2-merged at 3464b1bb5 brought a ~30% slowdown on them (sha256 38.2 before
+the merge, 26.7 at it, same host, paired medians); see the bisect note below.
+
+Bisect: `git bisect run` over origin/v2-merged (good 1c4b797e2, scoring
+stanford-crypto-sha256 ≥ 32) names b00f1cd5e (jit: share number bitwise lowering stage) as
+the first bad commit. 282264598 restores int-tagged bitwise results; paired medians on the
+same host then: sha256 27.6 → 39.5 (pre-regression 39.4), pbkdf2 28.0 → 38.1, aes 21.2 →
+28.1, hash-map 23.3 → 24.6. The ratios above predate that fix.
+
+## Paired sweep at 3a7eaaf0f (2026-10-24)
+
+Same method and host as above. Raw rows `paired-3a7eaaf0-raw.txt`; ratios, with the
+740c3c6c1 baseline beside them, `paired-3a7eaaf0-ratios.txt`.
+
+Geomean score **0.845×** Bun no-JIT (740c3c6c1: 0.790), max RSS **1.58×** smaller (1.53);
+8/34 tests at ≥1.2× score (the six Wasm tests other than argon2, stanford-crypto-sha256 1.22,
+stanford-crypto-aes 1.33), 26/34 at ≥1.2× smaller RSS. Against the baseline: chai 0.38 → 0.57,
+validatorjs 0.39 → 0.53, json-stringify 0.47 → 0.66, json-parse 0.49 → 0.53, postcss 0.52 →
+0.68, bigint 0.36 → 0.57, sync-fs 0.50 → 0.58, aes 0.93 → 1.33, pbkdf2 1.10 → 1.16; RSS
+babel 0.95 → 1.08, postcss 0.95 → 1.12, babel-minify 1.14 → 1.20, chai 1.21 → 1.68. js-tokens
+(1.15 → 0.98) and babel (0.70 → 0.55) moved mostly with Bun's single-run scores (Bun js-tokens
+20.7 → 26.0, babel 11.9 → 16.8); quench's own scores rose on both.

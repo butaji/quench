@@ -1,0 +1,12 @@
+richards             base 2624  noreads +4  nofill +0
+richards      --jit  base 2868  noreads +0  nofill +0
+deltablue            base 2912  noreads +24  nofill +20
+deltablue     --jit  base 3044  noreads +0  nofill +0
+crypto               base 3220  noreads -4  nofill -4
+crypto        --jit  base 4256  noreads +0  nofill +0
+raytrace             base 2952  noreads -52  nofill +0
+raytrace      --jit  base 3028  noreads -52  nofill +0
+regexp               base 6068  noreads -28  nofill -52
+regexp        --jit  base 6172  noreads +4  nofill +0
+navier-stokes        base 4156  noreads +0  nofill +0
+navier-stokes --jit  base 7784  noreads -4  nofill +4

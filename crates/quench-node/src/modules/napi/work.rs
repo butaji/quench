@@ -11,9 +11,16 @@ use super::lifecycle::{collected, finalize, Finalizer};
 use super::{api, enter, js_api, out, Context, Env, NapiValue, Status, Thrown, ENVS, NULL_VALUE};
 use crate::host::NodeHost;
 use quench_runtime::{RootId, RootedError};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::ffi::c_void;
+#[cfg(not(target_os = "linux"))]
+use std::io::{Read, Write};
+use std::os::fd::RawFd;
+#[cfg(not(target_os = "linux"))]
+use std::os::fd::AsRawFd;
+#[cfg(not(target_os = "linux"))]
+use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -32,13 +39,179 @@ pub(crate) enum Event {
 // dereferences them, after the producing thread has published its writes via the lock.
 unsafe impl Send for Event {}
 
-type Events = Arc<Mutex<VecDeque<Event>>>;
+type Events = Arc<EventQueue>;
 
-fn push(events: &Events, event: Event) {
+pub(super) struct EventQueue {
+    pub(super) queue: Mutex<VecDeque<Event>>,
+    wake: Arc<WakeSignal>,
+}
+
+struct WakeSignal {
+    #[cfg(target_os = "linux")]
+    fd: RawFd,
+    #[cfg(not(target_os = "linux"))]
+    reader: Mutex<UnixStream>,
+    #[cfg(not(target_os = "linux"))]
+    writer: Mutex<UnixStream>,
+}
+
+impl WakeSignal {
+    fn new() -> std::io::Result<Self> {
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: eventfd owns no pointers; the descriptor stays live with this signal.
+            let fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
+            if fd < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(Self { fd })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let (reader, writer) = UnixStream::pair()?;
+            reader.set_nonblocking(true)?;
+            writer.set_nonblocking(true)?;
+            Ok(Self {
+                reader: Mutex::new(reader),
+                writer: Mutex::new(writer),
+            })
+        }
+    }
+
+    fn notify(&self) {
+        #[cfg(target_os = "linux")]
+        {
+            let value: u64 = 1;
+            // SAFETY: `fd` is a live eventfd and `value` is its required eight-byte payload.
+            loop {
+                let written = unsafe {
+                    libc::write(
+                        self.fd,
+                        (&value as *const u64).cast(),
+                        std::mem::size_of::<u64>(),
+                    )
+                };
+                if written >= 0
+                    || std::io::Error::last_os_error().kind()
+                        != std::io::ErrorKind::Interrupted
+                {
+                    break;
+                }
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut writer = self.writer.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = writer.write(&[1]);
+        }
+    }
+
+    fn raw_fd(&self) -> RawFd {
+        #[cfg(target_os = "linux")]
+        {
+            self.fd
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.reader
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_raw_fd()
+        }
+    }
+
+    fn drain(&self) {
+        #[cfg(target_os = "linux")]
+        {
+            let mut value = 0u64;
+            loop {
+                // SAFETY: `fd` is a live eventfd and `value` is an eight-byte output buffer.
+                let read = unsafe {
+                    libc::read(
+                        self.fd,
+                        (&mut value as *mut u64).cast(),
+                        std::mem::size_of::<u64>(),
+                    )
+                };
+                if read == std::mem::size_of::<u64>() as isize {
+                    continue;
+                }
+                if read < 0
+                    && std::io::Error::last_os_error().kind()
+                        == std::io::ErrorKind::Interrupted
+                {
+                    continue;
+                }
+                break;
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut reader = self.reader.lock().unwrap_or_else(|e| e.into_inner());
+            let mut bytes = [0; 256];
+            loop {
+                match reader.read(&mut bytes) {
+                    Ok(0) => break,
+                    Ok(_) => continue,
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for WakeSignal {
+    fn drop(&mut self) {
+        // SAFETY: this is the unique owner of `fd`.
+        unsafe { libc::close(self.fd) };
+    }
+}
+
+thread_local! {
+    static WAKE_SIGNAL: RefCell<Option<Arc<WakeSignal>>> = const { RefCell::new(None) };
+}
+
+fn wake_signal() -> std::io::Result<Arc<WakeSignal>> {
+    WAKE_SIGNAL.with(|slot| {
+        if let Some(signal) = slot.borrow().as_ref() {
+            return Ok(Arc::clone(signal));
+        }
+        let signal = Arc::new(WakeSignal::new()?);
+        *slot.borrow_mut() = Some(Arc::clone(&signal));
+        Ok(signal)
+    })
+}
+
+pub(super) fn new_events() -> Result<Events, String> {
+    let wake = wake_signal().map_err(|error| error.to_string())?;
+    Ok(Arc::new(EventQueue {
+        queue: Mutex::new(VecDeque::new()),
+        wake,
+    }))
+}
+
+pub(super) fn push(events: &Events, event: Event) {
     events
+        .queue
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .push_back(event);
+    events.wake.notify();
+}
+
+pub(crate) fn wake_fd() -> Option<RawFd> {
+    WAKE_SIGNAL.with(|slot| slot.borrow().as_ref().map(|signal| signal.raw_fd()))
+}
+
+pub(crate) fn drain_wake() {
+    WAKE_SIGNAL.with(|slot| {
+        if let Some(signal) = slot.borrow().as_ref() {
+            signal.drain();
+        }
+    });
 }
 
 /// The lifecycle of an async work item.
@@ -471,6 +644,7 @@ fn next_event() -> Option<(*mut Env, Event)> {
             let env_ref = unsafe { &*env };
             let event = env_ref
                 .events
+                .queue
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .pop_front();
@@ -539,6 +713,7 @@ pub(crate) fn has_work() -> bool {
             env.pending_async_work.get() > 0
                 || !env
                     .events
+                    .queue
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .is_empty()
@@ -555,6 +730,7 @@ pub(crate) fn poll(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
 ) -> Result<bool, String> {
+    drain_wake();
     if ENVS.with(|envs| envs.borrow().is_empty()) {
         return Ok(false);
     }

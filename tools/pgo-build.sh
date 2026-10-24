@@ -28,10 +28,13 @@ per_program_timeout=10
 # the many Node fixtures share, dominate the profile (3 repeats measured 3-7% less Score).
 curriculum_repeats=20
 # A curriculum program runs its micro workload (`microRun`) once at load, a few milliseconds
-# against a startup the Node fixtures already train; a driver keeps calling it for this long
-# in the same process, so each program's interpreter paths, not startup, carry its weight.
-# Training with only the single load-time call left the PGO build slower than a plain build
-# on NavierStokes, Crypto, Richards and Splay.
+# against a startup the Node fixtures already train; a driver keeps calling it for this much
+# of the process's own CPU time, so each program's interpreter paths, not startup, carry its
+# weight. Training with only the single load-time call left the PGO build slower than a plain
+# build on NavierStokes, Crypto, Richards and Splay. The budget is CPU time, not wall time: a
+# busy host then leaves each program's share of the profile as it is. Wall-time budgets
+# trained one source revision into builds 20% apart on NavierStokes and 8% on Richards when
+# other work shared the host.
 curriculum_budget_ms=6000
 # Optional representative React SSR samples can be added to the general profile with
 # QUENCH_PGO_REACT_ROUNDS=N. Keep this off by default so production builds stay independent
@@ -96,10 +99,12 @@ train_micro_programs() {
         driver="$drivers_dir/$(basename "$corpus")-$(basename "$program")"
         {
             cat "$program"
-            printf '\nconst trainingEnd = Date.now() + %d;\nwhile (Date.now() < trainingEnd) microRun();\n' \
+            printf '\nconst trainingBudget = %d * 1000;\nconst trainingSpent = () => { const { user, system } = process.cpuUsage(); return user + system; };\nwhile (trainingSpent() < trainingBudget) microRun();\n' \
                 "$budget_ms"
         } >"$driver"
-        run_limited "$instrumented" "$driver" >/dev/null 2>&1 || true
+        # A CPU-time budget can outlast the per-program wall limit on a busy host, and a
+        # killed run writes no profile.
+        run_training_limited "$instrumented" "$driver" >/dev/null 2>&1 || true
     done
 }
 train_micro_programs quench-bench/deegen-curriculum "$curriculum_budget_ms"
@@ -133,3 +138,9 @@ rm -rf "$data_dir"
 CARGO_TARGET_DIR="$target_dir" cargo build --profile "$profile" -p quench-node \
     --config "build.rustflags=[\"-Cprofile-use=$profdata\", \"-Cllvm-args=-disable-icp\"]"
 printf 'PGO build: %s\n' "$target_dir/$profile/quench-node"
+# Profile-guided inlining decides which lane handlers form their dispatch as a sibling jump
+# (`tools/check-lane-tail-calls.sh`); a profile that keeps symbols reports the ones that do not.
+if nm "$target_dir/$profile/quench-node" 2>/dev/null | grep dispatch_fast >/dev/null; then
+    printf 'Lane handlers dispatching with a call:\n'
+    tools/check-lane-tail-calls.sh "$target_dir/$profile/quench-node" || true
+fi

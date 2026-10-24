@@ -634,6 +634,16 @@ impl ValueArena {
         }
     }
 
+    /// Whether `vector` of `len` values still names its storage once its last value is
+    /// dropped by a shorter shape: inline values, or an ordered range whose capacity, which
+    /// derives from the length, is the same for one value fewer.
+    pub(crate) fn drops_last_in_place(vector: ValueVec, len: usize) -> bool {
+        vector.has_inline_property_storage()
+            || (!vector.is_dictionary()
+                && len > 0
+                && Self::ordered_capacity(vector, len - 1) == Self::ordered_capacity(vector, len))
+    }
+
     /// Whether `vector`, an arena vector outside dictionary storage of `len` values, has room
     /// for one more value without moving its range (`push`'s `grow`).
     #[inline(always)]

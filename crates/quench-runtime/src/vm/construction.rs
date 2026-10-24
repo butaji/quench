@@ -155,13 +155,28 @@ impl<H: Host> Vm<H> {
     /// always; a dynamic atom is kept only where its kind bounds how many there can be, as a
     /// function's name is.
     fn atom_string_kept(&mut self, atom: Atom, keep: bool) -> Value {
+        if keep {
+            if let Some(&value) = self.atom_strings.get(&atom) {
+                return value;
+            }
+            let value = self.heap.alloc_string(self.atom_value(atom));
+            self.atom_strings.insert(atom, value);
+            return value;
+        }
         if let Some(&value) = self.atom_strings.get(&atom) {
             return value;
         }
-        let value = self.heap.alloc_string(self.atom_value(atom));
-        if keep {
-            self.atom_strings.insert(atom, value);
+        let slot = atom as usize & (super::ATOM_STRING_CACHE_SIZE - 1);
+        if let Some(recent) = &self.recent_atom_strings
+            && recent[slot].0 == atom
+        {
+            return recent[slot].1;
         }
+        let value = self.heap.alloc_string(self.atom_value(atom));
+        self.recent_atom_strings
+            .get_or_insert_with(|| {
+                Box::new([(super::NO_RECENT_ATOM, Value::UNDEFINED); super::ATOM_STRING_CACHE_SIZE])
+            })[slot] = (atom, value);
         value
     }
 
@@ -323,6 +338,14 @@ impl<H: Host> Vm<H> {
         self.closure_in_realm(p, id, env, self.realm.globals)
     }
 
+    /// The template recorded for closures of the active program's function `id` in `realm`.
+    #[inline(always)]
+    fn recorded_closure_template(&self, id: u32, realm: Value) -> Option<ClosureTemplate> {
+        self.closure_templates[closure_template_index(self.active_program, id)].filter(|template| {
+            template.function == id && template.program == self.active_program && template.realm == realm
+        })
+    }
+
     /// A closure's object allocated finished: its own `length`, `name` and `prototype` under
     /// `shape`, as the recorded adds would leave them, inline where they fit, else in the
     /// property arena.
@@ -378,6 +401,13 @@ impl<H: Host> Vm<H> {
         mut env: Value,
         realm: Value,
     ) -> Result<Value, JsError> {
+        // No `with` was ever entered, so no closure captures a `with` object
+        // (`Vm::with_scope_entered`): a recorded closure needs none of the scope work below.
+        if !self.with_scope_entered
+            && let Some(template) = self.recorded_closure_template(id, realm)
+        {
+            return Ok(self.closure_of_template(template, env));
+        }
         let function_plan = p.functions[id as usize].header();
         let with_objects = if env.is_null() {
             Vec::new()
@@ -393,11 +423,7 @@ impl<H: Host> Vm<H> {
         };
         let template_index = closure_template_index(self.active_program, id);
         let plain_scope = with_objects.is_empty();
-        if plain_scope
-            && let Some(template) = self.closure_templates[template_index].filter(|template| {
-                template.function == id && template.program == self.active_program && template.realm == realm
-            })
-        {
+        if plain_scope && let Some(template) = self.recorded_closure_template(id, realm) {
             return Ok(self.closure_of_template(template, env));
         }
         if !with_objects.is_empty() {
@@ -936,18 +962,15 @@ impl<H: Host> Vm<H> {
         let object = &self.heap.function(constructor)?.object;
         let shape = object.shape();
         let key = PropertyKey::string(prototype_atom);
-        let data_slot = || {
-            self.property_attributes(constructor, key)
-                .filter(|attributes| !attributes.accessor)
-                .and_then(|_| self.property_shape_slot(shape, key))
-        };
         if self.shape_is_dictionary(shape) {
-            return self.heap.property_get(object, data_slot()?);
+            return self.heap.property_get(object, self.prototype_data_slot(constructor, shape, key)?);
         }
         let memo = &self.shapes[shape as usize].prototype_slot;
         let slot = match memo.get() {
             PROTOTYPE_SLOT_UNKNOWN => {
-                let slot = data_slot().map_or(PROTOTYPE_SLOT_NONE, |slot| slot as u32);
+                let slot = self
+                    .prototype_data_slot(constructor, shape, key)
+                    .map_or(PROTOTYPE_SLOT_NONE, |slot| slot as u32);
                 memo.set(slot);
                 slot
             }
@@ -957,6 +980,17 @@ impl<H: Host> Vm<H> {
             return None;
         }
         self.heap.property_get(object, slot as usize)
+    }
+
+    /// The slot of `constructor`'s own `prototype` data property `key` in its `shape`; `None`
+    /// for an accessor or no such property. Out of line and of plain values: a construct the
+    /// lane inlines this lookup into passes it no address of its stack, which would keep its
+    /// dispatch from being a sibling call (`tools/check-lane-tail-calls.sh`).
+    #[inline(never)]
+    fn prototype_data_slot(&self, constructor: Value, shape: u32, key: PropertyKey) -> Option<usize> {
+        self.property_attributes(constructor, key)
+            .filter(|attributes| !attributes.accessor)
+            .and_then(|_| self.property_shape_slot(shape, key))
     }
 
     /// `constructor`'s own shape and the slot of its own data `prototype` there, for a shape
