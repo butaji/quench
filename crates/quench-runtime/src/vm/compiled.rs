@@ -1369,11 +1369,10 @@ pub(super) fn compile_js_general_dispatch(
             }
             _ => None,
         };
-        if let (Some(next), Some(target), Some(direct_branch)) = (
-            next,
-            usize::try_from(instruction.jump_target()).ok(),
-            direct_branch,
-        ) && target > pc
+        // Only a recognized branch has a jump target to read.
+        if let (Some(next), Some(direct_branch)) = (next, direct_branch)
+            && let Ok(target) = usize::try_from(instruction.jump_target())
+            && target > pc
             && let Some(target_block) = blocks.get(target).copied()
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
@@ -1448,15 +1447,15 @@ pub(super) fn compile_js_general_dispatch(
             continue;
         }
 
-        let unary = super::operations::NumberUnary::from_js_instruction(
-            instruction.op(),
-            instruction.unary_operator(),
-        );
-        let unary_source = register_offset(instruction.register_b());
-        let unary_destination = register_offset(instruction.result_register());
+        // The operator and registers are read only once the op is a numeric unary.
         if instruction.op().js_denotation() == JsDenotation::NumericUnary
-            && let (Some(next), Some(unary), Some(source), Some(destination)) =
-                (next, unary, unary_source, unary_destination)
+            && let Some(next) = next
+            && let Some(unary) = super::operations::NumberUnary::from_js_instruction(
+                instruction.op(),
+                instruction.unary_operator(),
+            )
+            && let Some(source) = register_offset(instruction.register_b())
+            && let Some(destination) = register_offset(instruction.result_register())
             && instruction.numeric_local_target().is_none()
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
@@ -1493,22 +1492,31 @@ pub(super) fn compile_js_general_dispatch(
             continue;
         }
 
-        let arithmetic = super::operations::NumberArithmetic::from_js_instruction(
-            instruction.op(),
-            instruction.binary_operator(),
-        );
-        let left_operand = instruction.operand_b();
-        let right_operand = instruction.operand_c();
-        let numeric_result = instruction.op().js_denotation() == JsDenotation::NumericBinary
+        // The operator is read only once the op is a numeric binary.
+        let numeric_binary = instruction.op().js_denotation() == JsDenotation::NumericBinary;
+        let arithmetic = numeric_binary
+            .then(|| {
+                super::operations::NumberArithmetic::from_js_instruction(
+                    instruction.op(),
+                    instruction.binary_operator(),
+                )
+            })
+            .flatten();
+        let operands = numeric_binary.then(|| (instruction.operand_b(), instruction.operand_c()));
+        let numeric_result = numeric_binary
             && arithmetic.is_some()
             && instruction.numeric_local_target().is_none()
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && !instruction.writes_current_this()
             && register_offset(instruction.result_register()).is_some()
-            && js_tagged_operand_supported(program, left_operand, &register_offset)
-            && js_tagged_operand_supported(program, right_operand, &register_offset);
-        if let (true, Some(next), Some(arithmetic)) = (numeric_result, next, arithmetic) {
+            && operands.is_some_and(|(left, right)| {
+                js_tagged_operand_supported(program, left, &register_offset)
+                    && js_tagged_operand_supported(program, right, &register_offset)
+            });
+        if let (true, Some(next), Some(arithmetic), Some((left_operand, right_operand))) =
+            (numeric_result, next, arithmetic, operands)
+        {
             let fallback = builder.create_block();
             let left_bits = read_js_tagged_operand(
                 &mut builder,
