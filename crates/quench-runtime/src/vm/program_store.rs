@@ -184,9 +184,12 @@ pub(super) enum JsTierState {
     /// The numeric profile passed its look, so wait for a numeric entry before
     /// compiling the specialized artifact.
     PromotionPending,
-    /// The function is hot but not numeric: compile the tagged semantics baseline once
-    /// its `entries` have paid for the compile (`general_promotion_due`).
+    /// The function is hot but not numeric: count its `entries` until they pay for the
+    /// tagged semantics baseline (`general_promotion_due`). Its calls stay as they were.
     GeneralPromotionPending { entries: u32 },
+    /// The entries paid for the baseline: its calls take a VM frame
+    /// (`Vm::js_tier_needs_general_entry`), whose next entry compiles it.
+    GeneralCompileDue,
     Rejected {
         entries: u64,
         reason: &'static str,
@@ -308,7 +311,7 @@ impl JitTierManager {
                     numeric
                 }
             }
-            JsTierState::GeneralPromotionPending { .. } => false,
+            JsTierState::GeneralPromotionPending { .. } | JsTierState::GeneralCompileDue => false,
             JsTierState::Rejected { .. }
             | JsTierState::Unsupported
             | JsTierState::Compiled(_) => false,
@@ -1600,8 +1603,13 @@ impl ProgramStore {
             JsTierState::PromotionPending => return false,
             JsTierState::GeneralPromotionPending { entries } => {
                 *entries = entries.saturating_add(1);
-                return !priced || general_promotion_due(*entries, instructions);
+                if priced && !general_promotion_due(*entries, instructions) {
+                    return false;
+                }
+                *state = JsTierState::GeneralCompileDue;
+                return true;
             }
+            JsTierState::GeneralCompileDue => return true,
             JsTierState::Rejected { entries, .. } => {
                 *entries = entries.saturating_add(1);
                 if *entries >= u64::from(JS_JIT_GENERAL_PROMOTION_ENTRIES) {
@@ -2325,6 +2333,7 @@ impl Drop for ProgramStore {
                     JsTierState::Hot { .. } => "hot",
                     JsTierState::PromotionPending => "promotion-pending",
                     JsTierState::GeneralPromotionPending { .. } => "general-promotion-pending",
+                    JsTierState::GeneralCompileDue => "general-compile-due",
                     JsTierState::Rejected { .. } => "unsupported",
                     JsTierState::Unsupported => "unsupported",
                     JsTierState::Compiled(_) => "compiled",
