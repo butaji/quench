@@ -3300,7 +3300,18 @@ pub(super) fn analyze_osr_region(
 /// fell by 576 KiB on Crypto (-13.5%, score -2.8%) and by 648 KiB on NavierStokes (-8.4%,
 /// score -6.1%); the other V8-v7 rows moved within noise (static x86_64 build, median of 11
 /// runs, 2026-10-24). Throughput keeps the optimizing pass, whose code it ran 2.8-6.1% faster.
-const LOOP_TIER_OPT_LEVELS: [&str; crate::MemoryPolicy::ALL.len()] = ["speed", "none"];
+/// Memory-first compiles no loop region (`None`), on the owner's direction of 2026-10-24
+/// (TOD-123: memory-first may trade Score for memory under `--jit`): Cranelift's code pages
+/// and one region's scratch outweigh the whole 20% margin. NavierStokes `--jit` peaked at
+/// 7468 KiB compiled and 3988 interpreted (Crypto 4000 and 3128), while the per-function
+/// tier, which this leaves running, kept Richards, RayTrace and EarleyBoyer `--jit` below
+/// their interpreted peaks (static BOLT x86_64, memory-first, median of 5, 2026-10-24).
+const LOOP_TIER_OPT_LEVELS: [Option<&str>; crate::MemoryPolicy::ALL.len()] = [Some("speed"), None];
+
+/// Whether the loop tier compiles regions under `policy` (`LOOP_TIER_OPT_LEVELS`).
+pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
+    LOOP_TIER_OPT_LEVELS[policy as usize].is_some()
+}
 
 pub(super) fn compile_osr_region(
     region: &LoopRegion,
@@ -3308,7 +3319,7 @@ pub(super) fn compile_osr_region(
     interrupt: &crate::execution_interrupt::ExecutionInterrupt,
     policy: crate::MemoryPolicy,
 ) -> Option<CompiledOsrRegion> {
-    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize], false)?;
+    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?, false)?;
     let (function, widenings) = osr_loop::lower(
         region,
         observation,

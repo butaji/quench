@@ -5457,7 +5457,9 @@ fn lane_loop_run<H: Host>(
     let mut tier = site.tier.borrow_mut();
     let tier = &mut *tier;
     if tier.code.is_none() {
-        if tier.compilations >= LOOP_TIER_MAX_COMPILATIONS {
+        // SAFETY: the lane's VM is live, and nothing borrows it across the read.
+        let policy = unsafe { vm(cx) }.heap.memory_policy();
+        if tier.compilations >= LOOP_TIER_MAX_COMPILATIONS || !super::compiled::loop_tier_compiles(policy) {
             return LoopContinuation::Jump;
         }
         tier.compilations += 1;
