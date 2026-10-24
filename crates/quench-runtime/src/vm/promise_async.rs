@@ -24,10 +24,15 @@ impl<H: Host> Vm<H> {
         else {
             return;
         };
-        for (register, value) in frame.registers.iter_mut().enumerate() {
-            if register >= u64::BITS as usize || mask & (1 << register) == 0 {
-                *value = Value::UNDEFINED;
-            }
+        // The mask covers the first `RegisterSet::BITS` registers; every later one is dead.
+        type RegisterSet = crate::compile::liveness::RegisterSet;
+        let covered = frame.registers.len().min(RegisterSet::BITS as usize);
+        let (low, high) = frame.registers.split_at_mut(covered);
+        high.fill(Value::UNDEFINED);
+        let mut dead = !mask & RegisterSet::MAX.checked_shr(RegisterSet::BITS - covered as u32).unwrap_or(0);
+        while dead != 0 {
+            low[dead.trailing_zeros() as usize] = Value::UNDEFINED;
+            dead &= dead - 1;
         }
     }
 
@@ -203,7 +208,7 @@ impl<H: Host> Vm<H> {
             && !self.is_object_like(source)
         {
             self.with_call_roots([Some(source), Some(promise), generator].into_iter().flatten(), |vm| {
-                let parent = vm.promise_record(promise).and_then(|record| record.host_context);
+                let parent = vm.promise_record(promise).and_then(|record| record.host_context.get());
                 let awaited = vm.promise_object_with_parent(parent)?;
                 vm.with_call_roots([awaited], |vm| vm.promise_resolve_value(p, awaited, source))?;
                 Ok(awaited)
@@ -216,7 +221,7 @@ impl<H: Host> Vm<H> {
         let next = if self.host.observes_promise_lifecycle() {
             self.with_call_roots([source], |vm| {
                 vm.promise_object_with_parent(
-                    vm.promise_record(source).and_then(|record| record.host_context),
+                    vm.promise_record(source).and_then(|record| record.host_context.get()),
                 )
             })?
         } else {
@@ -236,7 +241,7 @@ impl<H: Host> Vm<H> {
             on_fulfilled: state,
             on_rejected: state,
             next,
-            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context)),
+            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context.get())).into(),
         };
         if source_state == PromiseState::Pending {
             self.promise_record_mut(source)

@@ -103,6 +103,9 @@ pub(super) struct JsJitCaptureArgument {
 pub(super) enum JsJitResultKind {
     /// Numeric bytecode regions emit the common VM native-entry ABI.
     SharedNumberEntry,
+    /// A full function CFG whose operation blocks call the shared VM step
+    /// helper and branch directly to the next validated bytecode PC.
+    GeneralDispatch,
     /// An Int32-guarded return path proven by the bytecode's `typeof` switch.
     Int32Identity(u32),
     CaptureNumber(JsJitCaptureArgument),
@@ -186,7 +189,8 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
                     Some(Constant::Boolean(_))
                 ))
     }) {
-        compile_numeric_loop(program, function_id, function)
+        compile_numeric(program, function_id)
+            .or_else(|| compile_numeric_loop(program, function_id, function))
             .or_else(|| compile_number_domain_boolean_tree(program, function_id, function))
             .or_else(|| compile_string_branches(program, function_id, function))
     } else {
@@ -2842,7 +2846,13 @@ fn branch_number_comparison(
         local_state,
         right,
     )?;
-    super::compiled::emit_number_relation(builder, operator, lhs, rhs)
+    super::compiled::emit_number_relation(
+        builder,
+        operator,
+        lhs,
+        rhs,
+        super::compiled::NumberRelationDomain::Float64,
+    )
 }
 
 fn branch_numeric_operand(
@@ -2908,7 +2918,7 @@ fn compile_numeric_with_captures(
         return None;
     }
 
-    // The straight-line scalar region is bounded and has no safepoint or callout.
+    // Pure scalar control flow has no safepoint or callout and uses one guarded entry.
     let numeric_field_inputs = cached_numeric_field_inputs_candidate(function);
     let field_argument = if numeric_field_inputs.is_some() {
         None
@@ -3328,8 +3338,13 @@ fn compile_numeric_loop(
                     (Op::Binary, value)
                         if super::operations::NumberRelation::from_operator(value).is_some() =>
                     {
-                        let condition =
-                            super::compiled::emit_number_relation(&mut builder, value, left, right)?;
+                        let condition = super::compiled::emit_number_relation(
+                            &mut builder,
+                            value,
+                            left,
+                            right,
+                            super::compiled::NumberRelationDomain::Float64,
+                        )?;
                         let one = builder.ins().iconst(types::I8, 1);
                         let zero = builder.ins().iconst(types::I8, 0);
                         let result = builder.ins().select(condition, one, zero);
@@ -3438,6 +3453,7 @@ fn compile_numeric_loop(
                     instruction.binary_operator_field(),
                     left,
                     right,
+                    super::compiled::NumberRelationDomain::Float64,
                 )?;
                 let target = usize::try_from(instruction.jump_target()).ok()?;
                 emit_numeric_loop_conditional(
@@ -3962,7 +3978,13 @@ fn comparison(
         registers,
         strings,
     )?;
-    super::compiled::emit_number_relation(builder, operator, left, right)
+    super::compiled::emit_number_relation(
+        builder,
+        operator,
+        left,
+        right,
+        super::compiled::NumberRelationDomain::Float64,
+    )
 }
 
 fn numeric_operand(

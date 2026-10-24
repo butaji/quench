@@ -52,48 +52,185 @@ pub(super) use osr_loop::{
     FieldReceiver, LoopEntry, LoopOutcome, LoopRegion, Observation, RegionRejection, Widening,
 };
 
+#[derive(Clone, Copy)]
+pub(super) enum NumberRelationDomain {
+    Int32,
+    Float64,
+}
+
+/// The shared word written by a compiled region when it hands execution back to the lane.
+/// Region-specific metadata stays in the owning tier; this layout carries only the handoff
+/// kind and its PC or entry-miss payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RegionExit {
+    EntryMiss(u32),
+    Resume(u32),
+    Fallback(u32),
+    Recompile(u32),
+}
+
+impl RegionExit {
+    const KIND_SHIFT: u32 = u32::BITS;
+    const PAYLOAD_MASK: u64 = u32::MAX as u64;
+
+    pub(super) const fn encode(self) -> u64 {
+        let (kind, payload) = match self {
+            Self::EntryMiss(payload) => (0, payload),
+            Self::Resume(pc) => (1, pc),
+            Self::Fallback(pc) => (2, pc),
+            Self::Recompile(pc) => (3, pc),
+        };
+        ((kind as u64) << Self::KIND_SHIFT) | payload as u64
+    }
+
+    pub(super) const fn decode(word: u64) -> Self {
+        let payload = (word & Self::PAYLOAD_MASK) as u32;
+        match word >> Self::KIND_SHIFT {
+            1 => Self::Resume(payload),
+            2 => Self::Fallback(payload),
+            3 => Self::Recompile(payload),
+            _ => Self::EntryMiss(payload),
+        }
+    }
+}
+
+/// Common cold handoff blocks for a compiled region. The tier still supplies its live-state
+/// writeback at each exact PC; this type owns only the shared control-flow continuation.
+#[derive(Default)]
+pub(super) struct RegionExitBlocks {
+    leave_blocks: std::collections::BTreeMap<u32, ir::Block>,
+    outcomes: Vec<(ir::Block, RegionExit)>,
+}
+
+impl RegionExitBlocks {
+    /// Queues a cold outcome block for filling after the hot region has been lowered.
+    pub(super) fn outcome_block(
+        &mut self,
+        builder: &mut FunctionBuilder<'_>,
+        outcome: RegionExit,
+    ) -> ir::Block {
+        let block = builder.create_block();
+        builder.set_cold_block(block);
+        self.outcomes.push((block, outcome));
+        block
+    }
+
+    /// Sends control to the shared per-PC leave block, carrying the handoff word as an
+    /// argument. The tier fills that block with its exact-PC live-state writeback.
+    pub(super) fn leave(&mut self, builder: &mut FunctionBuilder<'_>, outcome: RegionExit) {
+        let pc = match outcome {
+            RegionExit::Resume(pc) | RegionExit::Fallback(pc) | RegionExit::Recompile(pc) => pc,
+            RegionExit::EntryMiss(_) => unreachable!("entry miss does not write back"),
+        };
+        let word = builder.ins().iconst(types::I64, outcome.encode() as i64);
+        let block = match self.leave_blocks.get(&pc) {
+            Some(block) => *block,
+            None => {
+                let block = builder.create_block();
+                builder.set_cold_block(block);
+                builder.append_block_param(block, types::I64);
+                self.leave_blocks.insert(pc, block);
+                block
+            }
+        };
+        builder.ins().jump(block, &[ir::BlockArg::Value(word)]);
+    }
+
+    pub(super) fn take_outcomes(&mut self) -> Vec<(ir::Block, RegionExit)> {
+        std::mem::take(&mut self.outcomes)
+    }
+
+    pub(super) fn leave_blocks(&self) -> Vec<(u32, ir::Block)> {
+        self.leave_blocks
+            .iter()
+            .map(|(pc, block)| (*pc, *block))
+            .collect()
+    }
+}
+
 /// Emit a Number relation using the same relation dispatch as the interpreter.
-/// Only the stage-specific Cranelift condition codes live here.
+/// The domain selects its Cranelift condition codes; the operation mapping is shared.
 pub(super) fn emit_number_relation(
     builder: &mut FunctionBuilder<'_>,
     operator: u32,
     left: ir::Value,
     right: ir::Value,
+    domain: NumberRelationDomain,
 ) -> Option<ir::Value> {
     struct Emit<'a, 'f> {
         builder: &'a mut FunctionBuilder<'f>,
+        domain: NumberRelationDomain,
     }
 
     impl crate::vm::operations::NumberRelationStage<ir::Value> for Emit<'_, '_> {
         type Output = ir::Value;
 
         fn equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fcmp(FloatCC::Equal, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => self.builder.ins().icmp(IntCC::Equal, left, right),
+                NumberRelationDomain::Float64 => {
+                    self.builder.ins().fcmp(FloatCC::Equal, left, right)
+                }
+            }
         }
         fn not_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fcmp(FloatCC::NotEqual, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => self.builder.ins().icmp(IntCC::NotEqual, left, right),
+                NumberRelationDomain::Float64 => {
+                    self.builder.ins().fcmp(FloatCC::NotEqual, left, right)
+                }
+            }
         }
         fn less_than(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fcmp(FloatCC::LessThan, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => {
+                    self.builder.ins().icmp(IntCC::SignedLessThan, left, right)
+                }
+                NumberRelationDomain::Float64 => {
+                    self.builder.ins().fcmp(FloatCC::LessThan, left, right)
+                }
+            }
         }
         fn less_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder
-                .ins()
-                .fcmp(FloatCC::LessThanOrEqual, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => self
+                    .builder
+                    .ins()
+                    .icmp(IntCC::SignedLessThanOrEqual, left, right),
+                NumberRelationDomain::Float64 => self
+                    .builder
+                    .ins()
+                    .fcmp(FloatCC::LessThanOrEqual, left, right),
+            }
         }
         fn greater_than(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fcmp(FloatCC::GreaterThan, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => self
+                    .builder
+                    .ins()
+                    .icmp(IntCC::SignedGreaterThan, left, right),
+                NumberRelationDomain::Float64 => {
+                    self.builder.ins().fcmp(FloatCC::GreaterThan, left, right)
+                }
+            }
         }
         fn greater_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder
-                .ins()
-                .fcmp(FloatCC::GreaterThanOrEqual, left, right)
+            match self.domain {
+                NumberRelationDomain::Int32 => self
+                    .builder
+                    .ins()
+                    .icmp(IntCC::SignedGreaterThanOrEqual, left, right),
+                NumberRelationDomain::Float64 => self
+                    .builder
+                    .ins()
+                    .fcmp(FloatCC::GreaterThanOrEqual, left, right),
+            }
         }
     }
 
     Some(
         crate::vm::operations::NumberRelation::from_operator(operator)?.apply(
-            &mut Emit { builder },
+            &mut Emit { builder, domain },
             left,
             right,
         ),
@@ -166,7 +303,104 @@ fn emit_f64_entry_return(
     builder.ins().return_(&[status]);
 }
 
-pub(super) fn emit_number_bitwise_operation(
+fn read_js_numeric_operand(
+    program: &ResidualProgram,
+    body: &mut Body<'_>,
+    operand: Operand,
+    registers: &[bool],
+) -> Option<ir::Value> {
+    match operand.kind()? {
+        OperandKind::Register => {
+            let register = operand.register_index()?;
+            registers
+                .get(usize::from(register))
+                .copied()
+                .filter(|initialized| *initialized)?;
+            Some(body.read(register, crate::WasmType::F64))
+        }
+        OperandKind::Constant => {
+            let crate::bytecode::Constant::Number(value) =
+                program.constants.get(usize::from(operand.payload()))?
+            else {
+                return None;
+            };
+            Some(
+                body.builder
+                    .ins()
+                    .f64const(Ieee64::with_bits(value.to_bits())),
+            )
+        }
+        OperandKind::Field | OperandKind::Local => None,
+    }
+}
+
+/// An acyclic bytecode graph and its predecessors. JS numeric regions may
+/// merge register state through the shared `Body` SSA variables; local-state
+/// branches stay rejected until local slots have an equivalent SSA view.
+fn js_numeric_control_flow(function: &Function) -> Option<(Vec<bool>, Vec<Vec<usize>>)> {
+    if function.code.is_empty() {
+        return None;
+    }
+    let length = function.code.len();
+    let mut reachable = vec![false; length];
+    let mut predecessors = vec![Vec::new(); length];
+    let mut pending = vec![0_usize];
+    while let Some(pc) = pending.pop() {
+        if reachable[pc] {
+            continue;
+        }
+        reachable[pc] = true;
+        let packed = function.code[pc];
+        if packed.is_wide() {
+            return None;
+        }
+        let instruction = packed.as_wide();
+        match instruction.op().control_flow_layout() {
+            ControlFlowLayout::Jump if instruction.op() == crate::bytecode::Op::Jump => {}
+            ControlFlowLayout::ConditionalJump
+                if matches!(
+                    instruction.op(),
+                    crate::bytecode::Op::JumpBinaryFalse
+                        | crate::bytecode::Op::JumpFalse
+                        | crate::bytecode::Op::JumpTrue
+                ) => {}
+            ControlFlowLayout::Terminal | ControlFlowLayout::Fallthrough => {}
+            ControlFlowLayout::Jump
+            | ControlFlowLayout::ConditionalJump
+            | ControlFlowLayout::BranchTable
+            | ControlFlowLayout::Call => return None,
+        }
+        let mut successors = Vec::with_capacity(2);
+        crate::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
+            successors.push(successor);
+        });
+        for successor in successors {
+            if successor <= pc || successor >= length {
+                return None;
+            }
+            predecessors[successor].push(pc);
+            pending.push(successor);
+        }
+    }
+    let has_join = (0..length).any(|pc| reachable[pc] && predecessors[pc].len() > 1);
+    let has_branch = function.code.iter().enumerate().any(|(pc, packed)| {
+        reachable[pc]
+            && packed.as_wide().op().control_flow_layout() == ControlFlowLayout::ConditionalJump
+    });
+    let has_local_state = function.code.iter().enumerate().any(|(pc, packed)| {
+        reachable[pc]
+            && matches!(
+                packed.as_wide().op().js_denotation(),
+                JsDenotation::PlainLocalLoad | JsDenotation::PlainLocalStore
+            )
+    });
+    if (has_join || has_branch) && has_local_state {
+        return None;
+    }
+    Some((reachable, predecessors))
+}
+
+pub(super) fn emit_number_bitwise_bits(
     builder: &mut FunctionBuilder<'_>,
     operation: crate::vm::operations::NumberBitwise,
     left: ir::Value,
@@ -202,13 +436,53 @@ pub(super) fn emit_number_bitwise_operation(
         }
     }
 
-    let bits = operation.apply(&mut Emit { builder }, left, right);
+    operation.apply(&mut Emit { builder }, left, right)
+}
+
+pub(super) fn emit_number_bitwise_operation(
+    builder: &mut FunctionBuilder<'_>,
+    operation: crate::vm::operations::NumberBitwise,
+    left: ir::Value,
+    right: ir::Value,
+) -> ir::Value {
+    let bits = emit_number_bitwise_bits(builder, operation, left, right);
     if operation == crate::vm::operations::NumberBitwise::ShiftRightUnsigned {
         let unsigned = builder.ins().uextend(types::I64, bits);
         builder.ins().fcvt_from_uint(types::F64, unsigned)
     } else {
         builder.ins().fcvt_from_sint(types::F64, bits)
     }
+}
+
+/// Emit JavaScript ToBoolean for a Number after the caller has proved its value is numeric.
+fn emit_number_truthiness(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+    struct Emit<'a, 'f> {
+        builder: &'a mut FunctionBuilder<'f>,
+    }
+
+    impl crate::vm::operations::NumberTruthinessStage<ir::Value> for Emit<'_, '_> {
+        type Predicate = ir::Value;
+
+        fn zero(&mut self) -> ir::Value {
+            self.builder
+                .ins()
+                .f64const(Ieee64::with_bits(0.0_f64.to_bits()))
+        }
+
+        fn equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Predicate {
+            self.builder.ins().fcmp(FloatCC::Equal, left, right)
+        }
+
+        fn not_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Predicate {
+            self.builder.ins().fcmp(FloatCC::NotEqual, left, right)
+        }
+
+        fn and(&mut self, left: Self::Predicate, right: Self::Predicate) -> Self::Predicate {
+            self.builder.ins().band(left, right)
+        }
+    }
+
+    crate::vm::operations::number_truthiness(&mut Emit { builder }, number)
 }
 
 /// Compile a JS numeric function-entry region with the same register views used by Wasm and
@@ -223,6 +497,7 @@ pub(super) fn compile_js_numeric_region(
     int32_bitwise: bool,
 ) -> Option<super::js_compiled::JsJitArtifact> {
     let function = program.function_get(function_id as usize)?;
+    let (reachable, predecessors) = js_numeric_control_flow(function)?;
     let params = usize::from(function.params);
     let isa = super::jit_backend::target_isa("speed", true)?;
 
@@ -236,6 +511,10 @@ pub(super) fn compile_js_numeric_region(
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     builder.seal_block(entry);
+    let blocks: Vec<_> = reachable
+        .iter()
+        .map(|reachable| reachable.then(|| builder.create_block()))
+        .collect();
     let parameters = builder.block_params(entry).to_vec();
     let context = parameters[0];
     let arguments = parameters[3];
@@ -260,13 +539,104 @@ pub(super) fn compile_js_numeric_region(
         body.write(index as u16, crate::WasmType::F64, value);
         *initialized = true;
     }
+    let entry_registers = registers;
+    let mut initialized_after: Vec<Option<Vec<bool>>> = vec![None; function.code.len()];
+    body.builder.ins().jump(blocks[0]?, &[]);
 
     let mut returned = false;
     for (pc, packed) in function.code.iter().copied().enumerate() {
-        if returned || packed.is_wide() {
+        if !reachable[pc] {
+            continue;
+        }
+        if packed.is_wide() {
             return None;
         }
+        let block = blocks[pc]?;
+        body.builder.switch_to_block(block);
+        body.builder.seal_block(block);
+        let mut registers = if pc == 0 {
+            entry_registers.clone()
+        } else {
+            let mut incoming: Option<Vec<bool>> = None;
+            for predecessor in &predecessors[pc] {
+                let predecessor_state = initialized_after[*predecessor].as_ref()?.clone();
+                if let Some(incoming) = &mut incoming {
+                    for (initialized, predecessor_initialized) in
+                        incoming.iter_mut().zip(predecessor_state)
+                    {
+                        *initialized &= predecessor_initialized;
+                    }
+                } else {
+                    incoming = Some(predecessor_state);
+                }
+            }
+            incoming?
+        };
         let instruction = packed.as_wide();
+        match instruction.op().control_flow_layout() {
+            ControlFlowLayout::Jump => {
+                let target = usize::try_from(instruction.jump_target()).ok()?;
+                initialized_after[pc] = Some(registers);
+                body.builder.ins().jump(blocks[target]?, &[]);
+                continue;
+            }
+            ControlFlowLayout::ConditionalJump => {
+                if instruction.result_flags() != 0 {
+                    return None;
+                }
+                let (condition, jump_when) = match instruction.op() {
+                    crate::bytecode::Op::JumpBinaryFalse => {
+                        let left = read_js_numeric_operand(
+                            program,
+                            &mut body,
+                            instruction.operand_b(),
+                            &registers,
+                        )?;
+                        let right = read_js_numeric_operand(
+                            program,
+                            &mut body,
+                            instruction.operand_c(),
+                            &registers,
+                        )?;
+                        let relation = emit_number_relation(
+                            &mut body.builder,
+                            instruction.binary_operator_field(),
+                            left,
+                            right,
+                            NumberRelationDomain::Float64,
+                        )?;
+                        (relation, false)
+                    }
+                    crate::bytecode::Op::JumpFalse | crate::bytecode::Op::JumpTrue => {
+                        let register = usize::from(instruction.register_a());
+                        if !*registers.get(register)? {
+                            return None;
+                        }
+                        let value = body.read(register as u16, crate::WasmType::F64);
+                        let truthy = emit_number_truthiness(&mut body.builder, value);
+                        let jump_when = instruction.op() == crate::bytecode::Op::JumpTrue;
+                        (truthy, jump_when)
+                    }
+                    _ => return None,
+                };
+                let target = usize::try_from(instruction.jump_target()).ok()?;
+                let fallthrough = pc.checked_add(1)?;
+                initialized_after[pc] = Some(registers);
+                if jump_when {
+                    body.builder
+                        .ins()
+                        .brif(condition, blocks[target]?, &[], blocks[fallthrough]?, &[]);
+                } else {
+                    body.builder
+                        .ins()
+                        .brif(condition, blocks[fallthrough]?, &[], blocks[target]?, &[]);
+                }
+                continue;
+            }
+            ControlFlowLayout::Terminal | ControlFlowLayout::Fallthrough => {}
+            ControlFlowLayout::Call | ControlFlowLayout::BranchTable => return None,
+        }
+        let mut terminal = false;
         let result = match instruction.op().js_denotation() {
             JsDenotation::GetField => {
                 let inputs = numeric_field_inputs?;
@@ -419,9 +789,11 @@ pub(super) fn compile_js_numeric_region(
                 if instruction.returns_from_frame() {
                     emit_f64_entry_return(&mut body.builder, result_pointer, value);
                     returned = true;
-                    break;
+                    terminal = true;
+                    None
+                } else {
+                    Some(value)
                 }
-                Some(value)
             }
             JsDenotation::NumericBinary => {
                 if instruction.numeric_local_target().is_some()
@@ -430,34 +802,18 @@ pub(super) fn compile_js_numeric_region(
                 {
                     return None;
                 }
-                let read_operand =
-                    |body: &mut Body<'_>, operand: Operand, registers: &[bool]| match operand
-                        .kind()?
-                    {
-                        OperandKind::Register => {
-                            let register = operand.register_index()?;
-                            if *registers.get(usize::from(register))? {
-                                Some(body.read(register, crate::WasmType::F64))
-                            } else {
-                                None
-                            }
-                        }
-                        OperandKind::Constant => {
-                            let Constant::Number(value) =
-                                program.constants.get(usize::from(operand.payload()))?
-                            else {
-                                return None;
-                            };
-                            Some(
-                                body.builder
-                                    .ins()
-                                    .f64const(Ieee64::with_bits(value.to_bits())),
-                            )
-                        }
-                        OperandKind::Field | OperandKind::Local => None,
-                    };
-                let left = read_operand(&mut body, instruction.operand_b(), &registers)?;
-                let right = read_operand(&mut body, instruction.operand_c(), &registers)?;
+                let left = read_js_numeric_operand(
+                    program,
+                    &mut body,
+                    instruction.operand_b(),
+                    &registers,
+                )?;
+                let right = read_js_numeric_operand(
+                    program,
+                    &mut body,
+                    instruction.operand_c(),
+                    &registers,
+                )?;
                 let op = instruction.binary_operator();
                 let arithmetic = super::operations::NumberArithmetic::from_js_instruction(
                     instruction.op(),
@@ -484,12 +840,14 @@ pub(super) fn compile_js_numeric_region(
                 if instruction.returns_from_frame() {
                     emit_f64_entry_return(&mut body.builder, result_pointer, value);
                     returned = true;
-                    break;
+                    terminal = true;
+                    None
+                } else {
+                    Some(value)
                 }
-                Some(value)
             }
             JsDenotation::Return => {
-                if instruction.result_flags() != 0 || pc + 1 != function.code.len() {
+                if instruction.result_flags() != 0 {
                     return None;
                 }
                 let register = instruction.register_a();
@@ -499,21 +857,737 @@ pub(super) fn compile_js_numeric_region(
                 let value = body.read(register, crate::WasmType::F64);
                 emit_f64_entry_return(&mut body.builder, result_pointer, value);
                 returned = true;
+                terminal = true;
                 None
             }
-            JsDenotation::Unsupported => return None,
+            JsDenotation::Noop | JsDenotation::Jump | JsDenotation::Unsupported => return None,
         };
         if let Some(value) = result {
             let destination = usize::from(instruction.result_register());
             body.write(destination as u16, crate::WasmType::F64, value);
             *registers.get_mut(destination)? = true;
         }
+        if !terminal {
+            if instruction.op().control_flow_layout() != ControlFlowLayout::Fallthrough {
+                return None;
+            }
+            let next = pc.checked_add(1)?;
+            initialized_after[pc] = Some(registers);
+            body.builder.ins().jump(blocks[next]?, &[]);
+        }
     }
     if !returned {
         return None;
     }
 
+    body.builder.seal_all_blocks();
     let Body { builder, .. } = body;
+    builder.finalize(isa.frontend_config());
+    let mut context = cranelift_codegen::Context::for_function(native);
+    let compiled = match context.compile(
+        &*isa,
+        &mut cranelift_codegen::control::ControlPlane::default(),
+    ) {
+        Ok(compiled) => compiled,
+        Err(_error) => {
+            #[cfg(test)]
+            eprintln!("general JS dispatch Cranelift rejection: {_error:?}");
+            return None;
+        }
+    };
+    if !compiled.buffer.relocs().is_empty() {
+        #[cfg(test)]
+        eprintln!("general JS dispatch has unresolved relocations");
+        return None;
+    }
+    let code = compiled.code_buffer();
+    if code.is_empty() || code.len() > super::js_compiled::MAX_CODE_BYTES {
+        #[cfg(test)]
+        eprintln!("general JS dispatch code exceeds its size budget");
+        return None;
+    }
+    let code = code.to_vec();
+    Some(super::js_compiled::JsJitArtifact {
+        code,
+        params,
+        requires_signed_int32_arguments: int32_bitwise,
+        result: super::js_compiled::JsJitResultKind::SharedNumberEntry,
+        field_argument,
+        numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.to_vec()),
+        capture_arguments: captures.to_vec(),
+    })
+}
+
+/// Compile a general JavaScript native dispatch loop. It carries the validated
+/// bytecode PC in native code and calls the VM's shared `step` implementation
+/// for each operation. This complete-semantics bridge lets us move pure
+/// denotations into Cranelift without creating a second interpreter.
+const MAX_JS_GENERAL_DISPATCH_BLOCKS: usize = 2048;
+
+fn js_general_dispatch_candidate(program: &ResidualProgram, function: &Function) -> bool {
+    !super::js_compiled::function_candidate(function, program)
+        && !function.code.is_empty()
+        && function.code.len() <= MAX_JS_GENERAL_DISPATCH_BLOCKS
+        && function.code.iter().all(|packed| {
+            let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+            !matches!(
+                instruction.op(),
+                Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
+            ) || usize::try_from(instruction.jump_target()).is_ok()
+        })
+}
+
+fn read_js_tagged_operand(
+    builder: &mut FunctionBuilder<'_>,
+    program: &ResidualProgram,
+    operand: Operand,
+    arguments: ir::Value,
+    register_offset: &impl Fn(u16) -> Option<i32>,
+) -> Option<ir::Value> {
+    match operand.kind()? {
+        OperandKind::Register => {
+            let offset = register_offset(operand.register_index()?)?;
+            Some(builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                arguments,
+                offset,
+            ))
+        }
+        OperandKind::Constant => {
+            let value = match program.constants.get(usize::from(operand.payload()))? {
+                crate::bytecode::Constant::Number(number) => Value::number(*number),
+                crate::bytecode::Constant::Boolean(boolean) => Value::boolean(*boolean),
+                crate::bytecode::Constant::Null => Value::NULL,
+                crate::bytecode::Constant::Undefined => Value::UNDEFINED,
+                crate::bytecode::Constant::String(_)
+                | crate::bytecode::Constant::StringUnits(_)
+                | crate::bytecode::Constant::BigInt(_)
+                | crate::bytecode::Constant::WasmBits64(_)
+                | crate::bytecode::Constant::WasmV128(_) => return None,
+            };
+            Some(builder.ins().iconst(types::I64, value.to_bits() as i64))
+        }
+        OperandKind::Field | OperandKind::Local => None,
+    }
+}
+
+fn js_tagged_operand_supported(
+    program: &ResidualProgram,
+    operand: Operand,
+    register_offset: &impl Fn(u16) -> Option<i32>,
+) -> bool {
+    match operand.kind() {
+        Some(OperandKind::Register) => operand
+            .register_index()
+            .is_some_and(|register| register_offset(register).is_some()),
+        Some(OperandKind::Constant) => matches!(
+            program.constants.get(usize::from(operand.payload())),
+            Some(crate::bytecode::Constant::Number(_))
+        ),
+        Some(OperandKind::Field | OperandKind::Local) | None => false,
+    }
+}
+
+/// Compute ToBoolean for values whose truthiness is encoded without a heap
+/// lookup. Strings, BigInts, and objects take the VM path at the same PC.
+fn emit_js_tagged_truthiness(
+    builder: &mut FunctionBuilder<'_>,
+    bits: ir::Value,
+    fallback: ir::Block,
+) -> ir::Value {
+    let is_true = builder
+        .ins()
+        .icmp_imm_u(IntCC::Equal, bits, Value::TRUE.to_bits() as i64);
+    let is_false = builder
+        .ins()
+        .icmp_imm_u(IntCC::Equal, bits, Value::FALSE.to_bits() as i64);
+    let is_null = builder
+        .ins()
+        .icmp_imm_u(IntCC::Equal, bits, Value::NULL.to_bits() as i64);
+    let is_undefined = builder
+        .ins()
+        .icmp_imm_u(IntCC::Equal, bits, Value::UNDEFINED.to_bits() as i64);
+    let known_primitive = builder.ins().bor(is_true, is_false);
+    let known_primitive = builder.ins().bor(known_primitive, is_null);
+    let known_primitive = builder.ins().bor(known_primitive, is_undefined);
+
+    let known_block = builder.create_block();
+    let number_block = builder.create_block();
+    let join = builder.create_block();
+    builder.append_block_param(join, types::I8);
+    builder.ins().brif(known_primitive, known_block, &[], number_block, &[]);
+
+    builder.switch_to_block(known_block);
+    builder.ins().jump(join, &[ir::BlockArg::Value(is_true)]);
+
+    builder.switch_to_block(number_block);
+    let number = emit_js_tagged_number(builder, bits, fallback);
+    let truthy = emit_number_truthiness(builder, number);
+    builder.ins().jump(join, &[ir::BlockArg::Value(truthy)]);
+
+    builder.seal_block(known_block);
+    builder.seal_block(number_block);
+    builder.seal_block(join);
+    builder.switch_to_block(join);
+    builder.block_params(join)[0]
+}
+
+/// Unbox a tagged JavaScript Number, branching to the current instruction's
+/// VM fallback for every other value. The representation keeps all tags in
+/// NaN space, with integer Numbers identified by `INT_TAG`.
+fn emit_js_tagged_number(
+    builder: &mut FunctionBuilder<'_>,
+    bits: ir::Value,
+    fallback: ir::Block,
+) -> ir::Value {
+    let number = builder
+        .ins()
+        .bitcast(types::F64, ir::MemFlagsData::new(), bits);
+    let unordered = builder.ins().fcmp(FloatCC::Unordered, number, number);
+    let nan = builder.create_block();
+    let tagged = builder.create_block();
+    let integer_block = builder.create_block();
+    let join = builder.create_block();
+    builder.append_block_param(join, types::F64);
+    builder.ins().brif(
+        unordered,
+        nan,
+        &[],
+        join,
+        &[ir::BlockArg::Value(number)],
+    );
+
+    builder.switch_to_block(nan);
+    let field = builder
+        .ins()
+        .ushr_imm_u(bits, i64::from(crate::value::ValueLayout::TAG_SHIFT));
+    let offset = builder.ins().iadd_imm_s(
+        field,
+        -(crate::value::ValueLayout::FIRST_TAG_FIELD as i64),
+    );
+    let is_tagged = builder.ins().icmp_imm_u(
+        IntCC::UnsignedLessThanOrEqual,
+        offset,
+        crate::value::ValueLayout::TAG_FIELD_SPAN as i64,
+    );
+    builder.ins().brif(
+        is_tagged,
+        tagged,
+        &[],
+        join,
+        &[ir::BlockArg::Value(number)],
+    );
+
+    builder.switch_to_block(tagged);
+    let int_field = (crate::value::ValueLayout::INT_TAG
+        >> crate::value::ValueLayout::TAG_SHIFT) as i64;
+    let is_integer_tag = builder
+        .ins()
+        .icmp_imm_u(IntCC::Equal, field, int_field);
+    builder
+        .ins()
+        .brif(is_integer_tag, integer_block, &[], fallback, &[]);
+
+    builder.switch_to_block(integer_block);
+    let integer = builder.ins().ireduce(types::I32, bits);
+    let integer = builder.ins().fcvt_from_sint(types::F64, integer);
+    builder
+        .ins()
+        .jump(join, &[ir::BlockArg::Value(integer)]);
+    builder.seal_block(nan);
+    builder.seal_block(tagged);
+    builder.seal_block(integer_block);
+    builder.seal_block(join);
+    builder.switch_to_block(join);
+    builder.block_params(join)[0]
+}
+
+/// Encode a Number result with `Value::number`'s integer, double and NaN
+/// representations.
+fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+    let truncated = builder.ins().fcvt_to_sint_sat(types::I32, number);
+    let round_trip = builder.ins().fcvt_from_sint(types::F64, truncated);
+    let result_bits = builder
+        .ins()
+        .bitcast(types::I64, ir::MemFlagsData::new(), number);
+    let round_trip_bits = builder
+        .ins()
+        .bitcast(types::I64, ir::MemFlagsData::new(), round_trip);
+    let is_integer = builder
+        .ins()
+        .icmp(IntCC::Equal, result_bits, round_trip_bits);
+    let integer_bits = builder.ins().uextend(types::I64, truncated);
+    let integer_bits = builder
+        .ins()
+        .bor_imm_u(integer_bits, crate::value::ValueLayout::INT_TAG as i64);
+    let encoded = builder
+        .ins()
+        .select(is_integer, integer_bits, result_bits);
+    let is_nan = builder.ins().fcmp(FloatCC::Unordered, number, number);
+    let canonical_nan = builder.ins().iconst(
+        types::I64,
+        crate::value::ValueLayout::CANONICAL_NAN as i64,
+    );
+    builder.ins().select(is_nan, canonical_nan, encoded)
+}
+
+fn emit_js_step_fallback(
+    builder: &mut FunctionBuilder<'_>,
+    context: ir::Value,
+    callout: ir::Value,
+    callout_signature: ir::SigRef,
+    result_pointer: ir::Value,
+    stopped_block: ir::Block,
+    continue_block: ir::Block,
+    pc: usize,
+) {
+    let pc_value = builder.ins().iconst(types::I64, pc as i64);
+    let call = builder.ins().call_indirect(
+        callout_signature,
+        callout,
+        &[context, pc_value, result_pointer, result_pointer],
+    );
+    let status = builder.inst_results(call)[0];
+    let failed = builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
+    let next_pc = builder
+        .ins()
+        .load(types::I64, MemFlagsData::trusted(), result_pointer, 0);
+    builder.ins().brif(
+        failed,
+        stopped_block,
+        &[],
+        continue_block,
+        &[ir::BlockArg::Value(next_pc)],
+    );
+}
+
+enum JsGeneralBranch {
+    ToBoolean {
+        source: u16,
+        take_when_truthy: bool,
+    },
+    NumberFalse {
+        operator: u32,
+        left: Operand,
+        right: Operand,
+    },
+}
+
+pub(super) fn compile_js_general_dispatch(
+    program: &ResidualProgram,
+    function_id: u32,
+) -> Option<super::js_compiled::JsJitArtifact> {
+    if program.kind == crate::bytecode::ProgramKind::Wasm || function_id == 0 {
+        return None;
+    }
+    let function = program.function_get(function_id as usize)?;
+    let instruction_count = function.code.len();
+    if !js_general_dispatch_candidate(program, function) {
+        return None;
+    }
+
+    let isa = super::jit_backend::target_isa("speed", true)?;
+    let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
+    let name = UserFuncName::user(0x5155_454e, function_id);
+    let mut native = ir::Function::with_name_signature(name, signature);
+    let mut builder_context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
+
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    let parameters = builder.block_params(entry).to_vec();
+    let context = parameters[0];
+    let arguments = parameters[3];
+    let result_pointer = parameters[4];
+    let stopped_block = builder.create_block();
+    let continue_block = builder.create_block();
+    let continue_pc = builder.append_block_param(continue_block, types::I64);
+    let invalid_pc = builder.create_block();
+    let invalid_pc_value = builder.append_block_param(invalid_pc, types::I64);
+    let callout = builder
+        .ins()
+        .load(types::I64, invariant(), context, CONTEXT_CALLOUT);
+    let blocks: Vec<_> = (0..instruction_count)
+        .map(|_| builder.create_block())
+        .collect();
+    builder.ins().jump(blocks[0], &[]);
+
+    let mut callout_signature = Signature::new(isa.default_call_conv());
+    for _ in 0..4 {
+        callout_signature.params.push(AbiParam::new(types::I64));
+    }
+    callout_signature.returns.push(AbiParam::new(types::I64));
+    let callout_signature = builder.import_signature(callout_signature);
+    builder.switch_to_block(stopped_block);
+    // A nonzero callout status has a rooted `JsStepDispatch` result in the
+    // adapter payload. The status itself only tells the outer entry to stop.
+    let stopped = builder.ins().iconst(types::I32, 1);
+    builder.ins().return_(&[stopped]);
+
+    builder.switch_to_block(invalid_pc);
+    builder.ins().store(
+        MemFlagsData::trusted(),
+        invalid_pc_value,
+        result_pointer,
+        0,
+    );
+    let out_of_range = builder.ins().iconst(types::I32, 2);
+    builder.ins().return_(&[out_of_range]);
+
+    let register_offset = |register: u16| -> Option<i32> {
+        if register >= function.registers {
+            return None;
+        }
+        i32::try_from(usize::from(register).checked_mul(std::mem::size_of::<u64>())?).ok()
+    };
+    for (pc, block) in blocks.iter().copied().enumerate() {
+        builder.switch_to_block(block);
+        let packed = function.code[pc];
+        let instruction = super::dispatch_fast::decoded_instruction(function, packed);
+        let next = blocks.get(pc + 1).copied();
+        let direct = if let Some(next) = next {
+            match instruction.op().js_denotation() {
+                JsDenotation::Noop
+                    if instruction.result_flags() == 0
+                        && !instruction.returns_from_frame()
+                        && !instruction.writes_current_this() =>
+                {
+                    builder.ins().jump(next, &[]);
+                    true
+                }
+                JsDenotation::Jump
+                    if instruction.result_flags() == 0
+                        && !instruction.returns_from_frame()
+                        && !instruction.writes_current_this() =>
+                {
+                    let target = usize::try_from(instruction.jump_target()).ok();
+                    if let Some(target) = target.filter(|target| *target > pc)
+                        && let Some(target) = blocks.get(target).copied()
+                    {
+                        builder.ins().jump(target, &[]);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                JsDenotation::Move
+                    if instruction.result_flags() == 0
+                        && !instruction.returns_from_frame()
+                        && !instruction.writes_current_this() =>
+                {
+                    if let (Some(source), Some(destination)) = (
+                        register_offset(instruction.register_b()),
+                        register_offset(instruction.result_register()),
+                    ) {
+                        let value = builder.ins().load(
+                            types::I64,
+                            MemFlagsData::trusted(),
+                            arguments,
+                            source,
+                        );
+                        builder.ins().store(
+                            MemFlagsData::trusted(),
+                            value,
+                            arguments,
+                            destination,
+                        );
+                        builder.ins().jump(next, &[]);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                JsDenotation::LoadConst
+                    if instruction.result_flags() == 0
+                        && !instruction.returns_from_frame()
+                        && !instruction.writes_current_this() =>
+                {
+                    let value = program.constants.get(instruction.constant_index()).and_then(
+                        |constant| match constant {
+                            crate::bytecode::Constant::Number(value) => {
+                                Some(Value::number(*value))
+                            }
+                            crate::bytecode::Constant::Boolean(value) => {
+                                Some(Value::boolean(*value))
+                            }
+                            crate::bytecode::Constant::Null => Some(Value::NULL),
+                            crate::bytecode::Constant::Undefined => Some(Value::UNDEFINED),
+                            crate::bytecode::Constant::String(_)
+                            | crate::bytecode::Constant::StringUnits(_)
+                            | crate::bytecode::Constant::BigInt(_)
+                            | crate::bytecode::Constant::WasmBits64(_)
+                            | crate::bytecode::Constant::WasmV128(_) => None,
+                        },
+                    );
+                    if let (Some(value), Some(destination)) =
+                        (value, register_offset(instruction.result_register()))
+                    {
+                        let value = builder.ins().iconst(types::I64, value.to_bits() as i64);
+                        builder.ins().store(
+                            MemFlagsData::trusted(),
+                            value,
+                            arguments,
+                            destination,
+                        );
+                        builder.ins().jump(next, &[]);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+        if direct {
+            continue;
+        }
+
+        let direct_branch = match instruction.op() {
+            Op::JumpFalse | Op::JumpTrue => register_offset(instruction.register_a()).map(
+                |_| JsGeneralBranch::ToBoolean {
+                    source: instruction.register_a(),
+                    take_when_truthy: instruction.op() == Op::JumpTrue,
+                },
+            ),
+            Op::JumpBinaryFalse => {
+                let operator = instruction.binary_operator_field();
+                let left = instruction.operand_b();
+                let right = instruction.operand_c();
+                (super::operations::NumberRelation::from_operator(operator).is_some()
+                    && js_tagged_operand_supported(program, left, &register_offset)
+                    && js_tagged_operand_supported(program, right, &register_offset))
+                .then_some(JsGeneralBranch::NumberFalse {
+                    operator,
+                    left,
+                    right,
+                })
+            }
+            _ => None,
+        };
+        // Only a recognized branch has a jump target to read.
+        if let (Some(next), Some(direct_branch)) = (next, direct_branch)
+            && let Ok(target) = usize::try_from(instruction.jump_target())
+            && target > pc
+            && let Some(target_block) = blocks.get(target).copied()
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+        {
+            let fallback = builder.create_block();
+            let branch = match direct_branch {
+                JsGeneralBranch::ToBoolean {
+                    source,
+                    take_when_truthy,
+                } => {
+                    let source = register_offset(source).expect("prevalidated branch register");
+                    let bits = builder.ins().load(
+                        types::I64,
+                        MemFlagsData::trusted(),
+                        arguments,
+                        source,
+                    );
+                    let truthy = emit_js_tagged_truthiness(&mut builder, bits, fallback);
+                    if take_when_truthy {
+                        truthy
+                    } else {
+                        builder.ins().icmp_imm_u(IntCC::Equal, truthy, 0)
+                    }
+                }
+                JsGeneralBranch::NumberFalse {
+                    operator,
+                    left,
+                    right,
+                } => {
+                    let left = read_js_tagged_operand(
+                        &mut builder,
+                        program,
+                        left,
+                        arguments,
+                        &register_offset,
+                    )
+                    .expect("prevalidated JS relation operand");
+                    let left = emit_js_tagged_number(&mut builder, left, fallback);
+                    let right = read_js_tagged_operand(
+                        &mut builder,
+                        program,
+                        right,
+                        arguments,
+                        &register_offset,
+                    )
+                    .expect("prevalidated JS relation operand");
+                    let right = emit_js_tagged_number(&mut builder, right, fallback);
+                    let holds = emit_number_relation(
+                        &mut builder,
+                        operator,
+                        left,
+                        right,
+                        NumberRelationDomain::Float64,
+                    )
+                    .expect("prevalidated JavaScript numeric relation");
+                    builder.ins().icmp_imm_u(IntCC::Equal, holds, 0)
+                }
+            };
+            builder.ins().brif(branch, target_block, &[], next, &[]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(
+                &mut builder,
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            );
+            continue;
+        }
+
+        // The operator and registers are read only once the op is a numeric unary.
+        if instruction.op().js_denotation() == JsDenotation::NumericUnary
+            && let Some(next) = next
+            && let Some(unary) = super::operations::NumberUnary::from_js_instruction(
+                instruction.op(),
+                instruction.unary_operator(),
+            )
+            && let Some(source) = register_offset(instruction.register_b())
+            && let Some(destination) = register_offset(instruction.result_register())
+            && instruction.numeric_local_target().is_none()
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+        {
+            let fallback = builder.create_block();
+            let bits = builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                arguments,
+                source,
+            );
+            let number = emit_js_tagged_number(&mut builder, bits, fallback);
+            let number = emit_number_unary_operation(&mut builder, unary, number);
+            let encoded = emit_js_box_number(&mut builder, number);
+            builder.ins().store(
+                MemFlagsData::trusted(),
+                encoded,
+                arguments,
+                destination,
+            );
+            builder.ins().jump(next, &[]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(
+                &mut builder,
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            );
+            continue;
+        }
+
+        // The operator is read only once the op is a numeric binary.
+        let numeric_binary = instruction.op().js_denotation() == JsDenotation::NumericBinary;
+        let arithmetic = numeric_binary
+            .then(|| {
+                super::operations::NumberArithmetic::from_js_instruction(
+                    instruction.op(),
+                    instruction.binary_operator(),
+                )
+            })
+            .flatten();
+        let operands = numeric_binary.then(|| (instruction.operand_b(), instruction.operand_c()));
+        let numeric_result = numeric_binary
+            && arithmetic.is_some()
+            && instruction.numeric_local_target().is_none()
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && register_offset(instruction.result_register()).is_some()
+            && operands.is_some_and(|(left, right)| {
+                js_tagged_operand_supported(program, left, &register_offset)
+                    && js_tagged_operand_supported(program, right, &register_offset)
+            });
+        if let (true, Some(next), Some(arithmetic), Some((left_operand, right_operand))) =
+            (numeric_result, next, arithmetic, operands)
+        {
+            let fallback = builder.create_block();
+            let left_bits = read_js_tagged_operand(
+                &mut builder,
+                program,
+                left_operand,
+                arguments,
+                &register_offset,
+            )
+            .expect("prevalidated JS numeric operand");
+            let left = emit_js_tagged_number(&mut builder, left_bits, fallback);
+            let right_bits = read_js_tagged_operand(
+                &mut builder,
+                program,
+                right_operand,
+                arguments,
+                &register_offset,
+            )
+            .expect("prevalidated JS numeric operand");
+            let right = emit_js_tagged_number(&mut builder, right_bits, fallback);
+            let number = emit_number_arithmetic_operation(&mut builder, arithmetic, left, right);
+            let encoded = emit_js_box_number(&mut builder, number);
+            let destination = register_offset(instruction.result_register())
+                .expect("prevalidated JS numeric destination");
+            builder.ins().store(
+                MemFlagsData::trusted(),
+                encoded,
+                arguments,
+                destination,
+            );
+            builder.ins().jump(next, &[]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(
+                &mut builder,
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            );
+            continue;
+        }
+
+        emit_js_step_fallback(
+            &mut builder,
+            context,
+            callout,
+            callout_signature,
+            result_pointer,
+            stopped_block,
+            continue_block,
+            pc,
+        );
+    }
+    builder.switch_to_block(continue_block);
+    let selector = builder.ins().ireduce(types::I32, continue_pc);
+    let cases: Vec<_> = blocks
+        .iter()
+        .map(|target| builder.func.dfg.block_call(*target, &[]))
+        .collect();
+    let invalid_argument = ir::BlockArg::Value(continue_pc);
+    let default = builder
+        .func
+        .dfg
+        .block_call(invalid_pc, &[invalid_argument]);
+    let table = ir::JumpTableData::new(default, &cases);
+    let table = builder.create_jump_table(table);
+    builder.ins().br_table(selector, table);
+    builder.seal_block(continue_block);
+    builder.seal_all_blocks();
     builder.finalize(isa.frontend_config());
     let code = compile_native_function(
         native,
@@ -523,12 +1597,12 @@ pub(super) fn compile_js_numeric_region(
     )?;
     Some(super::js_compiled::JsJitArtifact {
         code,
-        params,
-        requires_signed_int32_arguments: int32_bitwise,
-        result: super::js_compiled::JsJitResultKind::SharedNumberEntry,
-        field_argument,
-        numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.to_vec()),
-        capture_arguments: captures.to_vec(),
+        params: usize::from(function.params),
+        requires_signed_int32_arguments: false,
+        result: super::js_compiled::JsJitResultKind::GeneralDispatch,
+        field_argument: None,
+        numeric_field_inputs: Vec::new(),
+        capture_arguments: Vec::new(),
     })
 }
 
@@ -2917,11 +3991,30 @@ pub(super) fn analyze_osr_region(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[crate::value::Value],
-    live: Option<&[u64]>,
+    live: Option<&[crate::compile::liveness::RegisterSet]>,
     header: u32,
     backedge: u32,
 ) -> Result<LoopRegion, RegionRejection> {
     osr_loop::region(function, decoded, constants, live, header, backedge)
+}
+
+/// The Cranelift optimization level the loop tier compiles regions at under each memory
+/// policy (`MemoryPolicy` order), or none when it compiles no region. A loop region's
+/// compilation is the largest transient allocation of a `--jit` run: regalloc2's state and
+/// the code pages of the compiler and of the region.
+///
+/// Memory-first compiles no loop region, on the owner's direction of 2026-10-24 (TOD-123:
+/// memory-first may trade Score for memory under `--jit`). The per-function tier, which this
+/// leaves running, kept Richards, RayTrace and EarleyBoyer `--jit` below their interpreted
+/// peaks. NavierStokes `--jit` peaked at 7468 KiB compiled and 3988 interpreted, Crypto at
+/// 4000 and 3128 (static BOLT x86_64, memory-first, median of 5, 2026-10-24). Compiling at
+/// `none`, without the e-graph pass, saved only 576 KiB on Crypto and 648 on NavierStokes
+/// (`tod137-loop-tier-opt-level-…`). Throughput compiles at `speed`.
+const LOOP_TIER_OPT_LEVELS: [Option<&str>; crate::MemoryPolicy::ALL.len()] = [Some("speed"), None];
+
+/// Whether the loop tier compiles regions under `policy` (`LOOP_TIER_OPT_LEVELS`).
+pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
+    LOOP_TIER_OPT_LEVELS[policy as usize].is_some()
 }
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
@@ -2929,8 +4022,9 @@ pub(super) fn compile_osr_region(
     region: &LoopRegion,
     observation: &Observation<'_>,
     interrupt: &crate::execution_interrupt::ExecutionInterrupt,
+    policy: crate::MemoryPolicy,
 ) -> Option<CompiledOsrRegion> {
-    let isa = super::jit_backend::target_isa("speed", false)?;
+    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?, false)?;
     let (function, widenings) = osr_loop::lower(
         region,
         observation,
@@ -2971,9 +4065,13 @@ fn compile_native_function<T>(
     publish: impl FnOnce(&[u8]) -> Option<T>,
 ) -> Option<T> {
     let mut context = cranelift_codegen::Context::for_function(function);
-    let compiled = context
-        .compile(isa, &mut cranelift_codegen::control::ControlPlane::default())
-        .ok()?;
+    let compiled = match context.compile(
+        isa,
+        &mut cranelift_codegen::control::ControlPlane::default(),
+    ) {
+        Ok(compiled) => compiled,
+        Err(_) => return None,
+    };
     if !compiled.buffer.relocs().is_empty() {
         return None;
     }
@@ -3004,6 +4102,7 @@ pub(super) struct CompiledJsFunction {
 #[derive(Clone, Copy)]
 enum CompiledJsEntry {
     SharedNumber(Entry),
+    GeneralDispatch(Entry),
     Int32Identity {
         entry: unsafe extern "C" fn(*const f64) -> f64,
         return_pc: u32,
@@ -3078,6 +4177,223 @@ struct JsNativeCall<'a> {
     result: Option<CompiledJsResult>,
 }
 
+/// The instruction transition that returns from a general native-dispatch
+/// region to the ordinary frame loop. Its `StepResult` is already executed,
+/// so the dispatcher consumes it instead of replaying the bytecode.
+pub(super) struct JsNativeStep {
+    pub(super) instruction_pc: usize,
+    pub(super) next_pc: usize,
+    pub(super) result: Result<super::StepResult, JsError>,
+}
+
+struct JsStepDispatch {
+    program_id: ProgramId,
+    frame: usize,
+    allow_inline_calls: bool,
+    native_registers: *mut Value,
+    register_count: usize,
+    outcome: Option<JsNativeStep>,
+}
+
+pub(super) enum JsNativeDispatchResult {
+    Step(JsNativeStep),
+    Resume(usize),
+}
+
+pub(super) enum JsTierFrameEntry {
+    Interpreter,
+    ContinueAt(usize),
+    NativeStep(JsNativeStep),
+    NativeResume(usize),
+}
+
+enum JsCalloutStep {
+    Continue(usize),
+    Stop(JsNativeStep),
+}
+
+unsafe extern "C" fn js_step_callout<H: Host>(
+    context: *mut CallContext,
+    function: u64,
+    _arguments: *const u64,
+    result: *mut u64,
+) -> i64 {
+    // The shared trampoline marks its active context while native code runs.
+    // Clear it while Rust semantics and any host or guest helper run, so a
+    // fault there is never mistaken for a generated-code fault.
+    let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
+    // SAFETY: the compiled entry's owner keeps this context and adapter payload
+    // alive through the callout.
+    let context_ref = unsafe { &mut *context };
+    let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let pc = usize::try_from(function)
+            .map_err(|_| JsError::validation("native JS PC does not fit usize".into()))?;
+        let dispatch = unsafe { &mut *context_ref.adapter_payload.cast::<JsStepDispatch>() };
+        let vm = unsafe { &mut *context_ref.vm.cast::<Vm<H>>() };
+        let program = vm
+            .programs
+            .get(dispatch.program_id)
+            .ok_or_else(|| JsError::validation("native JS program is missing".into()))?;
+        let body = program
+            .function_get(vm.frames[dispatch.frame].function as usize)
+            .ok_or_else(|| JsError::validation("native JS function is missing".into()))?;
+        let packed = *body
+            .code
+            .get(pc)
+            .ok_or_else(|| JsError::validation("native JS PC is outside function".into()))?;
+        let instruction = super::dispatch_fast::decoded_instruction(body, packed);
+        let next_pc = pc
+            .checked_add(1)
+            .ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
+
+        if vm.frames[dispatch.frame].registers.len() != dispatch.register_count {
+            return Err(JsError::validation(
+                "native JS frame register layout changed".into(),
+            ));
+        }
+        let native_registers = unsafe {
+            std::slice::from_raw_parts(dispatch.native_registers, dispatch.register_count)
+        };
+        vm.frames[dispatch.frame]
+            .registers
+            .copy_from_slice(native_registers);
+        vm.frames[dispatch.frame].pc = pc;
+        vm.frames[dispatch.frame].pc_is_resume = false;
+        if let Err(error) = vm.check_execution_interrupt() {
+            return Ok(JsCalloutStep::Stop(JsNativeStep {
+                instruction_pc: pc,
+                next_pc,
+                result: Err(error),
+            }));
+        }
+
+        if instruction.op() == Op::GetField
+            && (instruction.result_flags() == 0
+                || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
+            && !instruction.writes_current_this()
+            && (instruction.returns_from_frame() || next_pc < body.code.len())
+            && let Some(FieldLookup::Atom {
+                base,
+                cache_site,
+                ..
+            }) = instruction.field_lookup()
+            && let Some(receiver_register) = base.register_index()
+            && let Some(receiver) = vm.frames[dispatch.frame]
+                .registers
+                .get(usize::from(receiver_register))
+                .copied()
+        {
+            let probe = vm.cached_field_hit(&program, receiver, cache_site);
+            if vm.programs.js_jit_diagnostics_enabled() {
+                vm.programs.record_js_jit_field_cache_probe(
+                    dispatch.program_id,
+                    vm.frames[dispatch.frame].function,
+                    matches!(&probe, super::object::FieldCacheProbe::Hit(_)),
+                );
+            }
+            if let super::object::FieldCacheProbe::Hit(value) = probe {
+                let frame = &mut vm.frames[dispatch.frame];
+                if instruction.returns_from_frame() {
+                    frame.pc = pc;
+                    frame.pc_is_resume = false;
+                    return Ok(JsCalloutStep::Stop(JsNativeStep {
+                        instruction_pc: pc,
+                        next_pc,
+                        result: Ok(super::StepResult::Return(value)),
+                    }));
+                }
+                let destination = frame
+                    .registers
+                    .get_mut(usize::from(instruction.result_register()))
+                    .ok_or_else(|| {
+                        JsError::validation("native JS field result register is invalid".into())
+                    })?;
+                *destination = value;
+                let native_registers = unsafe {
+                    std::slice::from_raw_parts_mut(
+                        dispatch.native_registers,
+                        dispatch.register_count,
+                    )
+                };
+                native_registers.copy_from_slice(&frame.registers);
+                frame.pc = next_pc;
+                frame.pc_is_resume = true;
+                return Ok(JsCalloutStep::Continue(next_pc));
+            }
+        }
+
+        let mut next = next_pc;
+        let step = vm.step(
+            &program,
+            dispatch.frame,
+            instruction,
+            &mut next,
+            dispatch.allow_inline_calls,
+        );
+        match step {
+            Ok(super::StepResult::Continue) => {
+                if next >= body.code.len() {
+                    vm.frames[dispatch.frame].pc = pc;
+                    vm.frames[dispatch.frame].pc_is_resume = false;
+                    return Ok(JsCalloutStep::Stop(JsNativeStep {
+                        instruction_pc: pc,
+                        next_pc: next,
+                        result: Err(JsError::validation(
+                            "native JS continuation is outside its function".into(),
+                        )),
+                    }));
+                }
+                let native_registers = unsafe {
+                    std::slice::from_raw_parts_mut(
+                        dispatch.native_registers,
+                        dispatch.register_count,
+                    )
+                };
+                native_registers.copy_from_slice(&vm.frames[dispatch.frame].registers);
+                vm.frames[dispatch.frame].pc = next;
+                vm.frames[dispatch.frame].pc_is_resume = true;
+                Ok(JsCalloutStep::Continue(next))
+            }
+            result => Ok(JsCalloutStep::Stop(JsNativeStep {
+                instruction_pc: pc,
+                next_pc: next,
+                result,
+            })),
+        }
+    }));
+    ACTIVE_CONTEXT.with(|current| current.set(active));
+
+    match called {
+        Ok(Ok(JsCalloutStep::Continue(next))) => {
+            // SAFETY: generated code supplies a valid result word.
+            unsafe { result.write(next as u64) };
+            0
+        }
+        Ok(Ok(JsCalloutStep::Stop(step))) => {
+            // SAFETY: the adapter payload is unique to this native entry.
+            unsafe {
+                (*context_ref.adapter_payload.cast::<JsStepDispatch>()).outcome = Some(step);
+                result.write(0);
+            }
+            1
+        }
+        Ok(Err(error)) => {
+            let dispatch = unsafe { &mut *context_ref.adapter_payload.cast::<JsStepDispatch>() };
+            dispatch.outcome = Some(JsNativeStep {
+                instruction_pc: usize::try_from(function).unwrap_or(0),
+                next_pc: usize::try_from(function).unwrap_or(0).saturating_add(1),
+                result: Err(error),
+            });
+            unsafe { result.write(0) };
+            1
+        }
+        Err(panic) => {
+            context_ref.raised = Some(Raised::Panic(panic));
+            RAISED_STATUS
+        }
+    }
+}
+
 unsafe extern "C" fn js_native_entry(
     context: *mut CallContext,
     _base: u64,
@@ -3111,6 +4427,11 @@ impl CompiledJsFunction {
                 // SAFETY: the bytecode numeric-region compiler uses `native_entry_signature`.
                 let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer) };
                 (CompiledJsEntry::SharedNumber(entry), Vec::new(), None)
+            }
+            super::js_compiled::JsJitResultKind::GeneralDispatch => {
+                // SAFETY: the general JS dispatcher emits the shared native-entry ABI.
+                let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer) };
+                (CompiledJsEntry::GeneralDispatch(entry), Vec::new(), None)
             }
             super::js_compiled::JsJitResultKind::Int32Identity(return_pc) => {
                 // SAFETY: the guarded integer identity compiler emits the Number ABI.
@@ -3255,12 +4576,29 @@ impl CompiledJsFunction {
         })
     }
 
+    /// Whether a call runs the body on its Number arguments alone, with no receiver,
+    /// captures or field reads to assemble and no string result to build
+    /// (`js_jit_compiled_call`).
+    fn direct_callable(&self) -> bool {
+        self.field_argument().is_none()
+            && self.numeric_field_inputs().is_empty()
+            && !self.is_capture_number()
+            && self.capture_arguments().is_empty()
+            && !self.is_string_transform()
+            && !self.is_string_hash_loop()
+            && !self.is_field_reject()
+    }
+
     pub(super) fn params(&self) -> usize {
         self.params
     }
 
     pub(super) fn is_int32_identity(&self) -> bool {
         matches!(self.entry, CompiledJsEntry::Int32Identity { .. })
+    }
+
+    pub(super) fn is_general_dispatch(&self) -> bool {
+        matches!(self.entry, CompiledJsEntry::GeneralDispatch(_))
     }
 
     pub(super) fn requires_signed_int32_arguments(&self) -> bool {
@@ -3293,6 +4631,9 @@ impl CompiledJsFunction {
         interrupt: &std::sync::atomic::AtomicBool,
         poll_page: Option<(usize, usize)>,
     ) -> Option<CompiledJsResult> {
+        if self.is_general_dispatch() {
+            return None;
+        }
         if let CompiledJsEntry::SharedNumber(entry) = self.entry {
             let (status, result) = run_native_entry(
                 entry,
@@ -3313,6 +4654,76 @@ impl CompiledJsFunction {
         }, poll_page)
     }
 
+    pub(super) fn run_general_dispatch<H: Host>(
+        &self,
+        vm: *mut Vm<H>,
+        program: ProgramId,
+        payload: *mut (),
+        interrupt: *const std::sync::atomic::AtomicBool,
+        poll_page: Option<(usize, usize)>,
+    ) -> Option<JsNativeDispatchResult> {
+        let CompiledJsEntry::GeneralDispatch(entry) = self.entry else {
+            return None;
+        };
+        let mut context = CallContext::native_adapter(payload, interrupt, poll_page);
+        context.vm = vm.cast();
+        context.program = program;
+        context.callout = js_step_callout::<H> as Callout as usize;
+        let dispatch_frame = unsafe { (*payload.cast::<JsStepDispatch>()).frame };
+        let mut native_registers = smallvec::SmallVec::<[Value; 32]>::new();
+        let register_count = unsafe {
+            let vm = &*vm.cast::<Vm<H>>();
+            let frame = vm.frames.get(dispatch_frame)?;
+            native_registers.extend_from_slice(&frame.registers);
+            frame.registers.len()
+        };
+        unsafe {
+            let dispatch = &mut *payload.cast::<JsStepDispatch>();
+            dispatch.native_registers = native_registers.as_mut_ptr();
+            dispatch.register_count = register_count;
+        }
+        let arguments = native_registers.as_mut_ptr().cast::<u64>();
+        let mut word = 0u64;
+        // SAFETY: the function's bytecode, frame and adapter payload outlive
+        // the native dispatch. The callout writes only `word` and its payload.
+        let status = unsafe {
+            enter_native(
+                &mut context,
+                0,
+                0,
+                arguments,
+                &mut word,
+                NativeEntryMode::Resumable,
+                entry,
+            )
+        };
+        if let Some(Raised::Panic(panic)) = context.raised.take() {
+            std::panic::resume_unwind(panic);
+        }
+        if let Some(Raised::Error(_)) = context.raised.take() {
+            return None;
+        }
+        match status {
+            1 => {
+                #[cfg(test)]
+                self.native_entries
+                    .set(self.native_entries.get().saturating_add(1));
+                unsafe { (*payload.cast::<JsStepDispatch>()).outcome.take() }
+                    .map(JsNativeDispatchResult::Step)
+            }
+            2 => {
+                let vm = unsafe { &mut *vm.cast::<Vm<H>>() };
+                let frame = vm.frames.get_mut(dispatch_frame)?;
+                if frame.registers.len() != native_registers.len() {
+                    return None;
+                }
+                frame.registers.copy_from_slice(&native_registers);
+                Some(JsNativeDispatchResult::Resume(word as usize))
+            }
+            _ => None,
+        }
+    }
+
     fn call_capture_number(
         &self,
         value: f64,
@@ -3327,7 +4738,9 @@ impl CompiledJsFunction {
 
     fn native_entry_mode(&self) -> NativeEntryMode {
         match self.entry {
-            CompiledJsEntry::NumberInterruptible(_) | CompiledJsEntry::StringHashLoop(_) => {
+            CompiledJsEntry::GeneralDispatch(_)
+            | CompiledJsEntry::NumberInterruptible(_)
+            | CompiledJsEntry::StringHashLoop(_) => {
                 NativeEntryMode::Resumable
             }
             CompiledJsEntry::SharedNumber(_)
@@ -3538,7 +4951,10 @@ impl CompiledJsFunction {
 
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn uses_shared_entry(&self) -> bool {
-        matches!(self.entry, CompiledJsEntry::SharedNumber(_))
+        matches!(
+            self.entry,
+            CompiledJsEntry::SharedNumber(_) | CompiledJsEntry::GeneralDispatch(_)
+        )
     }
 
     pub(super) fn mapped_bytes(&self) -> usize {
@@ -3909,21 +5325,13 @@ fn direct_access(op: Op) -> bool {
 }
 
 fn successors(function: &Function, pc: usize, instruction: WideInstruction) -> Vec<usize> {
-    match instruction.op().control_flow_layout() {
-        ControlFlowLayout::Jump => vec![instruction.jump_target() as usize],
-        ControlFlowLayout::ConditionalJump => vec![instruction.jump_target() as usize, pc + 1],
-        ControlFlowLayout::BranchTable => crate::bytecode::branch_table_entries(pc, instruction)
-            .filter(|entry| *entry < function.code.len())
-            .collect(),
-        ControlFlowLayout::Terminal => vec![],
-        ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => {
-            if instruction.returns_from_frame() {
-                vec![]
-            } else {
-                vec![pc + 1]
-            }
+    let mut successors = Vec::with_capacity(2);
+    crate::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
+        if successor < function.code.len() {
+            successors.push(successor);
         }
-    }
+    });
+    successors
 }
 
 /// The analysis context shared by every function of a program.
@@ -7615,19 +9023,113 @@ impl<H: Host> Vm<H> {
         !cfg!(quench_profiled) && self.execution_mode == ExecutionMode::Compiled
     }
 
-    /// Whether the JavaScript tier may still claim `function` of `program`: it runs, the
-    /// function passes its candidate filter, and the tier has not declined it. The tier
-    /// observes and enters functions at frame entry (`js_tier_frame_entry`), so such calls
-    /// keep their frames rather than running frameless in the lane. A permanently declined
-    /// function stays frameless unless diagnostics need its rejected-entry counters.
-    pub(super) fn js_tier_may_claim(&self, program: &ResidualProgram, id: ProgramId, function: u32) -> bool {
-        self.js_tier_runs()
-            && program.kind != crate::bytecode::ProgramKind::Wasm
-            && program
-                .function_get(function as usize)
-                .is_some_and(|body| super::js_compiled::function_candidate(body, program))
-            && (!self.programs.js_tier_declined(id, function)
-                || self.programs.js_jit_diagnostics_enabled())
+    /// Keep legacy specialized candidates framed as before. The general
+    /// dispatcher observes other bounded functions while they remain lane
+    /// eligible, and claims them only after the shared promotion threshold.
+    pub(super) fn js_tier_may_claim(
+        &mut self,
+        program: &ResidualProgram,
+        id: ProgramId,
+        function: u32,
+    ) -> bool {
+        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm {
+            return false;
+        }
+        let Some(body) = program.function_get(function as usize) else {
+            return false;
+        };
+        if super::js_compiled::function_candidate(body, program) {
+            return !self.programs.js_tier_declined(id, function)
+                || self.programs.js_jit_diagnostics_enabled();
+        }
+        if !js_general_dispatch_candidate(program, body) {
+            return false;
+        }
+        match self.programs.js_tier(id, function) {
+            Some(super::program_store::JsTierState::PromotionPending)
+            | Some(super::program_store::JsTierState::Compiled(_)) => true,
+            Some(
+                super::program_store::JsTierState::Unsupported
+                | super::program_store::JsTierState::Rejected { .. },
+            ) => self.programs.js_jit_diagnostics_enabled(),
+            Some(super::program_store::JsTierState::Hot { .. }) | None => self
+                .programs
+                .note_js_general_dispatch_entry(id, function),
+        }
+    }
+
+    /// Whether a lane-entered frame must hand control to the general frame
+    /// loop so a pending or installed generic native region can run there.
+    pub(super) fn js_tier_needs_general_entry(&self, id: ProgramId, function: u32) -> bool {
+        match self.programs.js_tier(id, function) {
+            Some(super::program_store::JsTierState::PromotionPending) => true,
+            Some(super::program_store::JsTierState::Compiled(compiled)) => {
+                compiled.is_general_dispatch()
+            }
+            _ => false,
+        }
+    }
+
+    /// The JavaScript tier at the entry of a frameless lane activation of `function`, as
+    /// `js_tier_frame_entry` is at a frame's: with the native result, the PC of the
+    /// instruction the activation continues at, its register and the value to write there;
+    /// else `None`, and the activation runs from its entry. `parameters` are the
+    /// activation's parameter registers, `this` its receiver where the function binds its
+    /// own, and `env` the closure's environment, which its captures walk.
+    pub(super) fn js_tier_activation_entry(
+        &mut self,
+        program: &ResidualProgram,
+        id: ProgramId,
+        function: u32,
+        parameters: &[Value],
+        this: Option<Value>,
+        env: Value,
+    ) -> Option<(usize, crate::bytecode::Register, Value)> {
+        // A compiled body that reads only its parameters runs as a direct call does
+        // (`js_jit_compiled_call`); the activation completes at its `Return` with the result.
+        if let Some(value) = self.js_jit_compiled_call(program, (id, function), false, parameters) {
+            let body = program.function_get(function as usize)?;
+            let last_pc = body.code.len().checked_sub(1)?;
+            let terminal = body.code.get(last_pc)?.as_wide();
+            if terminal.op() == Op::Return {
+                return Some((last_pc, terminal.register_a(), value));
+            }
+        }
+        let entry = TierEntry {
+            program: id,
+            function,
+            this,
+            parameters: parameters.iter().copied().collect(),
+            captures: TierCaptures::Environment(env),
+            allocates: false,
+        };
+        let entered = self.js_jit_at_entry(program, &entry);
+        if entered.is_none() {
+            self.programs.record_js_jit_fallback_entry(id, function);
+        }
+        entered
+    }
+
+    /// The capture at `depth` and `slot` of the activation an entry reads.
+    fn tier_capture(&mut self, captures: TierCaptures, depth: u16, slot: u16) -> Option<Value> {
+        match captures {
+            TierCaptures::Frame(frame) => self.cached_direct_capture(frame, depth, slot),
+            TierCaptures::Environment(env) => {
+                // A frameless activation's function has no environment of its own
+                // (`lane_load_capture_walk`).
+                let (slots, root) = self.walked_capture_slots(env, false, depth)?;
+                // SAFETY: as `Vm::walked_capture_slots`; nothing collects before the read.
+                self.owned_capture(unsafe { &*slots }, root, slot)
+            }
+        }
+    }
+
+    /// `tier_capture`, and for a frame the root bindings `jit_owned_capture` also reads.
+    fn tier_owned_capture(&mut self, captures: TierCaptures, depth: u16, slot: u16) -> Option<Value> {
+        match captures {
+            TierCaptures::Frame(frame) => self.jit_owned_capture(frame, depth, slot),
+            TierCaptures::Environment(_) => self.tier_capture(captures, depth, slot),
+        }
     }
 
     /// The JavaScript tier at the entry of `frame`, an initialized frame at PC zero, made
@@ -7639,15 +9141,53 @@ impl<H: Host> Vm<H> {
         &mut self,
         program: &ResidualProgram,
         frame: usize,
-    ) -> Option<usize> {
+        allow_inline_calls: bool,
+    ) -> JsTierFrameEntry {
         if self.execution_mode != ExecutionMode::Compiled {
-            return None;
+            return JsTierFrameEntry::Interpreter;
         }
-        if let Some((return_pc, return_register, value)) = self.js_jit_at_entry(program, frame) {
+        if allow_inline_calls
+            && let Some(outcome) = self.js_jit_general_dispatch_at_entry(
+                program, frame, true, false,
+            )
+        {
+            return match outcome {
+                JsNativeDispatchResult::Step(step) => JsTierFrameEntry::NativeStep(step),
+                JsNativeDispatchResult::Resume(pc) => JsTierFrameEntry::NativeResume(pc),
+            };
+        }
+        let function = self.frames[frame].function;
+        let general_candidate = program
+            .function_get(function as usize)
+            .is_some_and(|body| js_general_dispatch_candidate(program, body));
+        let entry = self.frames.get(frame).filter(|record| record.pc == 0).and_then(|record| {
+            let params = program.function_get(record.function as usize)?.params;
+            Some(TierEntry {
+                program: record.program,
+                function: record.function,
+                this: record.fixed_this.then_some(record.this),
+                parameters: record.registers.iter().copied().take(usize::from(params)).collect(),
+                captures: TierCaptures::Frame(frame),
+                allocates: true,
+            })
+        });
+        if let Some((return_pc, return_register, value)) =
+            entry.and_then(|entry| self.js_jit_at_entry(program, &entry))
+        {
             // The frame's own register file: a lane frame call reaches here before
             // `active_registers` names the frame (`lane_enter_script_frame`).
             self.frames[frame].registers[usize::from(return_register)] = value;
-            return Some(return_pc);
+            return JsTierFrameEntry::ContinueAt(return_pc);
+        }
+        if allow_inline_calls && general_candidate {
+            if let Some(outcome) = self.js_jit_general_dispatch_at_entry(
+                program, frame, true, true,
+            ) {
+                return match outcome {
+                    JsNativeDispatchResult::Step(step) => JsTierFrameEntry::NativeStep(step),
+                    JsNativeDispatchResult::Resume(pc) => JsTierFrameEntry::NativeResume(pc),
+                };
+            }
         }
         let (program_id, function_id) = (self.frames[frame].program, self.frames[frame].function);
         self.programs
@@ -7658,7 +9198,94 @@ impl<H: Host> Vm<H> {
         {
             self.frames[frame].js_jit_interpreter_started = Some(std::time::Instant::now());
         }
-        None
+        JsTierFrameEntry::Interpreter
+    }
+
+    fn js_jit_general_dispatch_at_entry(
+        &mut self,
+        program: &ResidualProgram,
+        frame: usize,
+        allow_inline_calls: bool,
+        promote: bool,
+    ) -> Option<JsNativeDispatchResult> {
+        if !self.js_tier_runs()
+            || program.kind == crate::bytecode::ProgramKind::Wasm
+            || self.frames.get(frame)?.pc != 0
+        {
+            return None;
+        }
+        let program_id = self.frames[frame].program;
+        let function_id = self.frames[frame].function;
+        let compiled = match self.programs.js_tier(program_id, function_id) {
+            Some(super::program_store::JsTierState::Compiled(compiled))
+                if compiled.is_general_dispatch() => Some(compiled),
+            Some(super::program_store::JsTierState::Compiled(_)
+            | super::program_store::JsTierState::Unsupported) => return None,
+            _ => {
+                let function = program.function_get(function_id as usize)?;
+                if !js_general_dispatch_candidate(program, function)
+                    || !promote
+                    || !self
+                    .programs
+                    .note_js_general_dispatch_entry(program_id, function_id)
+                {
+                    return None;
+                }
+                let compile_started = self
+                    .programs
+                    .js_jit_diagnostics_enabled()
+                    .then(std::time::Instant::now);
+                self.host.before_native_compilation();
+                let artifact = compile_js_general_dispatch(program, function_id);
+                self.host.after_native_compilation();
+                let code_bytes = artifact.as_ref().map_or(0, |artifact| artifact.code.len());
+                let rejection = artifact.is_none().then_some("general-dispatch-codegen-rejected");
+                let compiled = artifact
+                    .and_then(CompiledJsFunction::from_artifact)
+                    .map(Rc::new);
+                let installed = self
+                    .programs
+                    .install_js_tier(program_id, function_id, compiled.clone());
+                if let Some(compile_started) = compile_started {
+                    self.programs.record_js_jit_compile(
+                        program_id,
+                        function_id,
+                        u64::try_from(compile_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                        if installed { code_bytes } else { 0 },
+                        installed,
+                        if installed { None } else { rejection.or(Some("shared-code-cache-budget-exhausted")) },
+                    );
+                }
+                if !installed {
+                    return None;
+                }
+                compiled
+            }
+        }?;
+
+        let mut dispatch = JsStepDispatch {
+            program_id,
+            frame,
+            allow_inline_calls,
+            native_registers: std::ptr::null_mut(),
+            register_count: 0,
+            outcome: None,
+        };
+        let interrupt = self.execution_interrupt.atomic_flag();
+        let interrupt = interrupt as *const std::sync::atomic::AtomicBool;
+        let poll_page = self.compiled_poll_page();
+        let outcome = compiled.run_general_dispatch(
+            self as *mut Self,
+            program_id,
+            (&mut dispatch as *mut JsStepDispatch).cast(),
+            interrupt,
+            poll_page,
+        )?;
+        if self.programs.js_jit_diagnostics_enabled() {
+            self.programs
+                .record_js_jit_native_entry(program_id, function_id);
+        }
+        Some(outcome)
     }
 
     /// Run a narrow numeric linked-entry search using guarded VM field and
@@ -7667,17 +9294,14 @@ impl<H: Host> Vm<H> {
     fn js_jit_numeric_find_at_entry(
         &mut self,
         program: &ResidualProgram,
-        frame: usize,
+        activation: &TierEntry,
         candidate: super::js_compiled::JsJitNumericFind,
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
         const MAX_STEPS: usize = 256;
-        let program_id = self.frames.get(frame)?.program;
-        let function_id = self.frames.get(frame)?.function;
-        if !self.frames[frame].fixed_this {
-            return None;
-        }
+        let (program_id, function_id) = (activation.program, activation.function);
+        let receiver = activation.this?;
         let (key_value, index_value, hash_value) = {
-            let arguments = self.frames[frame].registers.get(..3)?;
+            let arguments = activation.parameters.get(..3)?;
             (arguments[0], arguments[1], arguments[2])
         };
         if key_value.as_number().is_none() || index_value.as_int().is_none() {
@@ -7686,7 +9310,6 @@ impl<H: Host> Vm<H> {
         let Some(key_hash) = hash_value.as_number() else {
             return None;
         };
-        let receiver = self.frames[frame].this;
         let array = match self.cached_field_hit(program, receiver, candidate.list_cache) {
             super::object::FieldCacheProbe::Hit(value) => value,
             super::object::FieldCacheProbe::Ineligible => {
@@ -7742,8 +9365,8 @@ impl<H: Host> Vm<H> {
                 let equals_function = if let Some(equals_function) = cached_equals_function {
                     equals_function
                 } else {
-                    let equals = self.jit_owned_capture(
-                        frame,
+                    let equals = self.tier_owned_capture(
+                        activation.captures,
                         candidate.equals_depth,
                         candidate.equals_slot,
                     )?;
@@ -7805,15 +9428,12 @@ impl<H: Host> Vm<H> {
     pub(super) fn js_jit_at_entry(
         &mut self,
         program: &ResidualProgram,
-        frame: usize,
+        entry: &TierEntry,
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
-        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm
-            || self.frames.get(frame)?.pc != 0
-        {
+        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm {
             return None;
         }
-        let program_id = self.frames[frame].program;
-        let function_id = self.frames[frame].function;
+        let (program_id, function_id) = (entry.program, entry.function);
         let function = program.function_get(function_id as usize)?;
         let facts = self.programs.js_entry_facts(program_id, function_id)?;
         // Most entries are of functions no entry path can claim; diagnostics still count them.
@@ -7822,14 +9442,14 @@ impl<H: Host> Vm<H> {
         }
         let numeric_find_candidate = facts.numeric_find.filter(|_| jit_numeric_find_enabled());
         if let Some(candidate) = numeric_find_candidate
-            && let Some(result) = self.js_jit_numeric_find_at_entry(program, frame, candidate)
+            && let Some(result) = self.js_jit_numeric_find_at_entry(program, entry, candidate)
         {
             return Some(result);
         }
         let field_increment_candidate = facts.field_increment;
         let mut field_increment_diagnostic_entry_recorded = false;
         if let Some(candidate) = field_increment_candidate {
-            let fixed_this = self.frames[frame].fixed_this;
+            let fixed_this = entry.this.is_some();
             if self.programs.js_jit_diagnostics_enabled() {
                 self.programs.record_js_jit_entry(
                     program_id,
@@ -7844,10 +9464,10 @@ impl<H: Host> Vm<H> {
                 );
                 field_increment_diagnostic_entry_recorded = true;
             }
-            if fixed_this
+            if let Some(receiver) = entry.this
                 && self.cached_field_increment_hit(
                     program,
-                    self.frames[frame].this,
+                    receiver,
                     candidate.atom,
                     candidate.read_cache_site,
                     candidate.write_cache_site,
@@ -7869,7 +9489,7 @@ impl<H: Host> Vm<H> {
             facts.field_return;
         let mut field_return_diagnostic_entry_recorded = field_increment_diagnostic_entry_recorded;
         if let Some(candidate) = field_return_candidate {
-            let fixed_this = self.frames[frame].fixed_this;
+            let fixed_this = entry.this.is_some();
             if self.programs.js_jit_diagnostics_enabled() {
                 self.programs.record_js_jit_entry(
                     program_id,
@@ -7884,8 +9504,7 @@ impl<H: Host> Vm<H> {
                 );
                 field_return_diagnostic_entry_recorded = true;
             }
-            if fixed_this {
-                let receiver = self.frames[frame].this;
+            if let Some(receiver) = entry.this {
                 if let super::object::FieldCacheProbe::Hit(value) =
                     self.cached_field_hit(program, receiver, candidate.cache_site)
                 {
@@ -7944,12 +9563,12 @@ impl<H: Host> Vm<H> {
             capture_arguments.extend(candidate);
         }
         let capture_number = capture_argument.and_then(|capture| {
-            self.cached_direct_capture(frame, capture.depth, capture.slot)
+            self.tier_capture(entry.captures, capture.depth, capture.slot)
                 .and_then(Value::as_number)
         });
 
         let params = usize::from(function.params);
-        let registers = self.frames[frame].registers.get(..params)?.to_vec();
+        let registers = entry.parameters.get(..params)?.to_vec();
         let first_argument = registers.first().copied();
         let mut numeric_field_inputs: smallvec::SmallVec<
             [super::js_compiled::JsJitNumericFieldInput; 4],
@@ -7997,7 +9616,7 @@ impl<H: Host> Vm<H> {
         }
         let mut capture_values: smallvec::SmallVec<[f64; 4]> = smallvec::SmallVec::new();
         let captures_numeric = capture_arguments.iter().all(|capture| {
-            self.cached_direct_capture(frame, capture.depth, capture.slot)
+            self.tier_capture(entry.captures, capture.depth, capture.slot)
                 .and_then(Value::as_number)
                 .is_some_and(|value| {
                     capture_values.push(value);
@@ -8013,11 +9632,11 @@ impl<H: Host> Vm<H> {
             for input in numeric_field_inputs.iter().copied() {
                 let receiver = match input.receiver {
                     super::js_compiled::JsJitFieldReceiver::This => {
-                        if !self.frames[frame].fixed_this {
+                        let Some(receiver) = entry.this else {
                             numeric = false;
                             break;
-                        }
-                        self.frames[frame].this
+                        };
+                        receiver
                     }
                     super::js_compiled::JsJitFieldReceiver::Parameter(parameter) => {
                         let Some(receiver) = registers.get(usize::from(parameter)).copied() else {
@@ -8028,7 +9647,7 @@ impl<H: Host> Vm<H> {
                     }
                     super::js_compiled::JsJitFieldReceiver::Capture { capture, .. } => {
                         let Some(receiver) =
-                            self.cached_direct_capture(frame, capture.depth, capture.slot)
+                            self.tier_capture(entry.captures, capture.depth, capture.slot)
                         else {
                             numeric = false;
                             break;
@@ -8129,7 +9748,9 @@ impl<H: Host> Vm<H> {
             Some(compiled) => compiled.string_transform_kind(),
             None => facts.string_transform,
         };
+        // Its result allocates a string, which no lane activation may (`TierEntry::allocates`).
         let string_transform = string_transform_kind
+            .filter(|_| entry.allocates)
             .filter(|kind| self.js_jit_string_transform_guard(*kind))
             .filter(|_| {
                 first_argument.is_some_and(|value| self.heap.is_string(value))
@@ -8450,59 +10071,11 @@ impl<H: Host> Vm<H> {
                 super::program_store::JsTierState::Compiled(compiled) => compiled.as_ref(),
                 _ => return None,
             };
-            // Direct calls have no callee frame from which to reload lexical
-            // captures. Those artifacts must use the ordinary frame-entry path,
-            // where the capture guards and ABI values are assembled together.
-            if compiled.field_argument().is_some()
-                || !compiled.numeric_field_inputs().is_empty()
-                || compiled.is_capture_number()
-                || !compiled.capture_arguments().is_empty()
-                || compiled.is_string_transform()
-                || compiled.is_string_hash_loop()
-                || compiled.is_field_reject()
-            {
-                return None;
-            }
             let params = usize::from(function.params);
-            if compiled.params() != params || arguments.len() < params {
+            if !compiled.direct_callable() || compiled.params() != params || arguments.len() < params {
                 return None;
             }
-            let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
-            for argument in arguments.iter().take(params) {
-                numeric_arguments.push(argument.as_number()?);
-            }
-            if compiled.requires_signed_int32_arguments()
-                && !numeric_arguments
-                    .iter()
-                    .all(|value| super::js_compiled::is_i32_number(*value))
-            {
-                return None;
-            }
-            if compiled.is_int32_identity()
-                && !numeric_arguments
-                    .first()
-                    .is_some_and(|value| super::js_compiled::is_i32_number(*value))
-            {
-                return None;
-            }
-            compiled
-                .call(&numeric_arguments, interrupt, poll_page)
-                .and_then(|result| match result {
-                    CompiledJsResult::Number(value) => {
-                        Some(CompiledJsCallResult::Value(Value::number(value)))
-                    }
-                    CompiledJsResult::Int32Identity { value, .. } => {
-                        Some(CompiledJsCallResult::Value(Value::number(value)))
-                    }
-                    CompiledJsResult::Boolean(value) => Some(CompiledJsCallResult::Value(
-                        if value { Value::TRUE } else { Value::FALSE },
-                    )),
-                    CompiledJsResult::StringReturnPc(return_pc) => compiled
-                        .string_constant_for_return(return_pc)
-                        .map(CompiledJsCallResult::ReturnConstant),
-                    CompiledJsResult::StringTransform(_, _)
-                    | CompiledJsResult::FieldReject { .. } => None,
-                })
+            direct_call(compiled, &arguments[..params], interrupt, poll_page)
         };
         if diagnostics {
             programs.record_js_jit_entry(program_id, function_id, true, function.params);
@@ -8514,6 +10087,60 @@ impl<H: Host> Vm<H> {
                 programs.constant(program_id, constant as usize)
             }
         }
+    }
+
+    /// The direct run of `function`'s compiled body a frameless activation keeps
+    /// (`LaneView::tier_direct`): where its body reads only its parameters
+    /// (`CompiledJsFunction::direct_callable`) and ends in a `Return`, which its result
+    /// completes. Diagnostics count every entry through `js_jit_compiled_call` instead.
+    pub(super) fn direct_tier_entry(
+        &self,
+        program: &ResidualProgram,
+        id: ProgramId,
+        function: u32,
+    ) -> Option<DirectTierEntry> {
+        if self.programs.js_jit_diagnostics_enabled() {
+            return None;
+        }
+        let super::program_store::JsTierState::Compiled(compiled) = self.programs.js_tier_ref(id, function)? else {
+            return None;
+        };
+        let body = program.function_get(function as usize)?;
+        let params = usize::from(body.params);
+        (compiled.direct_callable() && compiled.params() == params).then_some(())?;
+        let return_pc = body.code.len().checked_sub(1)?;
+        let terminal = body.code.get(return_pc)?.as_wide();
+        (terminal.op() == Op::Return).then_some(())?;
+        Some(DirectTierEntry {
+            compiled: Rc::downgrade(compiled),
+            params,
+            return_pc,
+            return_register: terminal.register_a(),
+        })
+    }
+
+    /// Runs `entry` on a frameless activation's `parameters`, as `js_jit_compiled_call` runs
+    /// the body: the `Return` to continue at, its register and the result; `None` where an
+    /// argument is no Number the body's guards admit, or the tier retired the artifact.
+    pub(super) fn run_direct_tier_entry(
+        &mut self,
+        entry: &DirectTierEntry,
+        id: ProgramId,
+        parameters: &[Value],
+    ) -> Option<(usize, crate::bytecode::Register, Value)> {
+        let compiled = entry.compiled.upgrade()?;
+        let poll_page = self.compiled_poll_page();
+        let result = direct_call(
+            &compiled,
+            parameters.get(..entry.params)?,
+            self.execution_interrupt.atomic_flag(),
+            poll_page,
+        )?;
+        let value = match result {
+            CompiledJsCallResult::Value(value) => value,
+            CompiledJsCallResult::ReturnConstant(constant) => self.programs.constant(id, constant as usize)?,
+        };
+        Some((entry.return_pc, entry.return_register, value))
     }
 
     /// Compile every function of `program` that has a compiled denotation,
@@ -9858,10 +11485,100 @@ const INTEGER_TAG: u64 = crate::value::INTEGER_TAG_BITS;
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
 
+/// `compiled`'s body run directly on `arguments`, its parameters, when each is a Number
+/// its guards admit: the call a known callee makes without a frame (`js_jit_compiled_call`).
+fn direct_call(
+    compiled: &CompiledJsFunction,
+    arguments: &[Value],
+    interrupt: &std::sync::atomic::AtomicBool,
+    poll_page: Option<(usize, usize)>,
+) -> Option<CompiledJsCallResult> {
+    let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
+    for argument in arguments {
+        numeric_arguments.push(argument.as_number()?);
+    }
+    if compiled.requires_signed_int32_arguments()
+        && !numeric_arguments.iter().all(|value| super::js_compiled::is_i32_number(*value))
+    {
+        return None;
+    }
+    if compiled.is_int32_identity()
+        && !numeric_arguments.first().is_some_and(|value| super::js_compiled::is_i32_number(*value))
+    {
+        return None;
+    }
+    match compiled.call(&numeric_arguments, interrupt, poll_page)? {
+        CompiledJsResult::Number(value) | CompiledJsResult::Int32Identity { value, .. } => {
+            Some(CompiledJsCallResult::Value(Value::number(value)))
+        }
+        CompiledJsResult::Boolean(value) => {
+            Some(CompiledJsCallResult::Value(if value { Value::TRUE } else { Value::FALSE }))
+        }
+        CompiledJsResult::StringReturnPc(return_pc) => {
+            compiled.string_constant_for_return(return_pc).map(CompiledJsCallResult::ReturnConstant)
+        }
+        CompiledJsResult::StringTransform(_, _) | CompiledJsResult::FieldReject { .. } => None,
+    }
+}
+
+/// A compiled body a frameless activation runs directly (`Vm::direct_tier_entry`): the
+/// artifact, held weakly so that the tier retiring it ends the direct run, its parameter
+/// count, and the `Return` its result completes.
+pub(super) struct DirectTierEntry {
+    compiled: std::rc::Weak<CompiledJsFunction>,
+    params: usize,
+    return_pc: usize,
+    return_register: crate::bytecode::Register,
+}
+
+impl DirectTierEntry {
+    /// Whether the tier retired the artifact.
+    pub(super) fn retired(&self) -> bool {
+        self.compiled.strong_count() == 0
+    }
+}
+
+/// What the JavaScript tier reads of an activation it enters at PC zero: a VM frame's
+/// (`Vm::js_tier_frame_entry`) or a frameless lane activation's
+/// (`Vm::js_tier_activation_entry`). Either way a native result continues the same
+/// activation, so the tier never decides how a function is called.
+pub(super) struct TierEntry {
+    program: ProgramId,
+    function: u32,
+    /// The receiver, where the function binds its own (`Frame::fixed_this`).
+    this: Option<Value>,
+    /// The activation's parameter registers.
+    parameters: smallvec::SmallVec<[Value; 8]>,
+    captures: TierCaptures,
+    /// Whether a native result may allocate: not in a lane activation, where nothing collects.
+    allocates: bool,
+}
+
+/// Where an entry's captures are read.
+#[derive(Clone, Copy)]
+pub(super) enum TierCaptures {
+    /// Through the frame's environment and capture cache.
+    Frame(usize),
+    /// Through the closure's environment.
+    Environment(Value),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::bytecode::Op;
+
+    #[test]
+    fn region_exit_words_round_trip_each_shared_handoff() {
+        for exit in [
+            RegionExit::EntryMiss(u32::MAX),
+            RegionExit::Resume(17),
+            RegionExit::Fallback(29),
+            RegionExit::Recompile(41),
+        ] {
+            assert_eq!(RegionExit::decode(exit.encode()), exit);
+        }
+    }
 
     fn memcpy_leaf_context(
         cache: &mut EmscriptenMemcpyCache,

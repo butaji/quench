@@ -174,6 +174,14 @@ macro_rules! layout_accessors {
                 self.a() & REGISTER_MASK
             }
 
+            /// The register this instruction writes, for an op whose A field is a result
+            /// register; `None` for an op whose A field holds something else.
+            #[allow(dead_code)]
+            pub(crate) fn defined_register(self) -> Option<Register> {
+                (self.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister)
+                    .then(|| self.a() & REGISTER_MASK)
+            }
+
             pub(crate) fn result_flags(self) -> Register {
                 self.a() & !REGISTER_MASK
             }

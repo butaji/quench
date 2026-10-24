@@ -82,7 +82,7 @@ pub(super) trait NumberArithmeticStage<T> {
 
 macro_rules! number_arithmetic {
     ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident;)+) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
         pub(super) enum NumberArithmetic { $($operation),+ }
 
         impl NumberArithmetic {
@@ -202,6 +202,28 @@ number_unary! {
     Negate => UnaryNegation, negate;
 }
 
+/// A stage supplies predicate operations for the shared JavaScript Number ToBoolean
+/// denotation. Interpreter and codegen stages use the same nonzero-and-not-NaN formula.
+pub(super) trait NumberTruthinessStage<T> {
+    type Predicate;
+
+    fn zero(&mut self) -> T;
+    fn equal(&mut self, left: T, right: T) -> Self::Predicate;
+    fn not_equal(&mut self, left: T, right: T) -> Self::Predicate;
+    fn and(&mut self, left: Self::Predicate, right: Self::Predicate) -> Self::Predicate;
+}
+
+#[inline(always)]
+pub(super) fn number_truthiness<T: Copy, S: NumberTruthinessStage<T>>(
+    stage: &mut S,
+    value: T,
+) -> S::Predicate {
+    let zero = stage.zero();
+    let nonzero = stage.not_equal(value, zero);
+    let not_nan = stage.equal(value, value);
+    stage.and(nonzero, not_nan)
+}
+
 /// The int32 operations used by JavaScript bitwise expressions. Keeping their
 /// operator mapping and operation selection in one stage lets the interpreter
 /// and native emitters share the same signed/unsigned shift decisions.
@@ -222,7 +244,15 @@ macro_rules! number_bitwise {
         pub(super) enum NumberBitwise { $($operation),+ }
 
         impl NumberBitwise {
+            /// `from_operator` of a decoded operator, as one match.
             #[inline(always)]
+            pub(super) fn from_binary_operator(operator: BinaryOperator) -> Option<Self> {
+                match operator {
+                    $(BinaryOperator::$operator => Some(Self::$operation),)+
+                    _ => None,
+                }
+            }
+
             pub(super) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == BinaryOperator::$operator as u32 {
@@ -313,10 +343,8 @@ fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) ->
     }
 }
 
-/// The Value of a bitwise operation on Int32 operands: its Int32 result, or for `>>>` its
-/// Uint32 result, which is an integer Value while it fits in an Int32. Built from the bits, not
-/// through `Value::number`, whose integral test a bitwise result needs no more than an integer
-/// operator's does.
+/// `operation` of int32 operands as a value: the int32 result as it is, but for a zero-fill
+/// shift above `i32::MAX`, which is the Number of its unsigned bits.
 #[inline(always)]
 fn number_bitwise_result(operation: NumberBitwise, left: i32, right: i32) -> Value {
     let bits = operation.apply(&mut I32BitwiseStage, left, right);
@@ -362,6 +390,35 @@ impl NumberUnaryStage<f64> for NumberF64Stage {
     fn negate(&mut self, value: f64) -> Self::Output {
         -value
     }
+}
+
+impl NumberTruthinessStage<f64> for NumberF64Stage {
+    type Predicate = bool;
+
+    #[inline(always)]
+    fn zero(&mut self) -> f64 {
+        0.0
+    }
+
+    #[inline(always)]
+    fn equal(&mut self, left: f64, right: f64) -> Self::Predicate {
+        left == right
+    }
+
+    #[inline(always)]
+    fn not_equal(&mut self, left: f64, right: f64) -> Self::Predicate {
+        left != right
+    }
+
+    #[inline(always)]
+    fn and(&mut self, left: Self::Predicate, right: Self::Predicate) -> Self::Predicate {
+        left && right
+    }
+}
+
+#[inline(always)]
+pub(crate) fn number_is_truthy(value: f64) -> bool {
+    number_truthiness(&mut NumberF64Stage, value)
 }
 
 #[inline(always)]
@@ -506,7 +563,7 @@ fn numeric_number_result(operator: BinaryOperator, left: f64, right: f64) -> f64
 
 #[cfg(test)]
 mod numeric_instruction_tests {
-    use super::{NumberArithmetic, NumberBitwise, NumberUnary, Op};
+    use super::{NumberArithmetic, NumberBitwise, NumberUnary, Op, number_is_truthy};
     use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
     #[test]
@@ -597,6 +654,21 @@ mod numeric_instruction_tests {
             None
         );
     }
+
+    #[test]
+    fn number_to_boolean_uses_nonzero_and_not_nan_for_both_signs_and_infinities() {
+        for (value, expected) in [
+            (0.0, false),
+            (-0.0, false),
+            (f64::NAN, false),
+            (f64::INFINITY, true),
+            (f64::NEG_INFINITY, true),
+            (f64::MIN_POSITIVE, true),
+            (-1.0, true),
+        ] {
+            assert_eq!(number_is_truthy(value), expected);
+        }
+    }
 }
 
 #[inline(always)]
@@ -643,12 +715,26 @@ pub(super) const BITWISE_AND: u32 = BinaryOperator::BitwiseAnd as u32;
 /// `None` for any other operand.
 #[inline(always)]
 pub(super) fn number_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+    if let Some(value) = bitwise_value_operator::<OP>(left, right) {
+        return Some(value);
+    }
     let (left, right) = Value::number_pair(left, right)?;
     Some(Value::number(numeric_number_result(
         numeric_binary_operator(OP)?,
         left,
         right,
     )))
+}
+
+/// A bitwise operator `OP` of two Numbers, each taken to int32 from its own representation
+/// (an integer as it is, a double by ToInt32), its result made as `number_bitwise_result`
+/// makes it, without the round trip through doubles `numeric_number_result` takes. `None`
+/// for any other operator, which folds away for a constant `OP`, and for other operands.
+#[inline(always)]
+fn bitwise_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+    let operation = NumberBitwise::from_binary_operator(numeric_binary_operator(OP)?)?;
+    let int32 = |value: Value| value.as_int().or_else(|| value.as_number().map(|number| number_to_u32(number) as i32));
+    Some(number_bitwise_result(operation, int32(left)?, int32(right)?))
 }
 
 /// Integer operator `OP` (`numeric_integer_result`) when both operands are integers;
@@ -713,9 +799,9 @@ fn numeric_integer_result(operator: BinaryOperator, left: i32, right: i32) -> Op
             }
         }
         BinaryOperator::Exponential => return None,
-        _ => number_bitwise_result(
-            NumberBitwise::from_operator(operator as u32)
-                .expect("numeric operator table contains supported bitwise operations"),
+        operator => number_bitwise_result(
+            NumberBitwise::from_binary_operator(operator)
+                .expect("numeric operator table only contains numeric operators"),
             left,
             right,
         ),

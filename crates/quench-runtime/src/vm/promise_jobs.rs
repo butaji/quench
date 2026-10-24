@@ -458,7 +458,7 @@ impl<H: Host> Vm<H> {
                 next: reaction.next,
                 rejected: state == PromiseState::Rejected,
                 value,
-                execution_context: reaction.execution_context,
+                execution_context: reaction.execution_context.get(),
             }));
     }
 
