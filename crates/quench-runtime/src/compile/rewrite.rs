@@ -256,12 +256,15 @@ fn hand_on(
 }
 
 /// Drops every `Nop`, relocating jumps, handlers and source positions onto the instruction
-/// that followed it. The transfer masks of the instructions that stay are handed on with them.
+/// that followed it. The transfer masks of the instructions that stay are handed on with them,
+/// and so are their live sets: a `Nop` passes its successor's live set through unchanged, so
+/// only the handler roots `add_suspended_exception_roots` adds after a call move, to the
+/// instruction that now follows it.
 fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
-    let mut transfers = match liveness.take() {
-        Some(CodeFacts::Live(analysis)) => Some(analysis.transfers),
-        Some(CodeFacts::Transfers(transfers)) => Some(transfers),
-        None => None,
+    let (mut transfers, mut live) = match liveness.take() {
+        Some(CodeFacts::Live(analysis)) => (Some(analysis.transfers), Some(analysis.live)),
+        Some(CodeFacts::Transfers(transfers)) => (Some(transfers), None),
+        None => (None, None),
     };
     let old = std::mem::take(&mut function.code);
     let mut code = Vec::with_capacity(old.len());
@@ -272,14 +275,17 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
             if let Some(transfers) = &mut transfers {
                 transfers[code.len()] = transfers[pc];
             }
+            if let Some(live) = &mut live {
+                live[code.len()] = live[pc];
+            }
             code.push(instruction);
         }
     }
-    if let Some(mut transfers) = transfers {
-        transfers.truncate(code.len());
-        *liveness = Some(CodeFacts::Transfers(transfers));
-    }
     map[old.len()] = code.len();
+    if let Some(live) = &mut live {
+        live[code.len()] = live[old.len()];
+        live.truncate(code.len() + 1);
+    }
     relocate(
         &mut code,
         &mut function.wide,
@@ -291,6 +297,22 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
         &old,
     );
     function.code = code;
+    *liveness = match (transfers, live) {
+        (Some(mut transfers), Some(mut live)) => {
+            transfers.truncate(function.code.len());
+            liveness::add_suspended_exception_roots(function, &mut live);
+            debug_assert!(
+                liveness::analyze_transfers(function, &transfers) == live,
+                "liveness handed past dropped Nops matches the code"
+            );
+            Some(CodeFacts::Live(CodeLiveness { transfers, live }))
+        }
+        (Some(mut transfers), None) => {
+            transfers.truncate(function.code.len());
+            Some(CodeFacts::Transfers(transfers))
+        }
+        _ => None,
+    };
 }
 
 /// The liveness of a function's code as it stands: each instruction's transfer masks and the
