@@ -75,7 +75,7 @@ const TRIM_THRESHOLD_VARIABLE: &str = "MALLOC_TRIM_THRESHOLD_";
 /// 4064, RayTrace 3884 -> 4128, DeltaBlue 3840 -> 4120, RegExp 7612 -> 7980. Blocks the system
 /// allocator handed out before the selection stay its own (`quench_alloc::owns`).
 fn apply_allocator_policy(policy: MemoryPolicy) {
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     if policy == MemoryPolicy::Throughput {
         quench_alloc::QuenchAlloc::enable();
     }
