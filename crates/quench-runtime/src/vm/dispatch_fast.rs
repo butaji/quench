@@ -5606,7 +5606,7 @@ fn lane_loop_entry<H: Host>(
         else {
             return None;
         };
-        entry.push_field(value.as_number()?);
+        entry.push_field(value, field.tagged)?;
     }
     Some(entry)
 }
