@@ -114,9 +114,8 @@ impl<H: Host> Vm<H> {
         let arguments: &[Value] = array_arguments
             .as_deref()
             .unwrap_or_else(|| unsafe { &*register_arguments });
-        if i.op() == Op::Call
-            && let Some(value) =
-                self.js_jit_compiled_call(p, (target.0, target.1), i.returns_from_frame(), arguments)
+        if let Some(value) =
+            self.js_jit_compiled_call(p, (target.0, target.1), i.returns_from_frame(), arguments)
         {
             self.write(f, i.result_register(), value);
             return Some(Ok(StepResult::Continue));
