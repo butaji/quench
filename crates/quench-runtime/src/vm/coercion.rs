@@ -21,14 +21,8 @@ impl<H: Host> Vm<H> {
     /// The ECMAScript language type of `value`, with callable objects distinguished.
     pub(crate) fn value_type(&self, value: Value) -> crate::ValueType {
         use crate::ValueType as T;
-        if value.is_undefined() || value.is_deleted() {
-            T::Undefined
-        } else if value.is_null() {
-            T::Null
-        } else if value.as_bool().is_some() {
-            T::Boolean
-        } else if value.as_number().is_some() {
-            T::Number
+        if let Some(kind) = immediate_value_type(value) {
+            kind
         } else {
             match self.heap.get(value) {
                 _ if self.heap.is_string(value)  => T::String,
@@ -56,6 +50,9 @@ impl<H: Host> Vm<H> {
     /// `bytecode::TYPEOF_NAMES` of the name `typeof value` is.
     #[inline]
     pub(super) fn typeof_index_value(&self, value: Value) -> Value {
+        if let Some(kind) = immediate_value_type(value) {
+            return Value::integer(typeof_name_index(kind) as i32);
+        }
         Value::integer(typeof_name_index(self.typeof_kind(value)) as i32)
     }
 
@@ -476,4 +473,23 @@ pub(super) fn immediate_to_string(value: Value) -> Option<String> {
         return Some(value.to_string());
     }
     value.as_number().map(crate::number_to_string::format)
+}
+
+/// The kind of a value its bits alone decide (undefined, null, a boolean, a Number); `None`
+/// for a heap value, whose kind its cell decides (`Vm::value_type`). None of these kinds is
+/// the `[[IsHTMLDDA]]` object's.
+#[inline(always)]
+fn immediate_value_type(value: Value) -> Option<crate::ValueType> {
+    use crate::ValueType as T;
+    Some(if value.is_undefined() || value.is_deleted() {
+        T::Undefined
+    } else if value.is_null() {
+        T::Null
+    } else if value.as_bool().is_some() {
+        T::Boolean
+    } else if value.as_number().is_some() {
+        T::Number
+    } else {
+        return None;
+    })
 }
