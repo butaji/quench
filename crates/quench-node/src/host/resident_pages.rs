@@ -37,19 +37,6 @@ const CODE_MAPPING: &str = "r-xp";
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const LOAD_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
-/// The first-call release interval under a policy that returns pages at collections
-/// (memory-first). Before a run's first collections its first calls run code it runs only
-/// once, and that code stayed resident until the first collection while the heap built up:
-/// the max RSS of V8-v7 DeltaBlue and RayTrace without JIT, and of RegExp in both modes, fell
-/// at 18-100 ms, during that warm-up. A release costs the refaults that follow, about 0.35 ms
-/// (npm scenarios with 300-1800 first calls, x86_64 VM, 2026-10-22), so a release at every
-/// first call slowed TypeScript's transpile 313 -> 829 ms. At 5 ms (plain x86_64 build,
-/// MemoryFirst, 10 runs; `evidence/tod137-first-call-release-linux-2026-10-23`): V8-v7 max
-/// RSS without JIT -124 to -516 KiB on six fixtures, with JIT -144 to +48 KiB, scores within
-/// noise; npm scenarios run 7-21% longer for -3.4 to +0.1 MB. Memory-first is the opt-in
-/// policy that trades speed for memory; the throughput default keeps `LOAD_RELEASE_INTERVAL`.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const MEMORY_FIRST_FIRST_CALL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
 
 /// When the read-only pages were last released.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -76,6 +63,19 @@ pub fn release_read_only_pages() {
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
+    discard_read_only_pages();
+    RESIDENT_FILE_AFTER_RELEASE.store(resident_file_bytes().unwrap_or(0), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The resident file-backed bytes just after the last release (`release_read_only_pages`):
+/// what a first call measures the code faulted in since against
+/// (`MEMORY_FIRST_FIRST_CALL_GROWTH`).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static RESIDENT_FILE_AFTER_RELEASE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Unmaps the read-only segments and tracked mappings from the resident set.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn discard_read_only_pages() {
     let segments = loaded_segments(ReleasedSegment::Clean);
     for &(start, end) in segments.iter().chain(unwritten_relro_pages()) {
         // SAFETY: each range is a private file mapping that is never written, so discarding
@@ -326,11 +326,11 @@ pub fn release_read_only_code_and_data() {}
 /// program builds at run time with `new Function`, `eval` or `vm`) run the same parser and
 /// code generator, which a release would only refault, and each release reads the whole
 /// mapping table (7% of the `@testing-library/dom` npm scenario's instructions). A first call
-/// releases the read-only pages, timed apart from the collections' releases, which come far
-/// more often, and sooner once their resident pages pass a budget
-/// (`CompileRelease::over_budget`): a run that reports its result once at the end first calls its reporting code
-/// then, at its heap's peak, with the code it ran since the last collection resident (V8-v7
-/// RegExp).
+/// releases the read-only pages: under throughput once per `LOAD_RELEASE_INTERVAL`, under
+/// memory-first once the code faulted in since the last release has grown by
+/// `MEMORY_FIRST_FIRST_CALL_GROWTH` (`CompileRelease::over_budget`). A run that reports its
+/// result once at the end first calls its reporting code then, at its heap's peak, with the
+/// code it ran since the last collection resident (V8-v7 RegExp).
 pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
     match phase {
         quench_runtime::CompilePhase::CodeGeneration => {
@@ -360,21 +360,28 @@ impl CompileRelease {
         let returns_pages = crate::shared_run::process_memory_policy()
             .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
         match self {
-            Self::FirstCall if returns_pages => MEMORY_FIRST_FIRST_CALL_INTERVAL,
+            // Memory-first first calls release by growth, not time (`over_budget`).
+            Self::FirstCall if returns_pages => std::time::Duration::MAX,
             Self::FirstCall | Self::CodeGeneration => LOAD_RELEASE_INTERVAL,
         }
     }
 }
 
-/// Under a policy that returns pages at collections, the resident file pages past which a
-/// first call releases within `MEMORY_FIRST_FIRST_CALL_INTERVAL` of the last release. A
-/// run's warm-up faults in 1.3-1.5 MB of code within one interval, while its heap is at its
-/// peak (V8-v7 RegExp, bolted static x86_64, 2026-10-24: code pages 1.3-1.45 MB beside 4.3 MB
-/// of heap at 50-80 ms).
+/// Under a policy that returns pages at collections (memory-first), the code a run faults in
+/// after the last release past which a first call releases again. Before its first
+/// collections a run's first calls run code it runs once, which stays resident while the heap
+/// builds; releasing by elapsed time made that warm-up peak depend on how fast the run was, and
+/// the board's worst run of a fixture sat 150-300 KiB above its median. By growth, the
+/// warm-up peak holds at most this much more code than the last release left
+/// (V8-v7 without and with JIT, unbolted static x86_64, 9 runs against the 5 ms interval,
+/// 2026-10-24: medians Richards 2456 -> 2384 KiB, DeltaBlue 2948 -> 2800, DeltaBlue `--jit`
+/// 3020 -> 2836; worst runs RayTrace 3200 -> 2960, Crypto `--jit` 3476 -> 3196; scores
+/// within noise; 128 and 512 KiB were no better).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const MEMORY_FIRST_RESIDENT_FILE_BUDGET: usize = 512 * 1024;
+const MEMORY_FIRST_FIRST_CALL_GROWTH: usize = 256 * 1024;
 
-/// The refaults that follow a release (`MEMORY_FIRST_FIRST_CALL_INTERVAL`'s measurement).
+/// The refaults that follow a release (npm scenarios with 300-1800 first calls, x86_64 VM,
+/// 2026-10-22).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const RELEASE_REFAULT_COST: std::time::Duration = std::time::Duration::from_micros(350);
 
@@ -395,9 +402,9 @@ static BUDGET_RELEASES: std::sync::Mutex<Option<(std::time::Instant, u32)>> = st
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 impl CompileRelease {
-    /// Whether a first call releases inside its interval: the resident file pages passed
-    /// `MEMORY_FIRST_RESIDENT_FILE_BUDGET`, and the releases over it so far leave room in
-    /// the run's time (`BUDGET_RELEASE_TIME_DIVISOR`).
+    /// Whether a memory-first first call releases: the code faulted in since the last release
+    /// reached `MEMORY_FIRST_FIRST_CALL_GROWTH`, and the releases so far leave room in the
+    /// run's time (`BUDGET_RELEASE_TIME_DIVISOR`).
     fn over_budget(self) -> bool {
         let returns_pages = crate::shared_run::process_memory_policy()
             .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
@@ -410,7 +417,9 @@ impl CompileRelease {
         let (started, count) = releases.get_or_insert_with(|| (std::time::Instant::now(), 0));
         let allowed = started.elapsed() / BUDGET_RELEASE_TIME_DIVISOR;
         if RELEASE_REFAULT_COST * (*count + 1) > allowed
-            || resident_file_bytes().is_none_or(|bytes| bytes <= MEMORY_FIRST_RESIDENT_FILE_BUDGET)
+            || resident_file_bytes().is_none_or(|bytes| {
+                bytes < RESIDENT_FILE_AFTER_RELEASE.load(std::sync::atomic::Ordering::Relaxed) + MEMORY_FIRST_FIRST_CALL_GROWTH
+            })
         {
             return false;
         }
