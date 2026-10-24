@@ -2165,10 +2165,8 @@ impl CallContext {
         interrupt: *const std::sync::atomic::AtomicBool,
         poll_page: Option<(usize, usize)>,
     ) -> Self {
-        let marker = 0u8;
-        let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
         Self {
-            stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
+            stack_limit: native_stack_limit(),
             interrupt,
             table: std::ptr::null(),
             vm: std::ptr::null_mut(),
@@ -8832,6 +8830,46 @@ unsafe fn enter_native(
     }
 }
 
+/// The poll page compiled code faults on to stop for `interrupt`: only where the guard
+/// trampoline can resume the fault.
+fn native_poll_page(interrupt: &crate::ExecutionInterrupt) -> Option<(usize, usize)> {
+    guard_trampoline()?;
+    interrupt.poll_page()
+}
+
+/// The stack limit a native entry starting at the current stack pointer runs under.
+fn native_stack_limit() -> usize {
+    let marker = 0u8;
+    let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
+    stack_pointer.saturating_sub(COMPILED_STACK_BUDGET)
+}
+
+thread_local! {
+    /// The context every leaf entry (`NativeEntryMode::Leaf`) runs with. A leaf makes no
+    /// calls, polls or callouts, so it reads only the stack limit its entry checks and the
+    /// adapter payload, which each leaf call sets before it enters (`run_leaf`); the rest
+    /// stays the empty adapter context.
+    static LEAF_CONTEXT: std::cell::UnsafeCell<CallContext> =
+        std::cell::UnsafeCell::new(CallContext::native_adapter(std::ptr::null_mut(), std::ptr::null(), None));
+}
+
+/// Runs leaf `entry` through the shared ABI on `arguments` and the adapter `payload`.
+fn run_leaf(payload: *mut (), arguments: *const u64, entry: Entry) -> (u32, u64) {
+    LEAF_CONTEXT.with(|context| {
+        // SAFETY: a leaf makes no calls, so no other use of this thread's leaf context
+        // overlaps this one.
+        let context = unsafe { &mut *context.get() };
+        context.stack_limit = native_stack_limit();
+        context.adapter_payload = payload;
+        let mut result = 0u64;
+        // SAFETY: the payload, arguments and result outlive the leaf call.
+        let status = unsafe {
+            enter_native(context, 0, 0, arguments, &mut result, NativeEntryMode::Leaf, entry)
+        };
+        (status, result)
+    })
+}
+
 /// Runs a JavaScript native denotation through the shared entry ABI. The
 /// artifact selects resumable or prechecked leaf mode; inputs stay borrowed.
 fn run_native_adapter(
@@ -8841,6 +8879,9 @@ fn run_native_adapter(
     mode: NativeEntryMode,
     entry: Entry,
 ) -> (u32, u64) {
+    if mode == NativeEntryMode::Leaf {
+        return run_leaf(payload, std::ptr::null(), entry);
+    }
     let mut context = CallContext::native_adapter(payload, interrupt, poll_page);
     let mut result = 0u64;
     // SAFETY: the payload, context, and result remain live until the common
@@ -8868,6 +8909,9 @@ fn run_native_entry(
     poll_page: Option<(usize, usize)>,
     mode: NativeEntryMode,
 ) -> (u32, u64) {
+    if mode == NativeEntryMode::Leaf {
+        return run_leaf(std::ptr::null_mut(), arguments.as_ptr().cast::<u64>(), entry);
+    }
     let interrupt = poll_page.map_or_else(
         || std::ptr::from_ref(interrupt),
         |(start, _)| start as *const std::sync::atomic::AtomicBool,
@@ -9013,8 +9057,7 @@ impl<H: Host> Vm<H> {
     /// A compiled tier's poll page is usable only when the shared entry can
     /// resume the protected-page fault back into the interpreter.
     pub(super) fn compiled_poll_page(&self) -> Option<(usize, usize)> {
-        guard_trampoline()?;
-        self.execution_interrupt.poll_page()
+        native_poll_page(&self.execution_interrupt)
     }
 
     /// Whether the per-function JavaScript tier runs: compiled execution, in a build whose
@@ -10062,8 +10105,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let poll_page = self.compiled_poll_page();
-        let (programs, interrupt) = (&mut self.programs, self.execution_interrupt.atomic_flag());
+        let (programs, interrupt) = (&mut self.programs, &self.execution_interrupt);
         let function = program.function_get(function_id as usize)?;
         let diagnostics = programs.js_jit_diagnostics_enabled();
         let native_result = {
@@ -10075,7 +10117,7 @@ impl<H: Host> Vm<H> {
             if !compiled.direct_callable() || compiled.params() != params || arguments.len() < params {
                 return None;
             }
-            direct_call(compiled, &arguments[..params], interrupt, poll_page)
+            direct_call(compiled, &arguments[..params], interrupt)
         };
         if diagnostics {
             programs.record_js_jit_entry(program_id, function_id, true, function.params);
@@ -10129,13 +10171,7 @@ impl<H: Host> Vm<H> {
         parameters: &[Value],
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
         let compiled = entry.compiled.upgrade()?;
-        let poll_page = self.compiled_poll_page();
-        let result = direct_call(
-            &compiled,
-            parameters.get(..entry.params)?,
-            self.execution_interrupt.atomic_flag(),
-            poll_page,
-        )?;
+        let result = direct_call(&compiled, parameters.get(..entry.params)?, &self.execution_interrupt)?;
         let value = match result {
             CompiledJsCallResult::Value(value) => value,
             CompiledJsCallResult::ReturnConstant(constant) => self.programs.constant(id, constant as usize)?,
@@ -11490,24 +11526,34 @@ const VOID_RESULT_CONSTANT: usize = 1;
 fn direct_call(
     compiled: &CompiledJsFunction,
     arguments: &[Value],
-    interrupt: &std::sync::atomic::AtomicBool,
-    poll_page: Option<(usize, usize)>,
+    interrupt: &crate::ExecutionInterrupt,
 ) -> Option<CompiledJsCallResult> {
+    let int32_identity = compiled.is_int32_identity();
+    if int32_identity && arguments.is_empty() {
+        return None;
+    }
     let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
-    for argument in arguments {
-        numeric_arguments.push(argument.as_number()?);
+    for (index, argument) in arguments.iter().enumerate() {
+        // An integer Value is an int32 Number by representation; any other Number is
+        // checked where the body's guards require one.
+        let value = match argument.as_int() {
+            Some(integer) => f64::from(integer),
+            None => {
+                let value = argument.as_number()?;
+                let int32 = compiled.requires_signed_int32_arguments() || (int32_identity && index == 0);
+                if int32 && !super::js_compiled::is_i32_number(value) {
+                    return None;
+                }
+                value
+            }
+        };
+        numeric_arguments.push(value);
     }
-    if compiled.requires_signed_int32_arguments()
-        && !numeric_arguments.iter().all(|value| super::js_compiled::is_i32_number(*value))
-    {
-        return None;
-    }
-    if compiled.is_int32_identity()
-        && !numeric_arguments.first().is_some_and(|value| super::js_compiled::is_i32_number(*value))
-    {
-        return None;
-    }
-    match compiled.call(&numeric_arguments, interrupt, poll_page)? {
+    // Only a body that polls reads the poll page.
+    let poll_page = (compiled.native_entry_mode() == NativeEntryMode::Resumable)
+        .then(|| native_poll_page(interrupt))
+        .flatten();
+    match compiled.call(&numeric_arguments, interrupt.atomic_flag(), poll_page)? {
         CompiledJsResult::Number(value) | CompiledJsResult::Int32Identity { value, .. } => {
             Some(CompiledJsCallResult::Value(Value::number(value)))
         }
