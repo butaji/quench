@@ -5523,9 +5523,11 @@ script_handler! {
         {
             next!(cx, r, header, Carried::script(cx))
         }
-        let Some(mut entry) = lane_loop_entry(cx, r, site) else {
+        // The record is filled where it lives, so its words are neither cleared nor copied.
+        let mut entry = super::compiled::LoopEntry::new();
+        if lane_loop_entry(cx, r, site, &mut entry).is_none() {
             next!(cx, r, header, Carried::script(cx))
-        };
+        }
         // The tier's state is borrowed only here, so the dispatch below holds no borrow.
         let continuation = lane_loop_run(cx, r, site, &mut entry);
         match continuation {
@@ -5574,8 +5576,13 @@ fn lane_loop_run<H: Host>(
         unsafe { vm(cx) }.host.before_native_compilation();
         let captures = entry.captures(site.region.captures.len());
         let heap = &unsafe { vm(cx) }.heap;
+        // A field's array is the value its entry word holds, not yet the register's.
+        let array_value = |register| match site.region.arrays.iter().find(|array| array.register == register) {
+            Some(super::compiled::ArrayUse { field: Some(index), .. }) => entry.field_value(&site.region, *index),
+            _ => r.get(register),
+        };
         let int32_elements = |register| {
-            heap.record_array(r.get(register)).is_some_and(|array| {
+            heap.record_array(array_value(register)).is_some_and(|array| {
                 array.elements().iter().take(LOOP_TIER_ELEMENT_SAMPLE).all(|value| value.as_int().is_some())
             })
         };
@@ -5714,10 +5721,10 @@ fn lane_loop_entry<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     site: &LoopSite,
-) -> Option<super::compiled::LoopEntry> {
+    entry: &mut super::compiled::LoopEntry,
+) -> Option<()> {
     let vm = unsafe { vm(cx) };
     let region = &site.region;
-    let mut entry = super::compiled::LoopEntry::new();
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
         if slots.is_null() {
@@ -5728,8 +5735,26 @@ fn lane_loop_entry<H: Host>(
             entry.push_capture((unsafe { &*slots }).dense_plain(usize::from(*slot))?);
         }
     }
+    let code = unsafe { &*(*cx).code };
+    // A cached data field's value, the same probe the field words below take.
+    let field_value = |vm: &mut Vm<H>, field: &super::compiled::FieldUse| -> Option<Value> {
+        if vm.is_private_name(field.atom) {
+            return None;
+        }
+        let receiver = match field.receiver {
+            super::compiled::FieldReceiver::This => unsafe { lane_held_this(cx) },
+            super::compiled::FieldReceiver::Register(register) => r.get(register),
+        };
+        match vm.cached_field_hit(code, receiver, field.cache_site) {
+            super::object::FieldCacheProbe::Hit(value) => Some(value),
+            _ => None,
+        }
+    };
     for array in &region.arrays {
-        let value = r.get(array.register);
+        let value = match array.field {
+            None => r.get(array.register),
+            Some(index) => field_value(vm, &region.fields[index])?,
+        };
         if array.written {
             // A Number store logs nothing.
             let object = vm.heap.record_array_store_mut_unlogged(value, Value::integer(0))?;
@@ -5751,23 +5776,11 @@ fn lane_loop_entry<H: Host>(
     // existing elements in bounds, which changes no named property. Thus a hit on an
     // ordinary data field stays valid for the whole native run. Any miss, accessor, private name, or non-Number exits before native
     // code can alter a register.
-    let code = unsafe { &*(*cx).code };
     for field in &region.fields {
-        if vm.is_private_name(field.atom) {
-            return None;
-        }
-        let receiver = match field.receiver {
-            super::compiled::FieldReceiver::This => unsafe { lane_held_this(cx) },
-            super::compiled::FieldReceiver::Register(register) => r.get(register),
-        };
-        let super::object::FieldCacheProbe::Hit(value) =
-            vm.cached_field_hit(code, receiver, field.cache_site)
-        else {
-            return None;
-        };
+        let value = field_value(vm, field)?;
         entry.push_field(value, field.tagged)?;
     }
-    Some(entry)
+    Some(())
 }
 
 script_handler! {
