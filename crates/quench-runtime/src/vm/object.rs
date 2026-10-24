@@ -290,7 +290,7 @@ impl<H: Host> Vm<H> {
         }
         Some(value)
     }
-    fn shape_slot_attributes(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
+    pub(super) fn shape_slot_attributes(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
         if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
             return Some(
                 index
@@ -829,6 +829,7 @@ impl<H: Host> Vm<H> {
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
         self.array_iteration_proof = None;
+        self.species_slot_proof.set(None);
         self.enumerable_keys.clear();
         self.field_add_sets.clear();
         self.megamorphic_fields.clear();

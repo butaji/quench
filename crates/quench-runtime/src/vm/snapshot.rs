@@ -326,6 +326,7 @@ impl<H: Host> Vm<H> {
             symbol_load_proofs: _,
             private_site_homes: _,
             array_iteration_proof: _,
+            species_slot_proof: _,
             function_name_shapes: _,
             typeof_names: _,
             closure_templates: _,
