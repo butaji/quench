@@ -125,6 +125,40 @@
       }
     },
     {
+      "id": "field-store-effects",
+      "path": "field-store-effects.js",
+      "sha256": "cc6d2abf13c5b11e8b53a52cb6a5bba98d158def0540d316e483f21797abdc36",
+      "native_functions": [
+        "updateValue"
+      ],
+      "denotations": [
+        "cached ordinary field store",
+        "setter throw identity and order",
+        "proxy set/get effect order"
+      ],
+      "guard_misses": [
+        "accessor setter throws before return",
+        "proxy receiver uses set and get traps"
+      ],
+      "required_counters": [
+        {
+          "function": "updateValue",
+          "counter": "field_store_cache_hits",
+          "at_least": 1
+        },
+        {
+          "function": "updateValue",
+          "counter": "field_store_cache_probes",
+          "greater_than": "field_store_cache_hits"
+        }
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "{\"values\":[101,102],\"sameError\":true,\"proxyValue\":60001,\"effects\":[\"setter:50001\",\"proxy-set:value:60001\",\"proxy-get:value\"]}\n",
+        "stderr": ""
+      }
+    },
+    {
       "id": "call-throw-effects",
       "path": "call-throw-effects.js",
       "sha256": "e11b1ed851b1143b11ce9a6c155ce48df408333be5fc62fde9d8ae7e0070c47c",
