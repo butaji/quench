@@ -385,26 +385,11 @@ impl<H: Host> Vm<H> {
     /// keys and their order are those of the generic walk; prototypes after
     /// the last one with an enumerable key are skipped, since they can neither
     /// add a key nor shadow one. `None` sends other chains to the generic walk.
-    /// Whether every prototype of `object` is a plain object whose memoized enumerable keys
-    /// are none (`shape_enumerable_slots`).
-    fn prototypes_list_no_enumerable_key(&self, object: Value) -> bool {
-        let mut current = self.object_data(object).map_or(Value::NULL, |data| data.proto());
-        while !current.is_null() {
-            if !self.shape_enumerable_slots(current).is_some_and(|slots| slots.is_empty()) {
-                return false;
-            }
-            current = self.object_data(current).map_or(Value::NULL, |data| data.proto());
-        }
-        true
-    }
-
     fn shape_for_in_keys(&mut self, receiver: Value) -> Option<Vec<Value>> {
         // The common chain: the receiver's memoized enumerable keys, and no prototype with an
         // enumerable key, so no key shadows another and the order is the receiver's own.
-        if let Some(own) = self.shape_enumerable_slots(receiver)
-            && self.prototypes_list_no_enumerable_key(receiver)
-        {
-            return Some(own.iter().map(|&(atom, _)| self.atom_string(atom)).collect());
+        if let Some(keys) = self.own_for_in_keys(receiver) {
+            return Some(keys);
         }
         let mut chain = Vec::new();
         let mut current = receiver;
@@ -450,6 +435,23 @@ impl<H: Host> Vm<H> {
             }
         }
         Some(result)
+    }
+
+    /// `shape_for_in_keys` of a receiver none of whose prototypes has an enumerable string
+    /// key, as most have not (class methods are not enumerable): a prototype then neither
+    /// adds a key nor shadows one the receiver lists first, so the keys are the receiver's
+    /// own enumerable ones, read from the shape memo (`shape_enumerable_slots`). `None`
+    /// leaves any other chain to the walk.
+    fn own_for_in_keys(&mut self, receiver: Value) -> Option<Vec<Value>> {
+        let slots = self.shape_enumerable_slots(receiver)?;
+        let mut prototype = self.object_data(receiver)?.proto();
+        while !prototype.is_null() {
+            if !self.shape_enumerable_slots(prototype)?.is_empty() {
+                return None;
+            }
+            prototype = self.object_data(prototype)?.proto();
+        }
+        Some(slots.iter().map(|&(atom, _)| self.atom_string(atom)).collect())
     }
 
     pub(super) fn object_for_in_key_is_enumerable(

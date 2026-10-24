@@ -1887,7 +1887,7 @@ impl ProgramStore {
         self.js_jit_tracked_functions
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn jit_mapped_bytes(&self) -> usize {
         self.jit_code_cache.mapped_bytes
     }

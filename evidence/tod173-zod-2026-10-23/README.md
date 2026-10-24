@@ -286,6 +286,32 @@ Candidate binary SHA-256:
 Raw reports: `zod-callcache-256-production-no-jit-11.json` and
 `zod-callcache-256-production-jit-11.json`.
 
+## `v2-merged` closure-retention refresh
+
+After fetching `v2-merged` commit `60d479a0e` and merging it as
+`4bbcad509`, I rebuilt a clean production binary and ran the new tip beside
+the saved pre-merge production binary. The paired runs used the same pinned
+workload, 11 interleaved rounds, 5,000 workload rounds per sample and 250
+warmups. This compares the merged closure-retention/GC work on this workload;
+both binaries produced the expected checksum.
+
+| Mode | Merged-tip Quench ops/s / RSS MiB | Saved control ops/s / RSS MiB | Paired throughput ratio | Paired RSS ratio |
+| --- | ---: | ---: | ---: | ---: |
+| No-JIT | 51,414 / 29.81 | 48,309 / 31.16 | 1.017 (9 / 11 ahead) | 0.958 |
+| JIT | 53,619 / 22.81 | 51,020 / 24.13 | 0.974 (5 / 11 ahead) | 0.945 |
+
+The merged tip has a small paired no-JIT speed gain and lower RSS in both
+modes, but the JIT throughput movement is negative and neither mode is a
+20% throughput win over Node and Bun. No-JIT RSS is still about 19% below Bun,
+short of the 20% target. These are Linux x86_64 diagnostics, not qualification
+measurements. Merged-tip binary SHA-256:
+`fdaa50d80f42bda6424eb4ca42dedb29db9f1daed084a06e0c7472b4c9ee6a86`;
+saved control binary SHA-256:
+`c61c923765f490a09208ebc14777bc4af89045c8132a6d8d52497891f22e6be2`.
+
+Raw paired reports: `zod-v2-merged-closure-refresh-no-jit-11.json` and
+`zod-v2-merged-closure-refresh-jit-11.json`.
+
 ## Exact field-path profile and holder-first probe screen
 
 A `profile-lane-exits` build sampled 500 rounds plus 50 warmups. The field
@@ -306,3 +332,80 @@ and no-JIT regresses, so I reverted the source change. Absolute RSS was
 baseline. Reports: `zod-holder-first-nojit-11.json` and
 `zod-holder-first-jit-11.json`; instrumented field profile:
 `zod-lane-exits-500-stdout.json` and `zod-lane-exits-500-stderr.log`.
+
+## Skip the megamorphic own-field probe after a monomorphic prototype hit (rejected)
+
+I tried returning from the first-level cache probe when the receiver shape
+matched the site's cached prototype-data entry. The intended saving was to
+avoid probing the megamorphic own-property table for a shape already known to
+lack that site's own field. The focused 12 field-cache tests passed, including
+prototype, proxy/getter, invalidation and megamorphic-holder cases.
+
+The paired production screen used 11 interleaved rounds of 5,000 workload
+rounds and 250 warmups on the same Linux x86_64 host. All engines produced the
+expected checksum. In no-JIT mode, the paired median candidate/control
+throughput ratio was 1.010 (6/11 rounds faster), while the paired RSS ratio was
+0.990. In JIT mode, the paired throughput ratio was 0.966 (2/11 rounds faster)
+and the paired RSS ratio was 0.990. The small no-JIT movement is within the
+observed spread, and JIT regressed; the code change was reverted.
+
+Candidate binary SHA-256: `8ef161d4b06ca3f93f64401419cc8159d85968ee0c667dc6ffae971c4f1f1662`;
+control binary SHA-256: `fdaa50d80f42bda6424eb4ca42dedb29db9f1daed084a06e0c7472b4c9ee6a86`.
+Reports: `zod-cache-probe-no-jit-11.json` and `zod-cache-probe-jit-11.json`.
+
+## Reuse call-plan classification across closures (rejected)
+
+The call-target profile includes sites that see multiple closures of the same
+function. I tried reusing the colliding call-target entry's immutable
+`Body`/`Settles` classification when the new closure had the same program and
+function, while refreshing its callee identity and lexical environment. The
+full `quench-runtime` suite passed (900 tests), and both benchmark modes
+produced checksum `120000`.
+
+In paired production screens of 11 interleaved rounds, 5,000 workload rounds
+and 250 warmups, the candidate regressed median paired throughput by 7.5%
+no-JIT (3/11 rounds faster) and 5.4% JIT (2/11 faster). Paired RSS ratios were
+1.001 no-JIT and 0.998 JIT, effectively unchanged. The general-dispatch
+resolution path was too cold for the extra same-function check to pay off, so
+the code change was reverted.
+
+Candidate binary SHA-256: `fe0e0e3ce59ce9c9bb76e2e1c629256fc4e9153dde5f06e8ad29291e640321c3`;
+control binary SHA-256: `fdaa50d80f42bda6424eb4ca42dedb29db9f1daed084a06e0c7472b4c9ee6a86`.
+Reports: `zod-call-plan-reuse-no-jit-11.json` and
+`zod-call-plan-reuse-jit-11.json`.
+
+## Fuse captured-local load into field read (rejected)
+
+The aggregate Zod profile counted roughly 400,000 `LoadEnvLocal → GetField`
+adjacent pairs. I added a `LoadEnvLocal, GetField` compiler rewrite using the
+existing local field-base path. Its focused compiler assertion passed, and the
+full runtime suite passed (901 tests). Both production workload modes produced
+checksum `120000`.
+
+The 11-round paired production screens regressed median throughput by 6.3%
+no-JIT (1/11 rounds faster) and 9.0% JIT (1/11 rounds faster). Paired RSS was
+effectively unchanged: ratios were 1.003 no-JIT and 1.001 JIT. The fused local
+base lost the faster register-based field-cache path, so I reverted the
+rewrite and its test.
+
+Candidate binary SHA-256: `9eef4ec9e77aa004cb3571f058fc779afc28207d291746acde5d3653095ef2a4`;
+control binary SHA-256: `fdaa50d80f42bda6424eb4ca42dedb29db9f1daed084a06e0c7472b4c9ee6a86`.
+Reports: `zod-capture-field-fusion-no-jit-11.json` and
+`zod-capture-field-fusion-jit-11.json`.
+
+## Direct initialized captured-environment read (rejected)
+
+The Zod profile counted 1.47 million `LoadEnvLocal` operations. I tried a
+guarded interpreter fast path that reads an initialized captured slot directly
+from its environment, preserving the general path for root frames, uncaptured
+slots, TDZ values, and mapped arguments. The full runtime suite passed (900
+tests).
+
+Paired production screens of 11 interleaved rounds measured the candidate
+0.5% slower than control no-JIT and 1.6% slower JIT. RSS ratios were 1.003
+no-JIT and 0.997 JIT, effectively unchanged. The implementation was reverted.
+
+Candidate binary SHA-256: `b44229e8c27b4a3c84a633f47791f4aa64b8fbdf50762d4c45fc5050c8c5278c`;
+control binary SHA-256: `fdaa50d80f42bda6424eb4ca42dedb29db9f1daed084a06e0c7472b4c9ee6a86`.
+Reports: `zod-envlocal-direct-no-jit-11.json` and
+`zod-envlocal-direct-jit-11.json`.
