@@ -5523,9 +5523,11 @@ script_handler! {
         {
             next!(cx, r, header, Carried::script(cx))
         }
-        let Some(mut entry) = lane_loop_entry(cx, r, site) else {
+        // The record is filled where it lives, so its words are neither cleared nor copied.
+        let mut entry = super::compiled::LoopEntry::new();
+        if lane_loop_entry(cx, r, site, &mut entry).is_none() {
             next!(cx, r, header, Carried::script(cx))
-        };
+        }
         // The tier's state is borrowed only here, so the dispatch below holds no borrow.
         let continuation = lane_loop_run(cx, r, site, &mut entry);
         match continuation {
@@ -5574,8 +5576,13 @@ fn lane_loop_run<H: Host>(
         unsafe { vm(cx) }.host.before_native_compilation();
         let captures = entry.captures(site.region.captures.len());
         let heap = &unsafe { vm(cx) }.heap;
+        // A field's array is the value its entry word holds, not yet the register's.
+        let array_value = |register| match site.region.arrays.iter().find(|array| array.register == register) {
+            Some(super::compiled::ArrayUse { field: Some(index), .. }) => entry.field_value(&site.region, *index),
+            _ => r.get(register),
+        };
         let int32_elements = |register| {
-            heap.record_array(r.get(register)).is_some_and(|array| {
+            heap.record_array(array_value(register)).is_some_and(|array| {
                 array.elements().iter().take(LOOP_TIER_ELEMENT_SAMPLE).all(|value| value.as_int().is_some())
             })
         };
@@ -5714,10 +5721,10 @@ fn lane_loop_entry<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     site: &LoopSite,
-) -> Option<super::compiled::LoopEntry> {
+    entry: &mut super::compiled::LoopEntry,
+) -> Option<()> {
     let vm = unsafe { vm(cx) };
     let region = &site.region;
-    let mut entry = super::compiled::LoopEntry::new();
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
         if slots.is_null() {
@@ -5728,8 +5735,26 @@ fn lane_loop_entry<H: Host>(
             entry.push_capture((unsafe { &*slots }).dense_plain(usize::from(*slot))?);
         }
     }
+    let code = unsafe { &*(*cx).code };
+    // A cached data field's value, the same probe the field words below take.
+    let field_value = |vm: &mut Vm<H>, field: &super::compiled::FieldUse| -> Option<Value> {
+        if vm.is_private_name(field.atom) {
+            return None;
+        }
+        let receiver = match field.receiver {
+            super::compiled::FieldReceiver::This => unsafe { lane_held_this(cx) },
+            super::compiled::FieldReceiver::Register(register) => r.get(register),
+        };
+        match vm.cached_field_hit(code, receiver, field.cache_site) {
+            super::object::FieldCacheProbe::Hit(value) => Some(value),
+            _ => None,
+        }
+    };
     for array in &region.arrays {
-        let value = r.get(array.register);
+        let value = match array.field {
+            None => r.get(array.register),
+            Some(index) => field_value(vm, &region.fields[index])?,
+        };
         if array.written {
             // A Number store logs nothing.
             let object = vm.heap.record_array_store_mut_unlogged(value, Value::integer(0))?;
@@ -5751,23 +5776,11 @@ fn lane_loop_entry<H: Host>(
     // existing elements in bounds, which changes no named property. Thus a hit on an
     // ordinary data field stays valid for the whole native run. Any miss, accessor, private name, or non-Number exits before native
     // code can alter a register.
-    let code = unsafe { &*(*cx).code };
     for field in &region.fields {
-        if vm.is_private_name(field.atom) {
-            return None;
-        }
-        let receiver = match field.receiver {
-            super::compiled::FieldReceiver::This => unsafe { lane_held_this(cx) },
-            super::compiled::FieldReceiver::Register(register) => r.get(register),
-        };
-        let super::object::FieldCacheProbe::Hit(value) =
-            vm.cached_field_hit(code, receiver, field.cache_site)
-        else {
-            return None;
-        };
+        let value = field_value(vm, field)?;
         entry.push_field(value, field.tagged)?;
     }
-    Some(entry)
+    Some(())
 }
 
 script_handler! {
@@ -8670,7 +8683,7 @@ impl<H: Host> Vm<H> {
         if !environment
             && !cross
             && !body.rest
-            && !plan.forwards_arguments
+            && !plan.keeps_arguments
             && shape.entry == CallEntry::Activates
             && self.js_tier_may_claim(code, program, function)
         {
@@ -8709,7 +8722,7 @@ impl<H: Host> Vm<H> {
             // completes across programs as a call does (`Completion::CrossConstructs`); a
             // forwarding one runs its program's keeping construction
             // (`lane_construct_keeping_activation`), which another program's caller does not.
-            constructs: shape.constructs && !environment && !body.rest && !(cross && plan.forwards_arguments),
+            constructs: shape.constructs && !environment && !body.rest && !(cross && plan.keeps_arguments),
             initializes: shape.initializes && !environment && !cross && !body.rest,
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
@@ -8719,7 +8732,7 @@ impl<H: Host> Vm<H> {
                 CallEntry::Environment
             } else if body.rest {
                 CallEntry::Gathers
-            } else if plan.forwards_arguments {
+            } else if plan.keeps_arguments {
                 CallEntry::Keeps
             } else if cross {
                 CallEntry::Activates
@@ -10673,6 +10686,40 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// `LoadLocal` of an `arguments` binding a keeping activation makes at its last read
+    /// (`KeptArguments::Passes`): the object made from the values it kept, as its frame
+    /// makes one on entry, whose binding a frame's run reads.
+    #[inline(never)]
+    fn lane_load_kept_arguments_object<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let value = if unsafe { (*cx).env }.is_deleted() {
+            // SAFETY: validated bytecode bounds the slot by Function.locals.
+            unsafe { vm.read_validated_local((*cx).frame, i.imm() as usize) }
+        } else {
+            let Some((function, Some(script))) =
+                vm.lane_stack.activations.last().map(|activation| (activation.function, activation.script()))
+            else {
+                return exit(ip);
+            };
+            // SAFETY: the context's program outlives the lane run.
+            let body = unsafe { &*(*cx).code }.function(function as usize);
+            // A keeping activation's values follow its registers (`lane_activate_keeping`).
+            let kept = (0..script.argc)
+                .map(|index| r.get(body.registers + index))
+                .collect::<smallvec::SmallVec<[Value; GATHERED_INLINE_VALUES]>>();
+            let context = CallContext::user_function(function, script.callee);
+            let Ok(arguments) = vm.activation_arguments_object(body, context, &kept) else {
+                return exit(ip);
+            };
+            note_allocation(vm);
+            arguments
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
 /// The values the running function kept for its unmaterialized `arguments` binding, in the
 /// local slot `slot` (`lane_kept_arguments`): `None` where a frame's binding was
 /// materialized, which the general path then reads.
@@ -10741,7 +10788,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `ArgumentsLength` of a binding only kept values answer (`Function::forwards_arguments_only`):
+    /// `ArgumentsLength` of a binding only kept values answer (`Function::kept_arguments`):
     /// their count, as the object made on entry holds it. `lane_arguments_length` answers a
     /// keeping activation first.
     #[inline(never)]
@@ -11461,6 +11508,19 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         ActivationArguments::Window(_) => usize::from(ImmediateLayout::argument_count(i.imm())),
         ActivationArguments::Kept(_, count) => count,
     };
+    #[cfg(feature = "profile-lane-exits")]
+    if let Some(body) = vm.programs.residual(target.program).and_then(|code| {
+        let body = code.function_get(target.function as usize)?;
+        let plan = body.call_plan(code);
+        Some(format!(
+            "keeping {} @{:?} entry={} argc={argc} params={} strict={} legacy={} forwards={} arguments={}",
+            body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+            body.source_span.map(|span| span.start), target.entry as u8, target.params, body.strict,
+            plan.legacy_reflection, plan.forwards_arguments, body.arguments_slot.is_some(),
+        ))
+    }) {
+        super::lane_exits::record_detail(body);
+    }
     let count = usize::from(target.registers);
     // A forwarding activation keeps every value passed after its registers, as does one for
     // a skipped forwarding constructor, whose frame passed them on, and one passed more values
@@ -13658,7 +13718,7 @@ fn derive_lane_view<H: Host>(
     let wasm = kind == crate::bytecode::ProgramKind::Wasm;
     let resolves_names = function.has_dynamic_scope_access();
     // One function-wide fact, consulted per local load; it scans the whole body.
-    let forwards_arguments = std::cell::OnceCell::new();
+    let kept_arguments = std::cell::OnceCell::new();
     let mut producer: Option<u16> = None;
     // Per instruction: the general path executes it, and its record reads
     // the accumulator.
@@ -13732,12 +13792,19 @@ fn derive_lane_view<H: Host>(
                 })
             } else if matches!(op, Op::LoadLocal | Op::LoadLocalPlain | Op::ArgumentsLength | Op::ArgumentGet)
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
-                && *forwards_arguments.get_or_init(|| function.forwards_arguments_only())
+                && let Some(kept) = *kept_arguments.get_or_init(|| function.kept_arguments())
             {
+                let forwards = decoded.get(pc + 1).is_some_and(|next| {
+                    next.op() == Op::CallForwardingArguments
+                        && next.call_window().last() == Some(instruction.result_register())
+                });
                 Some(LaneHandler {
                     handler: match op {
                         Op::ArgumentsLength => lane_arguments_length::<H> as Handler,
                         Op::ArgumentGet => lane_argument_get::<H> as Handler,
+                        _ if kept == crate::bytecode::KeptArguments::Passes && !forwards => {
+                            lane_load_kept_arguments_object::<H> as Handler
+                        }
                         _ => lane_load_forwarded_arguments::<H> as Handler,
                     },
                     produces: false,
