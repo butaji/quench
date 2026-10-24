@@ -10688,6 +10688,7 @@ fn js_jit_routes_rejected_lane_candidates_through_the_general_frame_handoff() {
     assert!(super::js_compiled::function_candidate(body, &program));
 
     let mut vm = Vm::new(TestHost::default());
+    vm.programs.enable_js_general_dispatch();
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
 
@@ -12098,10 +12099,12 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
 }
 
 #[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_tier_tracks_hot_function_after_cold_function_churn() {
     let program = Engine::compile(crate::ExecutionRequest::script("void 0", "js-jit-cold-churn.js"))
         .unwrap();
     let mut programs = super::program_store::ProgramStore::default();
+    programs.enable_js_general_dispatch();
     let id = programs.insert(program).unwrap();
 
     for function in 0..512 {
@@ -12318,6 +12321,51 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
         assert!(native.is_general_dispatch());
         assert!(native.native_entries() > 0);
     }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
+    let source = r#"
+      const captured = { value: 2 };
+      function addCaptured(value) { return captured.value + value; }
+      let result = 0;
+      for (let index = 0; index < 64; index++) result = addCaptured(index);
+      if (result !== 65) throw Error('interpreter island result');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-island.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "addCaptured")
+        })
+        .unwrap() as u32;
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("addCaptured should use the general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    assert!(native.general_dispatch_island_steps() > 0);
 }
 
 #[test]
