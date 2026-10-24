@@ -182,6 +182,20 @@ pub(crate) enum FieldReceiver {
     Register(Register),
 }
 
+/// The cached field a named `GetField` reads, as a region holds it.
+fn field_use(instruction: WideInstruction, tagged: bool) -> Option<FieldUse> {
+    (instruction.op() == Op::GetField && instruction.result_flags() == 0).then_some(())?;
+    let FieldLookup::Atom { atom, base, cache_site } = instruction.field_lookup()? else {
+        return None;
+    };
+    let receiver = if base == FieldBase::THIS {
+        FieldReceiver::This
+    } else {
+        FieldReceiver::Register(base.register_index()?)
+    };
+    Some(FieldUse { receiver, atom, cache_site, tagged })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FieldUse {
     pub(crate) receiver: FieldReceiver,
@@ -282,16 +296,7 @@ fn field_array_registers(instructions: &[WideInstruction]) -> std::collections::
             let (Some(read), None) = (definitions.next(), definitions.next()) else {
                 return None;
             };
-            let FieldLookup::Atom { atom, base, cache_site } = read.field_lookup()? else {
-                return None;
-            };
-            (read.op() == Op::GetField && read.result_flags() == 0).then_some(())?;
-            let receiver = if base == FieldBase::THIS {
-                FieldReceiver::This
-            } else {
-                FieldReceiver::Register(base.register_index()?)
-            };
-            Some((register, FieldUse { receiver, atom, cache_site, tagged: true }))
+            Some((register, field_use(*read, true)?))
         })
         .collect()
 }
@@ -699,20 +704,7 @@ fn admit(
             admission.source(instruction.operand_c())?;
         }
         Op::GetField => {
-            let FieldLookup::Atom { atom, base, cache_site } = instruction.field_lookup()? else {
-                return None;
-            };
-            let receiver = if base == FieldBase::THIS {
-                FieldReceiver::This
-            } else {
-                FieldReceiver::Register(base.register_index()?)
-            };
-            let field = FieldUse {
-                receiver,
-                atom,
-                cache_site,
-                tagged: tagged.contains(&instruction.result_register()),
-            };
+            let field = field_use(instruction, tagged.contains(&instruction.result_register()))?;
             if !admission.fields.contains(&field) {
                 admission.fields.push(field);
             }
@@ -2726,19 +2718,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             Op::RequireObjectCoercible => self.fall_through(pc),
             Op::GetField => {
-                let FieldLookup::Atom { atom, base, cache_site } = instruction.field_lookup()? else {
-                    return None;
-                };
-                let receiver = if base == FieldBase::THIS {
-                    FieldReceiver::This
-                } else {
-                    FieldReceiver::Register(base.register_index()?)
-                };
-                let field = self
-                    .region
-                    .fields
-                    .iter()
-                    .position(|field| field.receiver == receiver && field.atom == atom && field.cache_site == cache_site)?;
+                let read = field_use(instruction, false)?;
+                let field = self.region.fields.iter().position(|field| {
+                    field.receiver == read.receiver && field.atom == read.atom && field.cache_site == read.cache_site
+                })?;
                 let value = self.fields[field];
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
