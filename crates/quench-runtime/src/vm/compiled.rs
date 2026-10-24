@@ -1153,6 +1153,85 @@ fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> i
     builder.ins().select(is_nan, canonical_nan, encoded)
 }
 
+/// Keep the integer tier of Quench's shared Number arithmetic denotation in
+/// tagged i32 form. Overflow and non-integer representations continue through
+/// the same f64 lowering below.
+fn emit_js_int32_arithmetic(
+    builder: &mut FunctionBuilder<'_>,
+    arithmetic: super::operations::NumberArithmetic,
+    left_bits: ir::Value,
+    right_bits: ir::Value,
+    arguments: ir::Value,
+    destination: i32,
+    next: ir::Block,
+    float: ir::Block,
+) {
+    use super::operations::NumberArithmetic as A;
+
+    let shift = i64::from(crate::value::ValueLayout::TAG_SHIFT);
+    let int_tag = (crate::value::ValueLayout::INT_TAG >> shift) as i64;
+    let left_tag = builder.ins().ushr_imm_u(left_bits, shift);
+    let right_tag = builder.ins().ushr_imm_u(right_bits, shift);
+    let left_integer = builder.ins().icmp_imm_u(IntCC::Equal, left_tag, int_tag);
+    let right_integer = builder.ins().icmp_imm_u(IntCC::Equal, right_tag, int_tag);
+    let both_integer = builder.ins().band(left_integer, right_integer);
+    let integer = builder.create_block();
+    let result = builder.create_block();
+    builder.ins().brif(both_integer, integer, &[], float, &[]);
+
+    builder.switch_to_block(integer);
+    let left_narrow = builder.ins().ireduce(types::I32, left_bits);
+    let right_narrow = builder.ins().ireduce(types::I32, right_bits);
+    let left = builder.ins().sextend(types::I64, left_narrow);
+    let right = builder.ins().sextend(types::I64, right_narrow);
+    let wide = match arithmetic {
+        A::Add => builder.ins().iadd(left, right),
+        A::Subtract => builder.ins().isub(left, right),
+        A::Multiply => builder.ins().imul(left, right),
+        A::Divide => unreachable!("integer lowering is only used for add, subtract and multiply"),
+    };
+    let above_minimum = builder.ins().icmp_imm_s(
+        IntCC::SignedGreaterThanOrEqual,
+        wide,
+        i64::from(i32::MIN),
+    );
+    let below_maximum = builder.ins().icmp_imm_s(
+        IntCC::SignedLessThanOrEqual,
+        wide,
+        i64::from(i32::MAX),
+    );
+    let fits_i32 = builder.ins().band(above_minimum, below_maximum);
+    builder.ins().brif(fits_i32, result, &[], float, &[]);
+
+    builder.switch_to_block(result);
+    let payload = builder.ins().ireduce(types::I32, wide);
+    let payload = builder.ins().uextend(types::I64, payload);
+    let integer_bits = builder
+        .ins()
+        .bor_imm_u(payload, crate::value::ValueLayout::INT_TAG as i64);
+    let encoded = if arithmetic == A::Multiply {
+        let left_negative = builder.ins().icmp_imm_s(IntCC::SignedLessThan, left, 0);
+        let right_negative = builder.ins().icmp_imm_s(IntCC::SignedLessThan, right, 0);
+        let signs_differ = builder.ins().icmp(IntCC::NotEqual, left_negative, right_negative);
+        let is_zero = builder.ins().icmp_imm_s(IntCC::Equal, wide, 0);
+        let negative_zero = builder.ins().band(signs_differ, is_zero);
+        let minus_zero = builder.ins().iconst(
+            types::I64,
+            Value::number(-0.0).to_bits() as i64,
+        );
+        builder.ins().select(negative_zero, minus_zero, integer_bits)
+    } else {
+        integer_bits
+    };
+    builder.ins().store(
+        MemFlagsData::trusted(),
+        encoded,
+        arguments,
+        destination,
+    );
+    builder.ins().jump(next, &[]);
+}
+
 fn emit_js_step_fallback(
     builder: &mut FunctionBuilder<'_>,
     context: ir::Value,
@@ -1729,6 +1808,8 @@ pub(super) fn compile_js_general_dispatch(
             (numeric_result, next, arithmetic, operands)
         {
             let fallback = builder.create_block();
+            let destination = register_offset(instruction.result_register())
+                .expect("prevalidated JS numeric destination");
             let left_bits = read_js_tagged_operand(
                 &mut builder,
                 program,
@@ -1737,7 +1818,6 @@ pub(super) fn compile_js_general_dispatch(
                 &register_offset,
             )
             .expect("prevalidated JS numeric operand");
-            let left = emit_js_tagged_number(&mut builder, left_bits, fallback);
             let right_bits = read_js_tagged_operand(
                 &mut builder,
                 program,
@@ -1746,11 +1826,29 @@ pub(super) fn compile_js_general_dispatch(
                 &register_offset,
             )
             .expect("prevalidated JS numeric operand");
+            if matches!(
+                arithmetic,
+                super::operations::NumberArithmetic::Add
+                    | super::operations::NumberArithmetic::Subtract
+                    | super::operations::NumberArithmetic::Multiply
+            ) {
+                let float = builder.create_block();
+                emit_js_int32_arithmetic(
+                    &mut builder,
+                    arithmetic,
+                    left_bits,
+                    right_bits,
+                    arguments,
+                    destination,
+                    next,
+                    float,
+                );
+                builder.switch_to_block(float);
+            }
+            let left = emit_js_tagged_number(&mut builder, left_bits, fallback);
             let right = emit_js_tagged_number(&mut builder, right_bits, fallback);
             let number = emit_number_arithmetic_operation(&mut builder, arithmetic, left, right);
             let encoded = emit_js_box_number(&mut builder, number);
-            let destination = register_offset(instruction.result_register())
-                .expect("prevalidated JS numeric destination");
             builder.ins().store(
                 MemFlagsData::trusted(),
                 encoded,
