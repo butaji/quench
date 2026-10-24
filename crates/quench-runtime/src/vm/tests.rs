@@ -15577,3 +15577,38 @@ fn plain_data_equality_proves_only_plain_data() {
         assert_eq!(Some(vm.plain_data_equal(row[0], row[1])), row[2].as_bool(), "row {index}");
     }
 }
+
+#[test]
+fn array_holes_follow_prototype_chain_mutations() {
+    // Hole reads and stores consult a proof that the chain holds no index
+    // (`chain_holds_no_index`); every mutation below must retire or bypass it. Expected
+    // output is Node's (v22).
+    let source = r#"
+// Oracle: holes read through prototype chains under mutation.
+const out = [];
+const a = new Array(4); out.push(a[1]);
+Array.prototype[1] = "proto1"; out.push(a[1]); delete Array.prototype[1]; out.push(a[1]);
+Object.prototype[2] = "obj2"; out.push(a[2]); delete Object.prototype[2]; out.push(a[2]);
+Object.defineProperty(Array.prototype, 3, { get() { return "getter3"; }, configurable: true }); out.push(a[3]);
+a[3] = "set3"; out.push(a[3], Object.getOwnPropertyDescriptor(a, 3) === undefined);
+delete Array.prototype[3]; out.push(a[3]);
+Object.defineProperty(Object.prototype, 0, { set(v) { out.push("setter0:" + v); }, configurable: true });
+const b = new Array(2); b[0] = "x"; out.push(b.hasOwnProperty(0)); delete Object.prototype[0];
+b[0] = "y"; out.push(b[0]);
+Object.defineProperty(Array.prototype, 1, { value: "ro", writable: false, configurable: true });
+const c = []; c.length = 3; c[1] = "w"; out.push(c[1], c.hasOwnProperty(1)); delete Array.prototype[1];
+Array.prototype.length = 0; Array.prototype.push("pushed"); out.push(new Array(3)[0]); Array.prototype.length = 0;
+out.push(new Array(3)[0]);
+const p = new Proxy({}, { get(t, k) { return "proxy:" + String(k); } });
+const d = new Array(2); Object.setPrototypeOf(d, p); out.push(d[1]);
+Object.setPrototypeOf(d, Array.prototype); out.push(d[1]);
+const sp = []; sp[100000] = 1; const e = new Array(5); Object.setPrototypeOf(e, sp); out.push(e[100000], e[4]);
+for (let i = 0; i < 3; i++) { const f = new Array(3); out.push(f[i]); if (i === 0) Array.prototype[1] = "late"; }
+delete Array.prototype[1];
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "array-holes.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"[null,"proto1",null,"obj2",null,"getter3","getter3",true,null,"setter0:x",false,"y","ro",false,"pushed",null,"proxy:1",null,1,null,null,"late",null]"#]);
+}
