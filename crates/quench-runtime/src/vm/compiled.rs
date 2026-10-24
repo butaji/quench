@@ -4910,6 +4910,31 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                         dispatch.allow_inline_calls,
                     ),
                 }
+            } else if current_instruction.op() == Op::LoadCapture {
+                if let Some(value) = vm.cached_direct_capture(
+                    dispatch.frame,
+                    current_instruction.capture_depth(),
+                    current_instruction.capture_slot(),
+                ) {
+                    let destination = vm.frames[dispatch.frame]
+                        .registers
+                        .get_mut(usize::from(current_instruction.result_register()))
+                        .ok_or_else(|| {
+                            JsError::validation(
+                                "native JS capture result register is invalid".into(),
+                            )
+                        })?;
+                    *destination = value;
+                    Ok(super::StepResult::Continue)
+                } else {
+                    vm.step(
+                        &program,
+                        dispatch.frame,
+                        current_instruction,
+                        &mut next,
+                        dispatch.allow_inline_calls,
+                    )
+                }
             } else {
                 vm.step(
                     &program,
