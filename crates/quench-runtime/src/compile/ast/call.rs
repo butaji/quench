@@ -76,7 +76,7 @@ impl FunctionCompiler<'_, '_> {
 
     /// The value `typeof` examines: an unresolvable name reads as undefined rather than
     /// throwing (ECMA-262 13.5.3.1 step 2), which `LoadNameTypeof` does.
-    fn typeof_operand(&mut self, argument: &Expression<'_>) -> Register {
+    pub(super) fn typeof_operand(&mut self, argument: &Expression<'_>) -> Register {
         let mut operand = argument;
         while let Expression::ParenthesizedExpression(parenthesized) = operand {
             operand = &parenthesized.expression;

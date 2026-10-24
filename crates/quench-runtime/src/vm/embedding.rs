@@ -1052,6 +1052,10 @@ impl<H: Host> Vm<H> {
         Ok(self.same_value(self.embedding_value(left)?, self.embedding_value(right)?))
     }
 
+    pub(crate) fn embedding_plain_data_equal(&self, left: RootId, right: RootId) -> Result<bool, JsError> {
+        Ok(self.plain_data_equal(self.embedding_value(left)?, self.embedding_value(right)?))
+    }
+
     pub(crate) fn embedding_equal(&mut self, left: RootId, right: RootId) -> Result<bool, JsError> {
         let left = self.embedding_value(left)?;
         let right = self.embedding_value(right)?;
@@ -1120,7 +1124,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn decoded_string_rooted(&mut self, text: &str) -> RootId {
-        let value = self.heap.alloc_string(JsString::from_str(text));
+        let value = self.heap.alloc_string(JsString::decoded(text));
         self.root(value)
     }
 

@@ -48,6 +48,7 @@ const FIXED_WORK_SUITE_COUNT: usize = 1;
 const FIXED_WORK_MARKER_COUNT: usize = 1;
 const FIXED_WORK_SAMPLE_ORDER_PERIOD: usize = 2;
 const HOST_CPU_CONSUMER_LIMIT: usize = 5;
+const QUENCH_JS_JIT_GENERAL_DISPATCH: &str = "QUENCH_JS_JIT_GENERAL_DISPATCH";
 const FIXED_WORK_PLANS: &[FixedWorkPlan] = &[
     FixedWorkPlan {
         fixture: "crypto.js",
@@ -397,6 +398,9 @@ struct SuiteRecord {
     /// qualification measurements.
     #[serde(default)]
     jit_diagnostics: bool,
+    /// Uses the experimental JS GeneralDispatch tier; not qualification mode.
+    #[serde(default)]
+    jit_js_general_dispatch: bool,
     /// Experimental bounded root compilation; never qualification mode.
     #[serde(default)]
     jit_wasm_root: Option<u32>,
@@ -580,6 +584,7 @@ struct Options {
     suite: Suite,
     jit_mode: JitMode,
     jit_diagnostics: bool,
+    jit_js_general_dispatch: bool,
     jit_wasm_root: Option<u32>,
     jit_wasm_root_only: bool,
     jit_wasm_root_first: bool,
@@ -663,6 +668,7 @@ fn main() {
         suite,
         jit_mode: options.jit_mode,
         jit_diagnostics: options.jit_diagnostics,
+        jit_js_general_dispatch: options.jit_js_general_dispatch,
         jit_wasm_root: options.jit_wasm_root,
         jit_wasm_root_only: options.jit_wasm_root_only,
         jit_wasm_root_first: options.jit_wasm_root_first,
@@ -755,6 +761,7 @@ fn main() {
     report.qualification_ready = complete
         && options.rounds >= MIN_QUALIFYING_ROUNDS
         && !options.jit_diagnostics
+        && !options.jit_js_general_dispatch
         && options.jit_wasm_root.is_none()
         && !options.jit_wasm_root_only
         && !options.jit_wasm_root_first
@@ -912,6 +919,7 @@ fn resume_metadata_matches(saved: &SuiteRecord, expected: &SuiteRecord) -> bool 
         && saved.suite == expected.suite
         && saved.jit_mode == expected.jit_mode
         && saved.jit_diagnostics == expected.jit_diagnostics
+        && saved.jit_js_general_dispatch == expected.jit_js_general_dispatch
         && saved.jit_wasm_root == expected.jit_wasm_root
         && saved.jit_wasm_root_only == expected.jit_wasm_root_only
         && saved.jit_wasm_root_first == expected.jit_wasm_root_first
@@ -1248,6 +1256,14 @@ fn jit_wasm_selective_ab_error(options: &Options) -> Option<&'static str> {
     )
 }
 
+fn jit_js_general_dispatch_error(options: &Options) -> Option<&'static str> {
+    if !options.jit_js_general_dispatch {
+        return None;
+    }
+    (options.suite != Suite::JetStream3 || options.jit_mode != JitMode::Jit)
+        .then_some("--jit-js-general-dispatch requires --suite jetstream3 --jit")
+}
+
 fn parse_options() -> Options {
     parse_options_from(env::args().skip(1))
 }
@@ -1261,6 +1277,7 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
         suite: Suite::V8V7,
         jit_mode: JitMode::NoJit,
         jit_diagnostics: false,
+        jit_js_general_dispatch: false,
         jit_wasm_root: None,
         jit_wasm_root_only: false,
         jit_wasm_root_first: false,
@@ -1316,6 +1333,7 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
             }
             "--jit" => options.jit_mode = JitMode::Jit,
             "--jit-diagnostics" => options.jit_diagnostics = true,
+            "--jit-js-general-dispatch" => options.jit_js_general_dispatch = true,
             "--jit-wasm-selective" => options.jit_wasm_selective = true,
             "--jit-wasm-memcpy-ab" => options.jit_wasm_memcpy_ab = true,
             "--jit-wasm-memcpy-raw-ab" => options.jit_wasm_memcpy_raw_ab = true,
@@ -1390,6 +1408,9 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
     }
     if options.jit_diagnostics && options.jit_mode != JitMode::Jit {
         usage("--jit-diagnostics requires --suite jetstream3 --jit");
+    }
+    if let Some(error) = jit_js_general_dispatch_error(&options) {
+        usage(error);
     }
     if options.jit_wasm_root.is_some()
         && (options.jit_mode != JitMode::Jit || options.suite != Suite::JetStream3)
@@ -1898,6 +1919,9 @@ fn quench_engine(options: &Options) -> EngineSpec {
         environment.insert("QUENCH_WASM_JIT_STATS".into(), "1".into());
         environment.insert("QUENCH_JS_JIT_STATS".into(), "1".into());
     }
+    if options.jit_js_general_dispatch {
+        environment.insert(QUENCH_JS_JIT_GENERAL_DISPATCH.into(), "1".into());
+    }
     if options.jit_wasm_root.is_some() {
         if let Ok(value) = std::env::var("QUENCH_WASM_JIT_ROOT_OPT_LEVEL") {
             environment.insert("QUENCH_WASM_JIT_ROOT_OPT_LEVEL".into(), value);
@@ -1930,6 +1954,12 @@ fn quench_engine(options: &Options) -> EngineSpec {
         } else {
             "the measured Quench process is launched with --jit".into()
         };
+        if options.jit_js_general_dispatch {
+            quench.jit_proof = format!(
+                "{}; experimental priced JavaScript GeneralDispatch enabled with QUENCH_JS_JIT_GENERAL_DISPATCH=1; not qualification mode",
+                quench.jit_proof
+            );
+        }
         if let Some(root) = options.jit_wasm_root {
             quench.jit_proof = format!(
                 "{}; bounded experimental root compilation selected residual function {root} via QUENCH_WASM_JIT_ROOT; not qualification mode",
@@ -3362,7 +3392,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-memcpy-leaf-ab] [--jit-wasm-selective-ab] [--jit-wasm-compare-branch-ab] [--jit-wasm-affine-pair-ab] [--jit-wasm-reference-body-cache-ab] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-memcpy-leaf-ab] [--jit-wasm-selective-ab] [--jit-wasm-compare-branch-ab] [--jit-wasm-affine-pair-ab] [--jit-wasm-reference-body-cache-ab] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-memcpy-leaf-ab] [--jit-wasm-selective-ab] [--jit-wasm-compare-branch-ab] [--jit-wasm-affine-pair-ab] [--jit-wasm-reference-body-cache-ab] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-js-general-dispatch] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-memcpy-leaf-ab] [--jit-wasm-selective-ab] [--jit-wasm-compare-branch-ab] [--jit-wasm-affine-pair-ab] [--jit-wasm-reference-body-cache-ab] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -3513,6 +3543,7 @@ mod jit_wasm_root_only_tests {
             suite: Suite::JetStream3,
             jit_mode: JitMode::Jit,
             jit_diagnostics: false,
+            jit_js_general_dispatch: false,
             jit_wasm_root: Some(19),
             jit_wasm_root_only: true,
             jit_wasm_root_first: false,
@@ -3561,6 +3592,7 @@ mod jit_wasm_root_only_tests {
             suite: Suite::JetStream3,
             jit_mode: JitMode::Jit,
             jit_diagnostics: false,
+            jit_js_general_dispatch: false,
             jit_wasm_root: Some(19),
             jit_wasm_root_only: false,
             jit_wasm_root_first: true,
@@ -4096,6 +4128,63 @@ mod jit_wasm_memcpy_leaf_ab_tests {
 }
 
 #[cfg(test)]
+mod jit_js_general_dispatch_tests {
+    use super::{
+        jit_js_general_dispatch_error, parse_options_from, quench_engine, JitMode, Suite,
+        QUENCH_JS_JIT_GENERAL_DISPATCH,
+    };
+
+    fn experimental_options() -> super::Options {
+        parse_options_from(
+            [
+                "--all",
+                "--suite",
+                "jetstream3",
+                "--jit",
+                "--jit-js-general-dispatch",
+            ]
+            .map(str::to_string),
+        )
+    }
+
+    #[test]
+    fn flag_is_limited_to_jetstream_jit_mode() {
+        let options = experimental_options();
+        assert_eq!(options.suite, Suite::JetStream3);
+        assert_eq!(options.jit_mode, JitMode::Jit);
+        assert!(options.jit_js_general_dispatch);
+        assert!(jit_js_general_dispatch_error(&options).is_none());
+
+        let mut no_jit = options;
+        no_jit.jit_mode = JitMode::NoJit;
+        assert!(jit_js_general_dispatch_error(&no_jit).is_some());
+
+        let mut wrong_suite = experimental_options();
+        wrong_suite.suite = Suite::V8V7;
+        assert!(jit_js_general_dispatch_error(&wrong_suite).is_some());
+    }
+
+    #[test]
+    fn engine_receives_general_dispatch_environment_and_provenance() {
+        let mut options = experimental_options();
+        options.quench = std::env::current_exe().expect("test executable path");
+        let engine = quench_engine(&options);
+        assert_eq!(engine.argv, vec!["--jit".to_string()]);
+        assert_eq!(
+            engine
+                .env
+                .get(QUENCH_JS_JIT_GENERAL_DISPATCH)
+                .map(String::as_str),
+            Some("1")
+        );
+        assert!(engine
+            .jit_proof
+            .contains("experimental priced JavaScript GeneralDispatch"));
+        assert!(engine.jit_proof.contains("not qualification mode"));
+    }
+}
+
+#[cfg(test)]
 mod jit_wasm_selective_ab_tests {
     use super::{
         JitMode, QUENCH_WASM_JIT_SELECTIVE, Suite, jit_wasm_selective_ab_error, parse_options_from,
@@ -4458,6 +4547,7 @@ mod tests {
             suite: super::Suite::JetStream3,
             jit_mode: super::JitMode::Jit,
             jit_diagnostics: false,
+            jit_js_general_dispatch: false,
             jit_wasm_root: Some(19),
             jit_wasm_root_only: true,
             jit_wasm_root_first: false,

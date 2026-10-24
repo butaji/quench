@@ -82,13 +82,17 @@ impl Compiler<'_> {
         // early errors, and direct eval is excluded below.
         // As a function's (`direct_parameters`): an identifier rest parameter's local is
         // filled with the rest array as the arrow activates, so it promotes as any parameter.
+        // A list binding its names apart promotes just its hidden argument slots, as a
+        // function's does (`Compiler::compile_function`).
+        let direct_parameters = FunctionCompiler::binds_parameters_directly(&value.params);
+        let hidden_parameters = !direct_parameters && FunctionCompiler::arguments_promotable_apart(&value.params);
         let super::PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, .. } = self.promoted_local_plan(
             parent.is_some()
-                && FunctionCompiler::binds_parameters_directly(&value.params)
+                && (direct_parameters || hidden_parameters)
                 && !value.r#async
                 && with_depth == 0
                 && !dynamic_eval,
-            false,
+            hidden_parameters.then_some(value.params.items.len()),
             None,
             body_statements,
             expression_body,
@@ -208,6 +212,7 @@ impl Compiler<'_> {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            dynamic_scope_access: Default::default(),
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: function.handlers.into(),

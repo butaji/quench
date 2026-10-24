@@ -3182,7 +3182,7 @@ impl<'a> Compiler<'a> {
     fn promoted_local_plan(
         &mut self,
         eligible: bool,
-        arguments_only: bool,
+        arguments_only: Option<usize>,
         own_arguments: Option<(bool, &[Atom])>,
         body: &[Statement<'_>],
         expression_body: Option<&Expression<'_>>,
@@ -3199,11 +3199,17 @@ impl<'a> Compiler<'a> {
         };
         // A strict `arguments` object is a copy of the values passed, which no parameter
         // write reaches; a sloppy one aliases the parameters (`Function::arguments_alias_parameters`)
-        // unless the body only reads it and rebinds no parameter.
+        // unless the body rebinds no parameter and cannot observe the mapping
+        // (`FixedRegisterLocalFacts::arguments_mapping_unobserved`).
         let unaliased_arguments = eligible
             && register_local_facts.safe
-            && register_local_facts.arguments == early::ArgumentsUse::Reads
-            && own_arguments.is_some_and(|(strict, parameters)| !strict && !rebinds_parameter(parameters));
+            && own_arguments.is_some_and(|(strict, parameters)| {
+                !strict
+                    && !rebinds_parameter(parameters)
+                    && register_local_facts.arguments_mapping_unobserved(
+                        parameters.iter().map(|atom| &self.atoms[*atom as usize]),
+                    )
+            });
         let arguments_allow_promotion = match (register_local_facts.arguments, own_arguments) {
             (early::ArgumentsUse::None, _) => true,
             (_, None) => false,
@@ -3222,9 +3228,9 @@ impl<'a> Compiler<'a> {
         let mut promoted_local_slots = latest_local_slot
             .into_iter()
             .filter_map(|(atom, slot)| {
-                let promotable = if arguments_only {
+                let promotable = if let Some(arguments) = arguments_only {
                     // The hidden argument slots lead the locals, one per parameter.
-                    own_arguments.is_some_and(|(_, parameters)| usize::from(slot) < parameters.len())
+                    usize::from(slot) < arguments
                 } else {
                     function_scope.contains(&atom)
                         && !lexical_atoms.contains(&atom)
@@ -3368,10 +3374,7 @@ impl<'a> Compiler<'a> {
         // stay plain locals for the later promotion that tracks them (`frame_registers`).
         let hidden_parameters = !direct_parameters
             && !options.rest_override
-            && options.defaults.is_some_and(|formal| {
-                formal.rest.is_none()
-                    && early::parameters_reach_no_scope(formal, &FunctionCompiler::parameter_bound_names(formal))
-            });
+            && options.defaults.is_some_and(FunctionCompiler::arguments_promotable_apart);
         let promote_plain_locals = parent.is_some()
             && (direct_parameters || hidden_parameters)
             && !options.async_function
@@ -3392,7 +3395,7 @@ impl<'a> Compiler<'a> {
             && !dynamic_eval;
         let PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments } = self.promoted_local_plan(
             promote_plain_locals,
-            hidden_parameters,
+            hidden_parameters.then_some(params.len()),
             Some((root_strict, &params)),
             body,
             expression_body,
@@ -3585,6 +3588,7 @@ impl<'a> Compiler<'a> {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            dynamic_scope_access: Default::default(),
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: function.handlers.into(),

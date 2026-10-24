@@ -851,12 +851,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
             out.u16(handler.return_slot.unwrap_or(u16::MAX));
             out.u16(handler.with_depth);
         }
-        out.u32(function.source_positions.iter().count() as u32);
-        for position in function.source_positions.iter() {
-            out.u32(position.pc);
-            out.u32(position.line);
-            out.u32(position.column);
-        }
+        out.source_positions(&function.source_positions);
         let plain = match function.plain_locals.get() {
             Some(plain) => plain.to_vec(),
             None => function.plain_local_slots(superinstructions),
@@ -1101,16 +1096,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
                 with_depth,
             })
         })?;
-        let source_positions = input
-            .list(|input| {
-                Ok(SourcePosition {
-                    pc: input.u32()?,
-                    line: input.u32()?,
-                    column: input.u32()?,
-                })
-            })?
-            .into_iter()
-            .collect();
+        let source_positions = input.source_positions()?;
         let plain_locals: Box<[bool]> = {
             let mut plain = Vec::with_capacity(usize::from(locals));
             for _ in 0..usize::from(locals).div_ceil(u8::BITS as usize) {
@@ -1175,6 +1161,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            dynamic_scope_access: Default::default(),
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: handlers.into(),
@@ -1281,6 +1268,17 @@ impl BinaryWriter {
         if op.immediate_names_atom(b) { self.atom(imm) } else { self.u32(imm) }
     }
     pub(super) fn u8(&mut self, value: u8) { self.bytes.push(value); }
+    /// A source position table as it is coded in memory, and its final entry: decoding copies
+    /// the bytes instead of coding each entry again (`BinaryReader::source_positions`).
+    fn source_positions(&mut self, table: &super::SourcePositions) {
+        let (bytes, last) = table.encoded();
+        self.u32(bytes.len() as u32);
+        self.bytes.extend_from_slice(bytes);
+        match last {
+            Some(position) => { self.u8(1); self.u32(position.pc); self.u32(position.line); self.u32(position.column); }
+            None => self.u8(0),
+        }
+    }
     pub(super) fn u16(&mut self, value: u16) { self.bytes.extend_from_slice(&value.to_le_bytes()); }
     pub(super) fn u32(&mut self, value: u32) { self.bytes.extend_from_slice(&value.to_le_bytes()); }
     pub(super) fn u64(&mut self, value: u64) { self.bytes.extend_from_slice(&value.to_le_bytes()); }
@@ -1305,6 +1303,16 @@ impl<'a> BinaryReader<'a> {
     /// A one-byte boolean, named by `what` in its error.
     fn flag(&mut self, what: &str) -> Result<bool, String> {
         match self.u8()? { 0 => Ok(false), 1 => Ok(true), _ => Err(format!("invalid residual {what} flag")) }
+    }
+    fn source_positions(&mut self) -> Result<super::SourcePositions, String> {
+        let len = self.u32()? as usize;
+        let bytes = self.take(len)?.to_vec();
+        let last = match self.u8()? {
+            0 => None,
+            1 => Some(SourcePosition { pc: self.u32()?, line: self.u32()?, column: self.u32()? }),
+            _ => return Err("invalid residual source position table".into()),
+        };
+        Ok(super::SourcePositions::from_encoded(bytes, last))
     }
     fn atom(&mut self) -> Result<u32, String> {
         let encoded = self.u32()?;

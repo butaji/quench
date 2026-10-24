@@ -140,6 +140,7 @@ impl<H: Host> Vm<H> {
             inherited_field_caches: vec![],
             field_add_indices: Default::default(),
             field_add_sets: vec![],
+            keyed_adds: Box::new([FieldAddCache::EMPTY; KEYED_ADD_ENTRIES]),
             megamorphic_field_indices: Default::default(),
             field_cache_writes: Some(Vec::new()),
             megamorphic_fields: vec![],
@@ -165,7 +166,7 @@ impl<H: Host> Vm<H> {
             constructed_shapes: [provenance::ConstructedShape::EMPTY; provenance::CONSTRUCTED_SHAPE_ENTRIES],
             method_caches: vec![],
             megamorphic_methods: vec![],
-            method_cache_atoms: 0,
+            method_cache_atoms: Default::default(),
             #[cfg(feature = "profile-aggregate")]
             invalidated_methods: FxHashMap::default(),
             object_shapes: Default::default(),
