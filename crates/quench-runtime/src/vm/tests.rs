@@ -12092,6 +12092,60 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
 }
 
 #[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_compiles_loop_backedges_and_resumes_vm_operations() {
+    let source = r#"
+      function sum(values) {
+        let total = 0;
+        let index = 0;
+        while (index < values.length) {
+          try { total += values[index]; }
+          catch (error) { total += 0; }
+          index++;
+        }
+        return total;
+      }
+      var result = 0;
+      for (let run = 0; run < 48; run++) result = sum([1, 2, 3, 4]);
+      if (result !== 10) throw Error('loop result');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-loop.js",
+    ))
+    .unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    let function = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "sum")
+        })
+        .unwrap() as u32;
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("loop function should use the general JavaScript compiler");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let name = compiled.intern_atom("result");
+    let result = compiled.own_property(compiled.realm.globals, name).unwrap();
+    assert_eq!(result, Value::number(10.0));
+}
+
+#[test]
 fn js_jit_rejected_functions_return_to_frameless_lane_calls() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         "function add(a, b) { return a + b; } add(1, 2);",

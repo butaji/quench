@@ -928,12 +928,12 @@ fn js_general_dispatch_candidate(program: &ResidualProgram, function: &Function)
     !super::js_compiled::function_candidate(function, program)
         && !function.code.is_empty()
         && function.code.len() <= MAX_JS_GENERAL_DISPATCH_BLOCKS
-        && function.code.iter().enumerate().all(|(pc, packed)| {
+        && function.code.iter().all(|packed| {
             let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
             !matches!(
                 instruction.op(),
                 Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-            ) || usize::try_from(instruction.jump_target()).is_ok_and(|target| target > pc)
+            ) || usize::try_from(instruction.jump_target()).is_ok()
         })
 }
 
@@ -1208,7 +1208,7 @@ pub(super) fn compile_js_general_dispatch(
                         && !instruction.writes_current_this() =>
                 {
                     let target = usize::try_from(instruction.jump_target()).ok();
-                    if let Some(target) = target.filter(|target| *target > pc)
+                    if let Some(target) = target
                         && let Some(target) = blocks.get(target).copied()
                     {
                         builder.ins().jump(target, &[]);
