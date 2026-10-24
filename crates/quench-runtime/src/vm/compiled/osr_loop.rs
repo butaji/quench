@@ -502,6 +502,9 @@ fn admit(admission: &mut Admission<'_>, instruction: WideInstruction) -> Option<
             admission.source(instruction.operand_b())?;
             admission.source(instruction.operand_c())?;
         }
+        Op::JumpFalse | Op::JumpTrue => {
+            admission.number(instruction.register_a())?;
+        }
         _ => return None,
     }
     Some(())
@@ -591,9 +594,14 @@ fn number_reads(instruction: WideInstruction) -> Vec<Register> {
     let register = |operand: Operand| operand.register_index();
     match instruction.op() {
         Op::Move | Op::IncDec | Op::Unary | Op::ToNumeric => vec![instruction.register_b()],
-        Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => {
-            [register(instruction.operand_b()), register(instruction.operand_c())].into_iter().flatten().collect()
-        }
+        Op::Binary | Op::NumericAdd | Op::NumericMultiply | Op::JumpBinaryFalse => [
+            register(instruction.operand_b()),
+            register(instruction.operand_c()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+        Op::JumpFalse | Op::JumpTrue => vec![instruction.register_a()],
         Op::GetIndex => register(instruction.operand_c()).into_iter().collect(),
         Op::SetIndex => vec![instruction.register_a(), instruction.register_c()],
         _ => Vec::new(),
@@ -1014,6 +1022,7 @@ fn counted_loop(
                 test = Some(pc);
             }
             Op::JumpBinaryFalse => return None,
+            Op::JumpFalse | Op::JumpTrue => return None,
             _ => {}
         }
     }
@@ -1021,8 +1030,10 @@ fn counted_loop(
     // Control enters only at the header.
     let enters_inside = (region.header..=region.backedge).any(|pc| {
         let instruction = at(pc);
-        matches!(instruction.op(), Op::Jump | Op::JumpBinaryFalse)
-            && (header + 1..=backedge).contains(&instruction.jump_target())
+        matches!(
+            instruction.op(),
+            Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
+        ) && (header + 1..=backedge).contains(&instruction.jump_target())
     });
     if enters_inside {
         return None;
@@ -1292,11 +1303,8 @@ struct Lowering<'a, 'b> {
     proved_blocks: Vec<Vec<ir::Block>>,
     /// The counted loop whose proved copy is being lowered.
     copy: Option<usize>,
-    /// Per PC the code leaves at, the block that writes back the Number registers live
-    /// there and returns its parameter, the outcome word.
-    leaves: std::collections::BTreeMap<u32, ir::Block>,
-    /// The cold blocks that end the run with a fixed outcome (`outcome_block`).
-    outcomes: Vec<(ir::Block, super::RegionExit)>,
+    /// Shared handoff blocks; this tier fills per-PC leaves with its live-state writeback.
+    exits: super::RegionExitBlocks,
     registers: ir::Value,
     entry: ir::Value,
     /// The result word the outcome is written to.
@@ -1412,8 +1420,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             preheaders,
             proved_blocks,
             copy: None,
-            leaves: std::collections::BTreeMap::new(),
-            outcomes: Vec::new(),
+            exits: super::RegionExitBlocks::default(),
             chains: std::collections::HashMap::new(),
             exact: std::collections::BTreeMap::new(),
             encodings: std::collections::HashMap::new(),
@@ -1633,10 +1640,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.ins().return_(&[status]);
     }
 
-    fn outcome(&mut self, outcome: super::RegionExit) -> ir::Value {
-        self.body.builder.ins().iconst(types::I64, outcome.encode() as i64)
-    }
-
     fn word(&mut self, index: usize) -> ir::Value {
         self.body.builder
             .ins()
@@ -1653,27 +1656,22 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// A block that returns not entered, naming `widening`.
     fn not_entered(&mut self, widening: Option<Widening>) -> ir::Block {
-        self.outcome_block(super::RegionExit::EntryMiss(widening.map_or(0, Widening::code)))
-    }
-
-    /// A cold block that ends the run with `outcome`, filled once the body is
-    /// lowered (`fill_outcomes`): the builder leaves a block only once it is filled.
-    fn outcome_block(&mut self, outcome: super::RegionExit) -> ir::Block {
-        let block = self.cold_block();
-        self.outcomes.push((block, outcome));
-        block
+        self.exits.outcome_block(
+            &mut self.body.builder,
+            super::RegionExit::EntryMiss(widening.map_or(0, Widening::code)),
+        )
     }
 
     /// Fills each `outcome_block`: not entered returns at once, and every other outcome
     /// leaves at its PC through the write-back.
     fn fill_outcomes(&mut self) {
-        for (block, outcome) in std::mem::take(&mut self.outcomes) {
+        for (block, outcome) in self.exits.take_outcomes() {
             self.body.builder.switch_to_block(block);
             if matches!(outcome, super::RegionExit::EntryMiss(_)) {
-                let word = self.outcome(outcome);
+                let word = self.body.builder.ins().iconst(types::I64, outcome.encode() as i64);
                 self.finish(word);
             } else {
-                self.leave(outcome);
+                self.exits.leave(&mut self.body.builder, outcome);
             }
         }
     }
@@ -1862,7 +1860,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// there (`LoopRegion::live`) take their native values; any other keeps the value it
     /// held, which nothing reads before writing.
     fn write_back(&mut self) {
-        let leaves: Vec<(u32, ir::Block)> = self.leaves.iter().map(|(pc, block)| (*pc, *block)).collect();
+        let leaves = self.exits.leave_blocks();
         for (pc, block) in leaves {
             self.body.builder.switch_to_block(block);
             let word = self.body.builder.block_params(block)[0];
@@ -1893,30 +1891,15 @@ impl<'a, 'b> Lowering<'a, 'b> {
         }
     }
 
-    /// Leaves with `outcome` at `pc`.
+    /// Leaves with `outcome` at its exact continuation PC.
     fn leave(&mut self, outcome: super::RegionExit) {
-        let pc = match outcome {
-            super::RegionExit::Resume(pc)
-            | super::RegionExit::Fallback(pc)
-            | super::RegionExit::Recompile(pc) => pc,
-            super::RegionExit::EntryMiss(_) => unreachable!("entry miss does not write back"),
-        };
-        let word = self.outcome(outcome);
-        let block = match self.leaves.get(&pc) {
-            Some(block) => *block,
-            None => {
-                let block = self.cold_block();
-                self.body.builder.append_block_param(block, types::I64);
-                self.leaves.insert(pc, block);
-                block
-            }
-        };
-        self.body.builder.ins().jump(block, &[ir::BlockArg::Value(word)]);
+        self.exits.leave(&mut self.body.builder, outcome);
     }
 
     /// A block that exits at `pc` for the general path.
     fn exit_block(&mut self, pc: u32) -> ir::Block {
-        self.outcome_block(super::RegionExit::Fallback(pc))
+        self.exits
+            .outcome_block(&mut self.body.builder, super::RegionExit::Fallback(pc))
     }
 
     /// Continues past a guard that `failed` decides, exiting at `pc` when it holds.
@@ -1950,7 +1933,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// compilation.
     fn widen_block(&mut self, pc: u32, widening: Widening) -> ir::Block {
         self.widenings.insert(pc, widening);
-        self.outcome_block(super::RegionExit::Recompile(pc))
+        self.exits
+            .outcome_block(&mut self.body.builder, super::RegionExit::Recompile(pc))
     }
 
     /// `guard` of an `i32` assumption: `widening` was no `i32` when it fails.
@@ -2040,6 +2024,41 @@ impl<'a, 'b> Lowering<'a, 'b> {
             None => self.leave(super::RegionExit::Resume(target)),
         }
         Some(())
+    }
+
+    /// Branches on the bytecode condition, preserving whether its true or false arm takes
+    /// `target`; a branch arm that leaves the region resumes at that exact PC.
+    fn branch(
+        &mut self,
+        pc: u32,
+        target: u32,
+        condition: ir::Value,
+        jump_when: bool,
+    ) -> Option<()> {
+        let taken = self.body.builder.create_block();
+        let not_taken = self.body.builder.create_block();
+        let tested = self
+            .body
+            .builder
+            .current_block()
+            .expect("lowering inside a block");
+        let (on_true, on_false) = if jump_when {
+            (taken, not_taken)
+        } else {
+            (not_taken, taken)
+        };
+        self.body
+            .builder
+            .ins()
+            .brif(condition, on_true, &[], on_false, &[]);
+        self.body.builder.switch_to_block(taken);
+        self.body.builder.seal_block(taken);
+        self.jump(pc, target)?;
+        let chain = self.chain(tested);
+        self.chains.insert(not_taken, chain);
+        self.body.builder.switch_to_block(not_taken);
+        self.body.builder.seal_block(not_taken);
+        self.fall_through(pc)
     }
 
     fn fall_through(&mut self, pc: u32) -> Option<()> {
@@ -2517,6 +2536,22 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.switch_to_block(not_taken);
                 self.body.builder.seal_block(not_taken);
                 self.fall_through(pc)
+            }
+            Op::JumpFalse | Op::JumpTrue => {
+                let value = self.read(Source::Register(instruction.register_a()));
+                let truthy = match value.representation {
+                    Representation::Int32 => {
+                        self.body
+                            .builder
+                            .ins()
+                            .icmp_imm_s(IntCC::NotEqual, value.value, 0)
+                    }
+                    Representation::Float64 => {
+                        super::emit_number_truthiness(&mut self.body.builder, value.value)
+                    }
+                };
+                let jump_when = instruction.op() == Op::JumpTrue;
+                self.branch(pc, instruction.jump_target(), truthy, jump_when)
             }
             _ => None,
         }
