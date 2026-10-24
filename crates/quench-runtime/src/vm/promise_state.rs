@@ -161,7 +161,7 @@ impl<H: Host> Vm<H> {
             (std::mem::take(&mut record.reactions), notify_unhandled, module_evaluation)
         };
         self.realm.promise.async_module_settled |= module_evaluation;
-        if let Some(resource) = self.promise_record(promise).expect("promise record").host_context {
+        if let Some(resource) = self.promise_record(promise).expect("promise record").host_context.get() {
             // The reactions have left the authoritative record but are not
             // queued yet. Hooks may collect, so keep their entire payload live.
             let roots = std::iter::once(promise).chain(std::iter::once(result)).chain(
