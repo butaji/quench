@@ -36,11 +36,11 @@ fn from_raw(raw: Option<&str>, fallback: &str, quoted: bool) -> Constant {
         raw
     };
     if !body.contains('\\') {
-        return Constant::String(body.to_owned());
+        return Constant::String(body.into());
     }
     let units = decode_units(raw, quoted);
     match String::from_utf16(&units) {
-        Ok(value) => Constant::String(value),
+        Ok(value) => Constant::String(value.into()),
         Err(_) => Constant::StringUnits(units),
     }
 }
