@@ -981,9 +981,23 @@ impl JsString {
         }
     }
 
+    /// The string's unit storage and host text, each as (address, bytes), for the memory
+    /// report. It reads the string as it is: a rope not yet flattened reports its own node,
+    /// whose halves are strings of their own, and is not flattened to be measured (that
+    /// kept a flat copy for the string's life, so a report inflated the memory it reported).
     pub(crate) fn memory_parts(&self) -> ((usize, usize), Option<(usize, usize)>) {
         const RC_HEADER_BYTES: usize = 2 * std::mem::size_of::<usize>();
-        let unit_storage = match self.flat() {
+        let Some(flat) = self.existing_flat() else {
+            let Repr::Shared(inner) = &self.repr else {
+                unreachable!("a flat representation always has flat units");
+            };
+            let node = (
+                Rc::as_ptr(inner) as usize,
+                RC_HEADER_BYTES + std::mem::size_of::<JsStringInner>(),
+            );
+            return (node, None);
+        };
+        let unit_storage = match flat {
             // Inline units live in the string's own allocation.
             FlatUnits::Short(text) => (text.bytes.as_ptr() as usize, 0),
             FlatUnits::Ascii(text) => (

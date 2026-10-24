@@ -78,7 +78,8 @@ impl ModuleSource {
 
 /// An opaque host execution context captured by a Promise reaction or
 /// thenable-assimilation job. The VM carries it through the job lifecycle but
-/// never interprets it.
+/// never interprets it. Hosts number contexts below `u64::MAX`, which a promise
+/// record keeps for "no context" (`heap::StoredHostContext`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct HostExecutionContext(pub u64);
 
@@ -108,8 +109,8 @@ pub trait Host {
     /// A collection has finished, or a full one is starting: a host may return memory the
     /// process no longer needs resident (its read-only pages), which nothing observable
     /// depends on. At these boundaries the code about to run differs from the code that ran.
-    /// The runtime's memory policy says how often it should
-    /// (`MemoryPolicy::resident_release_interval`).
+    /// The runtime's memory policy says whether it should
+    /// (`MemoryPolicy::returns_pages_at_collections`).
     fn at_collection_boundary(&mut self, _policy: crate::MemoryPolicy) {}
 
     /// A compiled host program kept across runs: the bytes `keep_compiled_program` was given

@@ -3001,7 +3001,7 @@ script_handler! {
             && !vm.try_fill_dense_hole(object, key, value)
             && !vm.try_site_symbol_set(ip.addr(), object, key, value)
             && !lane_typed_array_store(ip, vm, object, key, value)
-            && !vm.try_plain_string_key_set(object, key, value)
+            && !lane_string_key_store(ip, vm, object, key, value)
             && !key
                 .as_int()
                 .and_then(|index| usize::try_from(index).ok())
@@ -3025,6 +3025,33 @@ fn lane_typed_array_store<H: Host>(ip: Ip, vm: &mut Vm<H>, object: Value, key: V
         requicken(ip, lane_set_index_typed::<H>);
     }
     stored
+}
+
+/// A plain string-keyed write (`Vm::try_plain_string_key_set`), which every array, symbol
+/// and typed-array path before it declines: the site then tries it first
+/// (`lane_set_index_string`).
+fn lane_string_key_store<H: Host>(ip: Ip, vm: &mut Vm<H>, object: Value, key: Value, value: Value) -> bool {
+    let stored = vm.try_plain_string_key_set(object, key, value);
+    if stored {
+        requicken(ip, lane_set_index_string::<H>);
+    }
+    stored
+}
+
+script_handler! {
+    /// `lane_set_index_slot` at a site that made a plain string-keyed write: that write is
+    /// the whole store, as the generic order reaches it once every array, symbol and typed
+    /// path declines a string key; any other store takes the generic order.
+    fn lane_set_index_string<>(cx, r, ip, i, view) {
+        let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
+        let vm = unsafe { vm(cx) };
+        if !vm.try_plain_string_key_set(object, key, value) {
+            sibling!(lane_set_index_slot::<H>, r, ip, view)
+        }
+        // Adding a property can allocate.
+        note_allocation(vm);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
 }
 
 script_handler! {
@@ -5147,8 +5174,12 @@ script_handler! {
         let equal = match NULLISH {
             NULLISH_NULL => value == Value::NULL,
             NULLISH_UNDEFINED => value == Value::UNDEFINED,
-            _ if value.is_heap() && !value.is_record() => {
-                sibling!(lane_jump_nullish_cell::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
+            // A record is an ordinary object: never `null`, `undefined` or [[IsHTMLDDA]].
+            _ if value.is_heap() => {
+                if !value.is_record() {
+                    sibling!(lane_jump_nullish_cell::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
+                }
+                false
             }
             _ => value.is_null() || value.is_undefined(),
         };
