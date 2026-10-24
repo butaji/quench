@@ -13365,6 +13365,73 @@ fn js_jit_general_dispatch_promotes_a_single_activation_hot_loop() {
     assert_eq!(result, expected);
 }
 
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_prices_work_inside_compiled_osr_regions() {
+    let source = r#"
+      function sum(count) {
+        let total = 0;
+        for (let index = 0; index < count; index++) total += index;
+        return total;
+      }
+      var result = sum(100000);
+      if (result !== 4999950000) throw Error('OSR priced handoff result');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-osr-priced-work.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|body| {
+            body.header()
+                .name
+                .or(body.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "sum")
+        })
+        .unwrap() as u32;
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let result_atom = interpreter.intern_atom("result");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, result_atom)
+        .unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+    let views = compiled
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let loop_view = views
+        .get(function as usize)
+        .and_then(std::cell::OnceCell::get)
+        .expect("sum function lane view");
+    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+        assert!(
+            loop_view.osr_diagnostics().native_region_runs > 0,
+            "shared-tier promotion must be paid by native OSR work"
+        );
+    }
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("paid native OSR work should hand the loop function to GeneralDispatch");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    let result = compiled
+        .own_property(compiled.realm.globals, result_atom)
+        .unwrap();
+    assert_eq!(result, expected);
+}
+
 #[cfg(not(quench_profiled))]
 #[test]
 fn js_jit_general_baseline_waits_until_entries_pay_for_its_compile() {
