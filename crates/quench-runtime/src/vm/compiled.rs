@@ -5421,6 +5421,38 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     dispatch.allow_inline_calls,
                 )
             };
+            if matches!(current_instruction.op(), Op::Call | Op::CallArray)
+                && vm.programs.js_jit_diagnostics_enabled()
+            {
+                let outcome = match &step {
+                    Ok(super::StepResult::Continue) => {
+                        super::program_store::JsJitCallOutcome::Continue
+                    }
+                    Ok(super::StepResult::TailCall) => {
+                        super::program_store::JsJitCallOutcome::TailCall
+                    }
+                    Ok(super::StepResult::PushFrame { .. }) => {
+                        super::program_store::JsJitCallOutcome::PushFrame
+                    }
+                    Ok(super::StepResult::Return(_)) => {
+                        super::program_store::JsJitCallOutcome::Return
+                    }
+                    Ok(super::StepResult::Await { .. }) => {
+                        super::program_store::JsJitCallOutcome::Await
+                    }
+                    Ok(super::StepResult::Yield { .. }) => {
+                        super::program_store::JsJitCallOutcome::Yield
+                    }
+                    Err(_) => super::program_store::JsJitCallOutcome::Error,
+                };
+                vm.programs.record_js_jit_call_site(
+                    dispatch.program_id,
+                    frame_function,
+                    current_pc,
+                    current_instruction.op(),
+                    outcome,
+                );
+            }
             dispatch.array_record_base = vm
                 .heap
                 .array_record_base()
@@ -11317,6 +11349,8 @@ impl<H: Host> Vm<H> {
             Some(super::program_store::JsTierState::Hot { .. })
             | Some(super::program_store::JsTierState::PromotionPending)
             | None => {
+                let general_candidate =
+                    self.js_general_tier_takes(program, function_id, facts);
                 if !self.programs.note_js_function_entry(
                     program_id,
                     function_id,
@@ -11331,7 +11365,7 @@ impl<H: Host> Vm<H> {
                         || (!capture_arguments.is_empty() && captures_numeric)
                         || string_hash_units.is_some()
                         || string_transform_units.is_some(),
-                    facts.general_acyclic,
+                    general_candidate,
                 ) || (!numeric
                     && !(field_reject_candidate && arguments.len() == 1)
                     && string_hash_units.is_none()
