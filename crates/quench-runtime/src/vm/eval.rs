@@ -444,6 +444,22 @@ impl<H: Host> Vm<H> {
         Ok(program)
     }
 
+    /// The script `source` as the host's compile cache keeps it under `goal`, decoded for this
+    /// VM with its origin, when the cache holds it.
+    fn kept_script(
+        &mut self, source: &str, name: &str, goal: &str, origin: Option<(u32, u32)>,
+    ) -> Option<crate::PreparedScript> {
+        let bytes = self.host.kept_compiled_program(name, &[self.specialization_part(), goal, source])?;
+        let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(source));
+        let specialized = self.specialized;
+        let mut kept = self.decode_cached_program(bytes, text, 0, name, specialized).ok()?;
+        if let (Some(source), Some((line_offset, column_offset))) = (&mut kept.source, origin) {
+            source.line_offset = line_offset;
+            source.column_offset = column_offset;
+        }
+        Some(crate::PreparedScript { program: Rc::new(kept) })
+    }
+
     pub(crate) fn prepare_embedding_specialized_script(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
     ) -> Result<crate::PreparedScript, JsError> {
@@ -466,17 +482,9 @@ impl<H: Host> Vm<H> {
             format!("{SPECIALIZED_SCRIPT_GOAL}:{line}:{column}:{keep_records}")
         });
         if let Some(goal) = &cache_key
-            && let Some(bytes) = self.host.kept_compiled_program(name, &[self.specialization_part(), goal, source])
+            && let Some(kept) = self.kept_script(source, name, goal, origin)
         {
-            let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(source));
-            let specialized = self.specialized;
-            if let Ok(mut kept) = self.decode_cached_program(bytes, text, 0, name, specialized) {
-                if let (Some(source), Some((line_offset, column_offset))) = (&mut kept.source, origin) {
-                    source.line_offset = line_offset;
-                    source.column_offset = column_offset;
-                }
-                return Ok(crate::PreparedScript { program: Rc::new(kept) });
-            }
+            return Ok(kept);
         }
         // A program keeping only static text cannot compile its functions again from it.
         let compiled = if keep_records {
@@ -515,6 +523,16 @@ impl<H: Host> Vm<H> {
         {
             let mode = self.specialization_part();
             self.host.keep_compiled_program(name, &[mode, goal, source], &bytes);
+            drop(bytes);
+            // The program then runs from its kept form, as every later run of the text does:
+            // its records decode on first call from the host's mapped entry, which the host
+            // can page out, instead of staying compiled in memory for the whole run (V8-v7
+            // MemoryFirst max RSS of a cold entry, static x86_64, 5 pairs, 2026-10-24:
+            // NavierStokes 4708 -> 4172 KiB, RayTrace 3332 -> 3016, Crypto 3480 -> 3292,
+            // RegExp 6228 -> 6028; a whole cold typescript-eslint run's CPU unchanged).
+            if let Some(kept) = self.kept_script(source, name, goal, origin) {
+                return Ok(kept);
+            }
         }
         // Its final source is settled, so a function compiles again from it on first call.
         #[cfg(feature = "profile-aggregate")]
