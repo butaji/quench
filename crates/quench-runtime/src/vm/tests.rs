@@ -11007,6 +11007,138 @@ fn js_jit_compiles_int32_bitwise_helpers_and_guards_the_domain() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_general_dispatch_compiles_tagged_int32_bitwise_ops_and_falls_back_exactly() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function bitAnd(left, right) {
+            let result = 0;
+            for (let pass = 0; pass < 2; pass++) result = left & right;
+            return result;
+          }
+          function bitOr(left, right) {
+            let result = 0;
+            for (let pass = 0; pass < 2; pass++) result = left | right;
+            return result;
+          }
+          function bitXor(left, right) {
+            let result = 0;
+            for (let pass = 0; pass < 2; pass++) result = left ^ right;
+            return result;
+          }
+          function shiftLeft(left, right) {
+            let result = 0;
+            for (let pass = 0; pass < 2; pass++) result = left << right;
+            return result;
+          }
+          function shiftRight(left, right) {
+            let result = 0;
+            for (let pass = 0; pass < 2; pass++) result = left >> right;
+            return result;
+          }
+          function shiftRightUnsigned(left, right) {
+            let result = 0;
+            for (let pass = 0; pass < 2; pass++) result = left >>> right;
+            return result;
+          }
+          var result = 0;
+          for (let index = 0; index < 20000; index++) {
+            result += bitAnd(index, 127) + bitOr(index, 32) + bitXor(index, 7);
+            result += shiftLeft(index, 2) + shiftRight(-index, 1);
+            result += shiftRightUnsigned(-1, index & 31);
+          }
+          if (bitAnd(6, 3) !== 2 || bitOr(6, 3) !== 7 || bitXor(6, 3) !== 5) {
+            throw Error('tagged bitwise operation');
+          }
+          if (shiftLeft(-2, 2) !== -8 || shiftRight(-8, 2) !== -2) {
+            throw Error('signed shift operation');
+          }
+          if (shiftRightUnsigned(-1, 0) !== 4294967295) {
+            throw Error('unsigned shift must box outside int32');
+          }
+          let conversions = 0;
+          const coercible = { valueOf() { conversions++; return 13; } };
+          if (bitXor(coercible, 10) !== 7 || conversions !== 2) {
+            throw Error('object coercion fallback');
+          }
+          if (bitXor(2.5, 7) !== 5 || bitXor(4294967296, 7) !== 7) {
+            throw Error('numeric conversion fallback');
+          }
+          if (bitXor('13', 10) !== 7 || bitXor(NaN, 7) !== 7) {
+            throw Error('primitive conversion fallback');
+          }
+          let bigintThrew = false;
+          try { bitXor(13n, 1); } catch (error) { bigintThrew = error instanceof TypeError; }
+          if (!bigintThrew) throw Error('mixed bigint fallback');
+        "#,
+        "js-general-int32-bitwise.js",
+    ))
+    .unwrap();
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    let result_atom = interpreter.intern_atom("result");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, result_atom)
+        .unwrap();
+    let result = compiled
+        .own_property(compiled.realm.globals, result_atom)
+        .unwrap();
+    assert_eq!(result, expected);
+
+    for name in [
+        "bitAnd",
+        "bitOr",
+        "bitXor",
+        "shiftLeft",
+        "shiftRight",
+        "shiftRightUnsigned",
+    ] {
+        let function = program
+            .functions
+            .iter()
+            .position(|body| {
+                body.header()
+                    .name
+                    .or(body.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} did not compile through GeneralDispatch");
+        };
+        assert!(native.is_general_dispatch(), "{name} used a specialized compiler");
+        assert!(native.native_entries() > 0, "{name} has no native entries");
+        let body = program.function_get(function as usize).unwrap();
+        let binary_pcs: Vec<_> = body
+            .code
+            .iter()
+            .enumerate()
+            .filter_map(|(pc, instruction)| {
+                (instruction.as_wide().op() == crate::bytecode::Op::Binary).then_some(pc as u32)
+            })
+            .collect();
+        assert!(!binary_pcs.is_empty());
+        for pc in binary_pcs {
+            assert!(
+                native.general_dispatch_pc_is_native(pc as usize),
+                "{name} pc {pc} is a callout"
+            );
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_guarded_int32_identity_arm_and_falls_back_for_other_types() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -12934,6 +13066,98 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_speculates_number_relations_and_falls_back_exactly() {
+    let source = r#"
+      function identity(value) { return value; }
+      function less(left, right) { return identity(left < right); }
+      function strictEqual(left, right) { return identity(left === right); }
+      function notEqual(left, right) { return identity(left !== right); }
+      function looseEqual(left, right) { return identity(left == right); }
+      for (let index = 0; index < 48; index++) {
+        if (less(index, index + 1) !== true) throw Error('numeric less-than');
+        if (strictEqual(index, index) !== true) throw Error('numeric strict equality');
+        if (notEqual(index, index + 1) !== true) throw Error('numeric strict inequality');
+        if (looseEqual(index, index) !== true) throw Error('numeric loose equality');
+      }
+      if (less(0, -0) || !strictEqual(0, -0)) throw Error('signed zero relations');
+      if (less(NaN, 1) || less(1, NaN) || strictEqual(NaN, NaN)) {
+        throw Error('unordered numeric relations');
+      }
+      if (!notEqual(NaN, NaN)) throw Error('NaN inequality');
+      if (!less(-Infinity, -1) || !less(1.5, Infinity)) throw Error('float relation');
+      if (!less('10', '2')) throw Error('string comparison fallback');
+
+      let coercions = 0;
+      const boxed = { valueOf() { coercions++; return 4; } };
+      if (!less(boxed, 5) || coercions !== 1) throw Error('relational coercion fallback');
+      if (!looseEqual(boxed, 4) || coercions !== 2) throw Error('loose equality coercion fallback');
+      let symbolThrew = false;
+      try { less(Symbol('value'), 1); }
+      catch (error) { symbolThrew = error instanceof TypeError; }
+      if (!symbolThrew) throw Error('symbol relational fallback');
+      if (strictEqual(Symbol('value'), Symbol('value'))) throw Error('symbol equality');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-relations.js",
+    ))
+    .unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+
+    for (name, operator) in [
+        ("less", oxc_ast::ast::BinaryOperator::LessThan),
+        ("strictEqual", oxc_ast::ast::BinaryOperator::StrictEquality),
+        ("notEqual", oxc_ast::ast::BinaryOperator::StrictInequality),
+        ("looseEqual", oxc_ast::ast::BinaryOperator::Equality),
+    ] {
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, function)
+        else {
+            panic!("{name} should use the general JavaScript compiler");
+        };
+        assert!(native.is_general_dispatch());
+        assert!(native.native_entries() > 0);
+        let body = program.function(function as usize);
+        let relation_pcs = body
+            .code
+            .iter()
+            .enumerate()
+            .filter_map(|(pc, packed)| {
+                let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+                (instruction.op() == crate::bytecode::Op::Binary
+                    && instruction.binary_operator() == operator as u32)
+                    .then_some(pc)
+            })
+            .collect::<Vec<_>>();
+        assert!(!relation_pcs.is_empty(), "{name} has no relation bytecode");
+        assert!(relation_pcs
+            .into_iter()
+            .all(|pc| native.general_dispatch_pc_is_native(pc)),
+            "{name} relation bytecode should have native code");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_batches_fallback_islands_before_native_ops() {
     let source = r#"
       const captured = { value: 2 };
@@ -13125,7 +13349,7 @@ fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
       }
       function caller(shouldThrow) {
         const live = { value: 40 };
-        try { return callee(live, shouldThrow) + 2; }
+        try { return callee(live, ...[shouldThrow]) + 2; }
         catch (error) { return error === marker ? live.value + 2 : -1; }
       }
       var result = 0;
@@ -13359,6 +13583,73 @@ fn js_jit_general_dispatch_promotes_a_single_activation_hot_loop() {
         assert!(native.general_dispatch_pc_is_native(pc));
     }
     let result_atom = compiled.intern_atom("result");
+    let result = compiled
+        .own_property(compiled.realm.globals, result_atom)
+        .unwrap();
+    assert_eq!(result, expected);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_prices_work_inside_compiled_osr_regions() {
+    let source = r#"
+      function sum(count) {
+        let total = 0;
+        for (let index = 0; index < count; index++) total += index;
+        return total;
+      }
+      var result = sum(100000);
+      if (result !== 4999950000) throw Error('OSR priced handoff result');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        source,
+        "js-jit-general-osr-priced-work.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|body| {
+            body.header()
+                .name
+                .or(body.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "sum")
+        })
+        .unwrap() as u32;
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let result_atom = interpreter.intern_atom("result");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, result_atom)
+        .unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+    let views = compiled
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let loop_view = views
+        .get(function as usize)
+        .and_then(std::cell::OnceCell::get)
+        .expect("sum function lane view");
+    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+        assert!(
+            loop_view.osr_diagnostics().native_region_runs > 0,
+            "shared-tier promotion must be paid by native OSR work"
+        );
+    }
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("paid native OSR work should hand the loop function to GeneralDispatch");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
     let result = compiled
         .own_property(compiled.realm.globals, result_atom)
         .unwrap();

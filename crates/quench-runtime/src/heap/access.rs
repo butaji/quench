@@ -526,6 +526,17 @@ impl Heap {
         Some(unsafe { self.array_records.get_live(record_id) })
     }
 
+    /// The fixed base of the direct-array record range after its first record is allocated.
+    ///
+    /// Native readers combine this base with a direct-array ID from a current live, rooted
+    /// `Value`. The heap must remain alive, and the reader must finish before any VM safepoint;
+    /// it must resolve the record's current backing for each access because array mutation can
+    /// replace that backing.
+    #[cfg(test)]
+    pub(crate) fn array_record_base(&self) -> Option<*const ArrayObject> {
+        self.array_records.base_ptr()
+    }
+
     /// An array's dense element backing, whether it lives in a record or a slot.
     pub(crate) fn array_elements(&self, value: Value) -> Option<&super::ArrayElements> {
         self.array(value).map(ArrayObject::elements)
