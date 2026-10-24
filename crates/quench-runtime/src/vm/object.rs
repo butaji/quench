@@ -2274,6 +2274,7 @@ impl<H: Host> Vm<H> {
                         prototype,
                         holder: OWN_ACCESSOR,
                         slot: slot as u16,
+                        getter_in_slot: self.getter_in_slot(receiver_shape, slot),
                         epoch,
                     },
                 );
@@ -2308,6 +2309,7 @@ impl<H: Host> Vm<H> {
         {
             return;
         }
+        let getter_in_slot = self.getter_in_slot(holder_object.shape(), slot);
         let mut link = prototype;
         for _ in 0..depth {
             self.heap.mark_prototype(link);
@@ -2324,9 +2326,16 @@ impl<H: Host> Vm<H> {
                 prototype,
                 holder,
                 slot: slot as u16,
+                getter_in_slot,
                 epoch,
             },
         );
+    }
+
+    /// Whether `shape` keeps the getter of the accessor at `slot` in the slot itself.
+    fn getter_in_slot(&self, shape: u32, slot: usize) -> bool {
+        !self.shape_is_dictionary(shape)
+            && self.shape_slot_attributes(shape, slot).is_some_and(ShapeAttributes::slot_getter)
     }
 
     /// Records `entry` among the site's accessor entries: one for its receiver shape is
@@ -2360,6 +2369,9 @@ impl<H: Host> Vm<H> {
         } else {
             self.heap.ordinary_object(cache.holder)?
         };
+        if cache.getter_in_slot {
+            return self.heap.property_get(holder, usize::from(cache.slot));
+        }
         self.slot_attributes(holder, usize::from(cache.slot))?.getter
     }
 

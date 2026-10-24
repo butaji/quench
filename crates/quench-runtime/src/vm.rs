@@ -678,6 +678,10 @@ struct AccessorFieldCache {
     /// own slot each receiver of the shape fills with its own accessor.
     holder: Value,
     slot: u16,
+    /// Whether the holder's shape keeps the getter in the slot itself
+    /// (`ShapeAttributes::slot_getter`): the shape the entry proves (the receiver's for
+    /// `OWN_ACCESSOR`, else the prototype holder's, which the epoch covers) fixes it.
+    getter_in_slot: bool,
     /// The `prototype_layout_epoch` the chain was proved under.
     epoch: u64,
 }
