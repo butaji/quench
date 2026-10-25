@@ -376,6 +376,21 @@ impl ValueArena {
         }
     }
 
+    /// The address of an initialized flat slot, for a native no-allocation region that holds
+    /// the owning object rooted and stores only non-reference values until it exits.
+    ///
+    /// # Safety
+    /// `vector` is a non-inline, non-dictionary vector and `index` is initialized. The caller
+    /// must prevent any arena reallocation, collection, or competing access until the pointer
+    /// is no longer used.
+    #[inline(always)]
+    pub(crate) unsafe fn flat_mut_ptr_unchecked(&mut self, vector: ValueVec, index: usize) -> *mut Value {
+        debug_assert!(!vector.has_inline_property_storage() && !vector.is_dictionary());
+        debug_assert!(index < self.len(vector));
+        // SAFETY: caller provides the same initialized-range invariant as get.
+        unsafe { self.values.as_mut_ptr().add(vector.start() + index) }
+    }
+
     /// Append `value` past `vector`'s values, which an add of one property makes. Inline:
     /// an append that fits its range is the store alone; growing is out of line.
     #[inline(always)]

@@ -3193,6 +3193,60 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// The raw address for a warmed, own-data store site whose exact receiver shape still
+    /// matches. Shared OSR uses this only for Number values in a region that cannot allocate,
+    /// collect, or call guest code; misses stay on the interpreter path before the store.
+    ///
+    /// # Safety
+    /// The caller must keep `object` rooted and must use the returned pointer only during the
+    /// current no-allocation OSR run. It may write only non-reference values; heap references
+    /// require the collector's write barrier.
+    #[inline(always)]
+    pub(super) unsafe fn cached_field_store_pointer(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        site: u16,
+    ) -> Option<*mut Value> {
+        if !(self.specialized && p.specialized)
+            || self.is_private_name(atom)
+            || !self.field_cache_atom_eligible(atom)
+            || self.method_caches_may_name(atom)
+        {
+            return None;
+        }
+        let data = self.heap.object(object)?;
+        if data.is_module_namespace() || data.is_arguments_object() {
+            return None;
+        }
+        let properties = data.properties();
+        if properties.has_inline_property_storage() || properties.is_dictionary() {
+            return None;
+        }
+        let cache = self.field_cache_entry(site);
+        if cache.holder != NO_FIELD_HOLDER || cache.receiver != data.shape() {
+            return None;
+        }
+        let slot = cache.slot as usize;
+        // Integrity changes can update descriptor attributes without changing the
+        // receiver's shape. Recheck the current own descriptor before bypassing the
+        // ordinary SetField path, which must observe read-only and accessor semantics.
+        if self.property_shape_slot(data.shape(), PropertyKey::string(atom)) != Some(slot)
+            || !self
+                .property_attributes(object, PropertyKey::string(atom))
+                .is_some_and(|attributes| attributes.writable && !attributes.accessor)
+        {
+            return None;
+        }
+        // SAFETY: the exact own-data cache shape proves this slot. The caller guarantees the
+        // pointer does not outlive the no-allocation native region and applies the owner's
+        // write barrier before native code may store a tagged value through it.
+        let pointer = unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot) }?;
+        self.heap.write_barrier(object);
+        Some(pointer)
+    }
+
     /// Increment or decrement a cached own writable Number field without
     /// falling through the ordinary get/coerce/set bytecodes. The successful
     /// own-field load and strict-store caches prove the shape, data descriptor,

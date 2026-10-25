@@ -1,10 +1,12 @@
-//! The loop tier: Cranelift code for a hot loop whose body makes no call and allocates
-//! nothing, entered at its backward jump in compiled execution.
+//! The loop tier: Cranelift code for a hot loop's supported body, entered at its backward
+//! jump in compiled execution. An effectful call ends a native prefix; the lane resumes at
+//! the call and returns to the loop tier at the next backward jump.
 //!
-//! A region is a loop's instructions, header to backward jump, every one of which reads and
-//! writes Numbers in registers, depth-0 captures and dense elements of record arrays: it
-//! reads present elements, and stores below an array's length or appends at it within the
-//! capacity its backing already has.
+//! A region is the loop's instructions, header to backward jump, or the supported prefix
+//! before its first dynamic call. Its native instructions read and write Numbers in
+//! registers, depth-0 captures and dense elements of record arrays: it reads present
+//! elements, and stores below an array's length or appends at it within the capacity its
+//! backing already has.
 //! Native code keeps each Number register in an SSA value: an `i32` where every value it
 //! takes is one (`representations`), else an `f64`. Registers are the
 //! interpreter's state at every instruction boundary the code leaves at, so leaving is
@@ -21,7 +23,7 @@
 //! - every backward jump polls host termination, exiting at the jump so the interpreter's
 //!   safepoint runs.
 //!
-//! Nothing in a region allocates, collects, or runs guest code, so the arrays, their
+//! Nothing in a native region allocates, collects, or runs guest code, so the arrays, their
 //! element storage and the captures the entry read stay as they are while native code runs.
 
 use crate::bytecode::{
@@ -48,6 +50,7 @@ const MAX_REGION_REGISTERS: usize = 128;
 const MAX_REGION_ARRAYS: usize = 8;
 const MAX_REGION_CAPTURES: usize = 16;
 const MAX_REGION_FIELDS: usize = 16;
+const MAX_REGION_FIELD_STORES: usize = 16;
 /// The largest native body a region may produce.
 pub(super) const MAX_CODE_BYTES: usize = 64 * 1024;
 
@@ -150,6 +153,9 @@ pub(crate) struct ArrayUse {
 /// A loop's admissible region and the facts its entry needs.
 pub(crate) struct LoopRegion {
     pub(crate) header: u32,
+    /// Last instruction lowered in this region. A dynamic call can end a guarded prefix
+    /// before the loop's actual backedge; control resumes at that call in the interpreter.
+    end: u32,
     pub(crate) backedge: u32,
     /// The Number registers; a register's index here names its entry definition (`Webs`).
     numbers: Vec<Register>,
@@ -166,6 +172,10 @@ pub(crate) struct LoopRegion {
     pub(crate) fields: Vec<FieldUse>,
     /// The field each `GetField` of the region reads, by offset from the header.
     field_reads: std::collections::BTreeMap<u32, usize>,
+    /// Existing own-data Number slots stored by the region, by offset from its header.
+    field_stores: std::collections::BTreeMap<u32, usize>,
+    /// Receivers and cache sites whose flat slots are guarded before native entry.
+    pub(crate) field_store_sites: Vec<FieldStore>,
     /// The registers that hold a field's value at every read (`held_registers`), with the
     /// path they hold and that field's index.
     held: std::collections::BTreeMap<Register, (FieldPath, usize)>,
@@ -194,6 +204,7 @@ pub(crate) enum RegionRejection {
     CaptureLimit,
     ArrayLimit,
     FieldLimit,
+    FieldStoreLimit,
     FieldMutation,
 }
 
@@ -353,6 +364,13 @@ pub(crate) struct FieldUse {
     pub(crate) atom: crate::bytecode::Atom,
     pub(crate) cache_site: u16,
     pub(crate) tagged: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FieldStore {
+    pub(crate) receiver: Register,
+    pub(crate) atom: crate::bytecode::Atom,
+    pub(crate) cache_site: u16,
 }
 
 #[derive(Clone, Copy)]
@@ -576,7 +594,9 @@ fn object_reads(instruction: WideInstruction) -> Option<Register> {
             _ => None,
         },
         Op::GetIndex => instruction.operand_b().register_index(),
-        Op::SetIndex | Op::RequireObjectCoercible => Some(instruction.register_b()),
+        Op::SetIndex | Op::SetField | Op::SetFieldStrict | Op::RequireObjectCoercible => {
+            Some(instruction.register_b())
+        }
         _ => None,
     }
 }
@@ -896,6 +916,7 @@ pub(super) fn inline_region<'a>(
     }
     let receivers = calls.values().map(|site| site.frame.receiver).collect();
     let header_live = masks.first().copied();
+    let backedge = header + instructions.len() as u32 - 1;
     let mut region = admit_region(
         instructions,
         total as usize,
@@ -905,6 +926,7 @@ pub(super) fn inline_region<'a>(
         header_live,
         header,
         &receivers,
+        backedge,
     )
     .ok()?;
     // Each callee's field, which the entry reads and guards still holds it, read through
@@ -988,9 +1010,9 @@ impl LoopRegion {
 }
 
 /// The entry record native code reads: each capture's value, then each cached field's,
-/// then each array's element pointer, length and capacity. Only the words pushed are ever
-/// read, by native code and by `captures` and `field_value`, so the rest stay
-/// uninitialized.
+/// then each array's element pointer, length and capacity, then each guarded field-store
+/// pointer. Only the words pushed are ever read, by native code and by `captures` and
+/// `field_value`, so the rest stay uninitialized.
 pub(crate) struct LoopEntry {
     words: [std::mem::MaybeUninit<u64>; ENTRY_WORDS],
     length: usize,
@@ -1010,10 +1032,16 @@ const WORD_BYTES: i32 = 8;
 /// An array's entry words: its element pointer, its length, then its capacity (which only
 /// a written array's appends read).
 const ARRAY_WORDS: usize = 3;
+const FIELD_STORE_WORDS: usize = 1;
 /// The scratch registers' address an inlining region's record ends with.
 const SCRATCH_WORDS: usize = 1;
 const ENTRY_WORDS: usize =
-    ENTRY_CAPTURES + MAX_REGION_CAPTURES + ARRAY_WORDS * MAX_REGION_ARRAYS + MAX_REGION_FIELDS + SCRATCH_WORDS;
+    ENTRY_CAPTURES
+        + MAX_REGION_CAPTURES
+        + ARRAY_WORDS * MAX_REGION_ARRAYS
+        + MAX_REGION_FIELDS
+        + FIELD_STORE_WORDS * MAX_REGION_FIELD_STORES
+        + SCRATCH_WORDS;
 
 impl LoopEntry {
     pub(crate) fn new() -> Self {
@@ -1063,6 +1091,11 @@ impl LoopEntry {
         self.push(length as u64);
         self.push(capacity.min(MAX_INDEXED_LENGTH) as u64);
         Some(())
+    }
+
+    /// A warmed own-data field slot guarded by the VM during entry setup.
+    pub(crate) fn push_field_store(&mut self, slot: *mut Value) {
+        self.push(slot.addr() as u64);
     }
 
     /// The value of the region's `index`th field as pushed: its word follows the captures
@@ -1224,8 +1257,8 @@ impl Admission<'_> {
     }
 }
 
-/// The region of the loop from `header` to its backward jump at `backedge`, when every
-/// instruction in it is one the tier lowers.
+/// The region of the loop from `header` to its backward jump at `backedge`, or the supported
+/// prefix before its first call, when every included instruction is one the tier lowers.
 pub(super) fn region(
     function: &Function,
     decoded: &[WideInstruction],
@@ -1240,8 +1273,19 @@ pub(super) fn region(
         return Err(RegionRejection::RegionTooLarge);
     }
     let header_live = live.and_then(|live| live.get(start));
+    // Dynamic calls are effect boundaries. Compile the supported prefix before the first
+    // call and resume the interpreter at that exact PC. The interpreter reaches this
+    // region again at the loop backedge, so the prefix remains useful across iterations.
+    // Branches that skip the call naturally resume at their exact target.
+    let mut prefix_end = end;
+    if let Some(call) = decoded[start..=end].iter().position(|instruction| instruction.op() == Op::Call) {
+        if call == 0 {
+            return Err(RegionRejection::UnsupportedInstruction(Op::Call));
+        }
+        prefix_end = start + call - 1;
+    }
     admit_region(
-        decoded[start..=end].to_vec(),
+        decoded[start..=prefix_end].to_vec(),
         usize::from(function.registers),
         constants,
         sites,
@@ -1249,6 +1293,7 @@ pub(super) fn region(
         header_live,
         header,
         &std::collections::BTreeSet::new(),
+        backedge,
     )
 }
 
@@ -1266,8 +1311,9 @@ fn admit_region(
     header_live: Option<RegisterSet>,
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
+    backedge: u32,
 ) -> Result<LoopRegion, RegionRejection> {
-    let backedge = header + instructions.len() as u32 - 1;
+    let end = header + instructions.len() as u32 - 1;
     let paths = held_registers(&instructions, sites, header_live, objects);
     let mut tagged = tagged_registers(&instructions, constants, &objects.iter().chain(paths.keys()).copied().collect())
         .ok_or(RegionRejection::UnsupportedInstruction(Op::JumpBinaryFalse))?;
@@ -1282,16 +1328,49 @@ fn admit_region(
         field_arrays: std::collections::BTreeMap::new(),
     };
     let mut field_reads = std::collections::BTreeMap::new();
+    let mut field_stores = std::collections::BTreeMap::new();
+    let mut field_store_sites = Vec::new();
+    let defined_registers: std::collections::BTreeSet<Register> = instructions
+        .iter()
+        .filter_map(|instruction| instruction.defined_register())
+        .collect();
     for (offset, instruction) in instructions.iter().copied().enumerate() {
         if instruction.op() == Op::GetField {
             let path = field_path(instruction, sites, &paths).ok_or(RegionRejection::UnsupportedInstruction(Op::GetField))?;
             let index = intern_field(&mut admission.fields, &path, tagged.contains(&instruction.result_register()));
             field_reads.insert(offset as u32, index);
         }
+        if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict) {
+            if instruction.result_flags() != 0 || instruction.returns_from_frame() {
+                return Err(RegionRejection::UnsupportedInstruction(instruction.op()));
+            }
+            let receiver = instruction.register_b();
+            let atom = instruction.atom_index();
+            let cache_site = instruction.cache_site_index();
+            // A cached read of this atom could otherwise keep using its entry value after a
+            // native store. Be conservative about aliases: reject every same-name read in
+            // this small region.
+            if instructions.iter().any(|candidate| {
+                candidate.op() == Op::GetField && candidate.atom_index() == atom
+            }) {
+                return Err(RegionRejection::FieldMutation);
+            }
+            // The slot pointer is captured at entry. The receiver must therefore stay in its
+            // tagged register for the entire region.
+            if instructions.iter().any(|candidate| candidate.defined_register() == Some(receiver)) {
+                return Err(RegionRejection::FieldMutation);
+            }
+            let site = FieldStore { receiver, atom, cache_site };
+            let index = field_store_sites.iter().position(|existing| *existing == site).unwrap_or_else(|| {
+                field_store_sites.push(site);
+                field_store_sites.len() - 1
+            });
+            field_stores.insert(offset as u32, index);
+        }
         if let Some(register) = object_reads(instruction).filter(|register| paths.contains_key(register)) {
             admission.field_arrays.entry(register).or_insert(false);
         }
-        admit(&mut admission, instruction, constants, &tagged)
+        admit(&mut admission, instruction, constants, &tagged, &defined_registers)
             .ok_or(RegionRejection::UnsupportedInstruction(instruction.op()))?;
     }
     let held: std::collections::BTreeMap<Register, (FieldPath, usize)> = paths
@@ -1311,11 +1390,13 @@ fn admit_region(
     if admission.fields.len() > MAX_REGION_FIELDS {
         return Err(RegionRejection::FieldLimit);
     }
+    if field_store_sites.len() > MAX_REGION_FIELD_STORES {
+        return Err(RegionRejection::FieldStoreLimit);
+    }
     // A field read holds the value its receiver had at entry, so no instruction may give a
-    // receiver register another value. Element stores cannot change one: a store writes an
-    // own data element below the length or at it (`Lowering::store_index`), which adds,
-    // removes or redefines no property a field cache holds (an array's `length` is no
-    // shape slot).
+    // receiver register another value. Element stores and admitted field stores preserve
+    // receiver registers and object shapes. A field store to any name read in the region was
+    // rejected above, so it cannot stale a cached field value.
     if admission.fields.iter().any(|field| match field.receiver {
         FieldReceiver::This | FieldReceiver::Field(_) => false,
         FieldReceiver::Register(register) => instructions
@@ -1367,6 +1448,7 @@ fn admit_region(
     }
     Ok(LoopRegion {
         header,
+        end,
         backedge,
         numbers,
         tagged,
@@ -1374,6 +1456,8 @@ fn admit_region(
         captures: admission.captures,
         fields: admission.fields,
         field_reads,
+        field_stores,
+        field_store_sites,
         held,
         identity_branches,
         instructions,
@@ -1389,6 +1473,7 @@ fn admit(
     instruction: WideInstruction,
     constants: &[Value],
     tagged: &std::collections::BTreeSet<Register>,
+    defined_registers: &std::collections::BTreeSet<Register>,
 ) -> Option<()> {
     match instruction.op() {
         Op::LoadConst => {
@@ -1460,6 +1545,17 @@ fn admit(
             admission.number(instruction.register_a())?;
             admission.array(instruction.register_b(), true)?;
             admission.number(instruction.register_c())?;
+        }
+        Op::SetField | Op::SetFieldStrict => {
+            let value_register = instruction.register_a();
+            if defined_registers.contains(&value_register) {
+                admission.number(value_register)?;
+            } else {
+                // An unchanged entry value can be any tagged value. The VM logs the
+                // receiver in the generational barrier before native writes begin.
+                admission.tagged(value_register)?;
+            }
+            admission.tagged(instruction.register_b())?;
         }
         Op::Jump => {}
         Op::JumpBinaryFalse => {
@@ -1625,7 +1721,7 @@ fn webs(region: &LoopRegion) -> Webs {
     use std::collections::{BTreeMap, BTreeSet};
     let count = region.instructions.len();
     let entries = region.entry_count();
-    let inside = |pc: u32| (region.header..=region.backedge).contains(&pc);
+    let inside = |pc: u32| (region.header..=region.end).contains(&pc);
     let mut reaching: Vec<BTreeMap<Register, BTreeSet<Definition>>> = vec![BTreeMap::new(); count];
     for (index, register) in region.entry_registers().enumerate() {
         reaching[0].entry(register).or_default().insert(index);
@@ -2158,7 +2254,7 @@ fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representati
     }
     // A web no definition reached holds nothing; it is taken to hold any `i32`.
     let ranges: Vec<Option<Range>> = ranges.into_iter().map(|range| Some(range.unwrap_or(INT32_RANGE))).collect();
-    let inside = |pc: u32| (region.header..=region.backedge).contains(&pc);
+    let inside = |pc: u32| (region.header..=region.end).contains(&pc);
     let written_back: std::collections::BTreeSet<Definition> = webs
         .leaves
         .iter()
@@ -2271,7 +2367,7 @@ fn counted_loops(
     representations: &[Representation],
     captures: &[Representation],
 ) -> Vec<CountedLoop> {
-    (region.header..=region.backedge)
+    (region.header..=region.end)
         .filter_map(|backedge| {
             let instruction = region.instructions[(backedge - region.header) as usize];
             (instruction.op() == Op::Jump).then_some(())?;
@@ -2309,7 +2405,7 @@ fn counted_loop(
     }
     let test = test?;
     // Control enters only at the header.
-    let enters_inside = (region.header..=region.backedge).any(|pc| {
+    let enters_inside = (region.header..=region.end).any(|pc| {
         let instruction = at(pc);
         matches!(
             instruction.op(),
@@ -2645,14 +2741,14 @@ struct Lowering<'a, 'b> {
 fn straight_pcs(region: &LoopRegion, counted: &[CountedLoop]) -> Vec<bool> {
     let count = region.instructions.len();
     let mut predecessors = vec![Vec::new(); count];
-    for pc in region.header..=region.backedge {
+    for pc in region.header..=region.end {
         for successor in successors(region, pc) {
-            if (region.header..=region.backedge).contains(&successor) {
+            if (region.header..=region.end).contains(&successor) {
                 predecessors[(successor - region.header) as usize].push(pc);
             }
         }
     }
-    (region.header..=region.backedge)
+    (region.header..=region.end)
         .map(|pc| {
             pc != region.header
                 && !counted.iter().any(|counted| counted.header == pc)
@@ -2694,7 +2790,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let &[context, registers, _, entry, result] = builder.block_params(start) else {
             unreachable!("the entry signature has five parameters")
         };
-        let blocks = (region.header..=region.backedge).map(|_| builder.create_block()).collect();
+        let blocks = (region.header..=region.end).map(|_| builder.create_block()).collect();
         let straight = straight_pcs(region, &counted);
         let preheaders = counted.iter().map(|_| builder.create_block()).collect();
         let proved_blocks = counted
@@ -2753,7 +2849,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         frontend: cranelift_codegen::isa::TargetFrontendConfig,
     ) -> Option<std::collections::BTreeMap<u32, Widening>> {
         self.enter()?;
-        for pc in self.region.header..=self.region.backedge {
+        for pc in self.region.header..=self.region.end {
             let block = self.block(pc)?;
             self.enter_instruction(pc, block);
             self.pc = pc;
@@ -2794,7 +2890,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     fn block(&self, pc: u32) -> Option<ir::Block> {
-        (self.region.header..=self.region.backedge)
+        (self.region.header..=self.region.end)
             .contains(&pc)
             .then(|| self.blocks[(pc - self.region.header) as usize])
     }
@@ -2961,6 +3057,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .load(types::I64, flags(), self.entry, index as i32 * WORD_BYTES)
     }
 
+    fn field_store_pointer(&mut self, index: usize) -> ir::Value {
+        let start = ENTRY_CAPTURES
+            + self.region.captures.len()
+            + self.region.fields.len()
+            + ARRAY_WORDS * self.region.arrays.len();
+        self.word(start + index)
+    }
+
     /// A block laid out after the hot code: an exit, or a representation a region rarely
     /// meets.
     fn cold_block(&mut self) -> ir::Block {
@@ -3025,9 +3129,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.fields.push(Typed { value, representation });
         }
         if let Some(inlining) = &self.region.inlining {
-            // The scratch registers' address follows the arrays; each inlined callee is still
-            // the function its field held when the region was made.
-            self.scratch = Some(self.word(arrays_start + ARRAY_WORDS * self.region.arrays.len()));
+            // The scratch registers' address follows arrays and field-store slots; each
+            // inlined callee is still the function its field held when the region was made.
+            self.scratch = Some(self.word(
+                arrays_start
+                    + ARRAY_WORDS * self.region.arrays.len()
+                    + self.region.field_store_sites.len(),
+            ));
             for frame in inlining.frames.clone() {
                 let held = self.fields[frame.field].value;
                 let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, held, frame.callee.to_bits() as i64);
@@ -3950,6 +4058,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let value = self.register(instruction.register_a());
                 let bits = self.encoding(value);
                 self.body.builder.ins().store(flags(), bits, address, displacement);
+                self.fall_through(pc)
+            }
+            Op::SetField | Op::SetFieldStrict => {
+                let index = *self.region.field_stores.get(&(pc - self.region.header))?;
+                let pointer = self.field_store_pointer(index);
+                let value = self.register(instruction.register_a());
+                let bits = self.boxed(value);
+                self.body.builder.ins().store(flags(), bits, pointer, 0);
                 self.fall_through(pc)
             }
             Op::Jump => self.jump(pc, instruction.jump_target()),
