@@ -1,8 +1,8 @@
-# Linux no-JIT matrix with short-process RSS sampling
+# Linux 11-round package matrix (no-JIT and JIT)
 
-Diagnostic 11-round refresh of the complete package no-JIT matrix after the
-runner's process-tree traversal and 5 ms RSS sampling change. Every raw report
-has `qualificationReady: false`; these results are not gate passes.
+Diagnostic 11-round refresh of the complete package matrix after the runner's
+process-tree traversal and 5 ms RSS sampling change. Every raw report has
+`qualificationReady: false`; these results are not gate passes.
 
 ## Exact inputs
 
@@ -20,7 +20,7 @@ has `qualificationReady: false`; these results are not gate passes.
   completed. The report schema retains per-round commands, hashes, environment,
   throughput and RSS details.
 
-## Results
+## No-JIT results
 
 The unchanged gate requires Quench to reach at least 1.20× the fastest valid
 peer's throughput and at most 0.80× the lowest valid peer's maximum RSS in each
@@ -52,3 +52,29 @@ directory. It confirms that Quench's severe Fastify HTTP gap is present in the
 generic transport path; transport implementation belongs to the web-runtime
 lane. Zod/Pino OSR fixtures remain prerequisites for the shared JIT owner and
 do not claim performance wins.
+
+## JIT results
+
+These reports use the same Quench production binary hash and package inputs,
+with `--jit` enabled for Quench and normal JIT-enabled Node/Bun. They passed
+output parity but remain diagnostic for process-tree RSS.
+
+| Workload | Quench ops/s | Fastest peer ops/s | Speed ratio | Quench root HWM | Lowest peer root HWM | RSS ratio | Quench JIT / interpreter |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| esbuild transform | 417 | 1,854 (Bun) | 0.225 | 40.0 MiB | 57.1 MiB | 0.700 | 1.00× |
+| Fastify JSON HTTP | 200 | 30,121 (Bun) | 0.007 | 48.0 MiB | 77.8 MiB | 0.617 | 1.00× |
+| Fastify JSON inject | 5,663 | 67,568 (Bun) | 0.084 | 46.7 MiB | 83.8 MiB | 0.557 | 1.03× |
+| Next route match | 175,439 | 1,000,000 (Bun) | 0.175 | 18.8 MiB | 38.1 MiB | 0.492 | 1.02× |
+| Pino JSON logger | 58,140 | 416,667 (Bun) | 0.140 | 30.5 MiB | 42.6 MiB | 0.717 | 0.98× |
+| React SSR | 1,357 | 40,650 (Node) | 0.033 | 28.2 MiB | 49.6 MiB | 0.567 | 0.98× |
+| sharp resize concurrent | 907 | 966 (Node) | 0.938 | 51.2 MiB | 72.3 MiB | 0.708 | 1.05× |
+| Undici pool | 4,484 | 43,860 (Bun) | 0.102 | 41.3 MiB | 88.0 MiB | 0.469 | 1.01× |
+| Vite transform | 20,161 | 70,423 (Bun) | 0.286 | 55.9 MiB | 74.3 MiB | 0.752 | 1.00× |
+| WebSocket echo | 9,524 | 166,667 (Bun) | 0.057 | 31.2 MiB | 37.7 MiB | 0.827 | 0.99× |
+| Zod parse | 106,383 | 869,565 (Bun) | 0.122 | 22.2 MiB | 52.0 MiB | 0.427 | 0.97× |
+
+Quench's existing JIT is within about 5% of its interpreter on every package
+row and misses the ≥1.20× fastest-peer throughput gate on all 11 JIT rows. This
+is direct evidence that these hot package paths are not reaching profitable
+native coverage. Every root-HWM ratio below 0.80 remains diagnostic until
+descendant RSS qualification is complete.
