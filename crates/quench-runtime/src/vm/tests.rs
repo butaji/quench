@@ -11947,7 +11947,7 @@ print(t);
         // call still runs out of line.
         let calls = 2000 * 30;
         assert!(
-            callee.native_region_runs * 4 < calls,
+            callee.native_region_runs * 40 < calls,
             "am3 ran out of line under {policy:?}: {callee:?} against {caller:?}"
         );
     }
