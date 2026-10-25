@@ -4400,6 +4400,13 @@ pub(super) struct JsEntryFacts {
 }
 
 impl JsEntryFacts {
+    /// Whether every fact is unset (`Self::default`): a function that does not enter
+    /// (`enters` false, so neither a candidate) keeps only its general-baseline shape
+    /// (`of`), and `general_acyclic` implies `general`.
+    pub(super) const fn is_unset(&self) -> bool {
+        !self.enters && !self.general
+    }
+
     pub(super) fn of(program: &ResidualProgram, function: &Function) -> Self {
         let numeric_find = numeric_find_candidate(function);
         let field_increment = cached_this_field_increment_candidate(program, function);
