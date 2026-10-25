@@ -2872,7 +2872,7 @@ impl ProgramStore {
     pub(super) fn lane_program(
         &self,
         id: ProgramId,
-    ) -> Option<(&ResidualProgram, &[std::cell::OnceCell<super::dispatch_fast::LaneView>], &[Value])> {
+    ) -> Option<(&ResidualProgram, &[LaneViewCell], &[Value])> {
         let entry = self.entry(id)?;
         Some((&entry.residual, entry.lane_views.of(&entry.residual), entry.constants.as_slice()))
     }
@@ -2880,7 +2880,7 @@ impl ProgramStore {
     pub(super) fn lane_views(
         &self,
         id: ProgramId,
-    ) -> Option<&[std::cell::OnceCell<super::dispatch_fast::LaneView>]> {
+    ) -> Option<&[LaneViewCell]> {
         let entry = self.entry(id)?;
         Some(entry.lane_views.of(&entry.residual))
     }
@@ -2905,7 +2905,7 @@ impl ProgramStore {
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
         let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
-        if let Some(view) = view.get() {
+        if let Some(view) = derived_lane_view(view) {
             return Some(view);
         }
         let code = entry.residual.function_get(function as usize)?;
@@ -2921,8 +2921,9 @@ impl ProgramStore {
                 let (start, end) = view.record_range();
                 super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
             }
-            view
+            Box::new(view)
         }))
+        .map(|view| &**view as *const _)
     }
 
     /// Whether a lane call may derive `function`'s view now: it has one, or its earlier entries
@@ -2965,8 +2966,9 @@ impl ProgramStore {
                 let (start, end) = view.record_range();
                 super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
             }
-            view
+            Box::new(view)
         }))
+        .map(|view| &**view as *const _)
     }
 
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
@@ -3478,18 +3480,28 @@ fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
 /// or loads never enter the lane, and a table zeroed for each of their functions cost a
 /// restored process about 54 fresh pages (2,493 functions at 88 bytes).
 #[derive(Default)]
-pub(super) struct LaneViews(std::cell::OnceCell<Box<[std::cell::OnceCell<super::dispatch_fast::LaneView>]>>);
+pub(super) struct LaneViews(std::cell::OnceCell<Box<[LaneViewCell]>>);
+
+/// One function's lane view, boxed: a table holds a cell for every function of its program,
+/// and most never run (fastify's JSON route over HTTP, memory-first, 2026-10-25: about 12,800
+/// functions in its programs, whose 88-byte cells were 1.1 MB at the peak).
+pub(super) type LaneViewCell = std::cell::OnceCell<Box<super::dispatch_fast::LaneView>>;
+
+/// The view a cell holds, if its function's was derived.
+pub(super) fn derived_lane_view(cell: &LaneViewCell) -> Option<&super::dispatch_fast::LaneView> {
+    cell.get().map(|view| &**view)
+}
 
 impl LaneViews {
     /// The table, one cell per function of `residual`. Its address is fixed once made, as
     /// the lane context's pointer to it requires.
-    fn of(&self, residual: &ResidualProgram) -> &[std::cell::OnceCell<super::dispatch_fast::LaneView>] {
+    fn of(&self, residual: &ResidualProgram) -> &[LaneViewCell] {
         self.0.get_or_init(|| residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect())
     }
 
     /// `function`'s view if it has one, without making the table.
     fn derived(&self, function: u32) -> Option<&super::dispatch_fast::LaneView> {
-        self.0.get()?.get(function as usize)?.get()
+        derived_lane_view(self.0.get()?.get(function as usize)?)
     }
 }
 
