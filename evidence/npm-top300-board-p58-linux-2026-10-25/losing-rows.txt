@@ -1,0 +1,12 @@
+MODE n losses 24
+  bun-threads(cpu<=bun): 9  wall:playwright 1.25x(393/314), wall:schema-utils 1.19x(179/151), wall:axios 1.17x(94/80), wall:vitest 1.10x(475/431), wall:baseline-browser-mapping 1.06x(52/49), wall:@babel/helper-module-transforms 1.06x(152/144), wall:ajv 1.05x(96/91), wall:semver 1.04x(83/80), wall:typescript-eslint 1.02x(676/663)
+  declarations-child: 9  wall:undici-types 1.09x(343/316), rss:@eslint/core 1.02x(46/45), rss:type-fest 1.02x(54/53), rss:@types/node 1.01x(72/72), rss:@types/json-schema 1.01x(45/44), rss:@types/react 1.00x(54/54), wall:type-fest 1.00x(248/247), rss:@types/babel__template 1.00x(54/53), rss:@types/chai 1.00x(46/45)
+  noise(<3%): 2  rss:typescript 1.00x(42/42), wall:node-fetch 1.00x(40/40)
+  single-thread: 1  wall:color-convert 1.42x(79/56)
+  structural-builtin: 3  wall:jiti 2.29x(130/57), wall:undici 2.17x(88/41), rss:jiti 1.10x(39/35)
+MODE j losses 28
+  bun-threads(cpu<=bun): 8  wall:semver 1.30x(93/72), wall:schema-utils 1.23x(177/144), wall:@typescript-eslint/eslint-plugin 1.09x(691/632), wall:ajv 1.04x(92/89), wall:ajv-formats 1.04x(102/98), wall:whatwg-url 1.03x(91/88), wall:vitest 1.01x(424/418), wall:ajv-keywords 1.00x(108/107)
+  declarations-child: 11  wall:type-fest 1.04x(254/243), wall:@types/babel__template 1.03x(240/232), wall:@types/yargs 1.01x(221/219), rss:@types/ws 1.01x(72/71), wall:@types/ws 1.01x(320/319), rss:@types/node 1.01x(73/72), rss:@types/react-dom 1.00x(54/54), rss:@types/json-schema 1.00x(45/45), rss:@types/ms 1.00x(45/44), rss:@types/yargs 1.00x(46/45), wall:@types/react-dom 1.00x(233/233)
+  noise(<3%): 1  wall:@aws-sdk/signature-v4-multi-region 1.02x(46/46)
+  single-thread: 6  wall:ws 1.50x(46/31), wall:baseline-browser-mapping 1.44x(69/48), wall:playwright 1.43x(410/286), wall:color-convert 1.41x(82/58), wall:nanoid 1.17x(36/31), wall:node-fetch 1.09x(42/38)
+  structural-builtin: 2  wall:jiti 2.71x(125/46), wall:undici 2.19x(86/39)
