@@ -474,7 +474,7 @@ impl FunctionCompiler<'_, '_> {
 
     fn throw_immutable_binding(&mut self, atom: Atom) {
         let _ = self.load_atom(atom);
-        let constructor = self.load_name("TypeError");
+        let constructor = self.load_name(crate::bytecode::INTRINSIC_TYPE_ERROR_BINDING);
         let message = self.literal(Constant::String(ASSIGNMENT_TO_CONSTANT.into()));
         let argument = self.reg();
         self.emit(Op::Move, argument, message, 0, 0);
