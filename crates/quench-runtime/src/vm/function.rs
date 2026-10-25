@@ -367,6 +367,32 @@ impl<H: Host> Vm<H> {
         None
     }
 
+    /// `forwarded_call` of a call whose `args` the caller owns, as an applied list's copied
+    /// elements: a bound function's bound arguments then lead the values it passes on
+    /// (ECMA-262 10.4.1.1), which `forwarded_call` leaves to the original call.
+    pub(super) fn forwarded_list_call<const N: usize>(
+        &self,
+        mut callee: Value,
+        mut receiver: Value,
+        mut args: smallvec::SmallVec<[Value; N]>,
+    ) -> Option<(Value, Value, smallvec::SmallVec<[Value; N]>)> {
+        for depth in 0..CALL_FORWARDING_DEPTH {
+            match self.heap.function(callee) {
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) => {
+                    let (target, this, bound) = self.bound_function_parts(*env)?;
+                    args.insert_many(0, bound.iter().copied());
+                    (callee, receiver) = (target, this);
+                }
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }) => {
+                    callee = receiver;
+                    receiver = if args.is_empty() { Value::UNDEFINED } else { args.remove(0) };
+                }
+                _ => return (depth != 0).then_some((callee, receiver, args)),
+            }
+        }
+        None
+    }
+
     /// A bound function's target, bound `this` and bound arguments, read from the
     /// environment object `Function.prototype.bind` made (`env`); `None` for any other.
     pub(super) fn bound_function_parts(&self, env: Value) -> Option<(Value, Value, &[Value])> {
