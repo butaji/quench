@@ -1,0 +1,528 @@
+{
+  "schema": 1,
+  "workload": "pino-json-logger",
+  "phase": "no-jit",
+  "runs": 5,
+  "qualificationReady": false,
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 5
+  },
+  "rssMeasurement": "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)",
+  "inputs": {
+    "workloadSha256": "762e4057912ade6e667f93c49daf88fd47fa041d3376a7e75bdae1a4e8ba615d",
+    "packageLockSha256": "92dbfcb2312b42ddf55a8f0b06c40368544ca4b5e861782ead6770268da3c1b0",
+    "quenchBinarySha256": "295e6bc1998ed260917db2b4be5d95d2046d0a185dea830dbf5fb056623120c3",
+    "nodeBinary": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "bunBinary": "/workspace/quench/work/bun/bun"
+  },
+  "nodeVersion": "v24.19.0",
+  "bunVersion": "1.4.2",
+  "summary": {
+    "quench-interpreter": {
+      "medianOperationsPerSecond": 61500.61500615006,
+      "medianElapsedMs": 813,
+      "medianMaximumRssBytes": 34111488
+    },
+    "node-jitless": {
+      "medianOperationsPerSecond": 135501.35501355014,
+      "medianElapsedMs": 369,
+      "medianMaximumRssBytes": 30953472
+    },
+    "bun-no-jit": {
+      "medianOperationsPerSecond": 106157.11252653928,
+      "medianElapsedMs": 471,
+      "medianMaximumRssBytes": 57483264
+    }
+  },
+  "output": {
+    "workload": "pino-json-logger",
+    "package": "pino@10.4.0",
+    "warmups": 5000,
+    "cases": [
+      "structured-json",
+      "request-serializer",
+      "redaction"
+    ],
+    "bytes": 11626550,
+    "checksum": 4265116
+  },
+  "samples": [
+    {
+      "engine": "quench-interpreter",
+      "round": 1,
+      "measurement": {
+        "workload": "pino-json-logger",
+        "package": "pino@10.4.0",
+        "rounds": 50000,
+        "warmups": 5000,
+        "cases": [
+          "structured-json",
+          "request-serializer",
+          "redaction"
+        ],
+        "bytes": 11626550,
+        "checksum": 4265116,
+        "elapsedMs": 808,
+        "operationsPerSecond": 61881.18811881188
+      },
+      "maxRssBytes": 34107392,
+      "wallTimeMs": 921.715643,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "50000",
+        "QUENCH_BENCH_WARMUPS": "5000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 1,
+      "measurement": {
+        "workload": "pino-json-logger",
+        "package": "pino@10.4.0",
+        "rounds": 50000,
+        "warmups": 5000,
+        "cases": [
+          "structured-json",
+          "request-serializer",
+          "redaction"
+        ],
+        "bytes": 11626550,
+        "checksum": 4265116,
+        "elapsedMs": 369,
+        "operationsPerSecond": 135501.35501355014
+      },
+      "maxRssBytes": 30953472,
+      "wallTimeMs": 445.17805,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "50000",
+        "QUENCH_BENCH_WARMUPS": "5000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "pino-json-logger",
+        "package": "pino@10.4.0",
+        "rounds": 50000,
+        "warmups": 5000,
+        "cases": [
+          "structured-json",
+          "request-serializer",
+          "redaction"
+        ],
+        "bytes": 11626550,
+        "checksum": 4265116,
+        "elapsedMs": 471,
+        "operationsPerSecond": 106157.11252653928
+      },
+      "maxRssBytes": 57384960,
+      "wallTimeMs": 539.389143,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun/bun",
+        "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "50000",
+        "QUENCH_BENCH_WARMUPS": "5000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 2,
+      "measurement": {
+        "workload": "pino-json-logger",
+        "package": "pino@10.4.0",
+        "rounds": 50000,
+        "warmups": 5000,
+        "cases": [
+          "structured-json",
+          "request-serializer",
+          "redaction"
+        ],
+        "bytes": 11626550,
+        "checksum": 4265116,
+        "elapsedMs": 361,
+        "operationsPerSecond": 138504.15512465374
+      },
+      "maxRssBytes": 30949376,
+      "wallTimeMs": 437.82472,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "50000",
+        "QUENCH_BENCH_WARMUPS": "5000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "pino-json-logger",
+        "package": "pino@10.4.0",
+        "rounds": 50000,
+        "warmups": 5000,
+        "cases": [
+          "structured-json",
+          "request-serializer",
+          "redaction"
+        ],
+        "bytes": 11626550,
+        "checksum": 4265116,
+        "elapsedMs": 472,
+        "operationsPerSecond": 105932.20338983051
+      },
+      "maxRssBytes": 57962496,
+      "wallTimeMs": 539.993441,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun/bun",
+        "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "50000",
+        "QUENCH_BENCH_WARMUPS": "5000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 2,
+      "measurement": {
+        "workload": "pino-json-logger",
+        "package": "pino@10.4.0",
+        "rounds": 50000,
+        "warmups": 5000,
+        "cases": [
+          "structured-json",
+          "request-serializer",
+          "redaction"
+        ],
+        "bytes": 11626550,
+        "checksum": 4265116,
+        "elapsedMs": 815,
+        "operationsPerSecond": 61349.69325153374
+      },
+      "maxRssBytes": 34111488,
+      "wallTimeMs": 927.545618,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "50000",
+        "QUENCH_BENCH_WARMUPS": "5000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "pino-json-logger",
+        "package": "pino@10.4.0",
+        "rounds": 50000,
+        "warmups": 5000,
+        "cases": [
+          "structured-json",
+          "request-serializer",
+          "redaction"
+        ],
+        "bytes": 11626550,
+        "checksum": 4265116,
+        "elapsedMs": 460,
+        "operationsPerSecond": 108695.65217391304
+      },
+      "maxRssBytes": 58404864,
+      "wallTimeMs": 524.922441,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun/bun",
+        "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "50000",
+        "QUENCH_BENCH_WARMUPS": "5000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 3,
+      "measurement": {
+        "workload": "pino-json-logger",
+        "package": "pino@10.4.0",
+        "rounds": 50000,
+        "warmups": 5000,
+        "cases": [
+          "structured-json",
+          "request-serializer",
+          "redaction"
+        ],
+        "bytes": 11626550,
+        "checksum": 4265116,
+        "elapsedMs": 813,
+        "operationsPerSecond": 61500.61500615006
+      },
+      "maxRssBytes": 34185216,
+      "wallTimeMs": 924.254512,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "50000",
+        "QUENCH_BENCH_WARMUPS": "5000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 3,
+      "measurement": {
+        "workload": "pino-json-logger",
+        "package": "pino@10.4.0",
+        "rounds": 50000,
+        "warmups": 5000,
+        "cases": [
+          "structured-json",
+          "request-serializer",
+          "redaction"
+        ],
+        "bytes": 11626550,
+        "checksum": 4265116,
+        "elapsedMs": 379,
+        "operationsPerSecond": 131926.12137203166
+      },
+      "maxRssBytes": 31219712,
+      "wallTimeMs": 456.215854,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "50000",
+        "QUENCH_BENCH_WARMUPS": "5000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 4,
+      "measurement": {
+        "workload": "pino-json-logger",
+        "package": "pino@10.4.0",
+        "rounds": 50000,
+        "warmups": 5000,
+        "cases": [
+          "structured-json",
+          "request-serializer",
+          "redaction"
+        ],
+        "bytes": 11626550,
+        "checksum": 4265116,
+        "elapsedMs": 826,
+        "operationsPerSecond": 60532.68765133172
+      },
+      "maxRssBytes": 34111488,
+      "wallTimeMs": 938.599496,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "50000",
+        "QUENCH_BENCH_WARMUPS": "5000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 4,
+      "measurement": {
+        "workload": "pino-json-logger",
+        "package": "pino@10.4.0",
+        "rounds": 50000,
+        "warmups": 5000,
+        "cases": [
+          "structured-json",
+          "request-serializer",
+          "redaction"
+        ],
+        "bytes": 11626550,
+        "checksum": 4265116,
+        "elapsedMs": 367,
+        "operationsPerSecond": 136239.78201634876
+      },
+      "maxRssBytes": 30953472,
+      "wallTimeMs": 445.743103,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "50000",
+        "QUENCH_BENCH_WARMUPS": "5000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "pino-json-logger",
+        "package": "pino@10.4.0",
+        "rounds": 50000,
+        "warmups": 5000,
+        "cases": [
+          "structured-json",
+          "request-serializer",
+          "redaction"
+        ],
+        "bytes": 11626550,
+        "checksum": 4265116,
+        "elapsedMs": 461,
+        "operationsPerSecond": 108459.86984815619
+      },
+      "maxRssBytes": 57401344,
+      "wallTimeMs": 527.055542,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun/bun",
+        "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "50000",
+        "QUENCH_BENCH_WARMUPS": "5000"
+      }
+    },
+    {
+      "engine": "node-jitless",
+      "round": 5,
+      "measurement": {
+        "workload": "pino-json-logger",
+        "package": "pino@10.4.0",
+        "rounds": 50000,
+        "warmups": 5000,
+        "cases": [
+          "structured-json",
+          "request-serializer",
+          "redaction"
+        ],
+        "bytes": 11626550,
+        "checksum": 4265116,
+        "elapsedMs": 378,
+        "operationsPerSecond": 132275.1322751323
+      },
+      "maxRssBytes": 30953472,
+      "wallTimeMs": 456.087724,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "50000",
+        "QUENCH_BENCH_WARMUPS": "5000"
+      }
+    },
+    {
+      "engine": "bun-no-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "pino-json-logger",
+        "package": "pino@10.4.0",
+        "rounds": 50000,
+        "warmups": 5000,
+        "cases": [
+          "structured-json",
+          "request-serializer",
+          "redaction"
+        ],
+        "bytes": 11626550,
+        "checksum": 4265116,
+        "elapsedMs": 495,
+        "operationsPerSecond": 101010.101010101
+      },
+      "maxRssBytes": 57483264,
+      "wallTimeMs": 563.280405,
+      "stderr": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "command": [
+        "/workspace/quench/work/bun/bun",
+        "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs"
+      ],
+      "effectiveEnvironment": {
+        "BUN_JSC_useJIT": "0",
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "50000",
+        "QUENCH_BENCH_WARMUPS": "5000"
+      }
+    },
+    {
+      "engine": "quench-interpreter",
+      "round": 5,
+      "measurement": {
+        "workload": "pino-json-logger",
+        "package": "pino@10.4.0",
+        "rounds": 50000,
+        "warmups": 5000,
+        "cases": [
+          "structured-json",
+          "request-serializer",
+          "redaction"
+        ],
+        "bytes": 11626550,
+        "checksum": 4265116,
+        "elapsedMs": 808,
+        "operationsPerSecond": 61881.18811881188
+      },
+      "maxRssBytes": 34111488,
+      "wallTimeMs": 919.977183,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "/workspace/quench/tests/npm-perf/workloads/pino-json-logger.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "50000",
+        "QUENCH_BENCH_WARMUPS": "5000"
+      }
+    }
+  ]
+}
