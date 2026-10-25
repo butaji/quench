@@ -9,7 +9,7 @@ impl<H: Host> Vm<H> {
     /// inheriting from `proto`, which runs no guest code; `None` when `proto` is neither an
     /// object nor `null`.
     pub(super) fn object_create(&mut self, proto: Value) -> Option<Value> {
-        if !proto.is_null() && self.object_data(proto).is_none() {
+        if !proto.is_null() && self.object_data(proto).is_none() && !self.is_wasm_gc_object(proto) {
             return None;
         }
         Some(self.heap.alloc(Cell::Object(Self::empty_object(proto))))
