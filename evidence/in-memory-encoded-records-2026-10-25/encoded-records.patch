@@ -1,0 +1,160 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 317380cf0..459f63c42 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -3453,6 +3453,15 @@ pub(crate) struct DeferredRecord {
+     pub(crate) checksum: u64,
+ }
+ 
++/// Appends `function`'s record to `bytes` as a deferred record of its program.
++pub(crate) fn append_function_record(
++    bytes: &mut Vec<u8>,
++    function: &Function,
++    superinstructions: &[Superinstruction],
++) -> DeferredRecord {
++    binary::append_function_record(bytes, function, superinstructions)
++}
++
+ /// Bytes a host kept for a compiled program (`Host::kept_compiled_program`), which the program
+ /// decoded from them keeps for as long as it lives.
+ pub type KeptBytes = std::rc::Rc<dyn AsRef<[u8]>>;
+@@ -3523,9 +3532,15 @@ impl ResidualProgram {
+                 .as_deref()
+                 .and_then(|records| binary::decode_deferred_function(records, index));
+             let function = match deferred {
+-                Some(decoded) => decoded.unwrap_or_else(|error| {
+-                    panic!("function {index} of {} does not decode: {error}", self.source_name)
+-                }),
++                Some(decoded) => {
++                    let mut function = decoded.unwrap_or_else(|error| {
++                        panic!("function {index} of {} does not decode: {error}", self.source_name)
++                    });
++                    // The function making this one may have named it after its record was
++                    // written; the header holds the name.
++                    function.inferred_name = self.functions[index].header().inferred_name;
++                    function
++                }
+                 None => crate::compile::replay::recompile(self, index as u32)
+                     .unwrap_or_else(|error| {
+                         panic!("function {index} of {} does not compile again: {error}", self.source_name)
+diff --git a/crates/quench-runtime/src/bytecode/binary.rs b/crates/quench-runtime/src/bytecode/binary.rs
+index 8f13b47dd..1f63e1ce8 100644
+--- a/crates/quench-runtime/src/bytecode/binary.rs
++++ b/crates/quench-runtime/src/bytecode/binary.rs
+@@ -1221,6 +1221,25 @@ pub(super) fn decode_deferred_function(
+     Some(read_function(&mut reader).and_then(|function| reader.finish().map(|()| function)))
+ }
+ 
++/// Appends `function`'s record to `bytes`, naming atoms by the program's own ids, as a
++/// deferred record that `decode_deferred_function` reads back.
++pub(super) fn append_function_record(
++    bytes: &mut Vec<u8>,
++    function: &Function,
++    superinstructions: &[super::Superinstruction],
++) -> super::DeferredRecord {
++    let mut out = BinaryWriter { bytes: std::mem::take(bytes), atoms: AtomEncoding::Program };
++    let start = out.bytes.len();
++    write_function(&mut out, function, superinstructions);
++    *bytes = out.bytes;
++    let record = &bytes[start..];
++    super::DeferredRecord {
++        start: u32::try_from(start).expect("deferred records fit u32 bytes"),
++        length: u32::try_from(record.len()).expect("a function record fits u32 bytes"),
++        checksum: compact_checksum(record),
++    }
++}
++
+ pub(super) struct BinaryWriter {
+     pub(super) bytes: Vec<u8>,
+     atoms: AtomEncoding,
+diff --git a/crates/quench-runtime/src/compile.rs b/crates/quench-runtime/src/compile.rs
+index 99a38fcab..93d59b5b0 100644
+--- a/crates/quench-runtime/src/compile.rs
++++ b/crates/quench-runtime/src/compile.rs
+@@ -1640,6 +1640,10 @@ struct Compiler<'a> {
+     dynamic_binding_scopes: u32,
+     /// The replays of functions finished and released during the load.
+     early_replays: FxHashMap<u32, replay::FunctionReplay>,
++    /// The finished records of early-released functions, which their first call decodes
++    /// instead of compiling them again, and where each lies.
++    early_records: Vec<u8>,
++    early_ranges: FxHashMap<u32, crate::bytecode::DeferredRecord>,
+     /// The source starts of function expressions called where they are made, which run at
+     /// once and so keep their records (`note_invoked_callee`).
+     invoked_functions: FxHashSet<u32>,
+@@ -2023,6 +2027,8 @@ impl<'a> Compiler<'a> {
+             function_facts: Vec::new(),
+             dynamic_binding_scopes: 0,
+             early_replays: FxHashMap::default(),
++            early_records: Vec::new(),
++            early_ranges: FxHashMap::default(),
+             invoked_functions: FxHashSet::default(),
+             replay_calls: FxHashMap::default(),
+             replay_target: None,
+@@ -2187,19 +2193,25 @@ impl<'a> Compiler<'a> {
+         );
+         self.rewrite_function(&mut function);
+         let undefined_constant = self.constant(Constant::Undefined);
+-        // The record is released below and only its header stays, so production settles just
+-        // the dispatch class the header keeps; `verify-replay` keeps the whole record to
+-        // compare each replay with.
+-        if cfg!(feature = "verify-replay") {
+-            self.lower_function(&mut function, undefined_constant);
+-            liveness::mark_register_roots(
+-                std::iter::once(&mut function),
+-                self.method_arguments(),
+-                self.field_sites.as_slice(),
+-                self.superinstructions.as_slice(),
+-            );
++        // The record is released below; its encoding stays for the first call to decode.
++        self.lower_function(&mut function, undefined_constant);
++        liveness::mark_register_roots(
++            std::iter::once(&mut function),
++            self.method_arguments(),
++            self.field_sites.as_slice(),
++            self.superinstructions.as_slice(),
++        );
++        let record = crate::bytecode::append_function_record(
++            &mut self.early_records,
++            &function,
++            self.superinstructions.as_slice(),
++        );
++        if std::env::var_os("QUENCH_TMP_RECORDS").is_some() { eprintln!("rec {}", record.length); }
++        let limit: u32 = std::env::var("QUENCH_TMP_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(u32::MAX);
++        if record.length <= limit {
++            self.early_ranges.insert(id, record);
+         } else {
+-            self.settle_dispatch(&mut function);
++            self.early_records.truncate(record.start as usize);
+         }
+         self.early_replays.insert(
+             id,
+@@ -2909,6 +2921,19 @@ impl<'a> Compiler<'a> {
+         method_arguments.shrink_to_fit();
+         let mut field_sites = self.field_sites.into_vec();
+         field_sites.shrink_to_fit();
++        let encoded_records = (!self.early_ranges.is_empty()).then(|| {
++            let mut ranges = vec![None; functions.len()];
++            for (id, record) in self.early_ranges.drain() {
++                ranges[id as usize] = Some(record);
++            }
++            let mut bytes = std::mem::take(&mut self.early_records);
++            bytes.shrink_to_fit();
++            std::rc::Rc::new(crate::bytecode::EncodedRecords {
++                bytes: std::rc::Rc::new(bytes),
++                atoms: None,
++                ranges: ranges.into_boxed_slice(),
++            })
++        });
+         let program = ResidualProgram {
+             specialized: self.mode == SpecializationMode::Enabled,
+             // Eval code is code compiled for an eval; a host script that only captures its
+@@ -2974,7 +2999,7 @@ impl<'a> Compiler<'a> {
+                     views: replay::ReplayViews::default(),
+                 })
+             }),
+-            encoded_records: None,
++            encoded_records,
+             validated: Default::default(),
+             closure_reads,
+         };
