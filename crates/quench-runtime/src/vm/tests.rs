@@ -274,6 +274,39 @@ fn minor_collection_roots_external_edges_of_old_owners() {
 }
 
 #[test]
+fn minor_collection_keeps_accessor_pairs_added_to_old_owners() {
+    use super::{PropertyAttributes, property_key::PropertyKey};
+
+    let program = Engine::specialize("", "minor-accessor-add.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    let owner = vm.object();
+    let owner_root = vm.heap.root(owner);
+    vm.collect_slow(&program, true);
+
+    let getter = vm.heap.alloc_string("young getter".into());
+    let setter = vm.heap.alloc_string("young setter".into());
+    let weak = [vm.heap.weak_handle(getter).unwrap(), vm.heap.weak_handle(setter).unwrap()];
+    let key = PropertyKey::string(vm.intern_atom("binding"));
+    vm.create_shape_accessor_property(
+        owner,
+        key,
+        PropertyAttributes {
+            writable: false,
+            enumerable: true,
+            configurable: false,
+            accessor: true,
+            getter: Some(getter),
+            setter: Some(setter),
+        },
+    )
+    .unwrap();
+
+    vm.collect_slow(&program, false);
+    assert_eq!(weak.map(|handle| vm.heap.weak_value(handle)), [Some(getter), Some(setter)]);
+    assert!(vm.heap.release_root(owner_root));
+}
+
+#[test]
 fn rootless_shapes_survive_collection_and_shape_compaction() {
     let program = Engine::specialize("", "shape-compaction.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
@@ -394,6 +427,38 @@ fn equivalent_data_descriptor_transitions_share_one_shape() {
 
     assert_eq!(vm.object_data(second).unwrap().shape(), first_shape);
     assert_eq!(vm.shapes.len(), shape_count);
+}
+
+#[test]
+fn new_accessor_properties_reach_the_two_step_shape_in_one_add() {
+    let program = Engine::specialize("", "accessor-add.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.initialize(&program).unwrap();
+    vm.heap.retain_allocations_for_test();
+
+    let key = super::property_key::PropertyKey::string(vm.intern_atom("binding"));
+    let accessor = |getter, setter| super::PropertyAttributes {
+        writable: false,
+        enumerable: true,
+        configurable: false,
+        accessor: true,
+        getter: Some(getter),
+        setter,
+    };
+    let (first_getter, second_getter, setter) = (vm.object(), vm.object(), vm.object());
+    let two_step = vm.object();
+    vm.set_shape_property(two_step, key, Value::UNDEFINED).unwrap();
+    vm.set_property_attributes(two_step, key, accessor(first_getter, None));
+    let fused = vm.object();
+    vm.create_shape_accessor_property(fused, key, accessor(second_getter, None)).unwrap();
+
+    assert_eq!(vm.object_data(fused).unwrap().shape(), vm.object_data(two_step).unwrap().shape());
+    assert!(vm.property_attributes(fused, key) == Some(accessor(second_getter, None)));
+    assert!(vm.property_attributes(two_step, key) == Some(accessor(first_getter, None)));
+
+    let both = vm.object();
+    vm.create_shape_accessor_property(both, key, accessor(first_getter, Some(setter))).unwrap();
+    assert!(vm.property_attributes(both, key) == Some(accessor(first_getter, Some(setter))));
 }
 
 #[test]
@@ -14326,6 +14391,69 @@ fn js_jit_general_dispatch_promotes_a_single_activation_hot_loop() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_attributes_frameless_arrow_loop_work_to_its_owner() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function invoke() {
+            let count = 1000;
+            const countDown = () => {
+              while (count > 0) count--;
+              return count;
+            };
+            countDown(); count = 1000;
+            countDown(); count = 1000;
+            countDown(); count = 1000;
+            countDown(); count = 1000;
+            countDown(); count = 1000;
+            countDown(); count = 1000;
+            countDown(); count = 1000;
+            return countDown();
+          }
+          var result = invoke();
+          if (result !== 0) throw Error('frameless loop result');
+        "#,
+        "js-jit-frameless-arrow-loop-owner.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|body| {
+            body.header()
+                .name
+                .or(body.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "countDown")
+        })
+        .unwrap() as u32;
+    assert_eq!(program.function(function as usize).locals, 0);
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let result_atom = interpreter.intern_atom("result");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, result_atom)
+        .unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("the frameless arrow's loop work should promote that function");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+
+    let result_atom = compiled.intern_atom("result");
+    assert_eq!(compiled.own_property(compiled.realm.globals, result_atom), Some(expected));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_prices_work_inside_compiled_osr_regions() {
     // Each taken backedge counts one unit of work. The first call's loop runs well past the
     // priced general-baseline floor for this small body (fixed plus per-instruction compile
@@ -14393,6 +14521,76 @@ fn js_jit_general_dispatch_prices_work_inside_compiled_osr_regions() {
         .own_property(compiled.realm.globals, result_atom)
         .unwrap();
     assert_eq!(result, expected);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_attributes_inlined_osr_work_to_the_loop_owner() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function helper(limit) {
+            let total = 0;
+            for (let index = 0; index < limit; index++) total += index;
+            return total;
+          }
+          function caller() { return helper(1000000); }
+          var result = caller();
+          if (result !== 499999500000) throw Error('inlined OSR result');
+        "#,
+        "js-jit-general-inline-osr-owner.js",
+    ))
+    .unwrap();
+    let function_id = |name: &str| {
+        program
+            .functions
+            .iter()
+            .position(|body| {
+                body.header()
+                    .name
+                    .or(body.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32
+    };
+    let helper = function_id("helper");
+    let caller = function_id("caller");
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let result_atom = interpreter.intern_atom("result");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, result_atom)
+        .unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+    let result_atom = compiled.intern_atom("result");
+    assert_eq!(
+        compiled
+            .own_property(compiled.realm.globals, result_atom)
+            .unwrap(),
+        expected
+    );
+
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, helper)
+    else {
+        panic!("OSR work from the inlined helper should promote the helper");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    assert!(!matches!(
+        compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, caller),
+        Some(super::program_store::JsTierState::Compiled(native))
+            if native.is_general_dispatch()
+    ));
 }
 
 #[cfg(not(quench_profiled))]
