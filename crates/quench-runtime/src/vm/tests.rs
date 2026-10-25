@@ -15216,6 +15216,69 @@ fn lane_in_place_steps_keep_private_brands_and_field_definitions() {
 }
 
 #[test]
+fn lane_in_place_steps_keep_property_definition_records() {
+    // Class methods and accessors and object-literal accessors define their descriptors in
+    // place; computed keys coerce in source order, setters and private methods stay exact, a
+    // throwing key conversion raises there, and repeated definitions keep their attributes.
+    let source = r#"
+      const out = [];
+      function desc(o, key) {
+        const d = Object.getOwnPropertyDescriptor(o, key);
+        if (!d) return "none";
+        const value = typeof d.value === "function" ? d.value() : String(d.value);
+        return [value, d.writable, d.enumerable, d.configurable, typeof d.get, typeof d.set].map(String).join("/");
+      }
+      function run(round) {
+        const log = [];
+        const key = { toString() { log.push("key" + round); return "computed" + round; } };
+        const literal = {
+          method() { return "lm"; },
+          get accessor() { return "lg"; },
+          set accessor(v) { log.push("lset" + v); },
+          [key]() { return "lk"; },
+          get ["ga" + round]() { return 41 + round; },
+        };
+        literal.accessor = 3;
+        const symbol = Symbol("s" + round);
+        class C {
+          #hidden() { return "h"; }
+          method() { return "cm"; }
+          static staticMethod() { return "cs"; }
+          get accessor() { return "cg"; }
+          set accessor(v) { log.push("cset" + v); }
+          static get staticAccessor() { return 7; }
+          static set staticAccessor(v) { log.push("sset" + v); }
+          [key]() { return "ck"; }
+          [symbol]() { return "sk"; }
+          read() { return this.#hidden(); }
+        }
+        const c = new C(); c.accessor = 4; C.staticAccessor = 5;
+        out.push(round,
+          desc(literal, "method"), desc(literal, "accessor"), desc(literal, "computed" + round), desc(literal, "ga" + round),
+          desc(C.prototype, "method"), desc(C.prototype, "accessor"), desc(C.prototype, "computed" + round),
+          desc(C, "staticMethod"), desc(C, "staticAccessor"),
+          literal.method(), literal["computed" + round](), literal["ga" + round],
+          c.method(), c["computed" + round](), c[symbol](), c.read(), C.staticMethod(), C.staticAccessor,
+          Object.keys(literal).join("+"), Object.keys(C.prototype).join("+"), Object.keys(C).join("+"),
+          log.join(","));
+        const boom = { toString() { throw new RangeError("key"); } };
+        for (const thunk of [() => ({ [boom]: 1 }), () => ({ get [boom]() {} }), () => class { [boom]() {} }, () => class { static [boom]() {} }]) {
+          try { thunk(); out.push("ok"); } catch (e) { out.push(e.constructor.name + ":" + e.message); }
+        }
+      }
+      for (let round = 0; round < 3; round++) run(round);
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-property-records.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["0|lm/true/true/true/undefined/undefined|undefined/undefined/true/true/function/function|lk/true/true/true/undefined/undefined|undefined/undefined/true/true/function/undefined|cm/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|ck/true/false/true/undefined/undefined|cs/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|lm|lk|41|cm|ck|sk|h|cs|7|method+accessor+computed0+ga0|||key0,lset3,key0,cset4,sset5|RangeError:key|RangeError:key|RangeError:key|RangeError:key|1|lm/true/true/true/undefined/undefined|undefined/undefined/true/true/function/function|lk/true/true/true/undefined/undefined|undefined/undefined/true/true/function/undefined|cm/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|ck/true/false/true/undefined/undefined|cs/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|lm|lk|42|cm|ck|sk|h|cs|7|method+accessor+computed1+ga1|||key1,lset3,key1,cset4,sset5|RangeError:key|RangeError:key|RangeError:key|RangeError:key|2|lm/true/true/true/undefined/undefined|undefined/undefined/true/true/function/function|lk/true/true/true/undefined/undefined|undefined/undefined/true/true/function/undefined|cm/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|ck/true/false/true/undefined/undefined|cs/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|lm|lk|43|cm|ck|sk|h|cs|7|method+accessor+computed2+ga2|||key2,lset3,key2,cset4,sset5|RangeError:key|RangeError:key|RangeError:key|RangeError:key"]
+    );
+}
+
+#[test]
 fn lane_framed_calls_and_returns_keep_frames_and_their_semantics() {
     // Calls of functions that need a frame are pushed and returned from the lane: closures,
     // `arguments`, `this` modes, throws, recursion, tail returns, generators, async functions

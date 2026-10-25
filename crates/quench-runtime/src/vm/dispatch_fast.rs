@@ -5113,6 +5113,45 @@ script_handler! {
     }
 }
 
+/// `DefinePropertyRecord` of the record at `ip`, defined as the general step defines it: a
+/// class method or accessor, or an object literal accessor. An out-of-domain mode or a throw
+/// leaves the instruction to the general path. Out of line, as `lane_set_index_slot_store`:
+/// the handler's frame then holds none of the descriptor across its dispatch, which forms as
+/// a sibling call (`tools/check-lane-tail-calls.sh`).
+#[inline(never)]
+fn lane_define_property_record_in_place<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    i: &LaneInstruction,
+) -> Option<()> {
+    let mode = crate::bytecode::PropertyDefinitionMode::from_word(i.imm())?;
+    let (value, target, key) = (i.a, i.b, i.c);
+    lane_in_place(cx, ip, |vm, code| {
+        let (value, target, key) = {
+            let r = unsafe { (*cx).registers };
+            (r.get(value), r.get(target), r.get(key))
+        };
+        let descriptor =
+            super::object_descriptors::PropertyDescriptorRecord::for_definition(mode, value);
+        vm.define_property_or_throw(code, target, key, descriptor)
+    })
+}
+
+script_handler! {
+    /// `DefinePropertyRecord`, whose computed key's conversion or a proxy's define may run
+    /// guest code. An out-of-domain mode leaves the instruction to the general path before it
+    /// has any effect.
+    #[inline(never)]
+    fn lane_define_property_record<>(cx, r, ip, i, view) {
+        if lane_define_property_record_in_place(cx, ip, i).is_none() {
+            return exit(ip);
+        }
+        // Guest code the definition ran made the activations frames, whose registers these are.
+        let r = unsafe { (*cx).registers };
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
 script_handler! {
     /// `CheckPrivate` of an object holding the private field under the name's brand at this
     /// record (`lane_private_brand`), which proves the check; any other check takes
@@ -13979,6 +14018,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),
         Op::DefineField => Some(lane_define_field::<H>),
         Op::DefinePrivateField => Some(lane_define_private_field::<H>),
+        Op::DefinePropertyRecord => Some(lane_define_property_record::<H>),
         Op::CheckPrivate => Some(lane_check_private::<H>),
         Op::PrivateIn => Some(lane_private_in::<H>),
         Op::CopyDataProperties => Some(lane_copy_data_properties::<H>),

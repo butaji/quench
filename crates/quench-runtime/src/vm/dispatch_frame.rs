@@ -1576,6 +1576,17 @@ impl<H: Host> Vm<H> {
                 executing_program = executing.id;
                 current_program = executing.retained;
                 executing_residual = current_program.as_deref().unwrap_or(entry_program);
+                // Lane calls and returns can leave a different activation, or a new one in the
+                // same frame slot; diagnostics below must observe that activation's view.
+                if self.frames[frame].function != cursor.function || executing_program != cursor.program {
+                    cursor = self.general_cursor(
+                        executing_program,
+                        // SAFETY: as for `p` at the top of the loop.
+                        unsafe { &*executing_residual },
+                        self.frames[frame].function,
+                        fast_lane,
+                    );
+                }
                 // SAFETY: as for `p` at the top of the loop; the lane may have left in another program.
                 #[cfg(feature = "profile-lane-exits")]
                 let p = unsafe { &*executing_residual };
@@ -1735,15 +1746,6 @@ impl<H: Host> Vm<H> {
                 // same frame slot; the active frame's PC slot and register file follow it.
                 published_pc = &mut self.frames[frame].pc;
                 self.active_registers = self.frames[frame].registers.as_mut_ptr();
-                if self.frames[frame].function != cursor.function || executing_program != cursor.program {
-                    cursor = self.general_cursor(
-                        executing_program,
-                        // SAFETY: as for `p` at the top of the loop.
-                        unsafe { &*executing_residual },
-                        self.frames[frame].function,
-                        fast_lane,
-                    );
-                }
                 // A call the lane made in place failed: it throws at its instruction, as the
                 // general path's call would have.
                 if let Some(error) = self.lane_raised.take() {
