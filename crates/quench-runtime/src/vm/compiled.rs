@@ -25,8 +25,8 @@
 
 use super::*;
 use crate::bytecode::{
-    ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, RETURN_REGISTER,
-    WideInstruction,
+    ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
+    RETURN_REGISTER, WideInstruction,
 };
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{
@@ -3316,6 +3316,72 @@ const MEMCPY_CACHE_FUNCTION: i32 = std::mem::offset_of!(EmscriptenMemcpyCache, f
 /// The callout's signature: (context, function index, arguments, result) ->
 /// status; arguments and result are Wasm bits, one word each.
 type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
+type OsrFieldProbeCallout = unsafe extern "C" fn(*mut CallContext, u64, u64, *mut u64) -> i64;
+
+#[repr(C)]
+struct OsrFieldProbePayload {
+    function: u32,
+    program: Option<Rc<ResidualProgram>>,
+    diagnostics_enabled: bool,
+}
+
+/// A cache-only JavaScript OSR helper. `receiver_bits` is passed in the ABI's arguments word
+/// (it is deliberately not dereferenced as a pointer); the cache site is the function word.
+/// A miss returns before any accessor, proxy trap, or other guest-visible operation runs.
+unsafe extern "C" fn osr_field_probe<H: Host>(
+    context: *mut CallContext,
+    cache_site: u64,
+    receiver_bits: u64,
+    result: *mut u64,
+) -> i64 {
+    let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
+    // SAFETY: `CompiledOsrRegion::run` owns this context, VM and payload until this
+    // synchronous callback returns. The helper performs no guest call and retains no pointer.
+    let context_ref = unsafe { &mut *context };
+    let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if context_ref.vm.is_null() || result.is_null() {
+            return None;
+        }
+        let site = u16::try_from(cache_site).ok()?;
+        // SAFETY: the stack payload lives through this native entry and owns a residual Rc,
+        // avoiding a ProgramStore lookup/refcount on every probed field read.
+        let payload = unsafe { &*context_ref.adapter_payload.cast::<OsrFieldProbePayload>() };
+        let program = payload.program.as_deref()?;
+        let vm = unsafe { &mut *context_ref.vm.cast::<Vm<H>>() };
+        // The ABI slot is used as a raw 64-bit Value, never as an address.
+        let receiver = Value::from_bits(receiver_bits);
+        let probe = vm.cached_field_hit(program, receiver, site);
+        if payload.diagnostics_enabled {
+            let function = payload.function;
+            vm.programs.record_js_jit_field_cache_probe(
+                context_ref.program,
+                function,
+                site,
+                matches!(&probe, super::object::FieldCacheProbe::Hit(_)),
+            );
+        }
+        match probe {
+            super::object::FieldCacheProbe::Hit(value) => Some(value),
+            super::object::FieldCacheProbe::OrdinaryMiss
+            | super::object::FieldCacheProbe::Ineligible => None,
+        }
+    }));
+    ACTIVE_CONTEXT.with(|current| current.set(active));
+
+    match called {
+        Ok(Some(value)) => {
+            // SAFETY: generated code supplies a valid result word.
+            unsafe { result.write(value.to_bits()) };
+            0
+        }
+        Ok(None) => 1,
+        Err(panic) => {
+            context_ref.raised = Some(Raised::Panic(panic));
+            RAISED_STATUS
+        }
+    }
+}
+
 type DirectMemcpyLeaf = unsafe extern "C" fn(*mut CallContext, u64, i32, i32, i32) -> i64;
 type ReferenceCallout = unsafe extern "C" fn(
     *mut CallContext,
@@ -4937,15 +5003,35 @@ impl CompiledOsrRegion {
     /// # Safety
     /// `registers` is the running activation's register file, at least `Function::registers`
     /// long; `entry` was built for this region from the current values of its arrays and
-    /// captures, which nothing changes while the call runs; `interrupt` is the VM's, whose
-    /// poll page the region was compiled for (`compile_osr_region`).
-    pub(super) unsafe fn run(
+    /// captures, which nothing changes while the call runs; `vm` and `interrupt` belong to
+    /// this lane activation, which excludes other mutable VM access while native code runs.
+    pub(super) unsafe fn run<H: Host>(
         &self,
         registers: *mut crate::value::Value,
         entry: &mut LoopEntry,
-        interrupt: &crate::execution_interrupt::ExecutionInterrupt,
+        vm: *mut Vm<H>,
+        program: ProgramId,
+        function: u32,
+        interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
     ) -> LoopOutcome {
-        let mut context = CallContext::interrupt_only(interrupt);
+        // SAFETY: the caller keeps the VM alive and excludes other mutable VM access while
+        // native code runs. The interrupt reference is used only to construct raw ABI fields.
+        let mut context = CallContext::interrupt_only(unsafe { &*interrupt });
+        // Keep the immutable residual alive independently of the mutable VM borrow while the
+        // native region invokes its cache-only field probe.
+        let (program_data, diagnostics_enabled) = unsafe {
+            let vm = &*vm;
+            (vm.programs.get(program), vm.programs.js_jit_diagnostics_enabled())
+        };
+        let mut payload = OsrFieldProbePayload {
+            function,
+            program: program_data,
+            diagnostics_enabled,
+        };
+        context.vm = vm.cast();
+        context.program = program;
+        context.callout = osr_field_probe::<H> as OsrFieldProbeCallout as usize;
+        context.adapter_payload = (&mut payload as *mut OsrFieldProbePayload).cast();
         let mut word = 0u64;
         // SAFETY: as the caller promises; the code reads and writes only those and the
         // result word.
@@ -4960,6 +5046,9 @@ impl CompiledOsrRegion {
                 self.entry,
             )
         };
+        if let Some(Raised::Panic(panic)) = context.raised.take() {
+            std::panic::resume_unwind(panic);
+        }
         if i64::from(status) == TERMINATED_STATUS {
             LoopOutcome::Terminated
         } else {
