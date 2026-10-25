@@ -10263,8 +10263,9 @@ script_handler! {
 
 script_handler! {
     /// `new Array(...values)` of an intrinsic `Array`, which allocates without running guest
-    /// code: the array of the values passed, with the callee's own `prototype`. One Number
-    /// argument (a length), and any other construction, take the general path.
+    /// code: the array of the values passed, or for one Number argument the array of that
+    /// length (`Vm::array_of_length`), with the callee's own `prototype`. An invalid length,
+    /// and any other construction, take the general path.
     #[inline(never)]
     fn lane_native_construct<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
@@ -10314,12 +10315,16 @@ script_handler! {
         let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
         // SAFETY: the construction's window is registers of the running function.
         let args = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.c)), argc) };
-        if let [length] = args
-            && length.as_number().is_some()
-        {
-            return exit(ip);
-        }
-        let array = lane_new_array(vm, prototype, args);
+        let array = match args {
+            [length] if let Some(length) = length.as_number() => {
+                // An invalid length throws its RangeError on the general path.
+                let Some(array) = vm.array_of_length(prototype, length) else {
+                    return exit(ip);
+                };
+                array
+            }
+            _ => lane_new_array(vm, prototype, args),
+        };
         note_allocation(vm);
         if returns {
             let Some(resumed) = lane_complete_activation(cx, array) else {
