@@ -225,7 +225,10 @@ enum SnapshotUse {
     /// module boots without one: a fresh boot loads only what it uses, while a restored
     /// `Preloaded` realm keeps every preloaded builtin resident (V8-v7 max RSS, without ->
     /// with: RegExp 12.3 -> 17.1 MB, Splay 32.6 -> 39.0, EarleyBoyer 12.3 -> 15.9; a one-line
-    /// `console.log` 12.9M -> 23.6M instructions).
+    /// `console.log` 12.9M -> 23.6M instructions). Only under a policy that keeps pages
+    /// resident: the preloaded realm is the memory a memory-first process exists to avoid
+    /// (V8-v7 DeltaBlue under memory-first, whose comments name `require`, static x86_64 +
+    /// BOLT, pinned, 2026-10-25: max RSS 2852 KiB without, 9112 with).
     Auto,
     Always,
     Never,
@@ -240,9 +243,12 @@ impl SnapshotUse {
         }
     }
 
-    fn restores(self, loading: entry_graph::EntryLoading) -> bool {
+    fn restores(self, loading: entry_graph::EntryLoading, policy: Option<quench_runtime::MemoryPolicy>) -> bool {
         match self {
-            Self::Auto => loading == entry_graph::EntryLoading::Modules,
+            Self::Auto => {
+                loading == entry_graph::EntryLoading::Modules
+                    && !policy.is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections)
+            }
             Self::Always => true,
             Self::Never => false,
         }
@@ -371,7 +377,7 @@ pub(crate) fn snapshot_path(
         SnapshotEntry::File(path) => entry_graph::entry_loading(path),
         SnapshotEntry::Inline(source) => entry_graph::inline_entry_loading(source),
     };
-    if !snapshot_use.restores(loading) {
+    if !snapshot_use.restores(loading, crate::shared_run::process_memory_policy()) {
         return None;
     }
     // Each build's snapshots share a directory, which a builder of another build removes.
@@ -469,3 +475,20 @@ pub(crate) fn build(path: &std::path::Path) -> Result<(), String> {
     result
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::SnapshotUse;
+    use super::entry_graph::EntryLoading;
+    use quench_runtime::MemoryPolicy;
+
+    #[test]
+    fn automatic_restores_follow_the_memory_policy() {
+        assert!(SnapshotUse::Auto.restores(EntryLoading::Modules, Some(MemoryPolicy::Throughput)));
+        assert!(SnapshotUse::Auto.restores(EntryLoading::Modules, None));
+        assert!(!SnapshotUse::Auto.restores(EntryLoading::Modules, Some(MemoryPolicy::MemoryFirst)));
+        assert!(!SnapshotUse::Auto.restores(EntryLoading::Console, Some(MemoryPolicy::Throughput)));
+        assert!(SnapshotUse::Always.restores(EntryLoading::Modules, Some(MemoryPolicy::MemoryFirst)));
+        assert!(!SnapshotUse::Never.restores(EntryLoading::Modules, Some(MemoryPolicy::Throughput)));
+    }
+}
