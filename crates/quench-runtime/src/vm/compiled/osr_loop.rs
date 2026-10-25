@@ -670,8 +670,12 @@ pub(super) fn inline_region<'a>(
     struct Site<'b> {
         frame: InlineFrame,
         callee: InlineCallee<'b>,
-        /// The callee's read.
-        read: u32,
+        /// The path the callee's read reads it through, from a root the region does not
+        /// write (a receiver given its own register reads through its path).
+        callee_path: FieldPath,
+        /// Where leaving in the call's setup resumes: the receiver's own read, else the
+        /// callee's.
+        resume: u32,
         window: Register,
         result: Register,
         reached: Vec<bool>,
@@ -771,7 +775,8 @@ pub(super) fn inline_region<'a>(
                     registers: callee.registers,
                     bound,
                 },
-                read,
+                callee_path: callee_path.clone(),
+                resume,
                 window,
                 result: instruction.result_register(),
                 reached,
@@ -866,8 +871,8 @@ pub(super) fn inline_region<'a>(
                 continue;
             }
             instructions.push(WideInstruction::new(Op::Move, frame.base + parameter, site.window + parameter, 0, 0));
-            origins.push(Origin::Caller(site.read));
-            masks.push(mask(site.read)?);
+            origins.push(Origin::Caller(site.resume));
+            masks.push(mask(site.resume)?);
         }
         let continuation = caller_flat.get(offset + 1).copied().unwrap_or_else(|| caller_target(pc + 1, &mut leaves));
         for (callee_pc, instruction) in site.callee.instructions.iter().copied().enumerate() {
@@ -916,7 +921,18 @@ pub(super) fn inline_region<'a>(
         let mut frame = site.frame;
         let written = frame.receiver >= caller_registers || defines(frame.receiver);
         (!written || held.contains_key(&frame.receiver)).then_some(())?;
-        let path = field_path(caller[(site.read - header) as usize], sites, &held)?;
+        let FieldPath { root, steps } = site.callee_path;
+        let path = match root {
+            FieldReceiver::Register(register) => match held.get(&register) {
+                Some(path) => FieldPath { root: path.root, steps: path.steps.iter().copied().chain(steps).collect() },
+                None => FieldPath { root, steps },
+            },
+            _ => FieldPath { root, steps },
+        };
+        // The root is `this`, or a register the region does not write (`field_path`).
+        if let FieldReceiver::Register(register) = path.root {
+            (!defines(register)).then_some(())?;
+        }
         frame.field = intern_field(&mut region.fields, &path, true);
         frames.push(frame);
     }
@@ -2167,13 +2183,22 @@ fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representati
         .collect();
     // Whether every read of `web` treats its -0 as +0: a bitwise operand (ToInt32), a
     // comparison, or a sum with an `i32`, which is never -0 itself.
-    let signless_reads = |web: Definition| {
-        region.instructions.iter().copied().enumerate().all(|(offset, instruction)| {
-            let pc = region.header + offset as u32;
-            let reads = |register: Register| webs.read(region, pc, register) == web;
-            if !number_reads(instruction).into_iter().any(reads) {
-                return true;
+    // The PC offsets of each web's reads, once.
+    let mut readers: Vec<Vec<usize>> = vec![Vec::new(); webs.parent.len()];
+    for (offset, instruction) in region.instructions.iter().copied().enumerate() {
+        let pc = region.header + offset as u32;
+        for register in number_reads(instruction) {
+            let web = webs.read(region, pc, register);
+            if readers[web].last() != Some(&offset) {
+                readers[web].push(offset);
             }
+        }
+    }
+    let signless_reads = |web: Definition| {
+        readers[web].iter().all(|offset| {
+            let instruction = region.instructions[*offset];
+            let pc = region.header + *offset as u32;
+            let reads = |register: Register| webs.read(region, pc, register) == web;
             match instruction.op() {
                 Op::JumpBinaryFalse => true,
                 Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
@@ -2208,11 +2233,9 @@ fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representati
             .iter()
             .copied()
             .filter(|web| {
-                region.instructions.iter().copied().enumerate().all(|(offset, instruction)| {
-                    let pc = region.header + offset as u32;
-                    if !number_reads(instruction).into_iter().any(|register| webs.read(region, pc, register) == *web) {
-                        return true;
-                    }
+                readers[*web].iter().all(|offset| {
+                    let instruction = region.instructions[*offset];
+                    let pc = region.header + *offset as u32;
                     match sums(instruction) {
                         Some(Arithmetic::Int32(_)) => true,
                         Some(Arithmetic::Float(NumberArithmetic::Add | NumberArithmetic::Subtract)) => {
