@@ -16129,3 +16129,60 @@ fn js_general_artifact_key_tracks_only_code_generation_dependencies() {
     assert_eq!(first_key, equivalent_key);
     assert_ne!(first_key, different_key);
 }
+
+#[test]
+fn synthesized_throws_class_setup_and_using_use_the_realm_intrinsics() {
+    // The compiler's own TypeError and ReferenceError throws, class prototype setup and
+    // `using` declarations call the realm's intrinsics, not whatever binding of the same name
+    // is in scope (`INTRINSIC_TYPE_ERROR_BINDING` and its siblings). Expected output is Node's
+    // (v26.12).
+    for (source, expected) in [
+        (r#"const out = [];
+{
+  class TypeError { constructor(m) { this.fake = m; } }
+  const c = 1;
+  try { c = 2; } catch (e) { out.push(e instanceof globalThis.TypeError, e.fake === undefined, e.constructor.name); }
+  try { const { a } = null; } catch (e) { out.push(e instanceof globalThis.TypeError, e.fake === undefined); }
+  try { (function () { const [x] = undefined; })(); } catch (e) { out.push(e instanceof globalThis.TypeError, e.fake === undefined); }
+}
+print(JSON.stringify(out));
+"#, r#"[true,true,"TypeError",true,true,true,true]"#),
+        (r#"const out = [];
+{
+  const Object = { setPrototypeOf() { out.push("fake setPrototypeOf"); } };
+  class B { static s() { return 1; } }
+  class A extends B {}
+  out.push(A.s(), globalThis.Object.getPrototypeOf(A) === B);
+  class N extends null {}
+  out.push(globalThis.Object.getPrototypeOf(N.prototype) === null);
+}
+const realSet = Object.setPrototypeOf;
+Object.setPrototypeOf = function () { out.push("patched"); return realSet.apply(this, arguments); };
+class C extends Array {}
+out.push(new C() instanceof Array);
+Object.setPrototypeOf = realSet;
+{
+  class DisposableStack { constructor() { out.push("fake stack"); } }
+  try {
+    { using r = { [Symbol.dispose]() { out.push("disposed"); } }; out.push("in"); }
+  } catch (e) { out.push("E:" + e.constructor.name); }
+}
+print(JSON.stringify(out));
+"#, r#"[1,true,true,true,"in","disposed"]"#),
+        (r#"const out = [];
+{
+  const ReferenceError = function () { this.fake = 1; };
+  try { (function () { super_delete: { } })(); } catch (e) {}
+  try { eval("f() = 1"); } catch (e) { out.push(e instanceof globalThis.ReferenceError, e.fake === undefined); }
+  class P { m() { try { delete super.x; } catch (e) { out.push(e instanceof globalThis.ReferenceError, e.fake === undefined); } } }
+  new P().m();
+}
+print(JSON.stringify(out));
+"#, r#"[true,true,true,true]"#),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.execute(&Engine::specialize(source, "intrinsic-names.js").unwrap()).unwrap();
+        assert_eq!(output.borrow().as_slice(), [expected]);
+    }
+}
