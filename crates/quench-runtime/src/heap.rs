@@ -3150,6 +3150,28 @@ impl Heap {
             unsafe { self.properties.get_unchecked(object.properties(), slot) }
         }
     }
+
+    /// Pointer to an initialized flat property slot. Inline and dictionary-backed objects
+    /// decline because their slots require representation conversion or a table update.
+    ///
+    /// # Safety
+    /// The object's exact shape and slot were guarded by the caller. The caller must keep the
+    /// object rooted and prevent allocation, collection, and other heap access while using
+    /// the pointer. Direct stores must not install a heap reference without the write barrier.
+    #[inline(always)]
+    pub(crate) unsafe fn flat_property_mut_ptr_unchecked(
+        &mut self,
+        object: Value,
+        slot: usize,
+    ) -> Option<*mut Value> {
+        let vector = self.object_mut(object)?.properties();
+        if vector.has_inline_property_storage() || vector.is_dictionary() || slot >= self.properties.len(vector) {
+            return None;
+        }
+        // SAFETY: shape/slot and storage lifetime are the caller's obligations above.
+        Some(unsafe { self.properties.flat_mut_ptr_unchecked(vector, slot) })
+    }
+
     pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
         let vector = {
             let data = self
