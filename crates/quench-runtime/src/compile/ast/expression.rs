@@ -200,7 +200,7 @@ impl FunctionCompiler<'_, '_> {
     fn regexp_literal(&mut self, value: &oxc_ast::ast::RegExpLiteral<'_>) -> Register {
         let pattern = self
             .owner
-            .constant(Constant::String(value.regex.pattern.text.to_string()));
+            .constant(Constant::String(value.regex.pattern.text.as_str().into()));
         let mut flags = String::new();
         for (flag, bit) in [
             ('d', RegExpFlags::D),
@@ -216,7 +216,7 @@ impl FunctionCompiler<'_, '_> {
                 flags.push(flag);
             }
         }
-        let flags = self.owner.constant(Constant::String(flags));
+        let flags = self.owner.constant(Constant::String(flags.into()));
         let site = self.owner.regexp_literal_site(pattern, flags);
         let destination = self.reg();
         self.emit(Op::CreateRegExpLiteral, destination, 0, 0, site);

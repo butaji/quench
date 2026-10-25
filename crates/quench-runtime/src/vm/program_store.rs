@@ -24,6 +24,9 @@ struct JsJitCounters {
     promotions: u64,
     compile_attempts: u64,
     compile_successes: u64,
+    general_compile_attempts: u64,
+    general_compile_successes: u64,
+    general_compile_rejection_reason: Option<&'static str>,
     rejection_reason: Option<&'static str>,
     compile_ns: u64,
     native_entries: u64,
@@ -45,7 +48,58 @@ struct JsJitCounters {
     opcode_counts: Vec<(u16, u32)>,
     general_dispatch_opcode_counts: Vec<(u16, u64)>,
     general_dispatch_opcode_sites: FxHashMap<(u32, u16), u64>,
+    call_sites: Vec<JsJitCallSiteCounters>,
     code_bytes: usize,
+}
+
+#[derive(Default)]
+struct JsJitCallSiteCounters {
+    pc: u32,
+    opcode: u16,
+    attempts: u64,
+    direct_target: Option<(u32, u32)>,
+    direct_target_calls: u64,
+    alternate_target_calls: u64,
+    other_target_calls: u64,
+    outcomes: [u64; JsJitCallOutcome::COUNT],
+}
+
+#[derive(Clone, Copy)]
+#[repr(usize)]
+pub(super) enum JsJitCallOutcome {
+    Continue = 0,
+    TailCall = 1,
+    PushFrame = 2,
+    Return = 3,
+    Await = 4,
+    Yield = 5,
+    Error = 6,
+}
+
+impl JsJitCallOutcome {
+    const COUNT: usize = Self::Error as usize + 1;
+
+    const ALL: [Self; Self::COUNT] = [
+        Self::Continue,
+        Self::TailCall,
+        Self::PushFrame,
+        Self::Return,
+        Self::Await,
+        Self::Yield,
+        Self::Error,
+    ];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Continue => "continue",
+            Self::TailCall => "tail_call",
+            Self::PushFrame => "push_frame",
+            Self::Return => "return",
+            Self::Await => "await",
+            Self::Yield => "yield",
+            Self::Error => "error",
+        }
+    }
 }
 
 /// Prespecified looks for the Number-entry profile. Critical counts are the
@@ -63,41 +117,58 @@ const JS_JIT_GENERAL_PROMOTION_ENTRIES: u8 = 32;
 /// paying for the complete-semantics baseline.
 pub(super) const JS_JIT_SPECIALIZED_GUARD_MISS_THRESHOLD: u8 = 8;
 /// The general baseline's compile cost in interpreted-instruction units: a fixed part
-/// and a part per bytecode instruction. Measured on Linux x86_64 (requiring jackspeak
-/// with `QUENCH_JS_JIT_STATS`): a compile takes about 0.8 ms plus 32 µs per instruction,
-/// against roughly 50 ns per interpreted instruction.
+/// and a part per bytecode instruction. Measured on Linux x86_64 with `QUENCH_JS_JIT_STATS`
+/// against roughly 50 ns per interpreted instruction: requiring jackspeak, about 0.8 ms
+/// plus 32 µs per instruction; npm's semver scenario, 1.4 ms for a four-instruction body
+/// and 40 to 76 µs per instruction for 160 to 200.
 const JS_JIT_GENERAL_COMPILE_FIXED_COST: u64 = 16_000;
-const JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION: u64 = 640;
-/// The share of an entry's interpreted instructions the baseline saves, as a fraction:
-/// at most half, since it keeps the interpreter's tagged semantics and callouts.
-const JS_JIT_GENERAL_SAVED_SHARE: (u64, u64) = (1, 2);
+const JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION: u64 = 1_200;
+/// The share of an entry's interpreted instructions the baseline saves, as a fraction. It
+/// keeps the interpreter's tagged semantics and calls back into the VM for most operations
+/// (`js_step_callout` was 11% of npm browserslist with it on), so a quarter until the
+/// baseline's savings are measured.
+const JS_JIT_GENERAL_SAVED_SHARE: (u64, u64) = (1, 4);
+/// What each native entry of the baseline costs beyond a frameless lane activation, in
+/// interpreted-instruction units: a due function's calls take a VM frame and the general
+/// loop (`Vm::js_tier_needs_general_entry`). Measured on npm's browserslist scenario: a
+/// six-instruction body's 72,427 native entries cost about 650 machine instructions each
+/// more than its lane calls, some 32 lane-interpreted instructions.
+const JS_JIT_GENERAL_ENTRY_OVERHEAD: u64 = 32;
 
 /// Whether `entries` of a function of `instructions` bytecode instructions have paid for
-/// its general baseline, taking an entry to run its instructions once and the savings of
-/// the entries so far to stand for those still to come. Backedge observations use their
-/// independently accumulated work in `general_dispatch_work_due`.
+/// its general baseline, taking an entry to run its instructions once (a loop hot within
+/// one entry is OSR's to compile) and the savings of the entries so far to stand for
+/// those still to come. A body whose entry saves less than the baseline's entry overhead
+/// never pays.
 fn general_promotion_due(entries: u32, instructions: usize) -> bool {
-    let instructions = u64::try_from(instructions.max(1)).unwrap_or(u64::MAX);
-    general_dispatch_work_due(
-        u64::from(entries).saturating_mul(instructions),
-        instructions,
-        true,
-    )
+    let Some(saved_per_entry) = general_saved_per_entry(instructions) else {
+        return false;
+    };
+    let instructions = u64::try_from(instructions).unwrap_or(u64::MAX);
+    let (_, of) = JS_JIT_GENERAL_SAVED_SHARE;
+    u64::from(entries).saturating_mul(saved_per_entry)
+        >= JS_JIT_GENERAL_COMPILE_FIXED_COST
+            .saturating_add(JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION.saturating_mul(instructions))
+            .saturating_mul(of)
 }
 
 /// Whether observed bytecode work has paid for one complete-semantics native
 /// baseline. An unpriced experiment still waits for 32 whole-function work
 /// units, matching the established general-tier entry floor.
 fn general_dispatch_work_due(work: u64, instructions: u64, priced: bool) -> bool {
+    work >= general_dispatch_work_required(instructions, priced)
+}
+
+fn general_dispatch_work_required(instructions: u64, priced: bool) -> u64 {
     let instructions = instructions.max(1);
     if !priced {
-        return work >= instructions.saturating_mul(u64::from(JS_JIT_GENERAL_PROMOTION_ENTRIES));
+        return instructions.saturating_mul(u64::from(JS_JIT_GENERAL_PROMOTION_ENTRIES));
     }
     let (saved, of) = JS_JIT_GENERAL_SAVED_SHARE;
-    work.saturating_mul(saved)
-        >= JS_JIT_GENERAL_COMPILE_FIXED_COST
-            .saturating_add(JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION.saturating_mul(instructions))
-            .saturating_mul(of)
+    JS_JIT_GENERAL_COMPILE_FIXED_COST
+        .saturating_add(JS_JIT_GENERAL_COMPILE_COST_PER_INSTRUCTION.saturating_mul(instructions))
+        .saturating_mul(of)
+        .div_ceil(saved.max(1))
 }
 
 fn accumulate_general_dispatch_work(accumulated_work: &mut u64, work: usize) {
@@ -129,6 +200,19 @@ fn promote_general_dispatch_if_paid(
     *state = JsTierState::GeneralCompileDue;
     true
 }
+
+/// What an entry of a body of `instructions` saves under the general baseline, in units of
+/// `1 / JS_JIT_GENERAL_SAVED_SHARE.1` interpreted instruction; `None` where it saves
+/// nothing past the baseline's entry overhead.
+fn general_saved_per_entry(instructions: usize) -> Option<u64> {
+    let (saved, of) = JS_JIT_GENERAL_SAVED_SHARE;
+    u64::try_from(instructions)
+        .unwrap_or(u64::MAX)
+        .saturating_mul(saved)
+        .checked_sub(JS_JIT_GENERAL_ENTRY_OVERHEAD.saturating_mul(of))
+        .filter(|saved| *saved > 0)
+}
+
 const JS_JIT_MAX_FUNCTIONS: usize = 64;
 // Tier observations include dynamically generated functions across all retained
 // programs. Web-SSR exposes more than 1,300 functions in one VM; keep a fixed
@@ -147,6 +231,16 @@ const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
 pub(super) const WASM_JIT_PROMOTION_ENTRIES: u8 = 32;
 const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
 const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
+/// The eager artifacts of Wasm modules together. A module's eager artifact is all of its code
+/// at once, compiled before its first call: held to the shared ceiling, a module larger than
+/// it compiled and was then discarded, leaving every function interpreted and promoting hot
+/// roots one by one into a tier budget that filled (sqlite3-wasm, a 5.2 MiB artifact: Score
+/// 0.61 against 12.29 kept, first iteration 17.3 s against 3.3 s; max RSS unchanged at 100
+/// MiB, JetStream 3 `--jit`, Linux x86_64, 2026-10-24). This bounds a VM's eager Wasm code
+/// to a few large modules.
+const WASM_JIT_MAX_BASELINE_MAPPED_BYTES: usize = 32 * 1024 * 1024;
+/// The least an artifact maps: executable mappings are page-rounded.
+const JIT_MIN_ARTIFACT_BYTES: usize = 4096;
 /// One VM-local admission ceiling shared by JS and Wasm artifacts.
 const JIT_MAX_ARTIFACTS: usize = JS_JIT_MAX_FUNCTIONS + WASM_JIT_MAX_TIER_ROOTS;
 const JIT_MAX_MAPPED_BYTES: usize = WASM_JIT_MAX_TIER_MAPPED_BYTES;
@@ -158,13 +252,19 @@ enum JitArtifactKind {
     WasmTierRoot,
 }
 
-/// One VM-local executable-code budget shared by the JavaScript, Wasm and
-/// eager compiled-program tiers. Tier-kind limits and aggregate capacity are
-/// admitted and accounted together here.
+/// One VM-local executable-code budget for the JavaScript, Wasm tier and eager
+/// compiled-program artifacts. Tier-kind limits and the JS and Wasm tiers' aggregate
+/// capacity are admitted and accounted together here; eager module artifacts have their own
+/// ceiling (`WASM_JIT_MAX_BASELINE_MAPPED_BYTES`).
 #[derive(Default)]
 struct JitCodeCacheBudget {
+    /// The JavaScript and Wasm tier artifacts, which share `JIT_MAX_ARTIFACTS` and
+    /// `JIT_MAX_MAPPED_BYTES`.
     artifacts: usize,
     mapped_bytes: usize,
+    /// Eager Wasm module artifacts, bounded apart (`WASM_JIT_MAX_BASELINE_MAPPED_BYTES`).
+    baseline_artifacts: usize,
+    baseline_mapped_bytes: usize,
     js_functions: usize,
     js_mapped_bytes: usize,
     wasm_tier_roots: usize,
@@ -174,7 +274,10 @@ struct JitCodeCacheBudget {
 impl JitCodeCacheBudget {
     fn can_retain(&self, kind: JitArtifactKind, mapped_bytes: usize) -> bool {
         let (count, bytes, max_count, max_bytes) = match kind {
-            JitArtifactKind::BaselineWasm => (0, 0, usize::MAX, usize::MAX),
+            JitArtifactKind::BaselineWasm => {
+                return self.baseline_mapped_bytes.saturating_add(mapped_bytes)
+                    <= WASM_JIT_MAX_BASELINE_MAPPED_BYTES;
+            }
             JitArtifactKind::JsFunction => (
                 self.js_functions,
                 self.js_mapped_bytes,
@@ -198,6 +301,11 @@ impl JitCodeCacheBudget {
         if !self.can_retain(kind, mapped_bytes) {
             return false;
         }
+        if matches!(kind, JitArtifactKind::BaselineWasm) {
+            self.baseline_artifacts += 1;
+            self.baseline_mapped_bytes += mapped_bytes;
+            return true;
+        }
         self.artifacts += 1;
         self.mapped_bytes += mapped_bytes;
         match kind {
@@ -215,6 +323,11 @@ impl JitCodeCacheBudget {
     }
 
     fn release(&mut self, kind: JitArtifactKind, artifacts: usize, mapped_bytes: usize) {
+        if matches!(kind, JitArtifactKind::BaselineWasm) {
+            self.baseline_artifacts = self.baseline_artifacts.saturating_sub(artifacts);
+            self.baseline_mapped_bytes = self.baseline_mapped_bytes.saturating_sub(mapped_bytes);
+            return;
+        }
         self.artifacts = self.artifacts.saturating_sub(artifacts);
         self.mapped_bytes = self.mapped_bytes.saturating_sub(mapped_bytes);
         match kind {
@@ -674,7 +787,14 @@ impl Default for ProgramStore {
             js_jit_tracking_exhaustions: 0,
             js_jit_rejected_functions: 0,
             jit_code_cache: JitCodeCacheBudget::default(),
-            general_baseline_priced: true,
+            // TOD-191's correctness oracle may force hot candidates past the
+            // payback model so guarded exits can be tested independently of
+            // profitability. This is diagnostic-only and never set by score
+            // harnesses.
+            general_baseline_priced: !std::env::var_os(
+                "QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH",
+            )
+            .is_some_and(|value| value == "1"),
             js_jit_diagnostics: std::env::var_os("QUENCH_JS_JIT_STATS")
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
@@ -1494,6 +1614,13 @@ impl ProgramStore {
             .cloned()
     }
 
+    /// Whether the code budget could still retain a Wasm tier artifact: a compile it could not
+    /// keep is work thrown away (sqlite3-wasm `--jit`: hundreds of root compiles after the
+    /// tier budget filled, 15 s of its first iteration).
+    pub(super) fn wasm_tier_has_room(&self) -> bool {
+        self.jit_code_cache.can_retain(JitArtifactKind::WasmTierRoot, JIT_MIN_ARTIFACT_BYTES)
+    }
+
     /// Retain one compiled root closure if the VM-wide tier budget permits
     /// it. Active calls retain their own Rc through native return.
     pub(super) fn install_wasm_tier(
@@ -1574,6 +1701,12 @@ impl ProgramStore {
         self.js_jit_general_dispatch_enabled
     }
 
+    /// Records the counters `QUENCH_JS_JIT_STATS` enables, for a test to read.
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn enable_js_jit_diagnostics(&mut self) {
+        self.js_jit_diagnostics.get_or_insert_with(FxHashMap::default);
+    }
+
     pub(super) fn js_jit_dataview_float64_enabled(&self) -> bool {
         self.js_jit_dataview_float64_enabled
     }
@@ -1625,9 +1758,29 @@ impl ProgramStore {
         decision.compile
     }
 
-    /// Promote any ordinary JS function to the complete-semantics native
-    /// dispatch baseline after it is hot. The existing tier record and shared
-    /// code-cache budget remain the single owners for both baseline and
+    /// Whether the general baseline could ever pay through entries for a body of
+    /// `instructions`: unpriced, or its entries save something past the baseline's entry
+    /// overhead. A loop-free body that cannot is not counted toward it at all.
+    pub(super) fn general_baseline_may_pay(&self, instructions: usize) -> bool {
+        !self.general_baseline_priced || general_saved_per_entry(instructions).is_some()
+    }
+
+    /// Whether the general baseline may ever take a body of `instructions` under `policy`:
+    /// the tier is switched on, the memory policy compiles JS tiers, and the body could
+    /// pay. An `acyclic` body pays only through its entries (`general_baseline_may_pay`);
+    /// one with loops may also pay through its backedge work (`general_dispatch_work_due`).
+    /// A function it may not take is neither claimed for the tier nor counted toward it.
+    pub(super) fn general_tier_admits(
+        &self,
+        instructions: usize,
+        acyclic: bool,
+        policy: crate::MemoryPolicy,
+    ) -> bool {
+        self.js_jit_general_dispatch_enabled
+            && super::compiled::js_function_tiers_compile(policy)
+            && (!acyclic || self.general_baseline_may_pay(instructions))
+    }
+
     /// Compile a hot function's general baseline without pricing it, for tests of its
     /// semantics.
     #[cfg(all(test, not(quench_profiled)))]
@@ -1635,6 +1788,9 @@ impl ProgramStore {
         self.general_baseline_priced = false;
     }
 
+    /// Promote any ordinary JS function to the complete-semantics native
+    /// dispatch baseline after it is hot. The existing tier record and shared
+    /// code-cache budget remain the single owners for both baseline and
     /// specialized artifacts.
     pub(super) fn note_js_general_dispatch_entry(
         &mut self,
@@ -1643,8 +1799,8 @@ impl ProgramStore {
         instructions: usize,
         policy: crate::MemoryPolicy,
     ) -> bool {
-        // Admission: the tier's switch, and the memory policy's (`GENERAL_DISPATCH_TIER`).
-        if !self.js_jit_general_dispatch_enabled || !super::compiled::general_dispatch_compiles(policy) {
+        // Admission: the tier's switch, and the memory policy's (`JS_FUNCTION_TIERS`).
+        if !self.js_jit_general_dispatch_enabled || !super::compiled::js_function_tiers_compile(policy) {
             return false;
         }
         let priced = self.general_baseline_priced;
@@ -2071,6 +2227,31 @@ impl ProgramStore {
         }
     }
 
+    pub(super) fn record_js_jit_general_compile(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        elapsed_ns: u64,
+        code_bytes: usize,
+        installed: bool,
+        rejection: Option<&'static str>,
+    ) {
+        self.record_js_jit_compile(id, function, elapsed_ns, code_bytes, installed, rejection);
+        if let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.general_compile_attempts = counters.general_compile_attempts.saturating_add(1);
+            counters.general_compile_successes = counters
+                .general_compile_successes
+                .saturating_add(u64::from(installed));
+            if rejection.is_some() {
+                counters.general_compile_rejection_reason = rejection;
+            }
+        }
+    }
+
     pub(super) fn record_js_jit_rejection(
         &mut self,
         id: ProgramId,
@@ -2244,6 +2425,107 @@ impl ProgramStore {
             .or_default() += 1;
     }
 
+    /// Count call instructions handled by a compiled function's VM islands.
+    /// Rows are bounded by that function's static Call/CallArray PCs and only
+    /// exist when the opt-in diagnostics map has been allocated.
+    pub(super) fn record_js_jit_call_site(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        pc: usize,
+        opcode: crate::bytecode::Op,
+        direct_target: Option<(u32, u32)>,
+        outcome: JsJitCallOutcome,
+    ) {
+        let Some(counters) = self
+            .js_jit_diagnostics
+            .as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        else {
+            return;
+        };
+        let Ok(pc) = u32::try_from(pc) else {
+            return;
+        };
+        let key = (pc, opcode as u16);
+        let index = match counters
+            .call_sites
+            .binary_search_by_key(&key, |site| (site.pc, site.opcode))
+        {
+            Ok(index) => index,
+            Err(index) => {
+                counters.call_sites.insert(
+                    index,
+                    JsJitCallSiteCounters {
+                        pc,
+                        opcode: key.1,
+                        ..JsJitCallSiteCounters::default()
+                    },
+                );
+                index
+            }
+        };
+        let site = &mut counters.call_sites[index];
+        site.attempts = site.attempts.saturating_add(1);
+        match direct_target {
+            Some(target) => match site.direct_target {
+                None => {
+                    site.direct_target = Some(target);
+                    site.direct_target_calls = site.direct_target_calls.saturating_add(1);
+                }
+                Some(first) if first == target => {
+                    site.direct_target_calls = site.direct_target_calls.saturating_add(1);
+                }
+                Some(_) => {
+                    site.alternate_target_calls = site.alternate_target_calls.saturating_add(1);
+                }
+            },
+            None => {
+                site.other_target_calls = site.other_target_calls.saturating_add(1);
+            }
+        }
+        let outcome_count = &mut site.outcomes[outcome as usize];
+        *outcome_count = outcome_count.saturating_add(1);
+    }
+
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn js_jit_call_site_counts(
+        &self,
+        id: ProgramId,
+        function: u32,
+    ) -> Option<Vec<(
+        u32,
+        u16,
+        u64,
+        [u64; JsJitCallOutcome::COUNT],
+        Option<(u32, u32)>,
+        u64,
+        u64,
+        u64,
+    )>> {
+        self.js_jit_diagnostics
+            .as_ref()?
+            .get(&(id.raw(), function))
+            .map(|counters| {
+                counters
+                    .call_sites
+                    .iter()
+                    .map(|site| {
+                        (
+                            site.pc,
+                            site.opcode,
+                            site.attempts,
+                            site.outcomes,
+                            site.direct_target,
+                            site.direct_target_calls,
+                            site.alternate_target_calls,
+                            site.other_target_calls,
+                        )
+                    })
+                    .collect()
+            })
+    }
+
     pub(super) fn record_js_jit_fallback_entry(&mut self, id: ProgramId, function: u32) {
         if let Some(counters) = self
             .js_jit_diagnostics
@@ -2320,7 +2602,7 @@ impl ProgramStore {
 
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn jit_mapped_bytes(&self) -> usize {
-        self.jit_code_cache.mapped_bytes
+        self.jit_code_cache.mapped_bytes + self.jit_code_cache.baseline_mapped_bytes
     }
 
     /// A program's lane views by function, derived on first use.
@@ -2346,7 +2628,8 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            Option<&[crate::compile::liveness::RegisterSet]>,
+            Option<&crate::compile::liveness::RegisterMasks>,
+            &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
@@ -2360,7 +2643,7 @@ impl ProgramStore {
         }
         Some(view.get_or_init(|| {
             let live = entry.residual.register_root_masks(function);
-            let view = derive(code, &entry.constants, entry.residual.kind, live);
+            let view = derive(code, &entry.constants, entry.residual.kind, live, &entry.residual.field_sites);
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();
@@ -2394,7 +2677,8 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            Option<&[crate::compile::liveness::RegisterSet]>,
+            Option<&crate::compile::liveness::RegisterMasks>,
+            &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.entry(id)?;
@@ -2402,7 +2686,7 @@ impl ProgramStore {
         let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         Some(view.get_or_init(|| {
             let live = entry.residual.register_root_masks(function);
-            let view = derive(code, &entry.constants, entry.residual.kind, live);
+            let view = derive(code, &entry.constants, entry.residual.kind, live, &entry.residual.field_sites);
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();
@@ -2522,6 +2806,17 @@ impl ProgramStore {
     }
 }
 
+/// The diagnostics report's ratios are parts per million.
+const PARTS_PER_MILLION: u128 = 1_000_000;
+
+/// `part` of `whole` in parts per million, capped at the whole; zero of nothing is zero.
+fn parts_per_million(part: u64, whole: u64) -> u64 {
+    if whole == 0 {
+        return 0;
+    }
+    (u128::from(part) * PARTS_PER_MILLION / u128::from(whole)).min(PARTS_PER_MILLION) as u64
+}
+
 impl Drop for ProgramStore {
     fn drop(&mut self) {
         let Some(diagnostics) = &self.js_jit_diagnostics else {
@@ -2565,21 +2860,20 @@ impl Drop for ProgramStore {
                 .map(|entry| entry.residual.source_name.as_str())
                 .or_else(|| counters.source_name.as_deref())
                 .unwrap_or("");
-            let native_entry_coverage_ppm = if counters.entries == 0 {
-                0
-            } else {
-                (u128::from(counters.native_entries) * 1_000_000
-                    / u128::from(counters.entries))
-                    .min(1_000_000) as u64
-            };
+            let native_entry_coverage_ppm = parts_per_million(counters.native_entries, counters.entries);
             let total_entries = counters.entries.saturating_add(counters.lane_entries);
-            let all_entry_native_coverage_ppm = if total_entries == 0 {
-                0
-            } else {
-                (u128::from(counters.native_entries) * 1_000_000
-                    / u128::from(total_entries))
-                .min(1_000_000) as u64
-            };
+            let all_entry_native_coverage_ppm = parts_per_million(counters.native_entries, total_entries);
+            let general_dispatch_work = self
+                .js_general_dispatch_work
+                .as_ref()
+                .and_then(|work| work.get(program))
+                .and_then(|work| work.get(function))
+                .copied()
+                .unwrap_or(0);
+            let general_dispatch_work_required = general_dispatch_work_required(
+                u64::from(counters.instruction_count),
+                self.general_baseline_priced,
+            );
             let osr = entry
                 .and_then(|entry| entry.lane_views.derived(*function))
                 .map(super::dispatch_fast::LaneView::osr_diagnostics)
@@ -2620,9 +2914,15 @@ impl Drop for ProgramStore {
             } else {
                 let _ = write!(stderr, "null");
             }
+            let _ = write!(stderr, ",\"general_dispatch_rejection_reason\":");
+            if let Some(reason) = counters.general_compile_rejection_reason {
+                let _ = write_json_string(&mut stderr, reason);
+            } else {
+                let _ = write!(stderr, "null");
+            }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"field_cache_sites\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}},\"call_sites\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -2631,6 +2931,8 @@ impl Drop for ProgramStore {
                 counters.promotions,
                 counters.compile_attempts,
                 counters.compile_successes,
+                counters.general_compile_attempts,
+                counters.general_compile_successes,
                 counters.compile_ns,
                 counters.native_entries,
                 native_entry_coverage_ppm,
@@ -2649,6 +2951,8 @@ impl Drop for ProgramStore {
                 counters.fallback_entries,
                 counters.interpreter_completions,
                 counters.interpreter_inclusive_ns,
+                general_dispatch_work,
+                general_dispatch_work_required,
                 counters.guard_conditional_branches,
                 counters.guard_typeof_ops,
                 counters.guard_strict_comparisons,
@@ -2664,17 +2968,49 @@ impl Drop for ProgramStore {
                 osr.exits,
                 osr.widenings,
             );
+            for (site_index, site) in counters.call_sites.iter().enumerate() {
+                if site_index != 0 {
+                    let _ = write!(stderr, ",");
+                }
+                let opcode = crate::bytecode::Op::NAMES
+                    .get(usize::from(site.opcode))
+                    .copied()
+                    .unwrap_or("unknown");
+                let _ = write!(stderr, "{{\"pc\":{},\"opcode\":", site.pc);
+                let _ = write_json_string(&mut stderr, opcode);
+                let _ = write!(stderr, ",\"attempts\":{},\"direct_target\":", site.attempts);
+                if let Some((program, function)) = site.direct_target {
+                    let _ = write!(stderr, "{{\"program\":{program},\"function\":{function}}}");
+                } else {
+                    let _ = write!(stderr, "null");
+                }
+                let _ = write!(
+                    stderr,
+                    ",\"direct_target_calls\":{},\"alternate_target_calls\":{},\"other_target_calls\":{},\"outcomes\":{{",
+                    site.direct_target_calls,
+                    site.alternate_target_calls,
+                    site.other_target_calls,
+                );
+                for (outcome_index, (outcome, count)) in JsJitCallOutcome::ALL
+                    .into_iter()
+                    .zip(site.outcomes)
+                    .enumerate()
+                {
+                    if outcome_index != 0 {
+                        let _ = write!(stderr, ",");
+                    }
+                    let _ = write!(stderr, "\"{}\":{}", outcome.name(), count);
+                }
+                let _ = write!(stderr, "}}}}");
+            }
+            let _ = write!(stderr, "],\"field_cache_sites\":[");
             let mut field_cache_sites: Vec<_> = counters.field_cache_sites.iter().collect();
             field_cache_sites.sort_unstable_by_key(|(site, _)| **site);
             for (index, (site, (probes, hits))) in field_cache_sites.iter().enumerate() {
                 if index != 0 {
                     let _ = write!(stderr, ",");
                 }
-                let hit_ppm = if *probes == 0 {
-                    0
-                } else {
-                    (u128::from(*hits) * 1_000_000 / u128::from(*probes)) as u64
-                };
+                let hit_ppm = parts_per_million(*hits, *probes);
                 let _ = write!(
                     stderr,
                     "{{\"cache_site\":{site},\"probes\":{probes},\"hits\":{hits},\"hit_rate_ppm\":{hit_ppm}}}"
@@ -2850,9 +3186,25 @@ impl LaneViews {
 }
 
 #[cfg(test)]
+mod general_promotion_tests {
+    use super::general_promotion_due;
+
+    #[test]
+    fn a_large_body_pays_after_enough_entries_and_a_small_one_never() {
+        // 400 instructions: each entry saves 400/4 - 32 = 68 interpreted instructions
+        // against 16,000 + 1,200 x 400 for the compile, so 7,295 entries pay.
+        assert!(!general_promotion_due(7_294, 400));
+        assert!(general_promotion_due(7_295, 400));
+        // Below 4 x 32 instructions an entry saves nothing.
+        assert!(!general_promotion_due(u32::MAX, 128));
+        assert!(!general_promotion_due(u32::MAX, 0));
+    }
+}
+
+#[cfg(test)]
 mod jit_code_cache_tests {
     use super::{
-        JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS,
+        JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS, WASM_JIT_MAX_BASELINE_MAPPED_BYTES,
         JS_JIT_MAX_MAPPED_BYTES, JitArtifactKind, JitCodeCacheBudget,
         JsTierState,
         WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS,
@@ -2862,10 +3214,11 @@ mod jit_code_cache_tests {
     fn general_dispatch_backedge_unpriced_mode_waits_for_work_floor() {
         let mut state = JsTierState::Hot { observations: 1, numeric: 0 };
         let mut work = 0;
-        super::accumulate_general_dispatch_work(&mut work, 31 * 64);
+        let required = super::general_dispatch_work_required(64, false);
+        super::accumulate_general_dispatch_work(&mut work, usize::try_from(required - 1).unwrap());
         assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 64, false));
         assert!(matches!(state, JsTierState::Hot { .. }));
-        super::accumulate_general_dispatch_work(&mut work, 64);
+        super::accumulate_general_dispatch_work(&mut work, 1);
         assert!(super::promote_general_dispatch_if_paid(&mut state, work, 64, false));
         assert!(matches!(state, JsTierState::GeneralCompileDue));
     }
@@ -2874,9 +3227,10 @@ mod jit_code_cache_tests {
     fn general_dispatch_backedge_priced_mode_uses_existing_compile_cost() {
         let mut state = JsTierState::Rejected { entries: 8, reason: "test" };
         let mut work = 0;
-        // 100 instructions cost 16,000 + 640*100 units. The 50% savings
-        // assumption requires twice that much observed bytecode work.
-        super::accumulate_general_dispatch_work(&mut work, 159_999);
+        // 100 instructions cost the fixed and per-instruction compile cost, which the
+        // saved share of observed bytecode work must cover.
+        let paid = usize::try_from(super::general_dispatch_work_required(100, true)).unwrap();
+        super::accumulate_general_dispatch_work(&mut work, paid - 1);
         assert!(!super::promote_general_dispatch_if_paid(&mut state, work, 100, true));
         super::accumulate_general_dispatch_work(&mut work, 1);
         assert!(super::promote_general_dispatch_if_paid(&mut state, work, 100, true));
@@ -2918,19 +3272,21 @@ mod jit_code_cache_tests {
         assert_eq!(cache.artifacts, 2);
         assert_eq!(cache.mapped_bytes, 384 * 1024);
 
-        assert!(!cache.can_retain(JitArtifactKind::BaselineWasm, JIT_MAX_MAPPED_BYTES));
         cache.release(JitArtifactKind::WasmTierRoot, 1, 256 * 1024);
         assert_eq!(cache.artifacts, 1);
         assert_eq!(cache.mapped_bytes, 128 * 1024);
-        assert!(cache.can_retain(
-            JitArtifactKind::BaselineWasm,
-            JIT_MAX_MAPPED_BYTES - 128 * 1024
-        ));
 
-        for _ in 1..JIT_MAX_ARTIFACTS {
-            assert!(cache.retain(JitArtifactKind::BaselineWasm, 0));
-        }
-        assert!(!cache.can_retain(JitArtifactKind::BaselineWasm, 0));
+        // An eager module artifact larger than the shared ceiling is admitted against its
+        // own, and leaves the tiers' allowance as it was.
+        assert!(cache.retain(JitArtifactKind::BaselineWasm, JIT_MAX_MAPPED_BYTES + 1));
+        assert_eq!((cache.artifacts, cache.mapped_bytes), (1, 128 * 1024));
+        assert!(cache.can_retain(JitArtifactKind::JsFunction, 128 * 1024));
+        assert!(!cache.can_retain(
+            JitArtifactKind::BaselineWasm,
+            WASM_JIT_MAX_BASELINE_MAPPED_BYTES - JIT_MAX_MAPPED_BYTES
+        ));
+        cache.release(JitArtifactKind::BaselineWasm, 1, JIT_MAX_MAPPED_BYTES + 1);
+        assert!(cache.can_retain(JitArtifactKind::BaselineWasm, WASM_JIT_MAX_BASELINE_MAPPED_BYTES));
     }
 
     #[test]
@@ -2951,7 +3307,8 @@ mod jit_code_cache_tests {
             WASM_JIT_MAX_TIER_MAPPED_BYTES + 1
         ));
         assert_eq!(cache.artifacts, JIT_MAX_ARTIFACTS);
-        assert!(!cache.can_retain(JitArtifactKind::BaselineWasm, 0));
+        // Full tiers do not hold back an eager module artifact.
+        assert!(cache.can_retain(JitArtifactKind::BaselineWasm, 0));
     }
 
     #[test]

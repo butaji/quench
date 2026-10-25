@@ -3199,11 +3199,17 @@ impl<'a> Compiler<'a> {
         };
         // A strict `arguments` object is a copy of the values passed, which no parameter
         // write reaches; a sloppy one aliases the parameters (`Function::arguments_alias_parameters`)
-        // unless the body only reads it and rebinds no parameter.
+        // unless the body rebinds no parameter and cannot observe the mapping
+        // (`FixedRegisterLocalFacts::arguments_mapping_unobserved`).
         let unaliased_arguments = eligible
             && register_local_facts.safe
-            && register_local_facts.arguments == early::ArgumentsUse::Reads
-            && own_arguments.is_some_and(|(strict, parameters)| !strict && !rebinds_parameter(parameters));
+            && own_arguments.is_some_and(|(strict, parameters)| {
+                !strict
+                    && !rebinds_parameter(parameters)
+                    && register_local_facts.arguments_mapping_unobserved(
+                        parameters.iter().map(|atom| &self.atoms[*atom as usize]),
+                    )
+            });
         let arguments_allow_promotion = match (register_local_facts.arguments, own_arguments) {
             (early::ArgumentsUse::None, _) => true,
             (_, None) => false,
@@ -3582,6 +3588,7 @@ impl<'a> Compiler<'a> {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            dynamic_scope_access: Default::default(),
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: function.handlers.into(),

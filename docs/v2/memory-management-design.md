@@ -297,7 +297,7 @@ nursery and pretenuring; QuickJS; Lua 5.4 generational mode; Go GC guide
 and soft memory limit; Wingo on Nofl field-logging barriers, V8 MinorMS and
 pretenuring. Full notes with links: the Linear design document.
 
-## 8. State and evidence (2026-10-22)
+## 8. State and evidence (2026-10-24)
 
 Linux x86_64, 4 vCPU, static + BOLT `quench-node` unless noted. Each line names its evidence
 directory under `evidence/`. A component counts as settled when its alternatives were
@@ -347,6 +347,7 @@ measured on the same binary and lost.
 | Young 2^10 with page releases paced to ≥ 2 or 10 ms apart under MemoryFirst | RegExp −224 KiB (−7% Score), but Richards, Crypto, RayTrace and DeltaBlue +50 to +260 KiB: a time-paced release misses the peaks | `tod137-paced-release-young-…` |
 | Bound the collector by pacing alone (most eager pacing, page releases on and off) | With releases off, garbage at the peak is −96 KiB on Crypto, −136 on RayTrace and +84 on DeltaBlue, so the collector is at its floor there; RegExp holds −432 and Richards −256, at Score −45% and −5% | `tod137-eager-collector-bound-…` |
 | Drop regexp matcher-cache entries no live RegExp shares, at full or every collection | RegExp +4 to +228 KiB, other rows flat: the cached matchers are in use, and dropping them recompiles. At RegExp's peak, compiled regexps are ~0.5 MB live (Massif: cache-held `Regex` 185 KiB, lowered programs 179, literal finders 60, match sets and classes 60) | session A/B (7 runs, unbolted static), TOD-137 comment |
+| MemoryFirst first-call release by code growth (256 KiB since the last release) instead of every 5 ms | Unbolted: Crypto worst −72 to −204 KiB, but NavierStokes `--jit` +124 and RayTrace +100; without the time budget npm CPU 1.4–2.2×. Bolted `cdsort`, 15 runs: RayTrace `--jit` worst +228, other rows ±120 both ways | `tod137-growth-release-rejected-…` |
 | Headerless payload space for string buffers | Exact census of RegExp: only 5,659 strings own a buffer; at most about 191 KiB of overhead to remove, under half the gap | `string-payload-linux-2026-10-23` |
 
 ### 8.3 Where the peak is now (MemoryFirst, no JIT)
@@ -361,13 +362,75 @@ At each peak, sampled from `/proc` with resident pages attributed by symbol size
   the runtime's builtins, 958 native function objects among them, and about 0.6 MB for the
   Node host (EventEmitter 164 KiB, `process` 168 KiB). QuickJS's whole heap is 0.55 MB.
 
-Against the target, max RSS ≤ 0.8 × the lowest other runtime
-(`tod137-board-after-replace-and-jit-release-…`):
+Against the target, max RSS ≤ 0.8 × the lowest other runtime, on the board of 2026-10-24
+(`tod137-board-memory-first-js-tiers-…`). Each cell is the worst of 5 runs, the median in
+brackets:
 
-| Mode | Met | Within 1.2× of the target | Beyond |
+| Fixture | No JIT | `--jit` |
+|---|---|---|
+| Richards | 0.97 (0.85) | 0.90 (0.90) |
+| DeltaBlue | 0.89 (0.89) | 0.93 (0.89) |
+| Crypto | 1.03 (0.97) | 1.02 (1.01) |
+| RayTrace | 1.05 (0.98) | 1.01 (0.98) |
+| RegExp | 1.04 (1.03) | 1.08 (1.05) |
+| NavierStokes | 0.93 (0.93) | 0.93 (0.93) |
+| EarleyBoyer | 0.45 | 0.46 |
+| Splay | 0.64 | 0.64 |
+
+### 8.3a Why the memory manager is at its floor on the rows that miss
+
+A MemoryFirst peak is the sum of terms; the memory manager controls some of them. For each
+controlled term, the evidence below bounds what any setting of it could still remove.
+
+| Term | What the memory manager controls | Bound | Evidence |
 |---|---|---|---|
-| no JIT | EarleyBoyer, Splay | Richards 1.16, DeltaBlue 1.13, NavierStokes 1.15 | RegExp 1.22, Crypto 1.28, RayTrace 1.32 |
-| `--jit` | EarleyBoyer, Splay | DeltaBlue 1.08, RayTrace 1.11, Richards 1.13, RegExp 1.19 | Crypto 1.41, NavierStokes 1.84 |
+| Garbage at the peak | collection pacing | The most eager pacing the knobs allow, with page releases off, removes at most 96 KiB on Crypto, 136 on RayTrace and none on DeltaBlue, at Score −24 to −79%. RegExp still holds about 430 KiB of garbage, and Richards about 260, that only that pacing removes (Score −45%, −5%). | `tod137-eager-collector-bound-…` |
+| Pacing alternatives | young size, release timing | Young 2^10 with paced releases; earlier first collections; trailing releases. None lowers most rows (§8.2). | `tod137-paced-release-young-…` and the §8.2 rows |
+| Retention | what a closure keeps | Closures keep only what their code can read, with the trace bounded at twice a whole trace. | `closure-retention-…`, `tod137-environment-trace-cost-…` |
+| Compile transients | which tiers compile under the policy, and code release around them | Under MemoryFirst no JavaScript tier compiles: every `--jit` row peaks at its no-JIT level. | `tod137-memory-first-js-tiers-…` |
+| Cold first runs | where records live | A cold-compiled entry runs from its kept form; no row's worst run is its first. | `tod137-cold-entry-kept-form-…` |
+| Code pages | release at boundaries | Releases at every collection and paced first-call releases. Every finer release rule measured raised a peak, or cost npm 1.4–2.9× in time (§8.2). | `tod137-first-call-release-…` |
+
+**Against reference counting.** QuickJS frees each object when its count drops to zero, so it
+holds no garbage between collections: its working set above its own empty-process floor is
+what the workload needs with no collector headroom. Quench's working set above its floor is
+smaller than that on all eight fixtures. In the board's median runs:
+
+| Fixture | Quench above its floor | QuickJS above its floor | Ratio |
+|---|--:|--:|--:|
+| Splay | 29,484 KiB | 157,508 | 0.19 |
+| EarleyBoyer | 4,336 | 15,172 | 0.29 |
+| Richards | 316 | 712 | 0.44 |
+| DeltaBlue | 756 | 1,208 | 0.63 |
+| NavierStokes | 1,916 | 2,572 | 0.74 |
+| Crypto | 856 | 1,068 | 0.80 |
+| RegExp | 3,832 | 4,356 | 0.88 |
+| RayTrace | 696 | 744 | 0.94 |
+
+The empty-process floors, from 7 evicted runs of an empty script, are Quench 2016 KiB and
+QuickJS 2744 KiB (median).
+
+The rows that miss the target are those whose workload above the floor is small:
+- RayTrace needs 744 KiB above QuickJS's floor, and Crypto 1068.
+- With such a workload, 0.8 × QuickJS's total requires a floor far below QuickJS's own, even
+  with no garbage at all.
+- Quench's floor is already 27% lower. What remains lies in that floor's code pages and
+  start-up state.
+
+What is left on the three missing rows (1–8% over the target) lies outside these terms:
+- **Crypto and RayTrace:** code pages, about 1.2–1.5 MB at the peak, which the code-layout
+  lane owns (TOD-171); and start-up state, about 1.5 MB, which the start-up lane owns
+  (TOD-21, TOD-104).
+- **RegExp:** compiled regexps, held live by the matcher cache and by live RegExp objects;
+  pruning the cache raised the peak (§8.2).
+  - Their 237 patterns held 523 KiB. Match sets as two-word bitmaps, wide literal finders
+    built on demand and a boxed opt-in byte backend bring that to 309 KiB.
+  - Effect on V8-v7 RegExp: median −256 KiB without JIT and −128 with it, worst runs −200 and
+    −212, scores within noise (`tod137-regexp-compact-patterns-…`).
+  - RegExp also holds about 430 KiB of garbage that only the −45% pacing removes.
+
+Run-to-run spread is 100–300 KiB on these rows, with the peaks set by time-paced releases.
+It is of the same order as the remaining gaps.
 
 ### 8.4 What remains, by owner
 

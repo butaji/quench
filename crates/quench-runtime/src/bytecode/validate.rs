@@ -640,6 +640,7 @@ function.plain_local_slots(&self.superinstructions)
                 || positions.clone().any(|position| {
                     position.pc >= code_len || position.line == 0 || position.column == 0
                 })
+                || positions.clone().last() != function.source_positions.last()
             {
                 return Err(format!("function {index} has invalid source positions"));
             }
@@ -1280,6 +1281,7 @@ mod tests {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
+            dynamic_scope_access: Default::default(),
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             handlers: vec![].into(),

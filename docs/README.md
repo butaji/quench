@@ -717,6 +717,11 @@ container: dynamic -no-jit 5.2 MB / -jit 7.6 MB, static 3.5 MB / 6.3 MB.
 A static position-independent build relocates its read-only pointers at
 startup and measured 9.1 MB.
 
+A static build cannot host native addons: an addon links the shared C runtime,
+and loading it would run a second C runtime beside the static one, so
+`process.dlopen` refuses with `ERR_DLOPEN_FAILED`. npm boards that run addon
+scenarios (rollup, sharp, vitest's rolldown binding) use the dynamic build.
+
 The static `quench-node` keeps its link relocations (`--emit-relocs`, never
 loaded), and qualification rewrites its block layout with `llvm-bolt` (BOLT
 20, Ubuntu `bolt-20`). A symbol order moves whole functions, but a run

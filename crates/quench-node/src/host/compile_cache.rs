@@ -10,6 +10,9 @@
 //! time, and the runtime ABI), the module's name and the exact text compiled. An entry that
 //! does not decode, or matches nothing, only costs the compilation it would have saved. Writes
 //! go to a temporary file renamed into place, so a concurrent reader sees a whole entry or none.
+//! Each build's entries share a directory under the cache's; the first store of a build removes
+//! all but the `KEPT_BUILDS` most recent builds' directories, which no process of the new build
+//! reads (they had grown to 243K files, 6.6 GB, over a day of rebuilds).
 
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::path::PathBuf;
@@ -24,6 +27,9 @@ const ENTRY_EXTENSION: &str = "qbc";
 /// The seeds of the two hashes that name an entry (`CompileCache::entry`): any two distinct
 /// values give independent hashes.
 const KEY_SEEDS: [u64; 2] = [0, 1];
+/// The builds whose compiled programs and startup snapshots a cache keeps: the running build
+/// and the two before it, which an older executable still installed may run.
+pub(crate) const KEPT_BUILDS: usize = 3;
 
 /// Where this process keeps compiled library modules, and the build identity that keys them.
 pub(crate) struct CompileCache {
@@ -71,7 +77,8 @@ impl CompileCache {
             }
             hasher.finish()
         };
-        Some(CacheEntry { path: directory.join(format!("{:016x}{:016x}.{ENTRY_EXTENSION}", hash(KEY_SEEDS[0]), hash(KEY_SEEDS[1]))) })
+        let build = directory.join(format!("{:016x}", self.build));
+        Some(CacheEntry { path: build.join(format!("{:016x}{:016x}.{ENTRY_EXTENSION}", hash(KEY_SEEDS[0]), hash(KEY_SEEDS[1]))) })
     }
 }
 
@@ -94,13 +101,48 @@ impl CacheEntry {
         let Some(directory) = self.path.parent() else {
             return;
         };
+        let new_build = !directory.exists();
         if std::fs::create_dir_all(directory).is_err() {
             return;
+        }
+        if new_build {
+            if let Some(builds) = directory.parent() {
+                remove_other_builds(builds);
+            }
         }
         let temporary = self.path.with_extension(format!("{ENTRY_EXTENSION}.{}", std::process::id()));
         if std::fs::write(&temporary, bytes).is_ok() && std::fs::rename(&temporary, &self.path).is_err() {
             let _ = std::fs::remove_file(&temporary);
         }
+    }
+}
+
+/// Removes from `builds`, a cache directory of per-build directories, all but the `KEPT_BUILDS`
+/// most recently modified builds, and any entry kept outside a build's directory, as the cache
+/// stored them before it kept builds apart.
+pub(crate) fn remove_other_builds(builds: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(builds) else {
+        return;
+    };
+    // Entries are classified by their own type, never a link's target, and a build directory
+    // is removed with `remove_dir_all`, which removes links without following them: nothing
+    // outside `builds` is removed. An entry another process removes first is skipped.
+    let mut kept = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            if let Ok(modified) = entry.metadata().and_then(|metadata| metadata.modified()) {
+                kept.push((modified, entry.path()));
+            }
+        } else {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    kept.sort_by(|left, right| right.0.cmp(&left.0));
+    for (_, build) in kept.into_iter().skip(KEPT_BUILDS) {
+        let _ = std::fs::remove_dir_all(build);
     }
 }
 
@@ -159,5 +201,38 @@ impl Drop for MappedFile {
     fn drop(&mut self) {
         // Nothing borrows the mapping past `self`.
         crate::host::resident_pages::unmap_tracked_mapping(self.address.as_ptr() as usize, self.length);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{remove_other_builds, KEPT_BUILDS};
+
+    #[test]
+    fn a_new_build_keeps_the_most_recent_builds_only() {
+        let root = std::env::temp_dir().join(format!("quench-compile-builds-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let builds = (0..KEPT_BUILDS + 2).map(|build| root.join(format!("{build:016x}"))).collect::<Vec<_>>();
+        for build in &builds {
+            std::fs::create_dir_all(build).unwrap();
+            std::fs::write(build.join("entry.qbc"), b"").unwrap();
+            // Directory times order the builds; filesystems keep them at least this finely.
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        std::fs::write(root.join("legacy.qbc"), b"").unwrap();
+        // A link out of the cache, to a directory and to a file, loses only the link.
+        let outside = std::env::temp_dir().join(format!("quench-compile-outside-{}", std::process::id()));
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("keep"), b"").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("linked-directory")).unwrap();
+        std::os::unix::fs::symlink(outside.join("keep"), root.join("linked-file")).unwrap();
+        remove_other_builds(&root);
+        assert!(outside.join("keep").exists());
+        assert!(std::fs::symlink_metadata(root.join("linked-directory")).is_err());
+        std::fs::remove_dir_all(&outside).unwrap();
+        let kept = builds.iter().filter(|build| build.exists()).collect::<Vec<_>>();
+        assert_eq!(kept, builds.iter().rev().take(KEPT_BUILDS).rev().collect::<Vec<_>>());
+        assert!(!root.join("legacy.qbc").exists());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
