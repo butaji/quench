@@ -5257,12 +5257,15 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let polymorphic = vm.field_site_polymorphic(i.c);
         let adds = vm.field_site_adds(i.c);
+        // A receiver outside the object records (a RegExp's or a function's cell) never hits
+        // the own-record store, so its site takes the general cached write from now on.
+        let cell_receiver = !THIS && r.get(i.b).direct_object_index().is_none() && vm.is_object_like(r.get(i.b));
         // A private field's store takes the private element path (`lane_set_field`).
         let handler: Option<Handler> = if vm.is_private_name(i.imm()) {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
         } else if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
             Some(if THIS { lane_set_this_field_add::<H> } else { lane_set_object_field_add::<H> })
-        } else if adds || polymorphic {
+        } else if adds || polymorphic || cell_receiver {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
         } else {
             None
