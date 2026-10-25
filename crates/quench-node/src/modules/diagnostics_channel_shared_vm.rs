@@ -4,7 +4,7 @@
 //! `DiagnosticsState`; tracing channels derive their event names from a prefix.
 
 use crate::host::NodeHost;
-use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
+use quench_runtime::{NativeContext, RootId, RootedError, Runtime};
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -586,39 +586,17 @@ pub(crate) fn publish_named(
     Ok(())
 }
 
-pub(crate) fn publish_named_runtime(
+/// A snapshot array of the subscribers of channel `name`, or none when it has none: a host
+/// publisher calls each with the message and the name, as `publish` does.
+pub(crate) fn subscribers_rooted(
     runtime: &mut Runtime<NodeHost>,
-    program: &quench_runtime::ResidualProgram,
     name: &str,
-    message: RootId,
-) -> Result<(), String> {
+) -> Result<Option<RootId>, String> {
     let state = runtime.host_mut().shared_state();
-    let callbacks = state
-        .borrow()
-        .diagnostics
-        .channels
-        .get(name)
-        .cloned()
-        .unwrap_or_default();
-    let undefined = runtime.root(Value::UNDEFINED);
-    for callback in callbacks {
-        let result = runtime.call_rooted(callback, undefined, &[message]);
-        match result {
-            Ok(result) => {
-                runtime.release_root(result);
-            }
-            Err(error) => {
-                let message = runtime.format_error(program, &error.error);
-                if let Some(exception) = error.exception {
-                    runtime.release_root(exception);
-                }
-                runtime.release_root(undefined);
-                return Err(message);
-            }
-        }
-    }
-    runtime.release_root(undefined);
-    Ok(())
+    let callbacks = state.borrow().diagnostics.channels.get(name).filter(|callbacks| !callbacks.is_empty()).cloned();
+    callbacks
+        .map(|callbacks| runtime.array_rooted(&callbacks).map_err(|error| error.to_string()))
+        .transpose()
 }
 
 fn callback_wrapper(

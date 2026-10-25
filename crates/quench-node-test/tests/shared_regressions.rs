@@ -188,6 +188,53 @@ console.log(t);
 }
 
 #[test]
+fn server_request_start_publishes_and_emits_like_node() {
+    // A parsed server request enters JavaScript once: it makes the request and response,
+    // publishes `http.server.request.start` to a subscriber snapshot with Node's message
+    // order and the channel name, then emits `request` on the server.
+    let source = r#"
+const dc = require('diagnostics_channel');
+const http = require('http');
+const seen = [];
+let starts = 0;
+function start(message, name) {
+  seen.push(['start', Object.keys(message).join(), name, this === undefined || this === globalThis,
+    message.request instanceof http.IncomingMessage, message.response.req === message.request,
+    message.server === server]);
+  if (++starts === 2) dc.unsubscribe('http.server.request.start', start);
+}
+dc.subscribe('http.server.request.start', start);
+const server = http.createServer(function (request, response) {
+  seen.push(['request', this === server, arguments.length, request.method, request.url,
+    response.statusCode, response.req === request]);
+  response.end('ok');
+});
+server.listen(0, async () => {
+  const { port } = server.address();
+  for (const path of ['/a', '/b?c=1', '/d']) {
+    await new Promise((done) => http.get({ port, path }, (response) => {
+      response.resume();
+      response.on('end', done);
+    }));
+  }
+  console.log(JSON.stringify(seen));
+  server.close();
+});
+"#;
+
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(
+        quench.outcome(),
+        RunResult::Pass,
+        "Quench failed: {:?}",
+        quench.worker
+    );
+    assert_eq!(quench.stdout, node.stdout, "Node and Quench output differ");
+}
+
+#[test]
 fn deep_named_calls_raise_catchable_range_error_and_recover() {
     let source = r#"
 function Box() {}
