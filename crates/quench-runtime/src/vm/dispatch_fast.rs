@@ -13526,6 +13526,12 @@ fn lane_push_frame_call<H: Host>(
     {
         return exit(ip);
     }
+    // A callee that has not made its deferred runs takes the general path, as a lane call's
+    // does (`ProgramStore::lane_call_may_derive`): entering its frame here derived its view at
+    // its first call, a callee run once included (jiti npm scenario: -2.1% instructions).
+    if !vm.programs.lane_call_may_derive(target.0, target.1) {
+        return exit(ip);
+    }
     #[cfg(feature = "profile-lane-exits")]
     if let Some(body) = frame_entry_census(vm, target.0, target.1) {
         super::lane_exits::record_detail(format!("frame call {body}"));
