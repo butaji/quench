@@ -1,0 +1,33 @@
+richards QX_K1=1 cold median 2624 max 2664
+richards QX_K1=1 QX_K3=1 cold median 2444 max 2540
+crypto QX_K1=1 cold median 2928 max 2928
+crypto QX_K1=1 QX_K3=1 cold median 2928 max 3000
+raytrace QX_K1=1 cold median 2660 max 2880
+raytrace QX_K1=1 QX_K3=1 cold median 2636 max 2644
+deltablue QX_K1=1 cold median 2620 max 2692
+deltablue QX_K1=1 QX_K3=1 cold median 2612 max 2620
+navier-stokes QX_K1=1 cold median 3784 max 3784
+navier-stokes QX_K1=1 QX_K3=1 cold median 3780 max 3780
+regexp QX_K1=1 cold median 4944 max 4968
+regexp QX_K1=1 QX_K3=1 cold median 4952 max 4976
+earley-boyer QX_K1=1 cold median 5984 max 6016
+earley-boyer QX_K1=1 QX_K3=1 cold median 5920 max 6104
+WARM
+richards QX_X=0 rss 2188 max 2256 score 1827
+richards QX_K3=1 rss 2052 max 2128 score 1832
+crypto QX_X=0 rss 2604 max 2644 score 2865
+crypto QX_K3=1 rss 2548 max 2616 score 2872
+raytrace QX_X=0 rss 2472 max 2548 score 2611
+raytrace QX_K3=1 rss 2432 max 2440 score 2647
+deltablue QX_X=0 rss 2536 max 2564 score 1575
+deltablue QX_K3=1 rss 2440 max 2564 score 1407
+navier-stokes QX_X=0 rss 3664 max 3800 score 2768
+navier-stokes QX_K3=1 rss 3660 max 3732 score 2765
+regexp QX_X=0 rss 5024 max 5024 score 3022
+regexp QX_K3=1 rss 5024 max 5024 score 3116
+earley-boyer QX_X=0 rss 5860 max 5936 score 4230
+earley-boyer QX_K3=1 rss 5868 max 5928 score 4178
+splay QX_X=0 rss 31224 max 31248 score 3116
+splay QX_K3=1 rss 31224 max 31232 score 5171
+
+[exited with code 0]
