@@ -1257,9 +1257,8 @@ impl Admission<'_> {
     }
 }
 
-/// The region of the loop from `header` to its backward jump at `backedge`, when every
-/// instruction in it is one the tier lowers. A call rejects it: the site may inline the
-/// call once hot (`inline_region`), or else run the prefix before it (`call_prefix_region`).
+/// The region of the loop from `header` to its backward jump at `backedge`, or the supported
+/// prefix before its first call, when every included instruction is one the tier lowers.
 pub(super) fn region(
     function: &Function,
     decoded: &[WideInstruction],
@@ -1269,62 +1268,24 @@ pub(super) fn region(
     header: u32,
     backedge: u32,
 ) -> Result<LoopRegion, RegionRejection> {
-    bounded_region(function, decoded, constants, sites, live, header, backedge, backedge)
-}
-
-/// The supported prefix of the loop from `header` before its first dynamic call, which ends
-/// the native region: the interpreter resumes at the call's exact PC and reaches the region
-/// again at the backward jump `backedge`, so the prefix stays useful across iterations.
-/// Branches that skip the call resume at their exact target.
-pub(super) fn call_prefix_region(
-    function: &Function,
-    decoded: &[WideInstruction],
-    constants: &[Value],
-    sites: &[FieldSite],
-    live: Option<&crate::compile::liveness::RegisterMasks>,
-    header: u32,
-    backedge: u32,
-) -> Result<LoopRegion, RegionRejection> {
-    let call = decoded
-        .get(header as usize..=backedge as usize)
-        .and_then(|body| body.iter().position(|instruction| instruction.op() == Op::Call));
-    match call {
-        // A call at the header leaves no prefix to compile.
-        Some(0) => Err(RegionRejection::UnsupportedInstruction(Op::Call)),
-        Some(call) => bounded_region(
-            function,
-            decoded,
-            constants,
-            sites,
-            live,
-            header,
-            header + call as u32 - 1,
-            backedge,
-        ),
-        None => region(function, decoded, constants, sites, live, header, backedge),
-    }
-}
-
-/// The region of the instructions from `header` through `end` of the loop whose backward
-/// jump is `backedge`.
-#[allow(clippy::too_many_arguments)]
-fn bounded_region(
-    function: &Function,
-    decoded: &[WideInstruction],
-    constants: &[Value],
-    sites: &[FieldSite],
-    live: Option<&crate::compile::liveness::RegisterMasks>,
-    header: u32,
-    end: u32,
-    backedge: u32,
-) -> Result<LoopRegion, RegionRejection> {
-    let (start, last, end) = (header as usize, backedge as usize, end as usize);
-    if start > last || last >= decoded.len() || last - start >= MAX_REGION_INSTRUCTIONS {
+    let (start, end) = (header as usize, backedge as usize);
+    if start > end || end >= decoded.len() || end - start >= MAX_REGION_INSTRUCTIONS {
         return Err(RegionRejection::RegionTooLarge);
     }
     let header_live = live.and_then(|live| live.get(start));
+    // Dynamic calls are effect boundaries. Compile the supported prefix before the first
+    // call and resume the interpreter at that exact PC. The interpreter reaches this
+    // region again at the loop backedge, so the prefix remains useful across iterations.
+    // Branches that skip the call naturally resume at their exact target.
+    let mut prefix_end = end;
+    if let Some(call) = decoded[start..=end].iter().position(|instruction| instruction.op() == Op::Call) {
+        if call == 0 {
+            return Err(RegionRejection::UnsupportedInstruction(Op::Call));
+        }
+        prefix_end = start + call - 1;
+    }
     admit_region(
-        decoded[start..=end].to_vec(),
+        decoded[start..=prefix_end].to_vec(),
         usize::from(function.registers),
         constants,
         sites,

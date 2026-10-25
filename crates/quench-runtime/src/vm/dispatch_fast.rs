@@ -5837,11 +5837,10 @@ script_handler! {
         }
         let region = match site.region.get() {
             Some(region) => region,
-            None => match lane_inlining_region(cx, r, site).or_else(|| lane_call_prefix_region(cx, site)) {
+            None => match lane_inlining_region(cx, r, site) {
                 Some(region) => site.region.get_or_init(|| region),
                 None => {
-                    // Neither the calls inline nor a prefix before them compiles: the loop
-                    // stays the interpreter's.
+                    // The calls do not run inlined: the loop stays the interpreter's.
                     site.exits.set(LOOP_TIER_MAX_EXITS);
                     lane_loop_retire::<H>(cx, ip, site);
                     next!(cx, r, header, Carried::script(cx))
@@ -6257,36 +6256,6 @@ fn lane_inlining_region<H: Host>(
         site.backedge,
         &mut resolve,
     )
-}
-
-/// The prefix of `site`'s loop before its first call, for a site whose calls do not inline.
-#[inline(never)]
-fn lane_call_prefix_region<H: Host>(
-    cx: *mut LaneContext<H>,
-    site: &LoopSite,
-) -> Option<super::compiled::LoopRegion> {
-    let machine = unsafe { vm(cx) };
-    // SAFETY: the context's program outlives the lane run.
-    let code = unsafe { &*(*cx).code };
-    let program = unsafe { (*cx).program };
-    let function_index = machine
-        .lane_stack
-        .activations
-        .last()
-        .map_or(machine.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
-    let function = code.function_get(function_index as usize)?;
-    let decoded: Vec<WideInstruction> = function.instructions().collect();
-    let constants = machine.programs.constants(program).to_vec();
-    super::compiled::analyze_osr_call_prefix_region(
-        function,
-        &decoded,
-        &constants,
-        &code.field_sites,
-        code.register_root_masks(function_index),
-        site.header,
-        site.backedge,
-    )
-    .ok()
 }
 
 /// The record native code leaving at the inlined instruction `callee_pc` of `frame` (exit
@@ -15443,7 +15412,7 @@ fn install_loop_sites<H: Host>(
         .filter(|pc| records[*pc].handler == backward && decoded[*pc].op() == Op::Jump && !fused_into(*pc))
         .filter_map(|pc| {
             let header = decoded[pc].jump_target();
-            let analyzed = match super::compiled::analyze_osr_region(
+            let region = match super::compiled::analyze_osr_region(
                 function,
                 decoded,
                 constants,
@@ -15452,22 +15421,11 @@ fn install_loop_sites<H: Host>(
                 header,
                 pc as u32,
             ) {
-                // A call may run inlined: the site makes its region once it is hot, and runs
-                // the prefix before the call when it does not inline (`lane_loop_region`).
+                Ok(region) => std::cell::OnceCell::from(region),
+                // A call may run inlined: the site makes its region once it is hot.
                 Err(super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)) if live.is_some() => {
-                    Ok(None)
+                    std::cell::OnceCell::new()
                 }
-                Err(super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)) => {
-                    super::compiled::analyze_osr_call_prefix_region(
-                        function, decoded, constants, sites, live, header, pc as u32,
-                    )
-                    .map(Some)
-                }
-                analyzed => analyzed.map(Some),
-            };
-            let region = match analyzed {
-                Ok(Some(region)) => std::cell::OnceCell::from(region),
-                Ok(None) => std::cell::OnceCell::new(),
                 Err(reason) => {
                     if diagnostics {
                         if let Some((_, count)) =
