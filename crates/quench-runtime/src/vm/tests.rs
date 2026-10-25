@@ -14296,6 +14296,69 @@ fn js_jit_general_dispatch_promotes_a_single_activation_hot_loop() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_attributes_frameless_arrow_loop_work_to_its_owner() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function invoke() {
+            let count = 1000;
+            const countDown = () => {
+              while (count > 0) count--;
+              return count;
+            };
+            countDown(); count = 1000;
+            countDown(); count = 1000;
+            countDown(); count = 1000;
+            countDown(); count = 1000;
+            countDown(); count = 1000;
+            countDown(); count = 1000;
+            countDown(); count = 1000;
+            return countDown();
+          }
+          var result = invoke();
+          if (result !== 0) throw Error('frameless loop result');
+        "#,
+        "js-jit-frameless-arrow-loop-owner.js",
+    ))
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|body| {
+            body.header()
+                .name
+                .or(body.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "countDown")
+        })
+        .unwrap() as u32;
+    assert_eq!(program.function(function as usize).locals, 0);
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let result_atom = interpreter.intern_atom("result");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, result_atom)
+        .unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, function)
+    else {
+        panic!("the frameless arrow's loop work should promote that function");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+
+    let result_atom = compiled.intern_atom("result");
+    assert_eq!(compiled.own_property(compiled.realm.globals, result_atom), Some(expected));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_prices_work_inside_compiled_osr_regions() {
     // Each taken backedge counts one unit of work. The first call's loop runs well past the
     // priced general-baseline floor for this small body (fixed plus per-instruction compile
@@ -14363,6 +14426,76 @@ fn js_jit_general_dispatch_prices_work_inside_compiled_osr_regions() {
         .own_property(compiled.realm.globals, result_atom)
         .unwrap();
     assert_eq!(result, expected);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_attributes_inlined_osr_work_to_the_loop_owner() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function helper(limit) {
+            let total = 0;
+            for (let index = 0; index < limit; index++) total += index;
+            return total;
+          }
+          function caller() { return helper(1000000); }
+          var result = caller();
+          if (result !== 499999500000) throw Error('inlined OSR result');
+        "#,
+        "js-jit-general-inline-osr-owner.js",
+    ))
+    .unwrap();
+    let function_id = |name: &str| {
+        program
+            .functions
+            .iter()
+            .position(|body| {
+                body.header()
+                    .name
+                    .or(body.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .unwrap() as u32
+    };
+    let helper = function_id("helper");
+    let caller = function_id("caller");
+
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let result_atom = interpreter.intern_atom("result");
+    let expected = interpreter
+        .own_property(interpreter.realm.globals, result_atom)
+        .unwrap();
+
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+    let result_atom = compiled.intern_atom("result");
+    assert_eq!(
+        compiled
+            .own_property(compiled.realm.globals, result_atom)
+            .unwrap(),
+        expected
+    );
+
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, helper)
+    else {
+        panic!("OSR work from the inlined helper should promote the helper");
+    };
+    assert!(native.is_general_dispatch());
+    assert!(native.native_entries() > 0);
+    assert!(!matches!(
+        compiled
+            .programs
+            .js_tier(super::program_store::ProgramId::MAIN, caller),
+        Some(super::program_store::JsTierState::Compiled(native))
+            if native.is_general_dispatch()
+    ));
 }
 
 #[cfg(not(quench_profiled))]
