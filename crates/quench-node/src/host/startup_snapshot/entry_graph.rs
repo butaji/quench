@@ -15,8 +15,10 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Names through which a file loads modules no static import names: CommonJS `require` (and
-/// `module.require`, `createRequire`) and `process.getBuiltinModule`. A match anywhere, a
-/// comment or string included, counts.
+/// `module.require`) and `process.getBuiltinModule`. A match as a whole identifier
+/// (`names_identifier`) anywhere, a comment or string included, counts; a longer word does not
+/// (V8-v7's DeltaBlue says "required" and Crypto "requires", and restoring the preloaded
+/// builtins for them tripled their peak RSS under memory-first).
 const MODULE_LOADING_NAMES: &[&str] = &["require", "getBuiltinModule"];
 /// `console`, whose first use loads Node's console and inspection modules, which the preloaded
 /// builtins hold (a file printing one line: 22.9 ms on the bootstrap, 15.8 ms on the preloaded
@@ -127,6 +129,16 @@ pub(super) fn inline_entry_loading(source: &str) -> EntryLoading {
     }
 }
 
+/// Whether `name` occurs in `text` as a whole identifier, not inside a longer word.
+fn names_identifier(text: &str, name: &str) -> bool {
+    let continues = |character: Option<char>| {
+        character.is_some_and(|character| character.is_alphanumeric() || character == '_' || character == '$')
+    };
+    text.match_indices(name).any(|(start, _)| {
+        !continues(text[..start].chars().next_back()) && !continues(text[start + name.len()..].chars().next())
+    })
+}
+
 /// The modules a WebAssembly module imports.
 fn wasm_specifiers(bytes: &[u8]) -> Option<Vec<String>> {
     let interface = quench_wasm::interface(bytes)?;
@@ -136,7 +148,7 @@ fn wasm_specifiers(bytes: &[u8]) -> Option<Vec<String>> {
 /// The specifiers a JavaScript file's static imports and re-exports name; `None` when it may
 /// load modules otherwise, or does not parse.
 fn source_specifiers(text: &str) -> Option<Vec<String>> {
-    if MODULE_LOADING_NAMES.iter().any(|name| text.contains(name)) {
+    if MODULE_LOADING_NAMES.iter().any(|name| names_identifier(text, name)) {
         return None;
     }
     if !MODULE_SYNTAX.iter().any(|keyword| text.contains(keyword)) {
@@ -247,6 +259,26 @@ mod tests {
         assert_eq!(inline_entry_loading("1 + 1"), EntryLoading::SelfContained);
         assert_eq!(inline_entry_loading("require('fs')"), EntryLoading::Modules);
         assert_eq!(inline_entry_loading("import('node:fs')"), EntryLoading::Modules);
+    }
+
+    #[test]
+    fn module_loading_names_count_only_as_whole_identifiers() {
+        let root = graph(
+            "words",
+            &[
+                ("prose.js", b"// The required constraint; requires a PRNG.\nvar s = 'required'; console.log(s);"),
+                ("call.js", b"const fs = require('fs');"),
+                ("member.js", b"module.require('fs');"),
+                ("comment.js", b"// require it later\nvar x = 1;"),
+                ("builtin.js", b"process.getBuiltinModule('fs');"),
+            ],
+        );
+        assert_eq!(entry_loading(&root.join("prose.js")), EntryLoading::Console);
+        for entry in ["call.js", "member.js", "comment.js", "builtin.js"] {
+            assert_eq!(entry_loading(&root.join(entry)), EntryLoading::Modules, "{entry}");
+        }
+        assert!(!names_identifier("myrequire requirement createRequire", "require"));
+        assert!(names_identifier("x = require;", "require"));
     }
 
     #[test]

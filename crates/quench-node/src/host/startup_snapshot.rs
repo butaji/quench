@@ -218,14 +218,20 @@ const SNAPSHOT_OFF: &str = "off";
 /// Whether an eligible process boots from a snapshot (`SNAPSHOT_ENV`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SnapshotUse {
-    /// When its entry loads modules (`EntryLoading::Modules`). A program that loads modules
+    /// For an inline entry, always; for a file, when it loads modules
+    /// (`EntryLoading::Modules`). A program that loads modules
     /// spends most of its start loading the builtins the snapshot holds (npm scenarios, x86_64
     /// 4 vCPU, pinned, median of 7, 2026-10-25, without -> with: lodash 67 -> 30 ms, express
     /// 123 -> 80, zod 85 -> 53, axios 132 -> 87, playwright 428 -> 382). A script that names no
     /// module boots without one: a fresh boot loads only what it uses, while a restored
     /// `Preloaded` realm keeps every preloaded builtin resident (V8-v7 max RSS, without ->
     /// with: RegExp 12.3 -> 17.1 MB, Splay 32.6 -> 39.0, EarleyBoyer 12.3 -> 15.9; a one-line
-    /// `console.log` 12.9M -> 23.6M instructions).
+    /// `console.log` 12.9M -> 23.6M instructions). An inline entry boots in full without one,
+    /// whatever it names (`quench -e 'console.log(42)'`, the child the tinyexec and execa npm
+    /// scenarios spawn: 27.4 -> 15.4 ms; the same line from a file 9.4 ms fresh). Only under a
+    /// policy that keeps pages resident: the preloaded realm is the memory a memory-first
+    /// process exists to avoid (V8-v7 DeltaBlue under memory-first, whose comments name
+    /// `require`, static x86_64 + BOLT, pinned, 2026-10-25: max RSS 2852 KiB without, 9112 with).
     Auto,
     Always,
     Never,
@@ -240,9 +246,17 @@ impl SnapshotUse {
         }
     }
 
-    fn restores(self, loading: entry_graph::EntryLoading) -> bool {
+    fn restores(
+        self,
+        entry: &SnapshotEntry<'_>,
+        loading: entry_graph::EntryLoading,
+        policy: Option<quench_runtime::MemoryPolicy>,
+    ) -> bool {
         match self {
-            Self::Auto => loading == entry_graph::EntryLoading::Modules,
+            Self::Auto => {
+                (matches!(entry, SnapshotEntry::Inline(_)) || loading == entry_graph::EntryLoading::Modules)
+                    && !policy.is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections)
+            }
             Self::Always => true,
             Self::Never => false,
         }
@@ -256,7 +270,8 @@ const SNAPSHOT_EXTENSION: &str = "qss";
 const LOCK_EXTENSION: &str = "lock";
 /// Builds whose snapshots are kept: a few builds in use side by side (an installed one and a
 /// development one) keep theirs, while older ones go.
-/// A build lock older than this belongs to a builder that died: another may start.
+/// A build lock older than this belongs to a builder that died, or to a build that failed and
+/// kept it so that eligible processes do not each start a failing build: another may start.
 const STALE_BUILD: std::time::Duration = std::time::Duration::from_secs(60);
 /// The Node builtins a `Preloaded` snapshot loads, as Node's own startup snapshot does: the
 /// modules nearly every program that loads modules loads, whose loading is most of its run.
@@ -371,7 +386,7 @@ pub(crate) fn snapshot_path(
         SnapshotEntry::File(path) => entry_graph::entry_loading(path),
         SnapshotEntry::Inline(source) => entry_graph::inline_entry_loading(source),
     };
-    if !snapshot_use.restores(loading) {
+    if !snapshot_use.restores(&entry, loading, crate::shared_run::process_memory_policy()) {
         return None;
     }
     // Each build's snapshots share a directory, which a builder of another build removes.
@@ -405,6 +420,7 @@ pub(crate) fn load_or_schedule(path: &std::path::Path) -> Option<quench_runtime:
         .and_then(|metadata| metadata.modified())
         .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > STALE_BUILD));
     if stale {
+        remove_unfinished_writes(path);
         let _ = std::fs::remove_file(&lock);
     }
     std::fs::create_dir_all(path.parent()?).ok()?;
@@ -457,15 +473,104 @@ pub(crate) fn build(path: &std::path::Path) -> Result<(), String> {
             })
             .map_err(|error| format!("{error:?}"))?;
         let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer))?;
-        let temporary = path.with_extension(format!("{SNAPSHOT_EXTENSION}.{}", std::process::id()));
-        std::fs::write(&temporary, &bytes).map_err(|error| error.to_string())?;
-        std::fs::rename(&temporary, path).map_err(|error| error.to_string())?;
+        let temporary = unfinished_write(path, std::process::id());
+        let written = std::fs::write(&temporary, &bytes).and_then(|()| std::fs::rename(&temporary, path));
+        if let Err(error) = written {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error.to_string());
+        }
         if let Some(builds) = path.parent().and_then(std::path::Path::parent) {
             crate::host::compile_cache::remove_other_builds(builds);
         }
         Ok(())
     })();
-    let _ = std::fs::remove_file(path.with_extension(LOCK_EXTENSION));
+    // A failed build keeps its lock until it is stale (`STALE_BUILD`), so the processes that
+    // find no snapshot meanwhile boot without one rather than each starting the build again.
+    if result.is_ok() {
+        let _ = std::fs::remove_file(path.with_extension(LOCK_EXTENSION));
+    }
     result
 }
 
+/// The file builder `pid` writes `path`'s snapshot into before renaming it to `path`, so no
+/// process maps a partly written snapshot.
+fn unfinished_write(path: &std::path::Path, pid: u32) -> std::path::PathBuf {
+    path.with_extension(format!("{SNAPSHOT_EXTENSION}.{pid}"))
+}
+
+/// Removes the unfinished writes of `path`'s builders, which only a builder that died leaves.
+fn remove_unfinished_writes(path: &std::path::Path) {
+    let (Some(directory), Some(prefix)) = (path.parent(), unfinished_write(path, 0).file_name().map(|name| {
+        let name = name.to_string_lossy();
+        name[..name.len() - 1].to_owned()
+    })) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.strip_prefix(&prefix).is_some_and(|pid| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit())) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn by_default_inline_entries_and_files_that_load_modules_restore() {
+        use entry_graph::EntryLoading;
+        let file = SnapshotEntry::File(std::path::Path::new("/app/main.js"));
+        let inline = SnapshotEntry::Inline("console.log(42)");
+        for loading in [EntryLoading::SelfContained, EntryLoading::Console, EntryLoading::Modules] {
+            assert!(SnapshotUse::Auto.restores(&inline, loading, None));
+            assert_eq!(SnapshotUse::Auto.restores(&file, loading, None), loading == EntryLoading::Modules);
+            assert!(SnapshotUse::Always.restores(&file, loading, None));
+            assert!(!SnapshotUse::Never.restores(&inline, loading, None));
+        }
+    }
+
+    #[test]
+    fn automatic_restores_follow_the_memory_policy() {
+        use entry_graph::EntryLoading;
+        use quench_runtime::MemoryPolicy;
+        let file = SnapshotEntry::File(std::path::Path::new("/app/main.js"));
+        let inline = SnapshotEntry::Inline("console.log(42)");
+        assert!(SnapshotUse::Auto.restores(&file, EntryLoading::Modules, Some(MemoryPolicy::Throughput)));
+        assert!(!SnapshotUse::Auto.restores(&file, EntryLoading::Modules, Some(MemoryPolicy::MemoryFirst)));
+        assert!(!SnapshotUse::Auto.restores(&inline, EntryLoading::Console, Some(MemoryPolicy::MemoryFirst)));
+        assert!(!SnapshotUse::Auto.restores(&file, EntryLoading::Console, Some(MemoryPolicy::Throughput)));
+        assert!(SnapshotUse::Always.restores(&file, EntryLoading::Modules, Some(MemoryPolicy::MemoryFirst)));
+        assert!(!SnapshotUse::Never.restores(&inline, EntryLoading::Modules, Some(MemoryPolicy::Throughput)));
+    }
+
+    #[test]
+    fn a_failed_build_keeps_its_lock_and_leaves_no_unfinished_write() {
+        let directory = std::env::temp_dir().join(format!("quench-snapshot-build-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        // A file name naming no snapshot kind fails the build before it writes anything.
+        let path = directory.join("0123456789abcdef.unknown.qss");
+        let lock = path.with_extension(LOCK_EXTENSION);
+        std::fs::write(&lock, b"").unwrap();
+        assert!(build(&path).is_err());
+        assert!(lock.exists(), "a failed build backs off by keeping its lock");
+        assert!(!path.exists());
+        // A builder that died left an unfinished write; clearing its stale lock removes it,
+        // and nothing else.
+        let unfinished = unfinished_write(&path, 4242);
+        let other = directory.join("0123456789abcdef.unknown.qss.notes");
+        std::fs::write(&unfinished, b"partial").unwrap();
+        std::fs::write(&other, b"").unwrap();
+        remove_unfinished_writes(&path);
+        assert!(!unfinished.exists());
+        assert!(other.exists());
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+}
