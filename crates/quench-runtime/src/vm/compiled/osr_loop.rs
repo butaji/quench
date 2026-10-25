@@ -1,5 +1,7 @@
-//! The loop tier: Cranelift code for a hot loop whose body makes no call and allocates
-//! nothing, entered at its backward jump in compiled execution.
+//! The loop tier: Cranelift code for a hot loop whose body makes no call or allocation,
+//! entered at its backward jump in compiled execution. Effectful instructions can form
+//! exact-PC boundaries: native code writes back its live state and the existing lane runs
+//! the instruction and all following semantics.
 //!
 //! A region is a loop's instructions, header to backward jump, every one of which reads and
 //! writes Numbers in registers, depth-0 captures and dense elements of record arrays: it
@@ -21,8 +23,9 @@
 //! - every backward jump polls host termination, exiting at the jump so the interpreter's
 //!   safepoint runs.
 //!
-//! Nothing in a region allocates, collects, or runs guest code, so the arrays, their
-//! element storage and the captures the entry read stay as they are while native code runs.
+//! Native code before an effect boundary allocates, collects, and runs no guest code, so
+//! arrays, element storage, and captures it reads stay as they are. An effect boundary exits
+//! before those assumptions can be invalidated.
 
 use crate::bytecode::{
     FieldBase, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
@@ -34,7 +37,7 @@ use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
 use cranelift_codegen::ir::{
     self, InstBuilder, UserFuncName,
     condcodes::{FloatCC, IntCC},
-    types,
+    types, Signature,
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
@@ -167,6 +170,9 @@ pub(crate) struct LoopRegion {
     pub(crate) fields: Vec<FieldUse>,
     /// The field each `GetField` of the region reads, by offset from the header.
     field_reads: std::collections::BTreeMap<u32, usize>,
+    /// Reads whose direct register receiver is redefined in this loop. These use a
+    /// side-effect-free field-cache callout at the instruction instead of an entry snapshot.
+    dynamic_field_reads: std::collections::BTreeMap<u32, usize>,
     /// Existing own-data Number slots stored by the region, by offset from its header.
     field_stores: std::collections::BTreeMap<u32, usize>,
     /// Receivers and cache sites whose flat slots are guarded before native entry.
@@ -943,6 +949,12 @@ pub(super) fn inline_region<'a>(
         &receivers,
     )
     .ok()?;
+    // Dynamic receiver reads use the loop's caller registers and exact caller PCs. Keep
+    // inlined regions on the established entry-snapshot contract until their multi-frame
+    // recovery maps can represent per-iteration cache misses.
+    if !region.dynamic_field_reads.is_empty() {
+        return None;
+    }
     // Each callee's field, which the entry reads and guards still holds it, read through
     // the region's held registers.
     let held: std::collections::BTreeMap<Register, FieldPath> =
@@ -1340,6 +1352,7 @@ fn admit_region(
         field_arrays: std::collections::BTreeMap::new(),
     };
     let mut field_reads = std::collections::BTreeMap::new();
+    let mut dynamic_field_reads = std::collections::BTreeMap::new();
     let mut field_stores = std::collections::BTreeMap::new();
     let mut field_store_sites = Vec::new();
     let defined_registers: std::collections::BTreeSet<Register> = instructions
@@ -1351,6 +1364,18 @@ fn admit_region(
             let path = field_path(instruction, sites, &paths).ok_or(RegionRejection::UnsupportedInstruction(Op::GetField))?;
             let index = intern_field(&mut admission.fields, &path, tagged.contains(&instruction.result_register()));
             field_reads.insert(offset as u32, index);
+            if path.steps.len() == 1
+                && let FieldReceiver::Register(receiver) = path.root
+                && defined_registers.contains(&receiver)
+                // A field result used as an array base is entry-pinned separately by the
+                // array lowering, so leave that combination on the conservative path.
+                && !instructions.iter().any(|candidate| {
+                    matches!(candidate.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible)
+                        && object_reads(*candidate) == Some(instruction.result_register())
+                })
+            {
+                dynamic_field_reads.insert(offset as u32, index);
+            }
         }
         if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict) {
             if instruction.result_flags() != 0 || instruction.returns_from_frame() {
@@ -1391,6 +1416,20 @@ fn admit_region(
                 field_store_sites.len() - 1
             });
             field_stores.insert(offset as u32, index);
+        }
+        // A field-resolved method call is owned by the existing inliner. Falling back to
+        // the generic exact-PC gateway here would run its loop out of line and regress the
+        // inliner's behavior and coverage. Dynamic/direct calls have no such owner.
+        if matches!(instruction.op(), Op::Call | Op::CallArray) {
+            let callee_register = instruction.register_b();
+            if instructions[..offset]
+                .iter()
+                .rev()
+                .find(|candidate| candidate.defined_register() == Some(callee_register))
+                .is_some_and(|definition| definition.op() == Op::GetField)
+            {
+                return Err(RegionRejection::UnsupportedInstruction(instruction.op()));
+            }
         }
         if let Some(register) = object_reads(instruction).filter(|register| paths.contains_key(register)) {
             admission.field_arrays.entry(register).or_insert(false);
@@ -1436,16 +1475,20 @@ fn admit_region(
     if field_store_sites.len() > MAX_REGION_FIELD_STORES {
         return Err(RegionRejection::FieldStoreLimit);
     }
-    // A field read holds the value its receiver had at entry, so no instruction may give a
-    // receiver register another value. Element stores and admitted field stores preserve
-    // receiver registers and object shapes. A field store to any name read in the region was
-    // rejected above, so it cannot stale a cached field value.
-    if let Some((field, write_offset)) = admission.fields.iter().find_map(|field| {
+    // Entry-snapshot reads require a stable receiver. Direct one-step reads can instead
+    // probe the current receiver at each instruction; nested paths, held paths, and
+    // field-backed arrays retain the entry-snapshot contract.
+    if let Some((field, write_offset)) = admission.fields.iter().enumerate().find_map(|(index, field)| {
         let FieldReceiver::Register(register) = field.receiver else { return None };
-        instructions
+        let write_offset = instructions
             .iter()
-            .position(|instruction| number_definition(*instruction) == Some(register))
-            .map(|offset| (field, offset))
+            .position(|instruction| instruction.defined_register() == Some(register))?;
+        let uses: Vec<u32> = field_reads
+            .iter()
+            .filter_map(|(offset, used)| (*used == index).then_some(*offset))
+            .collect();
+        (!uses.is_empty() && uses.iter().any(|offset| !dynamic_field_reads.contains_key(offset)))
+            .then_some((field, write_offset))
     }) {
         if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
             eprintln!(
@@ -1506,6 +1549,7 @@ fn admit_region(
         captures: admission.captures,
         fields: admission.fields,
         field_reads,
+        dynamic_field_reads,
         field_stores,
         field_store_sites,
         held,
@@ -1607,6 +1651,9 @@ fn admit(
             }
             admission.tagged(instruction.register_b())?;
         }
+        // The ordinary lane performs iterator-result inspection, binding lookup, call
+        // resolution, activation, allocation, GC, and throws at this exact PC.
+        Op::RequireIteratorResult | Op::LoadEnvLocal | Op::Call | Op::CallArray => {}
         Op::Jump => {}
         Op::JumpBinaryFalse => {
             if let Some(branch) = identity_branch(instruction, constants) {
@@ -2730,7 +2777,13 @@ pub(super) fn lower(
     let counted = counted_loops(region, &webs, &representations, &entry.captures);
     let facts = int32_facts(region, &webs, &representations);
     let mut context = FunctionBuilderContext::new();
-    let builder = FunctionBuilder::new(&mut native, &mut context);
+    let mut builder = FunctionBuilder::new(&mut native, &mut context);
+    let mut probe_signature = Signature::new(isa.default_call_conv());
+    for _ in 0..4 {
+        probe_signature.params.push(ir::AbiParam::new(types::I64));
+    }
+    probe_signature.returns.push(ir::AbiParam::new(types::I64));
+    let probe_signature = builder.import_signature(probe_signature);
     let widenings = Lowering::new(
         builder,
         region,
@@ -2741,6 +2794,7 @@ pub(super) fn lower(
         entry,
         counted,
         facts,
+        probe_signature,
         poll,
         track_backedges,
     )
@@ -2765,6 +2819,9 @@ struct Lowering<'a, 'b> {
     region: &'a LoopRegion,
     observation: &'a Observation<'a>,
     pointer: ir::Type,
+    /// Cache-only field probe through the shared native entry context.
+    callout: ir::Value,
+    callout_signature: ir::SigRef,
     webs: Webs,
     /// Each web's representation, at its root definition.
     representations: Vec<Representation>,
@@ -2878,6 +2935,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         entry_representations: EntryRepresentations,
         counted: Vec<CountedLoop>,
         facts: Int32Facts,
+        callout_signature: ir::SigRef,
         poll: Option<i64>,
         track_backedges: bool,
     ) -> Self {
@@ -2887,6 +2945,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let &[context, registers, _, entry, result] = builder.block_params(start) else {
             unreachable!("the entry signature has five parameters")
         };
+        let callout = builder.ins().load(types::I64, super::invariant(), context, super::CONTEXT_CALLOUT);
         let blocks = (region.header..=region.backedge).map(|_| builder.create_block()).collect();
         let straight = straight_pcs(region, &counted);
         let preheaders = counted.iter().map(|_| builder.create_block()).collect();
@@ -2911,6 +2970,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
             region,
             observation,
             pointer,
+            callout,
+            callout_signature,
             webs,
             representations,
             pc: region.header,
@@ -3507,6 +3568,50 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn guard_int32(&mut self, pc: u32, failed: ir::Value, widening: Widening) {
         let exit = self.widen_block(pc, widening);
         self.pass_unless(failed, exit);
+    }
+
+    /// Reads a field from the receiver's current register value. The callback only probes
+    /// the warmed data-field cache: a miss exits before `GetField`, so the lane performs the
+    /// full property semantics once with this PC's live register state written back.
+    fn dynamic_field(&mut self, pc: u32, index: usize) -> Option<Typed> {
+        let field = *self.region.fields.get(index)?;
+        let FieldReceiver::Register(receiver_register) = field.receiver else {
+            return None;
+        };
+        let receiver = self.register(receiver_register);
+        if receiver.representation != Representation::Tagged {
+            return None;
+        }
+        let site = self.body.builder.ins().iconst(types::I64, i64::from(field.cache_site));
+        let context = self.body.core.context;
+        let callout = self.callout;
+        let signature = self.callout_signature;
+        let result = self.result;
+        let call = self.body.builder.ins().call_indirect(
+            signature,
+            callout,
+            &[context, site, receiver.value, result],
+        );
+        let status = self.body.builder.inst_results(call)[0];
+        let miss = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
+        self.guard(pc, miss);
+
+        // The helper writes only on a cache hit. The result word is temporary until this
+        // region leaves, where `finish` overwrites it with the continuation outcome.
+        let bits = self.body.builder.ins().load(types::I64, flags(), result, 0);
+        let representation = self.entry_representations.fields[index];
+        let value = match representation {
+            Representation::Tagged => bits,
+            Representation::Int32 => {
+                let otherwise = self.widen_block(pc, Widening::Field(index as u16));
+                self.unbox(bits, representation, otherwise)
+            }
+            Representation::Float64 => {
+                let otherwise = self.exit_block(pc);
+                self.unbox(bits, representation, otherwise)
+            }
+        };
+        Some(Typed { value, representation })
     }
 
     /// The value of the web rooted at `web`, which its register's view holds where the web
@@ -4185,7 +4290,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Op::RequireObjectCoercible => self.fall_through(pc),
             Op::GetField => {
                 let field = *self.region.field_reads.get(&(pc - self.region.header))?;
-                let value = self.fields[field];
+                let value = if self.region.dynamic_field_reads.contains_key(&(pc - self.region.header)) {
+                    self.dynamic_field(pc, field)?
+                } else {
+                    self.fields[field]
+                };
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
             }
@@ -4256,6 +4365,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.ins().store(flags(), bits, pointer, 0);
                 self.fall_through(pc)
             }
+            Op::RequireIteratorResult | Op::LoadEnvLocal | Op::Call | Op::CallArray => {
+                self.leave(super::RegionExit::Fallback(pc));
+                Some(())
+            }
             Op::Jump => self.jump(pc, instruction.jump_target()),
             Op::JumpBinaryFalse => {
                 if let Some(branch) = self.region.identity_branches.get(&pc).copied() {
@@ -4288,6 +4401,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
                         } else {
                             self.body.builder.ins().bor(is_null, is_undefined)
                         }
+                    } else if branch.negated {
+                        self.body.builder.ins().icmp_imm_u(
+                            IntCC::NotEqual,
+                            value.value,
+                            branch.constant.to_bits() as i64,
+                        )
                     } else {
                         matches(branch.constant)
                     };

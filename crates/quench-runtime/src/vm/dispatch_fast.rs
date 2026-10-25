@@ -6115,9 +6115,19 @@ fn lane_loop_run<H: Host>(
         }
     }
     let code = tier.code.as_ref().expect("compiled above");
-    // SAFETY: `r` is the running activation's register file; the entry was read from it
-    // and the context just now, and native code runs no guest code.
-    let outcome = unsafe { code.run(r.0, entry, &vm(cx).execution_interrupt) };
+    // The native field probe may access the VM only through its synchronous, cache-only
+    // callback. Pass raw pointers so no Rust borrow of the VM overlaps that callback.
+    let (machine, program, interrupt) = unsafe {
+        let context = &*cx;
+        (
+            context.vm,
+            context.program,
+            std::ptr::addr_of!((*context.vm).execution_interrupt),
+        )
+    };
+    // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
+    // callback executes no guest code, allocates nothing, and retains no VM references.
+    let outcome = unsafe { code.run::<H>(r.0, entry, machine, program, site.function, interrupt) };
     if site.diagnostics {
         site.native_entry_attempts
             .set(site.native_entry_attempts.get().saturating_add(1));
