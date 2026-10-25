@@ -1,0 +1,1266 @@
+{
+  "schema": 1,
+  "workload": "undici-pool",
+  "phase": "jit",
+  "runs": 11,
+  "qualificationReady": false,
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 5
+  },
+  "rssMeasurement": "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)",
+  "inputs": {
+    "workloadSha256": "0230eb24453952ca360371bfe3810bcb932ea4467241a39770f6e0c4d7a64d78",
+    "packageLockSha256": "92dbfcb2312b42ddf55a8f0b06c40368544ca4b5e861782ead6770268da3c1b0",
+    "quenchBinarySha256": "5b0e3d97e0f561d9fb88a4455a7b8490cf4fa5eb0637d3bbbe765886e933a418",
+    "controlQuenchBinary": "/workspace/quench/target/tod173-pgo-control-getiterator",
+    "controlQuenchBinarySha256": "0fd1ddc4dee59d52040f8abeaf4c14bb337c663bdffd72be265da28349348616",
+    "nodeBinary": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "bunBinary": "/tmp/quench-bun/bun-linux-x64/bun"
+  },
+  "nodeVersion": "v24.19.0",
+  "bunVersion": "1.4.4",
+  "summary": {
+    "quench-jit": {
+      "medianOperationsPerSecond": 2612.330198537095,
+      "medianElapsedMs": 1914,
+      "medianMaximumRssBytes": 46301184
+    },
+    "quench-control-jit": {
+      "medianOperationsPerSecond": 2693.9655172413795,
+      "medianElapsedMs": 1856,
+      "medianMaximumRssBytes": 47304704
+    },
+    "node-jit": {
+      "medianOperationsPerSecond": 35714.28571428572,
+      "medianElapsedMs": 140,
+      "medianMaximumRssBytes": 90312704
+    },
+    "bun-jit": {
+      "medianOperationsPerSecond": 45045.045045045044,
+      "medianElapsedMs": 111,
+      "medianMaximumRssBytes": 102318080
+    }
+  },
+  "output": {
+    "workload": "undici-pool",
+    "package": "undici@7.30.1",
+    "warmups": 250,
+    "concurrency": 4,
+    "bytes": 297800,
+    "checksum": 407166
+  },
+  "samples": [
+    {
+      "engine": "quench-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1914,
+        "operationsPerSecond": 2612.330198537095
+      },
+      "maxRssBytes": 49790976,
+      "wallTimeMs": 2367.546018,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-control-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1862,
+        "operationsPerSecond": 2685.2846401718584
+      },
+      "maxRssBytes": 50683904,
+      "wallTimeMs": 2280.578774,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/tod173-pgo-control-getiterator",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 146,
+        "operationsPerSecond": 34246.57534246575
+      },
+      "maxRssBytes": 90312704,
+      "wallTimeMs": 264.625927,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 1,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 111,
+        "operationsPerSecond": 45045.045045045044
+      },
+      "maxRssBytes": 100044800,
+      "wallTimeMs": 209.602781,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-control-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1850,
+        "operationsPerSecond": 2702.7027027027025
+      },
+      "maxRssBytes": 47308800,
+      "wallTimeMs": 2003.992424,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/tod173-pgo-control-getiterator",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 133,
+        "operationsPerSecond": 37593.984962406015
+      },
+      "maxRssBytes": 81420288,
+      "wallTimeMs": 253.899241,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 128,
+        "operationsPerSecond": 39062.5
+      },
+      "maxRssBytes": 102318080,
+      "wallTimeMs": 224.797818,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 2,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1928,
+        "operationsPerSecond": 2593.360995850622
+      },
+      "maxRssBytes": 46342144,
+      "wallTimeMs": 2089.741207,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 149,
+        "operationsPerSecond": 33557.04697986577
+      },
+      "maxRssBytes": 95084544,
+      "wallTimeMs": 274.735765,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 121,
+        "operationsPerSecond": 41322.31404958678
+      },
+      "maxRssBytes": 105209856,
+      "wallTimeMs": 222.913606,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 2034,
+        "operationsPerSecond": 2458.2104228121925
+      },
+      "maxRssBytes": 46284800,
+      "wallTimeMs": 2208.777588,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-control-jit",
+      "round": 3,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1873,
+        "operationsPerSecond": 2669.5141484249866
+      },
+      "maxRssBytes": 47026176,
+      "wallTimeMs": 2030.082795,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/tod173-pgo-control-getiterator",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 111,
+        "operationsPerSecond": 45045.045045045044
+      },
+      "maxRssBytes": 100937728,
+      "wallTimeMs": 201.361586,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1932,
+        "operationsPerSecond": 2587.991718426501
+      },
+      "maxRssBytes": 46338048,
+      "wallTimeMs": 2093.068587,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-control-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1856,
+        "operationsPerSecond": 2693.9655172413795
+      },
+      "maxRssBytes": 47222784,
+      "wallTimeMs": 2009.941061,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/tod173-pgo-control-getiterator",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 4,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 129,
+        "operationsPerSecond": 38759.68992248062
+      },
+      "maxRssBytes": 87248896,
+      "wallTimeMs": 251.111064,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1956,
+        "operationsPerSecond": 2556.237218813906
+      },
+      "maxRssBytes": 46288896,
+      "wallTimeMs": 2116.034666,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-control-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1875,
+        "operationsPerSecond": 2666.6666666666665
+      },
+      "maxRssBytes": 47304704,
+      "wallTimeMs": 2027.864874,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/tod173-pgo-control-getiterator",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 132,
+        "operationsPerSecond": 37878.78787878788
+      },
+      "maxRssBytes": 81575936,
+      "wallTimeMs": 250.129732,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 5,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 118,
+        "operationsPerSecond": 42372.8813559322
+      },
+      "maxRssBytes": 99827712,
+      "wallTimeMs": 205.732824,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-control-jit",
+      "round": 6,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1985,
+        "operationsPerSecond": 2518.891687657431
+      },
+      "maxRssBytes": 47296512,
+      "wallTimeMs": 2178.600692,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/tod173-pgo-control-getiterator",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 6,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 143,
+        "operationsPerSecond": 34965.03496503497
+      },
+      "maxRssBytes": 83402752,
+      "wallTimeMs": 260.801854,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 6,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 109,
+        "operationsPerSecond": 45871.55963302752
+      },
+      "maxRssBytes": 102494208,
+      "wallTimeMs": 205.274732,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 6,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1966,
+        "operationsPerSecond": 2543.23499491353
+      },
+      "maxRssBytes": 46288896,
+      "wallTimeMs": 2129.724691,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 7,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 160,
+        "operationsPerSecond": 31250
+      },
+      "maxRssBytes": 85549056,
+      "wallTimeMs": 292.46167,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 7,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 154,
+        "operationsPerSecond": 32467.532467532466
+      },
+      "maxRssBytes": 101543936,
+      "wallTimeMs": 249.048946,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 7,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1893,
+        "operationsPerSecond": 2641.310089804543
+      },
+      "maxRssBytes": 46301184,
+      "wallTimeMs": 2051.604886,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-control-jit",
+      "round": 7,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1847,
+        "operationsPerSecond": 2707.092582566324
+      },
+      "maxRssBytes": 47308800,
+      "wallTimeMs": 1998.898011,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/tod173-pgo-control-getiterator",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 8,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 111,
+        "operationsPerSecond": 45045.045045045044
+      },
+      "maxRssBytes": 104169472,
+      "wallTimeMs": 198.084987,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 8,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1848,
+        "operationsPerSecond": 2705.627705627706
+      },
+      "maxRssBytes": 46514176,
+      "wallTimeMs": 2006.994733,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-control-jit",
+      "round": 8,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1821,
+        "operationsPerSecond": 2745.744096650192
+      },
+      "maxRssBytes": 47321088,
+      "wallTimeMs": 1976.058535,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/tod173-pgo-control-getiterator",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 8,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 130,
+        "operationsPerSecond": 38461.53846153846
+      },
+      "maxRssBytes": 90578944,
+      "wallTimeMs": 243.807071,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 9,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1846,
+        "operationsPerSecond": 2708.5590465872156
+      },
+      "maxRssBytes": 46379008,
+      "wallTimeMs": 2006.862199,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-control-jit",
+      "round": 9,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1835,
+        "operationsPerSecond": 2724.7956403269754
+      },
+      "maxRssBytes": 45363200,
+      "wallTimeMs": 1985.129958,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/tod173-pgo-control-getiterator",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 9,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 140,
+        "operationsPerSecond": 35714.28571428572
+      },
+      "maxRssBytes": 93913088,
+      "wallTimeMs": 281.03072,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 9,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 107,
+        "operationsPerSecond": 46728.97196261682
+      },
+      "maxRssBytes": 101007360,
+      "wallTimeMs": 195.624268,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-control-jit",
+      "round": 10,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1817,
+        "operationsPerSecond": 2751.78866263071
+      },
+      "maxRssBytes": 47644672,
+      "wallTimeMs": 1967.571574,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/tod173-pgo-control-getiterator",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 10,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 148,
+        "operationsPerSecond": 33783.78378378379
+      },
+      "maxRssBytes": 90599424,
+      "wallTimeMs": 268.481231,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 10,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 127,
+        "operationsPerSecond": 39370.07874015748
+      },
+      "maxRssBytes": 104800256,
+      "wallTimeMs": 219.745133,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 10,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1827,
+        "operationsPerSecond": 2736.7268746579093
+      },
+      "maxRssBytes": 44351488,
+      "wallTimeMs": 1991.170717,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "node-jit",
+      "round": 11,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 130,
+        "operationsPerSecond": 38461.53846153846
+      },
+      "maxRssBytes": 91000832,
+      "wallTimeMs": 239.249289,
+      "stderr": "",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "bun-jit",
+      "round": 11,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 107,
+        "operationsPerSecond": 46728.97196261682
+      },
+      "maxRssBytes": 102416384,
+      "wallTimeMs": 192.000767,
+      "stderr": "",
+      "command": [
+        "/tmp/quench-bun/bun-linux-x64/bun",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-jit",
+      "round": 11,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1811,
+        "operationsPerSecond": 2760.9055770292657
+      },
+      "maxRssBytes": 46297088,
+      "wallTimeMs": 1965.802618,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    },
+    {
+      "engine": "quench-control-jit",
+      "round": 11,
+      "measurement": {
+        "workload": "undici-pool",
+        "package": "undici@7.30.1",
+        "rounds": 5000,
+        "warmups": 250,
+        "concurrency": 4,
+        "bytes": 297800,
+        "checksum": 407166,
+        "elapsedMs": 1861,
+        "operationsPerSecond": 2686.7275658248254
+      },
+      "maxRssBytes": 46940160,
+      "wallTimeMs": 2010.570584,
+      "stderr": "",
+      "command": [
+        "/workspace/quench/target/tod173-pgo-control-getiterator",
+        "--jit",
+        "/workspace/quench/tests/npm-perf/workloads/undici-pool.cjs"
+      ],
+      "effectiveEnvironment": {
+        "NODE_ENV": "production",
+        "QUENCH_BENCH_ROUNDS": "5000",
+        "QUENCH_BENCH_WARMUPS": "250"
+      }
+    }
+  ]
+}

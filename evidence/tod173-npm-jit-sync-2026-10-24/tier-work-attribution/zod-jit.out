@@ -1,0 +1,1 @@
+{"workload":"zod-parse","package":"zod@4.6.7","rounds":1000,"warmups":50,"cases":["flat-parse","nested-array-parse","discriminated-union-parse","flat-safeParse-invalid"],"bytes":0,"checksum":24000,"elapsedMs":2626,"operationsPerSecond":1523.2292460015233}
