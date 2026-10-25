@@ -9164,7 +9164,14 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn script_call_index(&self, callee: Value) -> Option<usize> {
         let set = self.lane_stack.script_targets.set(callee)?;
-        [set, set | 1].into_iter().find(|index| self.script_call_holds(*index, callee))
+        // The set's two ways, tested in turn: an array iterator here compiled to an
+        // out-of-line search on every call.
+        let other = set | 1;
+        if self.script_call_holds(set, callee) {
+            Some(set)
+        } else {
+            self.script_call_holds(other, callee).then_some(other)
+        }
     }
 
     /// Whether `LaneStack::script_targets` entry `index` holds `callee`'s target for this
