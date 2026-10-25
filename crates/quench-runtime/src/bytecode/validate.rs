@@ -531,6 +531,15 @@ impl ResidualProgram {
             if function.registers > REGISTER_MASK {
                 return Err(format!("function {index} has too many registers"));
             }
+            // A lane lets the callee of a dead result skip building it, so each claim is the
+            // compiler's own derivation (`liveness::register_roots`).
+            if !function.register_roots.dead_call_results().is_empty()
+                && crate::compile::liveness::register_roots(function, self, &self.field_sites, &self.superinstructions)
+                    .dead_call_results()
+                    != function.register_roots.dead_call_results()
+            {
+                return Err(format!("function {index} claims dead call results its liveness does not prove"));
+            }
             if function
                 .self_binding_slot
                 .is_some_and(|slot| slot >= function.locals)
@@ -640,6 +649,7 @@ function.plain_local_slots(&self.superinstructions)
                 || positions.clone().any(|position| {
                     position.pc >= code_len || position.line == 0 || position.column == 0
                 })
+                || positions.clone().last() != function.source_positions.last()
             {
                 return Err(format!("function {index} has invalid source positions"));
             }

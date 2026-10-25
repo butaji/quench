@@ -25,6 +25,7 @@
   ],
   "jit_environment": {
     "QUENCH_JS_JIT_GENERAL_DISPATCH": "1",
+    "QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH": "1",
     "QUENCH_JS_JIT_STATS": "1"
   },
   "fixtures": [
@@ -69,9 +70,91 @@
         "accessor property",
         "proxy receiver"
       ],
+      "required_counters": [
+        {
+          "function": "readValue",
+          "counter": "field_cache_hits",
+          "at_least": 1
+        },
+        {
+          "function": "readValue",
+          "counter": "field_cache_probes",
+          "greater_than": "field_cache_hits"
+        }
+      ],
       "expected": {
         "exit_code": 0,
         "stdout": "{\"sameError\":true,\"proxyValue\":11,\"effects\":[\"getter\",\"proxy:value\"]}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "field-changing-receiver",
+      "path": "field-changing-receiver.js",
+      "sha256": "0910f64d8f0e0ec3693f9df9d9f95c774d123f600e5f45205a3411e0dae47394",
+      "native_functions": [
+        "readValue"
+      ],
+      "denotations": [
+        "current receiver checked at each call",
+        "dynamic values from same-shape objects",
+        "polymorphic receiver shape fallback",
+        "inherited data read after prototype mutation"
+      ],
+      "guard_misses": [
+        "receiver shapes differ",
+        "mutated field values remain current",
+        "prototype holder changes after warmup"
+      ],
+      "required_counters": [
+        {
+          "function": "readValue",
+          "counter": "field_cache_hits",
+          "at_least": 1
+        },
+        {
+          "function": "readValue",
+          "counter": "field_cache_probes",
+          "greater_than": "field_cache_hits"
+        }
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "{\"values\":[101,9,13,34],\"inheritedValue\":89}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "field-store-effects",
+      "path": "field-store-effects.js",
+      "sha256": "cc6d2abf13c5b11e8b53a52cb6a5bba98d158def0540d316e483f21797abdc36",
+      "native_functions": [
+        "updateValue"
+      ],
+      "denotations": [
+        "cached ordinary field store",
+        "setter throw identity and order",
+        "proxy set/get effect order"
+      ],
+      "guard_misses": [
+        "accessor setter throws before return",
+        "proxy receiver uses set and get traps"
+      ],
+      "required_counters": [
+        {
+          "function": "updateValue",
+          "counter": "field_store_cache_hits",
+          "at_least": 1
+        },
+        {
+          "function": "updateValue",
+          "counter": "field_store_cache_probes",
+          "greater_than": "field_store_cache_hits"
+        }
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "{\"values\":[101,102],\"sameError\":true,\"proxyValue\":60001,\"effects\":[\"setter:50001\",\"proxy-set:value:60001\",\"proxy-get:value\"]}\n",
         "stderr": ""
       }
     },

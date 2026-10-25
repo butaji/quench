@@ -33,6 +33,12 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
         "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
         "\0quench:object-define-property" => Native::ObjectDefineProperty,
         "\0quench:object-freeze" => Native::ObjectFreeze,
+        // What the compiler's own throws, class setup and `using` declarations call: the
+        // realm's intrinsics, which a binding of the same name in scope does not replace.
+        INTRINSIC_TYPE_ERROR_BINDING => Native::TypeError,
+        INTRINSIC_REFERENCE_ERROR_BINDING => Native::ReferenceError,
+        INTRINSIC_SET_PROTOTYPE_OF_BINDING => Native::ObjectSetPrototypeOf,
+        INTRINSIC_DISPOSABLE_STACK_BINDING => Native::DisposableStack,
         // The iteration helpers each realm also installs on its global object.
         ITERATOR_CLOSE_BINDING => Native::IteratorClose,
         FOR_IN_KEYS_BINDING => Native::ForInKeys,
@@ -46,6 +52,10 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
 pub(crate) fn is_intrinsic_name(name: &str) -> bool {
     name == INTRINSIC_REGEXP_BINDING || intrinsic_name_native(name).is_some()
 }
+pub(crate) const INTRINSIC_TYPE_ERROR_BINDING: &str = "\0quench:intrinsic-type-error";
+pub(crate) const INTRINSIC_REFERENCE_ERROR_BINDING: &str = "\0quench:intrinsic-reference-error";
+pub(crate) const INTRINSIC_SET_PROTOTYPE_OF_BINDING: &str = "\0quench:intrinsic-set-prototype-of";
+pub(crate) const INTRINSIC_DISPOSABLE_STACK_BINDING: &str = "\0quench:intrinsic-disposable-stack";
 /// The engine-internal global a `with` statement calls to enter its object scope.
 pub(crate) const WITH_ENTER_BINDING: &str = "\0quench:with-enter";
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
@@ -1528,28 +1538,45 @@ pub(crate) struct SourcePosition {
 pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 
 /// Whether register liveness covers a function's register forms, so a frame may leave its
-/// dead registers stale; and the per-pc live register masks the collector scans, derived
-/// when a collection first finds the function on the stack. Most of a program's functions
-/// never run during a collection, so their masks are never built.
+/// dead registers stale; the pcs of its `Call`s whose result register is dead after the
+/// call, which the compiler derives once from the same liveness (`liveness::mark_register_roots`);
+/// and the per-pc live register masks the collector scans, derived when a collection first
+/// finds the function on the stack. Most of a program's functions never run during a
+/// collection, so their masks are never built.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RegisterRoots {
     covered: bool,
-    masks: std::cell::OnceCell<Box<[crate::compile::liveness::RegisterSet]>>,
+    dead_call_results: Box<[u32]>,
+    masks: std::cell::OnceCell<crate::compile::liveness::RegisterMasks>,
 }
 
 impl RegisterRoots {
     pub(crate) fn new(covered: bool) -> Self {
-        Self { covered, masks: std::cell::OnceCell::new() }
+        Self::with_dead_call_results(covered, Box::default())
+    }
+
+    /// `dead_call_results` in increasing pc order.
+    pub(crate) fn with_dead_call_results(covered: bool, dead_call_results: Box<[u32]>) -> Self {
+        Self { covered, dead_call_results, masks: std::cell::OnceCell::new() }
     }
 
     pub(crate) fn covered(&self) -> bool {
         self.covered
     }
 
+    pub(crate) fn dead_call_results(&self) -> &[u32] {
+        &self.dead_call_results
+    }
+
+    /// Whether the `Call` at `pc` leaves its result register dead.
+    pub(crate) fn call_result_dead(&self, pc: usize) -> bool {
+        u32::try_from(pc).is_ok_and(|pc| self.dead_call_results.binary_search(&pc).is_ok())
+    }
+
     /// The masks a collection derived so far; none until one finds the function running.
     #[cfg(feature = "profile-memory")]
     pub(crate) fn capacity_bytes(&self) -> usize {
-        self.masks.get().map_or(0, |masks| size_of_val::<[crate::compile::liveness::RegisterSet]>(masks))
+        self.masks.get().map_or(0, crate::compile::liveness::RegisterMasks::bytes)
     }
 }
 
@@ -1597,6 +1624,17 @@ const LEB128_CONTINUATION: u8 = 1 << LEB128_PAYLOAD_BITS;
 impl SourcePositions {
     pub(crate) fn last(&self) -> Option<SourcePosition> {
         self.last
+    }
+
+    /// The coded entries and the final one, as a residual stores them
+    /// (`BinaryWriter::source_positions`).
+    pub(crate) fn encoded(&self) -> (&[u8], Option<SourcePosition>) {
+        (&self.bytes, self.last)
+    }
+
+    /// The table a residual stored (`encoded`); validation judges it against its function.
+    pub(crate) fn from_encoded(bytes: Vec<u8>, last: Option<SourcePosition>) -> Self {
+        Self { bytes, last, checkpoints: std::cell::OnceCell::new() }
     }
 
     /// Appends `position`. Compiled code orders positions by pc; a decoded table keeps any
@@ -1713,7 +1751,9 @@ impl SourcePositionIter<'_> {
         let mut shift = 0;
         while let Some((&byte, rest)) = self.bytes.split_first() {
             self.bytes = rest;
-            value |= u64::from(byte & !LEB128_CONTINUATION) << shift;
+            // A stored table is validated after decoding; an overlong varint decodes to junk
+            // the validation rejects rather than shifting past the value's width.
+            value |= u64::from(byte & !LEB128_CONTINUATION).checked_shl(shift).unwrap_or(0);
             if byte & LEB128_CONTINUATION == 0 {
                 break;
             }
@@ -3157,12 +3197,73 @@ impl ProgramKind {
 }
 
 /// The source text a program retains for diagnostics and `Function.prototype.toString`: its
-/// own copy, or static host text (an embedded library) the compiled source wrapped.
+/// own copy, static host text (an embedded library) the compiled source wrapped, or the text
+/// its compile-cache entry keeps after its encoding (`binary::append_kept_source`), read in
+/// place from the host's mapping.
 #[derive(Clone, Debug)]
 pub(crate) enum SourceText {
     Shared(std::sync::Arc<str>),
     Static(&'static str),
+    Kept(KeptText),
 }
+
+/// Text inside kept bytes: valid UTF-8, checked when made (`KeptText::new`).
+#[derive(Clone)]
+pub(crate) struct KeptText {
+    bytes: KeptBytes,
+    range: std::ops::Range<usize>,
+}
+
+impl KeptText {
+    /// The text `range` of `bytes` holds, if it is UTF-8.
+    pub(crate) fn new(bytes: KeptBytes, range: std::ops::Range<usize>) -> Option<Self> {
+        std::str::from_utf8((*bytes).as_ref().get(range.clone())?).ok()?;
+        Some(Self { bytes, range })
+    }
+}
+
+impl std::ops::Deref for KeptText {
+    type Target = str;
+    fn deref(&self) -> &str {
+        // SAFETY: `new` checked that the range holds UTF-8, and kept bytes never change.
+        unsafe { std::str::from_utf8_unchecked(&(*self.bytes).as_ref()[self.range.clone()]) }
+    }
+}
+
+impl std::fmt::Debug for KeptText {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("KeptText").field("len", &self.range.len()).finish()
+    }
+}
+
+/// The first `len` bytes of kept bytes: a compile-cache entry's encoding, without the source
+/// text after it.
+struct KeptPrefix {
+    bytes: KeptBytes,
+    len: usize,
+}
+
+impl AsRef<[u8]> for KeptPrefix {
+    fn as_ref(&self) -> &[u8] {
+        &(*self.bytes).as_ref()[..self.len]
+    }
+}
+
+/// A compile-cache entry split into its encoding and the source text
+/// `binary::append_kept_source` kept after it, when it keeps `source_len` bytes of text whose
+/// checksum holds; the entry itself otherwise.
+pub(crate) fn split_kept_source(entry: KeptBytes, source_len: usize) -> Result<(KeptBytes, SourceText), KeptBytes> {
+    let Some(range) = binary::kept_source_range((*entry).as_ref()).filter(|range| range.len() == source_len) else {
+        return Err(entry);
+    };
+    let Some(text) = KeptText::new(entry.clone(), range.clone()) else {
+        return Err(entry);
+    };
+    let encoding: KeptBytes = std::rc::Rc::new(KeptPrefix { bytes: entry, len: range.start });
+    Ok((encoding, SourceText::Kept(text)))
+}
+
+pub(crate) use binary::append_kept_source;
 
 impl std::ops::Deref for SourceText {
     type Target = str;
@@ -3170,6 +3271,7 @@ impl std::ops::Deref for SourceText {
         match self {
             Self::Shared(text) => text,
             Self::Static(text) => text,
+            Self::Kept(text) => text,
         }
     }
 }
@@ -3201,9 +3303,10 @@ const SNAPSHOT_TEXT_EDGE: usize = 32;
 impl SourceText {
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         match self {
-            Self::Shared(text) => {
+            // A snapshot outlives the entry's mapping, so it keeps its own copy of kept text.
+            Self::Shared(_) | Self::Kept(_) => {
                 writer.u8(0);
-                writer.str(text);
+                writer.str(self);
             }
             Self::Static(text) => {
                 writer.u8(1);
@@ -3506,12 +3609,12 @@ impl ResidualProgram {
 
     /// The registers live at `pc` in `function`, when liveness covers it.
     pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<crate::compile::liveness::RegisterSet> {
-        self.register_root_masks(function)?.get(pc).copied()
+        self.register_root_masks(function)?.get(pc)
     }
 
     /// `function`'s live register masks by pc, one past its last instruction included, when
     /// liveness covers it.
-    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&[crate::compile::liveness::RegisterSet]> {
+    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&crate::compile::liveness::RegisterMasks> {
         let function = self.function_get(function as usize)?;
         if !function.register_roots.covered {
             return None;
@@ -3526,8 +3629,8 @@ impl ResidualProgram {
                     &self.field_sites,
                     &self.superinstructions,
                 )
+                .map(crate::compile::liveness::RegisterMasks::new)
                 .expect("a covered function's liveness is derivable")
-                .into_boxed_slice()
             });
         Some(masks)
     }
@@ -3553,7 +3656,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 106;
+    pub const FORMAT_VERSION: u8 = 108;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

@@ -1535,17 +1535,41 @@ impl<H: Host> Vm<H> {
                     &mut executing,
                     allow_inline_calls,
                 );
-                if self.js_tier_runs()
-                    && self.js_tier_needs_general_entry(
-                        self.frames[frame].program,
-                        self.frames[frame].function,
-                    )
-                {
+                let (resumed_program_id, resumed_function) = {
+                    let resumed = &self.frames[frame];
+                    (resumed.program, resumed.function)
+                };
+                let general_due = self.js_tier_runs()
+                    && self.js_tier_needs_general_entry(resumed_program_id, resumed_function);
+                if general_due {
                     // A lane loop reported enough backward-edge work for the
-                    // shared baseline. Re-enter at that loop header without
-                    // restarting the same lane before compilation.
+                    // shared baseline. Re-enter at the exact resume PC now so
+                    // a last loop activation cannot return before it gives the
+                    // shared compiler an entry.
                     cursor.lane = std::ptr::null();
                     cursor.back_edges = None;
+                    if resumed_program_id == cursor.program
+                        && p.function_get(resumed_function as usize)
+                            .is_some_and(|body| pc < body.code.len())
+                        && let Some(outcome) = self.js_jit_general_dispatch_at_entry(
+                            p,
+                            frame,
+                            pc,
+                            allow_inline_calls,
+                            true,
+                        )
+                    {
+                        match outcome {
+                            super::compiled::JsNativeDispatchResult::Step(step) => {
+                                pc = step.next_pc;
+                                native_step = Some(step);
+                            }
+                            super::compiled::JsNativeDispatchResult::Resume(resume_pc) => {
+                                pc = resume_pc;
+                                continue;
+                            }
+                        }
+                    }
                 }
                 // The lane may leave in a frame of another program, its activations' calls
                 // having set the loop's executing program aside as the loop's pushes do.

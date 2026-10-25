@@ -328,6 +328,7 @@ impl<H: Host> Vm<H> {
             private_site_homes: _,
             array_iteration_proof: _,
             species_slot_proof: _,
+            index_free_chain_proof: _,
             function_name_shapes: _,
             typeof_names: _,
             closure_templates: _,
@@ -508,7 +509,7 @@ impl<H: Host> Vm<H> {
         entry: &ResidualProgram,
         read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> SnapshotResult<ResidualProgram> {
-        let mut reader = Reader::new((*bytes).as_ref(), Some(H::snapshot_bytes_read))?;
+        let mut reader = Reader::new((*bytes).as_ref(), Some(H::kept_bytes_read))?;
         self.specialized = reader.bool()?;
         self.read_atoms(&mut reader)?;
         self.heap = Heap::read_snapshot(&mut reader, self.heap.memory_policy())?;

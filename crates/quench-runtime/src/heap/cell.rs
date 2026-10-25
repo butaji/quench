@@ -2258,6 +2258,7 @@ impl Object {
             .is_some_and(|extras| extras.indexed_descriptors)
     }
     pub(crate) fn mark_indexed_descriptors(&mut self) {
+        self.note_prototype_layout_change();
         self.extras_mut().indexed_descriptors = true;
     }
     pub(crate) fn has_length_descriptor(&self) -> bool {

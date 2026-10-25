@@ -10,20 +10,7 @@ pub(crate) mod esm_wasm;
 pub(crate) mod policy_projection;
 pub(crate) use commonjs::source_kind;
 
-thread_local! {
-    /// The import resolver, kept as `commonjs::with_commonjs_resolver` keeps the require one.
-    static IMPORT_RESOLVER: oxc_resolver::Resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
-        extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
-        main_files: vec!["index".into()],
-        condition_names: vec!["node".into(), "import".into(), "default".into()],
-        ..Default::default()
-    });
-}
-
-/// Runs `use_resolver` with the resolver of an ES module's imports.
-pub(crate) fn with_import_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver::Resolver) -> R) -> R {
-    IMPORT_RESOLVER.with(use_resolver)
-}
+pub(crate) use commonjs::with_import_resolver;
 
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
@@ -1125,8 +1112,9 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_free_heap_pages();
     }
 
-    /// The snapshot is a tracked read-only mapping (`startup_snapshot::load_or_schedule`).
-    fn snapshot_bytes_read(bytes: &[u8]) {
+    /// Snapshots and compile-cache entries are tracked read-only mappings
+    /// (`startup_snapshot::load_or_schedule`, `CacheEntry::load`).
+    fn kept_bytes_read(bytes: &[u8]) {
         crate::host::resident_pages::release_tracked_bytes(bytes);
     }
 
@@ -1137,6 +1125,7 @@ impl quench_runtime::Host for NodeHost {
         if let Some(entry) = self.compile_cache.entry(name, parts) {
             entry.store(bytes);
         }
+        crate::host::resident_pages::after_program_kept();
     }
     /// A decoded program after bootstrap (the entry and its modules, a builtin or library
     /// module loaded on first use) releases what loading it touched, as its compilation would
@@ -1715,22 +1704,12 @@ impl NodeHost {
         let path = match path {
             Some(path) => path,
             None => {
-                thread_local! {
-                    /// The import resolver, kept as `commonjs::with_commonjs_resolver` keeps
-                    /// the require one.
-                    static IMPORT_RESOLVER: oxc_resolver::Resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
-                        extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
-                        main_files: vec!["index".into()],
-                        condition_names: vec!["node".into(), "import".into(), "default".into()],
-                        ..Default::default()
-                    });
-                }
                 let resolution_specifier = if internal {
                     format!("./{specifier}")
                 } else {
                     specifier.to_owned()
                 };
-                let resolved = IMPORT_RESOLVER.with(|resolver| {
+                let resolved = with_import_resolver(|resolver| {
                     match commonjs::resolve_kept(resolver, |resolver| resolver.resolve(&base, &resolution_specifier)) {
                         Ok(resolution) => Ok(Some(resolution.full_path())),
                         Err(oxc_resolver::ResolveError::Specifier(_)) => Ok(None),

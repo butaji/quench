@@ -205,6 +205,33 @@ lower compile cost if measurements show compiler allocation is still the RSS
 driver. These sources motivate tiering and specialization; they do not predict
 Quench's benchmark outcome. [V8 Wasm compilation pipeline](https://v8.dev/docs/wasm-compilation-pipeline), [Deegen paper](https://arxiv.org/abs/2411.11469), [Futamura's partial-evaluation paper](https://www.jstage.jst.go.jp/article/jssst/21/5/21_5_343/_article/-char/en).
 
+## Candidate two-tier JIT above the interpreter
+
+The next compiler experiment is an interpreter → Copy-and-Patch baseline →
+selective Cranelift optimizing tier ([C&P paper](https://arxiv.org/abs/2011.13127)),
+all inside the existing `Vm`, compiler entry/exit ABI, tier manager, and
+code-cache budget. The baseline would copy
+prebuilt machine-code stencils for operations selected from the shared
+bytecode-semantics definitions, then patch only validated immediates,
+branches, helper targets, and relocations. Unsupported operations leave through
+the same exact-PC VM continuation. The optimizing tier would consume the same
+region and state-map representation, so baseline output can be recompiled
+without creating another frontend or runtime.
+
+First validate this on the measured Wasm compile-scratch hotspot: HashSet's
+large function. Compare interpreter, stencil baseline, current Cranelift
+baseline, and stencil-to-Cranelift promotion. Record compile CPU and wall time,
+peak RSS including temporary compiler allocations, emitted and retained code
+bytes, first-iteration latency, steady-state score, and promotion payback. A
+stencil backend may still lose if generic helper calls or patching make native
+execution too slow, or if its retained code and instruction-cache footprint
+grow. Keep it only if matched production runs show a net gain under the shared
+budgets. Port the stencil set to JS only when time-weighted hot-region data
+shows compilation cost limits JS payback; JS effects, rooting, guards, and
+fallback maps must use the same semantics and recovery contract. This is an
+experiment, not a measured Quench win or a reason to change production tiering
+before the comparison exists.
+
 ## Per-site TSF indirect-call attribution
 
 An opt-in diagnostic ABI records each compiled indirect call site's total,
@@ -1329,3 +1356,16 @@ target. Before choosing a hot site, record time-weighted compile rejection
 reasons, call-target/cache state, receiver-shape diversity, entries and
 callouts. A cache/guard hit is useful only if it reduces measured VM work; keep
 it only on matched production JetStream score and RSS data.
+
+## Dumping loop-region machine code
+
+`QUENCH_JS_JIT_DUMP=<dir>` makes each compiled loop region write its machine code
+(`loop-<n>.bin`, the whole executable mapping) and its CLIF (`loop-<n>.clif`) into
+`<dir>`, numbered in compilation order. One stderr line per region gives its header PC,
+mapping address and size. To attribute instruction costs to native code:
+
+1. Run under `valgrind --tool=callgrind --dump-instr=yes`.
+2. Match each mapping address in the callgrind output to its dump.
+3. Disassemble the `.bin` with `objdump -D -b binary -mi386:x86-64`.
+
+The variable is read once per process and changes nothing about what the run computes.

@@ -130,9 +130,9 @@ fn eval_binding_declarations_survive_residual_round_trip() {
     assert!(EvalBindingDeclaration::from_binary_tag(u8::MAX).is_err());
 }
 
-#[test]
-fn decoder_rejects_out_of_range_local_load() {
-    let program = ResidualProgram {
+/// A residual of one function with `code` and `source_positions`, the rest empty.
+fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::SourcePositions) -> ResidualProgram {
+    ResidualProgram {
         specialized: true,
         kind: crate::bytecode::ProgramKind::Script,
         module_requests: Vec::new(),
@@ -178,9 +178,9 @@ fn decoder_rejects_out_of_range_local_load() {
             global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
-            source_positions: Default::default(),
+            source_positions,
             environment_clones: vec![].into(),
-            code: vec![Instr::new(Op::LoadLocal, 0, 0, 0, 1)],
+            code,
             wide: vec![],
             registers: 1,
             dispatch: DispatchClass::General,
@@ -211,12 +211,44 @@ fn decoder_rejects_out_of_range_local_load() {
         encoded_records: None,
             validated: Default::default(),
             closure_reads: None,
-    };
-    let path = std::env::temp_dir().join(format!("quench-invalid-local-{}", std::process::id()));
+    }
+}
+
+/// `program` written to a residual file and read back.
+fn residual_round_trip(program: &ResidualProgram, name: &str) -> Result<ResidualProgram, String> {
+    let path = std::env::temp_dir().join(format!("quench-{name}-{}", std::process::id()));
     program.write_binary(&path).unwrap();
     let result = ResidualProgram::read_binary(&path);
     std::fs::remove_file(path).unwrap();
-    assert_eq!(result.unwrap_err(), "invalid residual local load");
+    result
+}
+
+#[test]
+fn decoder_rejects_out_of_range_local_load() {
+    let program = one_function_program(vec![Instr::new(Op::LoadLocal, 0, 0, 0, 1)], Default::default());
+    assert_eq!(residual_round_trip(&program, "invalid-local").unwrap_err(), "invalid residual local load");
+}
+
+/// A stored source position table is untrusted input: a final entry that is not the coded
+/// table's last, a truncated varint and an overlong one each fail decoding with an error.
+#[test]
+fn decoder_rejects_inconsistent_source_position_tables() {
+    use crate::bytecode::{SourcePosition, SourcePositions};
+    let code = || vec![Instr::new(Op::Return, 0, 0, 0, 0), Instr::new(Op::Return, 0, 0, 0, 0)];
+    let valid: SourcePositions = [SourcePosition { pc: 0, line: 1, column: 1 }, SourcePosition { pc: 1, line: 2, column: 3 }]
+        .into_iter()
+        .collect();
+    assert!(residual_round_trip(&one_function_program(code(), valid.clone()), "positions-valid").is_ok());
+    let (bytes, last) = valid.encoded();
+    let bytes = bytes.to_vec();
+    let mismatched = SourcePositions::from_encoded(bytes.clone(), Some(SourcePosition { pc: 1, line: 9, column: 9 }));
+    let missing_last = SourcePositions::from_encoded(bytes.clone(), None);
+    let truncated = SourcePositions::from_encoded(bytes[..bytes.len() - 1].iter().copied().chain([0x80]).collect(), last);
+    let overlong = SourcePositions::from_encoded(vec![0xff; 32], last);
+    for (name, table) in [("mismatched", mismatched), ("missing-last", missing_last), ("truncated", truncated), ("overlong", overlong)] {
+        let error = residual_round_trip(&one_function_program(code(), table), name).unwrap_err();
+        assert!(error.contains("invalid source positions"), "{name}: {error}");
+    }
 }
 
 #[test]
@@ -674,3 +706,36 @@ fn compact_encoding_names_every_atom_by_its_text() {
     );
 }
 
+
+#[test]
+fn dead_call_results_are_the_liveness_masks_projection_and_round_trip() {
+    let source = "function g() { return 1; }\nfunction f(x) { g(); const kept = g(); x(); return kept + x(); }\nf(() => 2);";
+    let program = crate::Engine::specialize(source, "dead-call-results.js").unwrap();
+    let mut claimed = 0;
+    for (index, function) in program.functions.iter().enumerate() {
+        let Some(masks) = program.register_root_masks(index as u32) else {
+            assert!(function.register_roots.dead_call_results().is_empty());
+            continue;
+        };
+        let derived: Vec<u32> = function
+            .instructions()
+            .enumerate()
+            .filter(|(pc, instruction)| {
+                instruction.op() == Op::Call
+                    && instruction.result_flags() == 0
+                    && masks.get(pc + 1).is_some_and(|after| {
+                        crate::compile::liveness::register_dead(after, usize::from(instruction.a() & crate::bytecode::REGISTER_MASK))
+                    })
+            })
+            .map(|(pc, _)| pc as u32)
+            .collect();
+        assert_eq!(function.register_roots.dead_call_results(), derived.as_slice(), "function {index}");
+        claimed += derived.len();
+    }
+    assert!(claimed > 0, "the unused `g()` and `x()` results are dead");
+    let decoded = residual_round_trip(&program, "dead-call-results").unwrap();
+    for (original, decoded) in program.functions.iter().zip(&decoded.functions) {
+        assert_eq!(original.register_roots.dead_call_results(), decoded.register_roots.dead_call_results());
+    }
+    assert_eq!(decoded.validate(), Ok(()));
+}

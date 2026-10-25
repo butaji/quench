@@ -426,11 +426,17 @@ impl<H: Host> Vm<H> {
         &mut self, bytes: crate::KeptBytes, text: crate::bytecode::SourceText, base: usize, name: &str,
         specialized: bool,
     ) -> Result<crate::ResidualProgram, String> {
+        let read = bytes.clone();
         let mut program = crate::ResidualProgram::decode_compact(
             bytes,
             &mut |name| self.intern_atom(name),
             text,
         )?;
+        // The decode read the body to check and decode it; the program reads the bytes again
+        // only for a function's record on its first call. A run that loads many modules
+        // before its first release had kept every decoded body resident (undici npm scenario:
+        // 4.2 MB of compile-cache pages at its 30 MB peak).
+        H::kept_bytes_read((*read).as_ref());
         let source_matches = program.source.as_ref().is_some_and(|source| source.base as usize == base);
         if program.source_name != name || !source_matches || program.specialized != specialized {
             return Err("cached program does not match its body".into());
@@ -449,8 +455,9 @@ impl<H: Host> Vm<H> {
     fn kept_script(
         &mut self, source: &str, name: &str, goal: &str, origin: Option<(u32, u32)>,
     ) -> Option<crate::PreparedScript> {
-        let bytes = self.host.kept_compiled_program(name, &[self.specialization_part(), goal, source])?;
-        let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(source));
+        let entry = self.host.kept_compiled_program(name, &[self.specialization_part(), goal, source])?;
+        let (bytes, text) = crate::bytecode::split_kept_source(entry, source.len())
+            .unwrap_or_else(|entry| (entry, crate::bytecode::SourceText::Shared(std::sync::Arc::from(source))));
         let specialized = self.specialized;
         let mut kept = self.decode_cached_program(bytes, text, 0, name, specialized).ok()?;
         if let (Some(source), Some((line_offset, column_offset))) = (&mut kept.source, origin) {
@@ -519,8 +526,9 @@ impl<H: Host> Vm<H> {
         // text a user runs adds an entry; a store that fails (a full disk) keeps the cache
         // as it was, and costs only the compilation it would have saved.
         if let Some(goal) = &cache_key
-            && let Some(bytes) = self.encode_cached_program(&residual)
+            && let Some(mut bytes) = self.encode_cached_program(&residual)
         {
+            crate::bytecode::append_kept_source(&mut bytes, source);
             let mode = self.specialization_part();
             self.host.keep_compiled_program(name, &[mode, goal, source], &bytes);
             drop(bytes);

@@ -6,6 +6,53 @@ use crate::bytecode::{
 /// A set of registers, one bit each: the uses, definitions and live registers liveness
 /// derives, and the root masks a collection reads.
 pub(crate) type RegisterSet = u128;
+
+/// A function's live registers before each instruction (`analyze`), held at the width they
+/// need: most functions use fewer than 64 registers, so their masks take half the space
+/// (V8-v7 RegExp: 95 KiB of masks at its heap's peak, all within 64 registers).
+#[derive(Clone, Debug)]
+pub(crate) enum RegisterMasks {
+    Narrow(Box<[u64]>),
+    Wide(Box<[RegisterSet]>),
+}
+
+impl RegisterMasks {
+    /// `masks` at the narrowest width that holds every one of them.
+    pub(crate) fn new(masks: Vec<RegisterSet>) -> Self {
+        let narrow: Option<Box<[u64]>> = masks.iter().map(|&mask| u64::try_from(mask).ok()).collect();
+        narrow.map_or_else(|| Self::Wide(masks.into_boxed_slice()), Self::Narrow)
+    }
+
+    /// The registers live before instruction `pc`, one past the last included.
+    pub(crate) fn get(&self, pc: usize) -> Option<RegisterSet> {
+        match self {
+            Self::Narrow(masks) => masks.get(pc).map(|&mask| RegisterSet::from(mask)),
+            Self::Wide(masks) => masks.get(pc).copied(),
+        }
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Narrow(masks) => masks.len(),
+            Self::Wide(masks) => masks.len(),
+        }
+    }
+
+    /// The bytes the masks occupy.
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn bytes(&self) -> usize {
+        match self {
+            Self::Narrow(masks) => size_of_val::<[u64]>(masks),
+            Self::Wide(masks) => size_of_val::<[RegisterSet]>(masks),
+        }
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    pub(crate) fn iter(&self) -> impl Iterator<Item = RegisterSet> + '_ {
+        (0..self.len()).filter_map(|pc| self.get(pc))
+    }
+}
 /// The registers a `RegisterSet` covers. Liveness, and with it root maps, register promotion
 /// and move coalescing, covers only functions whose registers fit.
 pub(crate) const ROOT_MAP_REGISTERS: u16 = RegisterSet::BITS as u16;
@@ -54,8 +101,9 @@ impl MethodArguments for crate::bytecode::ResidualProgram {
     }
 }
 
-/// Records which functions liveness covers; the collector derives a covered function's
-/// per-pc root masks when it first finds one on the stack (`ResidualProgram::register_root_mask`).
+/// Records which functions liveness covers and, for each covered one, its `Call`s whose
+/// result is dead (`dead_call_results`); the collector derives a covered function's per-pc
+/// root masks when it first finds one on the stack (`ResidualProgram::register_root_mask`).
 pub(crate) fn mark_register_roots<'a>(
     functions: impl IntoIterator<Item = &'a mut Function>,
     methods: &(impl MethodArguments + ?Sized),
@@ -63,9 +111,44 @@ pub(crate) fn mark_register_roots<'a>(
     superinstructions: &[Superinstruction],
 ) {
     for function in functions {
-        let covered = transfers(function, methods, fields, superinstructions).is_some();
-        function.register_roots = crate::bytecode::RegisterRoots::new(covered);
+        function.register_roots = register_roots(function, methods, fields, superinstructions);
     }
+}
+
+/// `function`'s liveness coverage and dead call results, as `mark_register_roots` records them.
+pub(crate) fn register_roots(
+    function: &Function,
+    methods: &(impl MethodArguments + ?Sized),
+    fields: &[FieldSite],
+    superinstructions: &[Superinstruction],
+) -> crate::bytecode::RegisterRoots {
+    match transfers(function, methods, fields, superinstructions) {
+        Some(transfers) => {
+            let live = analyze_transfers(function, &transfers);
+            crate::bytecode::RegisterRoots::with_dead_call_results(true, dead_call_results(function, &live))
+        }
+        None => crate::bytecode::RegisterRoots::new(false),
+    }
+}
+
+/// The pcs, in order, of `function`'s `Call`s that write their result to a register (no
+/// result flags) that is dead after the call, under `live`: a lane call may let the callee
+/// skip building a result nothing reads (`ImmediateLayout::LANE_CALL_RESULT_UNUSED_FLAG`).
+/// A lane derived each from the per-pc masks on its first run, 3-6% of the instructions of
+/// cached npm runs (axios, schema-utils, ajv-formats), which a compile-cache hit now keeps.
+fn dead_call_results(function: &Function, live: &[RegisterSet]) -> Box<[u32]> {
+    function
+        .instructions()
+        .enumerate()
+        .filter(|(pc, instruction)| {
+            instruction.op() == crate::bytecode::Op::Call
+                && instruction.result_flags() == 0
+                && live.get(pc + 1).is_some_and(|&after| {
+                    register_dead(after, usize::from(instruction.a() & crate::bytecode::REGISTER_MASK))
+                })
+        })
+        .map(|(pc, _)| u32::try_from(pc).expect("a function's pcs fit u32"))
+        .collect()
 }
 
 pub(crate) fn analyze(

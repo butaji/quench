@@ -149,6 +149,11 @@ def main() -> int:
         native_rows = [row for row in stat_rows if row.get("native_entries", 0) > 0]
         native_names = {row.get("function_name", "") for row in native_rows}
         required_native = set(fixture["native_functions"])
+        counter_rows: dict[str, list[dict[str, object]]] = {}
+        for row in stat_rows:
+            function_name = row.get("function_name")
+            if isinstance(function_name, str):
+                counter_rows.setdefault(function_name, []).append(row)
         if not native_rows:
             print(f"FAIL {fixture['id']}: no native entries reported", file=sys.stderr)
             failed = True
@@ -161,7 +166,41 @@ def main() -> int:
             failed = True
         else:
             total_native = sum(row.get("native_entries", 0) for row in native_rows)
-            print(f"PASS {fixture['id']}: native_entries={total_native} native={','.join(sorted(required_native))}")
+            counter_summary: list[str] = []
+            for requirement in fixture.get("required_counters", []):
+                function_name = requirement["function"]
+                counter = requirement["counter"]
+                rows = counter_rows.get(function_name, [])
+                actual = sum(
+                    row.get(counter, 0)
+                    for row in rows
+                    if isinstance(row.get(counter, 0), int)
+                )
+                minimum = requirement.get("at_least")
+                greater_than = requirement.get("greater_than")
+                comparison = sum(
+                    row.get(greater_than, 0)
+                    for row in rows
+                    if greater_than is not None and isinstance(row.get(greater_than, 0), int)
+                )
+                if minimum is not None and actual < minimum:
+                    print(
+                        f"FAIL {fixture['id']}: {function_name}.{counter}={actual}, expected at least {minimum}",
+                        file=sys.stderr,
+                    )
+                    failed = True
+                elif greater_than is not None and actual <= comparison:
+                    print(
+                        f"FAIL {fixture['id']}: {function_name}.{counter}={actual}, expected greater than {greater_than}={comparison}",
+                        file=sys.stderr,
+                    )
+                    failed = True
+                else:
+                    counter_summary.append(f"{function_name}.{counter}={actual}")
+            result = f"PASS {fixture['id']}: native_entries={total_native} native={','.join(sorted(required_native))}"
+            if counter_summary:
+                result += " counters=" + ",".join(counter_summary)
+            print(result)
 
     if failed:
         return 1
