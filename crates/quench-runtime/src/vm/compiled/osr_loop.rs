@@ -1987,9 +1987,10 @@ struct ElementIndex {
     displacement: i32,
 }
 
-/// A counted loop of a region: a loop whose body, header to backward jump, is one path but
-/// for the test that leaves it, and whose test compares an induction variable with a bound
-/// the body leaves unchanged. Every arrival at its header from outside it runs the proof of
+/// A counted loop of a region: a loop whose body, header to backward jump, reaches the test
+/// that leaves it on every path and otherwise branches only forward within itself, and
+/// whose test compares an induction variable with a bound the body leaves unchanged on
+/// every path. Every arrival at its header from outside it runs the proof of
 /// its facts (`Lowering::proof`), which selects the copy of the body without their guards
 /// or the copy with them.
 #[derive(Clone, Debug)]
@@ -2316,28 +2317,32 @@ fn counted_loop(
     use std::collections::{BTreeMap, BTreeSet};
     let at = |pc: u32| region.instructions[(pc - region.header) as usize];
     let body = header..backedge;
-    // One path: the test is the body's only branch, and it leaves the loop.
+    let jumps = |instruction: WideInstruction| {
+        matches!(instruction.op(), Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
+    };
+    // The test leaves the loop, and every path of the body reaches it: before it, the body
+    // branches nowhere. Every other branch of the body jumps forward within it.
     let mut test = None;
+    let mut branched = false;
     for pc in body.clone() {
         let instruction = at(pc);
-        match instruction.op() {
-            Op::Jump => return None,
-            Op::JumpBinaryFalse if test.is_none() && !(header..=backedge).contains(&instruction.jump_target()) => {
-                test = Some(pc);
-            }
-            Op::JumpBinaryFalse => return None,
-            Op::JumpFalse | Op::JumpTrue => return None,
-            _ => {}
+        if !jumps(instruction) {
+            continue;
+        }
+        let target = instruction.jump_target();
+        if (pc + 1..=backedge).contains(&target) {
+            branched = true;
+        } else if instruction.op() == Op::JumpBinaryFalse && test.is_none() && !branched && !(header..=backedge).contains(&target) {
+            test = Some(pc);
+        } else {
+            return None;
         }
     }
     let test = test?;
     // Control enters only at the header.
     let enters_inside = (region.header..=region.backedge).any(|pc| {
         let instruction = at(pc);
-        matches!(
-            instruction.op(),
-            Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-        ) && (header + 1..=backedge).contains(&instruction.jump_target())
+        !(header..=backedge).contains(&pc) && jumps(instruction) && (header + 1..=backedge).contains(&instruction.jump_target())
     });
     if enters_inside {
         return None;
@@ -2375,7 +2380,33 @@ fn counted_loop(
     };
     let mut candidates: Vec<Fact> = Vec::new();
     let mut tested = None;
+    // The states forward branches carry to their targets, merged where paths join: a
+    // register keeps a value all its paths agree on.
+    let mut pending: BTreeMap<u32, Vec<BTreeMap<Register, Option<Affine>>>> = BTreeMap::new();
+    let mut reached = true;
+    let merge = |state: &mut BTreeMap<Register, Option<Affine>>, reached: bool, others: Vec<BTreeMap<Register, Option<Affine>>>| {
+        let mut states: Vec<BTreeMap<Register, Option<Affine>>> = others;
+        if reached {
+            states.push(std::mem::take(state));
+        }
+        let registers: BTreeSet<Register> = states.iter().flat_map(|state| state.keys().copied()).collect();
+        *state = registers
+            .into_iter()
+            .map(|register| {
+                let mut values = states.iter().map(|state| value(state, register));
+                let first = values.next().flatten();
+                (register, first.filter(|first| values.all(|other| other == Some(*first))))
+            })
+            .collect();
+    };
     for pc in body.clone() {
+        if let Some(others) = pending.remove(&pc) {
+            merge(&mut state, reached, others);
+            reached = true;
+        }
+        if !reached {
+            continue;
+        }
         let instruction = at(pc);
         let register = |register: Register| (int32(webs.read(region, pc, register)), value(&state, register));
         let defined = || int32(webs.defined(region, pc));
@@ -2459,7 +2490,7 @@ fn counted_loop(
                 }
                 None
             }
-            Op::JumpBinaryFalse => {
+            Op::JumpBinaryFalse if pc == test => {
                 let left = source(&state, pc, instruction.operand_b())?;
                 let right = source(&state, pc, instruction.operand_c())?;
                 tested = Some((instruction.binary_operator_field(), left, right));
@@ -2470,6 +2501,13 @@ fn counted_loop(
         if let Some(register) = number_definition(instruction) {
             state.insert(register, result);
         }
+        if jumps(instruction) && (pc + 1..=backedge).contains(&instruction.jump_target()) {
+            pending.entry(instruction.jump_target()).or_default().push(state.clone());
+            reached = instruction.op() != Op::Jump;
+        }
+    }
+    if let Some(others) = pending.remove(&backedge) {
+        merge(&mut state, reached, others);
     }
     let steps: BTreeMap<Register, i64> = state
         .iter()
