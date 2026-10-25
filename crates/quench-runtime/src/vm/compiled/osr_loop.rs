@@ -2853,7 +2853,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             })
             .collect();
         Self {
-            body: super::Body::new(builder, context, poll),
+            body: super::Body::new(builder, context, poll, super::Int32Extension::Sign),
             region,
             observation,
             pointer,
@@ -2979,7 +2979,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 return if multiply { self.body.builder.ins().imul(left, right) } else { self.body.builder.ins().iadd(left, right) };
             }
         };
-        self.body.builder.ins().sextend(types::I64, value)
+        self.body.extend(value, super::Int32Extension::Sign)
     }
 
     fn affine_start(&mut self, counted: &CountedLoop, value: Affine) -> ir::Value {
@@ -3612,8 +3612,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
             // an access folds into its displacement. A negative key extends below zero,
             // which compares unsigned past every length (`MAX_INDEXED_LENGTH`).
             Representation::Int32 => {
-                let (root, offset) = self.int32_root(key.value);
-                let wide = self.body.builder.ins().sextend(types::I64, root);
+                let (root, narrow_offset) = self.constant_sum_root(key.value);
+                let wide = self.body.extend(root, super::Int32Extension::Sign);
+                let (wide, wide_offset) = self.constant_sum_root(wide);
+                let offset = narrow_offset + wide_offset;
                 let index = self.body.builder.ins().iadd_imm_s(wide, offset);
                 match i32::try_from(offset * i64::from(WORD_BYTES)) {
                     Ok(displacement) => (index, ElementIndex { wide, displacement }),
@@ -3655,8 +3657,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .then_some(())?;
         let array = *self.arrays.get(&read.operand_b().register_index()?)?;
         let (left, right) = (
-            self.body.builder.ins().sextend(types::I64, left.value),
-            self.body.builder.ins().sextend(types::I64, right.value),
+            self.body.extend(left.value, super::Int32Extension::Sign),
+            self.body.extend(right.value, super::Int32Extension::Sign),
         );
         let sum = self.body.builder.ins().iadd(left, right);
         let length = self.length(array);
@@ -3722,16 +3724,20 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.seal_block(join);
     }
 
-    /// The value an `i32` is a constant sum from, and that sum: the chain of constant
-    /// additions ending at `value`.
-    fn int32_root(&self, value: ir::Value) -> (ir::Value, i64) {
+    /// The value an integer is a constant sum from, and that sum: the chain of constant
+    /// additions of its type ending at `value`, through the views it was written to and
+    /// read back from.
+    fn constant_sum_root(&self, value: ir::Value) -> (ir::Value, i64) {
         let dfg = &self.body.builder.func.dfg;
         let (mut value, mut offset) = (dfg.resolve_aliases(value), 0i64);
         loop {
+            if let Some(written) = written_int32(dfg, value) {
+                value = written;
+            }
             let ir::ValueDef::Result(instruction, 0) = dfg.value_def(value) else { break };
             let ir::InstructionData::Binary { opcode: ir::Opcode::Iadd, args } = dfg.insts[instruction] else { break };
             let (left, right) = (dfg.resolve_aliases(args[0]), dfg.resolve_aliases(args[1]));
-            match (self.int32_constant(left), self.int32_constant(right)) {
+            match (self.integer_constant(left), self.integer_constant(right)) {
                 (_, Some(constant)) => (value, offset) = (left, offset + constant),
                 (Some(constant), None) => (value, offset) = (right, offset + constant),
                 (None, None) => break,
@@ -3811,15 +3817,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
         right: ir::Value,
     ) -> Option<ir::Value> {
         let (value, offset) = match operator {
-            NumberArithmetic::Add => match (self.int32_constant(left), self.int32_constant(right)) {
+            NumberArithmetic::Add => match (self.integer_constant(left), self.integer_constant(right)) {
                 (_, Some(offset)) => (left, offset),
                 (Some(offset), None) => (right, offset),
                 (None, None) => return None,
             },
-            NumberArithmetic::Subtract => (left, -self.int32_constant(right)?),
+            NumberArithmetic::Subtract => (left, -self.integer_constant(right)?),
             NumberArithmetic::Multiply | NumberArithmetic::Divide => return None,
         };
-        let unguarded = self.proved(pc) || self.facts.exact.contains(&pc) || self.facts.truncated.contains(&pc);
+        let truncated = self.facts.truncated.contains(&pc);
+        let unguarded = self.proved(pc) || self.facts.exact.contains(&pc) || truncated;
         if !unguarded && offset != 0 {
             let (condition, bound) = if offset > 0 {
                 (IntCC::SignedGreaterThan, i64::from(i32::MAX) - offset)
@@ -3829,17 +3836,48 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let overflow = self.body.builder.ins().icmp_imm_s(condition, value, bound);
             self.guard_int32(pc, overflow, Widening::Register(register));
         }
-        Some(self.body.builder.ins().iadd_imm_s(value, offset))
+        if truncated {
+            return Some(self.body.builder.ins().iadd_imm_s(value, offset));
+        }
+        let offset = self.body.builder.ins().iconst(types::I32, offset);
+        Some(self.exact_int32(NumberArithmetic::Add, value, offset))
     }
 
-    /// The value of an `i32` constant operand.
-    fn int32_constant(&self, value: ir::Value) -> Option<i64> {
+    /// `value`, an `i32`, sign-extended: a constant as the `i64` constant.
+    fn sign_extended(&mut self, value: ir::Value) -> ir::Value {
+        match self.integer_constant(value) {
+            Some(constant) => self.body.builder.ins().iconst(types::I64, constant),
+            None => self.body.extend(value, super::Int32Extension::Sign),
+        }
+    }
+
+    /// The exact `i32` sum or difference of `left` and `right`, computed on their sign
+    /// extensions: its 64 bits are the result's own sign extension, which the views it is
+    /// written to store (`Body::read`) and an element access keyed by it scales.
+    fn exact_int32(&mut self, operator: NumberArithmetic, left: ir::Value, right: ir::Value) -> ir::Value {
+        let (left, right) = (self.sign_extended(left), self.sign_extended(right));
+        let wide = match operator {
+            NumberArithmetic::Add => self.body.builder.ins().iadd(left, right),
+            NumberArithmetic::Subtract => self.body.builder.ins().isub(left, right),
+            NumberArithmetic::Multiply | NumberArithmetic::Divide => unreachable!("only sums and differences extend exactly"),
+        };
+        let narrow = self.body.builder.ins().ireduce(types::I32, wide);
+        self.body.extended.insert(narrow, wide);
+        narrow
+    }
+
+    /// The value of an integer constant operand, signed in its type.
+    fn integer_constant(&self, value: ir::Value) -> Option<i64> {
         let dfg = &self.body.builder.func.dfg;
-        let ir::ValueDef::Result(instruction, _) = dfg.value_def(dfg.resolve_aliases(value)) else {
+        let value = dfg.resolve_aliases(value);
+        let ir::ValueDef::Result(instruction, _) = dfg.value_def(value) else {
             return None;
         };
         match dfg.insts[instruction] {
-            ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } => Some(i64::from(imm.bits() as i32)),
+            ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } if dfg.value_type(value) == types::I32 => {
+                Some(i64::from(imm.bits() as i32))
+            }
+            ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } => Some(imm.bits()),
             _ => None,
         }
     }
@@ -3861,6 +3899,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let unguarded = exact || self.facts.truncated.contains(&pc);
         // `int32_offset` leaves the same sums unguarded.
         match operator {
+            NumberArithmetic::Add | NumberArithmetic::Subtract if exact => {
+                return self.exact_int32(operator, left, right);
+            }
             NumberArithmetic::Add if unguarded => {
                 return self.body.builder.ins().iadd(left, right);
             }
@@ -4036,7 +4077,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
                             self.body.builder.ins().icmp_imm_s(IntCC::Equal, operand.value, i64::from(limit));
                         self.guard_int32(pc, overflow, Widening::Register(result));
                     }
-                    let value = self.body.builder.ins().iadd_imm_s(operand.value, step);
+                    let step = self.body.builder.ins().iconst(types::I32, step);
+                    let value = self.exact_int32(NumberArithmetic::Add, operand.value, step);
                     Typed { value, representation: Representation::Int32 }
                 } else {
                     let operator = if decrement {
@@ -4226,19 +4268,28 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
 /// The SSA value an `i32` operand is a pure function of, so that two reads of one register
 /// definition key the same arithmetic: each read of an `i32` view narrows its stored
-/// zero-extended value anew (`Body::read`), giving distinct `ireduce`s of one value, and a
-/// view written in the same block chain reads back as `ireduce(uextend(x))`, which is `x`.
+/// sign-extended value anew (`Body::read`), giving distinct `ireduce`s of one value, and a
+/// view written in the same block chain reads back as `ireduce(sextend(x))`, which is `x`.
 fn int32_key(dfg: &ir::DataFlowGraph, value: ir::Value) -> ir::Value {
-    let operand = |value: ir::Value, opcode: ir::Opcode| match dfg.value_def(value) {
+    let value = dfg.resolve_aliases(value);
+    let Some(wide) = unary_operand(dfg, value, ir::Opcode::Ireduce) else { return value };
+    written_int32(dfg, value).unwrap_or(wide)
+}
+
+/// The `i32` an `i32` view read back where the same block chain wrote it, `ireduce(sextend(x))`,
+/// is: `x`.
+fn written_int32(dfg: &ir::DataFlowGraph, value: ir::Value) -> Option<ir::Value> {
+    let wide = unary_operand(dfg, dfg.resolve_aliases(value), ir::Opcode::Ireduce)?;
+    unary_operand(dfg, wide, ir::Opcode::Sextend).filter(|narrow| dfg.value_type(*narrow) == types::I32)
+}
+
+/// The operand of `value` when an `opcode` instruction defines it.
+fn unary_operand(dfg: &ir::DataFlowGraph, value: ir::Value, opcode: ir::Opcode) -> Option<ir::Value> {
+    match dfg.value_def(value) {
         ir::ValueDef::Result(instruction, 0) => match dfg.insts[instruction] {
             ir::InstructionData::Unary { opcode: found, arg } if found == opcode => Some(dfg.resolve_aliases(arg)),
             _ => None,
         },
         _ => None,
-    };
-    let value = dfg.resolve_aliases(value);
-    let Some(wide) = operand(value, ir::Opcode::Ireduce) else { return value };
-    operand(wide, ir::Opcode::Uextend)
-        .filter(|narrow| dfg.value_type(*narrow) == types::I32)
-        .unwrap_or(wide)
+    }
 }
