@@ -11313,9 +11313,13 @@ fn lane_construct_keeping_activation<H: Host>(
     if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
         return Err(Some(exit(ip)));
     }
-    let target = lane_script_target(cx, callee)
-        .filter(|target| target.constructs && target.forwards())
-        .ok_or(None)?;
+    // Matched rather than filtered: the combinators moved the target through copies.
+    let Some(target) = lane_script_target(cx, callee) else {
+        return Err(None);
+    };
+    if !(target.constructs && target.forwards()) {
+        return Err(None);
+    }
     // One look at the plan serves the receiver and the forwarding: a plan the receiver's
     // allocation leaves records no resolution yet.
     let plan = holding_construct_plan(vm, callee);
@@ -11326,8 +11330,10 @@ fn lane_construct_keeping_activation<H: Host>(
     note_allocation(vm);
     let arguments = ActivationArguments::Window(i.c);
     if let Some(&method) = vm.lane_stack.forwarded_methods.get(target.forwarded_method as usize)
-        && let Some(forwarded) = lane_resolved_forwarding(cx, callee, plan.as_ref())
-            .or_else(|| lane_forwarded_construction(cx, target, method, this))
+        && let Some(forwarded) = match lane_resolved_forwarding(cx, callee, plan.as_ref()) {
+            Some(forwarded) => Some(forwarded),
+            None => lane_forwarded_construction(cx, target, method, this),
+        }
     {
         let forwarder = SkippedForwarder {
             function: target.function,
@@ -11804,16 +11810,20 @@ fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option
     // activate callees of the running program alone. Another program's callee, once
     // resolved, is held apart (`cross_call_entry`) for the callers that activate across
     // programs; resolving it again would only find it so.
-    vm.script_call_target(callee)
-        .or_else(|| {
-            if vm.cross_call_entry(callee).is_some() {
-                return None;
-            }
-            vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee)
-        })
-        .filter(|target| {
-            target.program == vm.active_program && !matches!(target.entry, CallEntry::Frame | CallEntry::Environment)
-        })
+    // The cached entry is tested in place and copied once.
+    let active = vm.active_program;
+    let admits = move |target: &ScriptCallTarget| {
+        target.program == active && !matches!(target.entry, CallEntry::Frame | CallEntry::Environment)
+    };
+    if let Some(entry) = vm.script_call_entry(callee) {
+        // SAFETY: the entry is read before anything else touches the cache.
+        let target = unsafe { &*entry };
+        return admits(target).then(|| *target);
+    }
+    if vm.cross_call_entry(callee).is_some() {
+        return None;
+    }
+    vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee).filter(admits)
 }
 
 /// Make `program` the lane's running program, as a call into or a return to one of its
