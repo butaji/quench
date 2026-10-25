@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # Profile-guided production build of quench-node.
 #
-# usage: tools/pgo-build.sh [PROFILE]   (default: production)
+# usage: tools/pgo-build.sh [--static] [PROFILE]   (default: production)
+#
+# --static builds the static x86_64 Linux binary (C runtime linked in, static relocation
+# model), the input of the BOLT layout step in docs/README.md: both the instrumented and the
+# profile-guided build add `-Ctarget-feature=+crt-static -Crelocation-model=static` and build
+# for the host triple, so the binary lands at target/<host>/PROFILE/quench-node. The
+# repository's own rustflags (.cargo/config.toml) stay in force in every mode: each build
+# appends its flags with `--config`, which cargo concatenates with the configured array.
 #
 # 1. Builds an instrumented quench-node into target/pgo-instrumented.
 # 2. Runs the training corpus: the interpreter curriculum micro programs, the numbered
@@ -16,6 +23,11 @@
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+static=false
+if [[ "${1:-}" == "--static" ]]; then
+    static=true
+    shift
+fi
 profile="${1:-production}"
 target_dir="${CARGO_TARGET_DIR:-$root_dir/target}"
 instrumented_dir="$target_dir/pgo-instrumented"
@@ -47,6 +59,22 @@ react_training_rounds="${QUENCH_PGO_REACT_ROUNDS:-0}"
 micros_budget_ms=1500
 
 host="$(rustc -vV | sed -n 's/^host: //p')"
+# RUSTFLAGS replaces every configured rustflags array, the repository's and the ones this
+# script passes with `--config`, so a build under it would silently lose the profile.
+if [[ -n "${RUSTFLAGS:-}" ]]; then
+    printf 'unset RUSTFLAGS: it would replace the profile flags and the repository rustflags\n' >&2
+    exit 1
+fi
+# The static mode's link flags, appended to both builds, and the target directory layout a
+# `--target` build uses.
+mode_flags=""
+target_args=()
+binary_subdir="$profile"
+if [[ "$static" == true ]]; then
+    mode_flags='"-Ctarget-feature=+crt-static", "-Crelocation-model=static", '
+    target_args=(--target "$host")
+    binary_subdir="$host/$profile"
+fi
 llvm_profdata="$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-profdata"
 if [[ ! -x "$llvm_profdata" ]]; then
     printf 'llvm-profdata not found; run: rustup component add llvm-tools\n' >&2
@@ -84,9 +112,9 @@ cd "$root_dir"
 rm -rf "$data_dir"
 mkdir -p "$data_dir"
 # `--config` appends to the repository's configured rustflags instead of replacing them.
-CARGO_TARGET_DIR="$instrumented_dir" cargo build --profile "$profile" -p quench-node \
-    --config "build.rustflags=[\"-Cprofile-generate=$data_dir\"]"
-instrumented="$instrumented_dir/$profile/quench-node"
+CARGO_TARGET_DIR="$instrumented_dir" cargo build --profile "$profile" -p quench-node "${target_args[@]}" \
+    --config "build.rustflags=[${mode_flags}\"-Cprofile-generate=$data_dir\"]"
+instrumented="$instrumented_dir/$binary_subdir/quench-node"
 
 # A fixed pool of profiles merged in place as programs exit keeps the raw data small.
 export LLVM_PROFILE_FILE="$data_dir/quench-%4m.profraw"
@@ -135,12 +163,13 @@ rm -rf "$data_dir"
 # promoting one inlines a large handler (a frameless call) into a small one (a register
 # move), whose every dispatch then pays the large one's prologue: Crypto and NavierStokes
 # ran 38% more instructions once training made a call the move's most frequent successor.
-CARGO_TARGET_DIR="$target_dir" cargo build --profile "$profile" -p quench-node \
-    --config "build.rustflags=[\"-Cprofile-use=$profdata\", \"-Cllvm-args=-disable-icp\"]"
-printf 'PGO build: %s\n' "$target_dir/$profile/quench-node"
+CARGO_TARGET_DIR="$target_dir" cargo build --profile "$profile" -p quench-node "${target_args[@]}" \
+    --config "build.rustflags=[${mode_flags}\"-Cprofile-use=$profdata\", \"-Cllvm-args=-disable-icp\"]"
+binary="$target_dir/$binary_subdir/quench-node"
+printf 'PGO build: %s\n' "$binary"
 # Profile-guided inlining decides which lane handlers form their dispatch as a sibling jump
 # (`tools/check-lane-tail-calls.sh`); a profile that keeps symbols reports the ones that do not.
-if nm "$target_dir/$profile/quench-node" 2>/dev/null | grep dispatch_fast >/dev/null; then
+if nm "$binary" 2>/dev/null | grep dispatch_fast >/dev/null; then
     printf 'Lane handlers dispatching with a call:\n'
-    tools/check-lane-tail-calls.sh "$target_dir/$profile/quench-node" || true
+    tools/check-lane-tail-calls.sh "$binary" || true
 fi
