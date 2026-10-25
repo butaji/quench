@@ -418,6 +418,7 @@ fn tagged_registers(
     instructions: &[WideInstruction],
     constants: &[Value],
     held: &std::collections::BTreeSet<Register>,
+    header: u32,
 ) -> Option<std::collections::BTreeSet<Register>> {
     let mut tagged: std::collections::BTreeSet<Register> = instructions
         .iter()
@@ -436,7 +437,7 @@ fn tagged_registers(
         .collect();
     loop {
         let before = tagged.len();
-        for instruction in instructions.iter().rev().copied() {
+        for (offset, instruction) in instructions.iter().copied().enumerate().rev() {
             let Some(result) = number_definition(instruction) else {
                 continue;
             };
@@ -453,11 +454,26 @@ fn tagged_registers(
             }
             match instruction.op() {
                 Op::LoadConst => {
-                    constants.get(instruction.constant_index())?;
+                    if constants.get(instruction.constant_index()).is_none() {
+                        if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                            eprintln!(
+                                "QUENCH_JS_JIT_OSR_TAGGED_REJECT header={header} offset={offset} reason=missing_constant result={result}"
+                            );
+                        }
+                        return None;
+                    }
                 }
                 // A cached field's value, which the entry record carries tagged.
                 Op::GetField => {}
-                _ => return None,
+                _ => {
+                    if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                        eprintln!(
+                            "QUENCH_JS_JIT_OSR_TAGGED_REJECT header={header} offset={offset} reason=unsupported_tagged_definition op={:?} result={result}",
+                            instruction.op()
+                        );
+                    }
+                    return None;
+                }
             }
         }
         if tagged.len() == before {
@@ -1339,7 +1355,12 @@ fn admit_region(
 ) -> Result<LoopRegion, RegionRejection> {
     let backedge = header + instructions.len() as u32 - 1;
     let paths = held_registers(&instructions, sites, header_live, objects);
-    let mut tagged = match tagged_registers(&instructions, constants, &objects.iter().chain(paths.keys()).copied().collect()) {
+    let mut tagged = match tagged_registers(
+        &instructions,
+        constants,
+        &objects.iter().chain(paths.keys()).copied().collect(),
+        header,
+    ) {
         Some(tagged) => tagged,
         None => {
             if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
@@ -4573,6 +4594,7 @@ mod tests {
             &[instruction],
             &constants,
             &std::collections::BTreeSet::new(),
+            0,
         )
         .expect("valid constant operand");
         let mut admission = Admission {
