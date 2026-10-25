@@ -31,6 +31,7 @@ impl ProgramStore {
             js_jit_dataview_float64_enabled: _,
             js_jit_dataview_float64_get_entries: _,
             js_jit_dataview_float64_set_entries: _,
+            ..
         } = self;
         if !owned_scripts.is_empty() {
             return Err(SnapshotError::unsupported("scripts an embedder compiled and holds"));
