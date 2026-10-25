@@ -81,7 +81,7 @@ function engineSpecs() {
   return specs;
 }
 
-function linuxProcessTreeRssBytes(rootPid) {
+function linuxProcessTreeSnapshot(rootPid) {
   const childrenByParent = new Map();
   const rssByPid = new Map();
   for (const entry of fs.readdirSync("/proc")) {
@@ -102,14 +102,16 @@ function linuxProcessTreeRssBytes(rootPid) {
   let total = 0;
   const pending = [rootPid];
   const visited = new Set();
+  const descendants = [];
   while (pending.length) {
     const pid = pending.pop();
     if (visited.has(pid)) continue;
     visited.add(pid);
+    if (pid !== rootPid) descendants.push(pid);
     total += rssByPid.get(pid) ?? 0;
     pending.push(...(childrenByParent.get(pid) ?? []));
   }
-  return total;
+  return { rssBytes: total, descendants };
 }
 
 function linuxProcessHighWaterRssBytes(pid) {
@@ -127,13 +129,18 @@ async function runLinuxChild(spec, env) {
   let stderr = "";
   let maxRssBytes = 0;
   let maxProcessRssBytes = 0;
+  const descendantSamples = new Map();
   child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
   child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
   const sample = () => {
     // VmHWM is maintained by the kernel, so sampling it does not miss a brief
     // peak within the engine process. Descendants still use a separate RSS sample.
     maxProcessRssBytes = Math.max(maxProcessRssBytes, linuxProcessHighWaterRssBytes(child.pid));
-    maxRssBytes = Math.max(maxRssBytes, linuxProcessTreeRssBytes(child.pid));
+    const tree = linuxProcessTreeSnapshot(child.pid);
+    maxRssBytes = Math.max(maxRssBytes, tree.rssBytes);
+    for (const pid of tree.descendants) {
+      descendantSamples.set(pid, (descendantSamples.get(pid) ?? 0) + 1);
+    }
   };
   const sampler = setInterval(sample, 50);
   sample();
@@ -145,7 +152,15 @@ async function runLinuxChild(spec, env) {
   sample();
   clearInterval(sampler);
   clearTimeout(timeout);
-  return { ...result, stdout, stderr, maxRssBytes, maxProcessRssBytes };
+  return {
+    ...result,
+    stdout,
+    stderr,
+    maxRssBytes,
+    maxProcessRssBytes,
+    descendantProcessCount: descendantSamples.size,
+    maxObservedDescendantSamples: Math.max(0, ...descendantSamples.values()),
+  };
 }
 
 async function runOne(spec, round) {
@@ -194,6 +209,10 @@ async function runOne(spec, round) {
     maxRssBytes: timed ? parseRss(result.stderr) : result.maxRssBytes,
     ...(result.maxProcessRssBytes === undefined ? {} : {
       maxProcessRssBytes: result.maxProcessRssBytes,
+    }),
+    ...(result.descendantProcessCount === undefined ? {} : {
+      descendantProcessCount: result.descendantProcessCount,
+      maxObservedDescendantSamples: result.maxObservedDescendantSamples,
     }),
     wallTimeMs,
     stderr: result.stderr.replace(/__QUENCH_MAX_RSS_KB=\d+\n?/g, "").trim(),
@@ -253,6 +272,15 @@ const summaries = Object.fromEntries(specs.map(({ name }) => {
         rows.map(({ maxProcessRssBytes }) => maxProcessRssBytes),
       ),
     } : {}),
+    ...(rows.some(({ descendantProcessCount }) => descendantProcessCount !== undefined) ? {
+      medianObservedDescendantProcessCount: median(
+        rows.map(({ descendantProcessCount }) => descendantProcessCount),
+      ),
+      maximumObservedDescendantSamples: Math.max(
+        0,
+        ...rows.map(({ maxObservedDescendantSamples }) => maxObservedDescendantSamples),
+      ),
+    } : {}),
   }];
 }));
 const source = fs.readFileSync(workload);
@@ -270,7 +298,7 @@ const report = {
   } : {}),
   host: { platform: process.platform, arch: process.arch, cpus: os.cpus().length },
   rssMeasurement: process.platform === "linux"
-    ? "kernel VmHWM maximum RSS for the engine process plus a 50 ms sampled descendant-tree RSS estimate (tree sampling can miss short-lived children and counts shared pages per process; not qualification-ready)"
+    ? "kernel VmHWM maximum RSS for the engine process plus a 50 ms sampled descendant-tree RSS estimate, observed descendant count, and maximum samples per descendant (tree sampling can miss short-lived children and counts shared pages per process; not qualification-ready)"
     : "maximum RSS from /usr/bin/time -l",
   inputs: {
     workloadSha256: crypto.createHash("sha256").update(source).digest("hex"),
