@@ -928,6 +928,8 @@ impl Native {
                 | Self::TypedArrayToStringTag
                 | Self::FunctionBind
                 | Self::Array
+                | Self::PromiseResolve
+                | Self::PromiseWithResolvers
         )
     }
 

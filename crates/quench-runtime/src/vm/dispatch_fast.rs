@@ -8923,7 +8923,17 @@ impl<H: Host> Vm<H> {
         };
         // SAFETY: the deferred call's lane runs, so its context lives.
         let cx = cx.cast::<LaneContext<H>>();
+        let before = self.frames.len();
         self.materialize_lane_activations(cx);
+        // The natives running beside the activations recorded the frame count without them;
+        // their caller is now the innermost new frame (`Vm::function_caller`).
+        let added = self.frames.len() - before;
+        for activation in self.realm.promise.active_native.iter_mut().rev() {
+            if activation.frame_depth != before {
+                break;
+            }
+            activation.frame_depth += added;
+        }
         // The call runs from the innermost activation's frame, resuming after it.
         let frame = unsafe { (*cx).frame };
         self.frames[frame].pc = call_pc + 1;
