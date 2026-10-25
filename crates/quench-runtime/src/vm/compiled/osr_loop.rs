@@ -196,6 +196,25 @@ pub(crate) struct LoopRegion {
     pub(crate) inlining: Option<Box<Inlining>>,
 }
 
+impl LoopRegion {
+    pub(crate) fn has_dynamic_field_reads(&self) -> bool {
+        !self.dynamic_field_reads.is_empty()
+    }
+
+    pub(crate) fn is_dynamic_field(&self, index: usize) -> bool {
+        self.dynamic_field_reads.values().any(|field| *field == index)
+    }
+
+    pub(crate) fn call_boundary_pcs(&self) -> Vec<u32> {
+        self.instructions
+            .iter()
+            .enumerate()
+            .filter(|(_, instruction)| matches!(instruction.op(), Op::Call | Op::CallArray))
+            .map(|(offset, _)| self.header.saturating_add(offset as u32))
+            .collect()
+    }
+}
+
 /// Why a backward jump was excluded from OSR before native code generation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RegionRejection {
@@ -207,6 +226,23 @@ pub(crate) enum RegionRejection {
     FieldLimit,
     FieldStoreLimit,
     FieldMutation,
+}
+
+/// A loop analysis failure attributed to the function PC whose requirement blocked it.
+/// Limits that apply to the whole region point at its backedge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RegionAnalysisFailure {
+    pub(crate) reason: RegionRejection,
+    pub(crate) pc: u32,
+}
+
+impl RegionAnalysisFailure {
+    fn at(reason: RegionRejection, header: u32, offset: usize) -> Self {
+        Self {
+            reason,
+            pc: header.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX)),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -414,12 +450,22 @@ fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<
 /// Registers whose bytecode definitions must stay tagged because a nullish comparison
 /// branch observes them. Propagate that fact along moves and through constants; other
 /// definitions need a general value denotation before they can be admitted.
+#[cfg(test)]
 fn tagged_registers(
     instructions: &[WideInstruction],
     constants: &[Value],
     held: &std::collections::BTreeSet<Register>,
     header: u32,
 ) -> Option<std::collections::BTreeSet<Register>> {
+    tagged_registers_with_failure(instructions, constants, held, header).ok()
+}
+
+fn tagged_registers_with_failure(
+    instructions: &[WideInstruction],
+    constants: &[Value],
+    held: &std::collections::BTreeSet<Register>,
+    header: u32,
+) -> Result<std::collections::BTreeSet<Register>, usize> {
     let mut tagged: std::collections::BTreeSet<Register> = instructions
         .iter()
         .filter_map(|instruction| identity_branch(*instruction, constants).map(|branch| branch.register))
@@ -460,7 +506,7 @@ fn tagged_registers(
                                 "QUENCH_JS_JIT_OSR_TAGGED_REJECT header={header} offset={offset} reason=missing_constant result={result}"
                             );
                         }
-                        return None;
+                        return Err(offset);
                     }
                 }
                 // A cached field's value, which the entry record carries tagged.
@@ -472,12 +518,12 @@ fn tagged_registers(
                             instruction.op()
                         );
                     }
-                    return None;
+                    return Err(offset);
                 }
             }
         }
         if tagged.len() == before {
-            return Some(tagged);
+            return Ok(tagged);
         }
     }
 }
@@ -1086,6 +1132,7 @@ const WORD_BYTES: i32 = 8;
 /// a written array's appends read).
 const ARRAY_WORDS: usize = 3;
 const FIELD_STORE_WORDS: usize = 1;
+const DYNAMIC_FIELD_HEAP_WORDS: usize = 3;
 /// The scratch registers' address an inlining region's record ends with.
 const SCRATCH_WORDS: usize = 1;
 const ENTRY_WORDS: usize =
@@ -1094,6 +1141,7 @@ const ENTRY_WORDS: usize =
         + ARRAY_WORDS * MAX_REGION_ARRAYS
         + MAX_REGION_FIELDS
         + FIELD_STORE_WORDS * MAX_REGION_FIELD_STORES
+        + DYNAMIC_FIELD_HEAP_WORDS
         + SCRATCH_WORDS;
 
 impl LoopEntry {
@@ -1149,6 +1197,19 @@ impl LoopEntry {
     /// A warmed own-data field slot guarded by the VM during entry setup.
     pub(crate) fn push_field_store(&mut self, slot: *mut Value) {
         self.push(slot.addr() as u64);
+    }
+
+    /// Heap views for the dynamic own-data field reader. The pointers are valid only for this
+    /// synchronous run and are never retained in compiled code.
+    pub(crate) fn push_native_field_heap(
+        &mut self,
+        objects: *const crate::heap::Object,
+        properties: *const Value,
+        property_len: usize,
+    ) {
+        self.push(objects.addr() as u64);
+        self.push(properties.addr() as u64);
+        self.push(property_len as u64);
     }
 
     /// The value of the region's `index`th field as pushed: its word follows the captures
@@ -1320,10 +1381,13 @@ pub(super) fn region(
     live: Option<&crate::compile::liveness::RegisterMasks>,
     header: u32,
     backedge: u32,
-) -> Result<LoopRegion, RegionRejection> {
+) -> Result<LoopRegion, RegionAnalysisFailure> {
     let (start, end) = (header as usize, backedge as usize);
     if start > end || end >= decoded.len() || end - start >= MAX_REGION_INSTRUCTIONS {
-        return Err(RegionRejection::RegionTooLarge);
+        return Err(RegionAnalysisFailure {
+            reason: RegionRejection::RegionTooLarge,
+            pc: backedge,
+        });
     }
     let header_live = live.and_then(|live| live.get(start));
     admit_region(
@@ -1352,17 +1416,17 @@ fn admit_region(
     header_live: Option<RegisterSet>,
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
-) -> Result<LoopRegion, RegionRejection> {
+) -> Result<LoopRegion, RegionAnalysisFailure> {
     let backedge = header + instructions.len() as u32 - 1;
     let paths = held_registers(&instructions, sites, header_live, objects);
-    let mut tagged = match tagged_registers(
+    let mut tagged = match tagged_registers_with_failure(
         &instructions,
         constants,
         &objects.iter().chain(paths.keys()).copied().collect(),
         header,
     ) {
-        Some(tagged) => tagged,
-        None => {
+        Ok(tagged) => tagged,
+        Err(failure_offset) => {
             if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
                 for (offset, instruction) in instructions.iter().copied().enumerate().filter(|(_, instruction)| {
                     instruction.op() == Op::JumpBinaryFalse
@@ -1382,7 +1446,11 @@ fn admit_region(
                     );
                 }
             }
-            return Err(RegionRejection::UnsupportedInstruction(Op::JumpBinaryFalse));
+            return Err(RegionAnalysisFailure::at(
+                RegionRejection::UnsupportedInstruction(Op::JumpBinaryFalse),
+                header,
+                failure_offset,
+            ));
         }
     };
     tagged.extend(paths.keys().copied());
@@ -1405,7 +1473,13 @@ fn admit_region(
         .collect();
     for (offset, instruction) in instructions.iter().copied().enumerate() {
         if instruction.op() == Op::GetField {
-            let path = field_path(instruction, sites, &paths).ok_or(RegionRejection::UnsupportedInstruction(Op::GetField))?;
+            let path = field_path(instruction, sites, &paths).ok_or_else(|| {
+                RegionAnalysisFailure::at(
+                    RegionRejection::UnsupportedInstruction(Op::GetField),
+                    header,
+                    offset,
+                )
+            })?;
             let index = intern_field(&mut admission.fields, &path, tagged.contains(&instruction.result_register()));
             field_reads.insert(offset as u32, index);
             if path.steps.len() == 1
@@ -1423,7 +1497,11 @@ fn admit_region(
         }
         if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict) {
             if instruction.result_flags() != 0 || instruction.returns_from_frame() {
-                return Err(RegionRejection::UnsupportedInstruction(instruction.op()));
+                return Err(RegionAnalysisFailure::at(
+                    RegionRejection::UnsupportedInstruction(instruction.op()),
+                    header,
+                    offset,
+                ));
             }
             let receiver = instruction.register_b();
             let atom = instruction.atom_index();
@@ -1439,7 +1517,7 @@ fn admit_region(
                         "QUENCH_JS_JIT_OSR_FIELD_REJECT header={header} reason=read_after_or_before_store atom={atom} read_offset={read_offset} store_offset={offset} receiver={receiver}"
                     );
                 }
-                return Err(RegionRejection::FieldMutation);
+                return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, offset));
             }
             // The slot pointer is captured at entry. The receiver must therefore stay in its
             // tagged register for the entire region.
@@ -1452,7 +1530,7 @@ fn admit_region(
                         "QUENCH_JS_JIT_OSR_FIELD_REJECT header={header} reason=store_receiver_redefined atom={atom} write_offset={write_offset} store_offset={offset} receiver={receiver}"
                     );
                 }
-                return Err(RegionRejection::FieldMutation);
+                return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, offset));
             }
             let site = FieldStore { receiver, atom, cache_site };
             let index = field_store_sites.iter().position(|existing| *existing == site).unwrap_or_else(|| {
@@ -1472,7 +1550,11 @@ fn admit_region(
                 .find(|candidate| candidate.defined_register() == Some(callee_register))
                 .is_some_and(|definition| definition.op() == Op::GetField)
             {
-                return Err(RegionRejection::UnsupportedInstruction(instruction.op()));
+                return Err(RegionAnalysisFailure::at(
+                    RegionRejection::UnsupportedInstruction(instruction.op()),
+                    header,
+                    offset,
+                ));
             }
         }
         if let Some(register) = object_reads(instruction).filter(|register| paths.contains_key(register)) {
@@ -1505,7 +1587,11 @@ fn admit_region(
                     constant.flatten(),
                 );
             }
-            return Err(RegionRejection::UnsupportedInstruction(instruction.op()));
+            return Err(RegionAnalysisFailure::at(
+                RegionRejection::UnsupportedInstruction(instruction.op()),
+                header,
+                offset,
+            ));
         }
     }
     let held: std::collections::BTreeMap<Register, (FieldPath, usize)> = paths
@@ -1523,10 +1609,10 @@ fn admit_region(
         identity_branches.insert(header + offset as u32, branch);
     }
     if admission.fields.len() > MAX_REGION_FIELDS {
-        return Err(RegionRejection::FieldLimit);
+        return Err(RegionAnalysisFailure { reason: RegionRejection::FieldLimit, pc: backedge });
     }
     if field_store_sites.len() > MAX_REGION_FIELD_STORES {
-        return Err(RegionRejection::FieldStoreLimit);
+        return Err(RegionAnalysisFailure { reason: RegionRejection::FieldStoreLimit, pc: backedge });
     }
     // Entry-snapshot reads require a stable receiver. Direct one-step reads can instead
     // probe the current receiver at each instruction; nested paths, held paths, and
@@ -1550,15 +1636,15 @@ fn admit_region(
                 field.receiver,
             );
         }
-        return Err(RegionRejection::FieldMutation);
+        return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, write_offset));
     }
     if admission.roles.keys().any(|register| usize::from(*register) >= registers)
         || admission.roles.len() > MAX_REGION_REGISTERS
     {
-        return Err(RegionRejection::RegisterLimit);
+        return Err(RegionAnalysisFailure { reason: RegionRejection::RegisterLimit, pc: backedge });
     }
     if admission.captures.len() > MAX_REGION_CAPTURES {
-        return Err(RegionRejection::CaptureLimit);
+        return Err(RegionAnalysisFailure { reason: RegionRejection::CaptureLimit, pc: backedge });
     }
     let numbers = admission
         .roles
@@ -1591,7 +1677,7 @@ fn admit_region(
         arrays.push(ArrayUse { register: *register, written: *written, field: Some(held[register].1) });
     }
     if arrays.len() > MAX_REGION_ARRAYS {
-        return Err(RegionRejection::ArrayLimit);
+        return Err(RegionAnalysisFailure { reason: RegionRejection::ArrayLimit, pc: backedge });
     }
     Ok(LoopRegion {
         header,
@@ -1704,12 +1790,24 @@ fn admit(
             }
             admission.tagged(instruction.register_b())?;
         }
+        Op::LoadEnvLocal => {
+            if instruction.result_flags() != 0
+                || instruction.returns_from_frame()
+                || instruction.numeric_local_target().is_some()
+            {
+                return None;
+            }
+            if tagged.contains(&instruction.result_register()) {
+                admission.tagged(instruction.result_register())?;
+            } else {
+                admission.result(instruction)?;
+            }
+        }
         // The ordinary lane owns these VM/effectful operations. Admit their surrounding
         // region but leave at the exact PC so it can perform binding lookup, call resolution,
         // activation, allocation, GC, and throws with the complete interpreter state
         // materialized.
         Op::RequireIteratorResult
-        | Op::LoadEnvLocal
         | Op::LoadName
         | Op::LoadNameCall
         | Op::LoadNameTypeof
@@ -1756,7 +1854,18 @@ pub(crate) struct Observation<'a> {
     pub(crate) captures: &'a [Value],
     /// The fields' values at the entry the compilation follows, in the region's order.
     pub(crate) fields: &'a [Value],
+    /// Holderless out-of-line own-data shapes the native OSR field reader may load directly.
+    pub(crate) native_field_loads: &'a [Option<NativeFieldLoad>],
     pub(crate) widened: &'a std::collections::BTreeSet<Widening>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeFieldLoad {
+    pub(crate) shape: u32,
+    pub(crate) slot: u16,
+    /// Shape IDs are remapped by collection. Compiled users must retire this descriptor when
+    /// the process-wide shape-layout epoch changes.
+    pub(crate) epoch: u64,
 }
 
 /// How native code holds the values the entry record carries, by their record order.
@@ -1860,6 +1969,7 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
             | Op::ToNumeric
             | Op::GetIndex
             | Op::GetField
+            | Op::LoadEnvLocal
     )
     .then(|| instruction.result_register())
 }
@@ -2100,6 +2210,9 @@ fn definition(
         },
         Op::GetIndex => element_representation(instruction, observation),
         Op::GetField => entry.fields[*region.field_reads.get(&offset)?],
+        // Environment loads are dynamically checked at the exact instruction. Keep a
+        // numeric web in Float64 form so a changed/non-Number local falls back before use.
+        Op::LoadEnvLocal => Representation::Float64,
         _ => return None,
     };
     Some((instruction.result_register(), representation))
@@ -3643,6 +3756,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
         if receiver.representation != Representation::Tagged {
             return None;
         }
+        if let Some(load) = self.observation.native_field_loads.get(index).and_then(|load| *load) {
+            return Some(self.native_dynamic_field(pc, index, receiver.value, load));
+        }
         let site = self.body.builder.ins().iconst(types::I64, i64::from(field.cache_site));
         let context = self.body.core.context;
         let callout = self.callout;
@@ -3673,6 +3789,141 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
         };
         Some(Typed { value, representation })
+    }
+
+    /// Loads a direct-object own-data slot from the current receiver. Every receiver/layout
+    /// mismatch exits before GetField, so the lane retains complete accessor/proxy semantics.
+    fn native_dynamic_field(&mut self, pc: u32, index: usize, receiver: ir::Value, load: NativeFieldLoad) -> Typed {
+        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+        let heap_base = ENTRY_CAPTURES
+            + self.region.captures.len()
+            + self.region.fields.len()
+            + ARRAY_WORDS * self.region.arrays.len()
+            + self.region.field_store_sites.len();
+        let object_base = self.word(heap_base);
+        let properties_base = self.word(heap_base + 1);
+        let properties_len = self.word(heap_base + 2);
+
+        let family = self.body.builder.ins().band_imm_u(receiver, ValueLayout::HEAP_FAMILY_MASK as i64);
+        let bad_family = self
+            .body
+            .builder
+            .ins()
+            .icmp_imm_u(IntCC::NotEqual, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+        self.guard(pc, bad_family);
+        let record_id = self.body.builder.ins().ireduce(types::I32, receiver);
+        let record_out_of_range = self
+            .body
+            .builder
+            .ins()
+            .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, record_id, layout.record_capacity as i64);
+        self.guard(pc, record_out_of_range);
+
+        let object_base_missing = self
+            .body
+            .builder
+            .ins()
+            .icmp_imm_u(IntCC::Equal, object_base, 0);
+        self.guard(pc, object_base_missing);
+        let properties_base_missing = self
+            .body
+            .builder
+            .ins()
+            .icmp_imm_u(IntCC::Equal, properties_base, 0);
+        self.guard(pc, properties_base_missing);
+
+        let record_offset = self
+            .body
+            .builder
+            .ins()
+            .uextend(self.pointer, record_id);
+        let record_offset = self
+            .body
+            .builder
+            .ins()
+            .imul_imm_u(record_offset, layout.record_size as i64);
+        let object = self.body.builder.ins().iadd(object_base, record_offset);
+        let meta = self
+            .body
+            .builder
+            .ins()
+            .load(types::I32, flags(), object, layout.meta_offset as i32);
+        let auxiliary = self
+            .body
+            .builder
+            .ins()
+            .load(types::I32, flags(), object, layout.auxiliary_offset as i32);
+        let wrong_shape = self
+            .body
+            .builder
+            .ins()
+            .icmp_imm_u(IntCC::NotEqual, auxiliary, i64::from(load.shape));
+        self.guard(pc, wrong_shape);
+
+        let inline = self
+            .body
+            .builder
+            .ins()
+            .band_imm_u(meta, i64::from(layout.inline_storage_mask));
+        let inline_storage = self
+            .body
+            .builder
+            .ins()
+            .icmp_imm_u(IntCC::NotEqual, inline, 0);
+        self.guard(pc, inline_storage);
+
+        let payload = self
+            .body
+            .builder
+            .ins()
+            .load(types::I64, flags(), object, layout.payload_offset as i32);
+        let extras_tag = self
+            .body
+            .builder
+            .ins()
+            .band_imm_u(payload, layout.extras_tag_mask as i64);
+        let has_extras = self
+            .body
+            .builder
+            .ins()
+            .icmp_imm_u(IntCC::Equal, extras_tag, layout.extras_tag as i64);
+        self.guard(pc, has_extras);
+
+        let start = self.body.builder.ins().ireduce(types::I32, payload);
+        let start = self
+            .body
+            .builder
+            .ins()
+            .band_imm_u(start, layout.storage_start_mask as i64);
+        let position = self.body.builder.ins().iadd_imm_u(start, i64::from(load.slot));
+        let position = self.body.builder.ins().uextend(types::I64, position);
+        let out_of_bounds = self
+            .body
+            .builder
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThanOrEqual, position, properties_len);
+        self.guard(pc, out_of_bounds);
+        let value_offset = self
+            .body
+            .builder
+            .ins()
+            .imul_imm_u(position, layout.property_value_size as i64);
+        let value_address = self.body.builder.ins().iadd(properties_base, value_offset);
+        let bits = self.body.builder.ins().load(types::I64, flags(), value_address, 0);
+
+        let representation = self.entry_representations.fields[index];
+        let value = match representation {
+            Representation::Tagged => bits,
+            Representation::Int32 => {
+                let otherwise = self.widen_block(pc, Widening::Field(index as u16));
+                self.unbox(bits, representation, otherwise)
+            }
+            Representation::Float64 => {
+                let otherwise = self.exit_block(pc);
+                self.unbox(bits, representation, otherwise)
+            }
+        };
+        Typed { value, representation }
     }
 
     /// The value of the web rooted at `web`, which its register's view holds where the web
@@ -4359,6 +4610,37 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
             }
+            Op::LoadEnvLocal => {
+                let slot = i64::try_from(instruction.local_slot()).ok()?;
+                let operation = self
+                    .body
+                    .builder
+                    .ins()
+                    .iconst(types::I64, super::OSR_INITIALIZED_LOCAL_READ as i64);
+                let slot = self.body.builder.ins().iconst(types::I64, slot);
+                let context = self.body.core.context;
+                let callout = self.callout;
+                let signature = self.callout_signature;
+                let result = self.result;
+                let call = self.body.builder.ins().call_indirect(
+                    signature,
+                    callout,
+                    &[context, operation, slot, result],
+                );
+                let status = self.body.builder.inst_results(call)[0];
+                let miss = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
+                self.guard(pc, miss);
+                let bits = self.body.builder.ins().load(types::I64, flags(), result, 0);
+                let representation = self.result_representation();
+                let otherwise = if representation == Representation::Int32 {
+                    self.widen_block(pc, Widening::Register(instruction.result_register()))
+                } else {
+                    self.exit_block(pc)
+                };
+                let value = self.unbox(bits, representation, otherwise);
+                self.define(instruction.result_register(), Typed { value, representation });
+                self.fall_through(pc)
+            }
             Op::GetIndex => {
                 // An index sum just before checked this read's bounds (`index_sum`).
                 let bounded = self.bounded_reads.remove(&pc);
@@ -4433,7 +4715,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.fall_through(pc)
             }
             Op::RequireIteratorResult
-            | Op::LoadEnvLocal
             | Op::LoadName
             | Op::LoadNameCall
             | Op::LoadNameTypeof

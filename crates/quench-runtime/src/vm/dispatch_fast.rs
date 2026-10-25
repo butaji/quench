@@ -103,6 +103,10 @@ pub(super) struct LoopSite {
     /// Observe backedge work for the JS function tier when OSR rejected this loop. These
     /// sites never attempt native loop code; the shared function compiler owns promotion.
     promotion_only: bool,
+    /// First analysis failure, when admission did not produce a region.
+    analysis_failure: Option<super::compiled::RegionAnalysisFailure>,
+    /// Static effectful calls that leave native code at their exact PC.
+    call_boundary_pcs: Option<Box<[u32]>>,
     /// The admitted region; a loop whose calls run inlined makes its region once it is hot
     /// (`lane_inlining_region`), when its callees are known.
     region: std::cell::OnceCell<super::compiled::LoopRegion>,
@@ -126,6 +130,7 @@ pub(super) struct LoopSite {
     declines: std::cell::Cell<u32>,
     /// Whether this VM requested OSR diagnostics when its lane view was derived.
     diagnostics: bool,
+    lane_backedge_count: std::cell::Cell<u64>,
     native_entry_attempts: std::cell::Cell<u64>,
     native_region_runs: std::cell::Cell<u64>,
     entry_guard_misses: std::cell::Cell<u64>,
@@ -136,6 +141,15 @@ pub(super) struct LoopSite {
     tier: std::cell::RefCell<LoopTier>,
 }
 
+impl LoopSite {
+    fn is_admitted(&self) -> bool {
+        !self.promotion_only
+            && self.analysis_failure.is_none_or(|failure| {
+                failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
+            })
+    }
+}
+
 /// A loop site's compilations: the current code, if any, and the values earlier code found
 /// were no `i32`, which the next compilation holds as `f64`s.
 #[derive(Default)]
@@ -143,6 +157,9 @@ struct LoopTier {
     code: Option<super::compiled::CompiledOsrRegion>,
     widened: std::collections::BTreeSet<super::compiled::Widening>,
     compilations: u32,
+    /// A raw field load embeds a shape ID, which collection may remap. Such code is only
+    /// valid under the epoch in which its field descriptors were observed.
+    native_field_epoch: Option<u64>,
 }
 
 impl LoopTier {
@@ -228,14 +245,77 @@ pub(super) struct OsrDiagnostics {
     pub(super) exits: u64,
     pub(super) widenings: u64,
     pub(super) analysis_rejections: Vec<(super::compiled::RegionRejection, usize)>,
+    pub(super) sites: Vec<OsrSiteDiagnostics>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum OsrSiteStatus {
+    Admitted,
+    CallBoundary,
+    PromotionOnly,
+    Rejected,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct OsrSiteDiagnostics {
+    pub(super) header_pc: u32,
+    pub(super) backedge_pc: u32,
+    pub(super) status: OsrSiteStatus,
+    pub(super) failure: Option<super::compiled::RegionAnalysisFailure>,
+    pub(super) admitted: bool,
+    pub(super) deferred_call: bool,
+    pub(super) tier_threshold_reached: bool,
+    pub(super) lane_backedge_count: u64,
+    pub(super) analysis_rejection: Option<super::compiled::RegionRejection>,
+    pub(super) call_boundary_pcs: Vec<u32>,
+    pub(super) compile_attempts: u64,
+    pub(super) compile_successes: u64,
+    pub(super) native_entry_attempts: u64,
+    pub(super) native_region_runs: u64,
+    pub(super) entry_guard_misses: u64,
+    pub(super) exits: u64,
+    pub(super) widenings: u64,
 }
 
 impl LaneView {
     /// OSR tier coverage and outcomes, for opt-in JIT diagnostics.
     pub(super) fn osr_diagnostics(&self) -> OsrDiagnostics {
+        let mut sites = self.loops.iter().map(|site| OsrSiteDiagnostics {
+            header_pc: site.header,
+            backedge_pc: site.backedge,
+            status: if site.promotion_only {
+                OsrSiteStatus::PromotionOnly
+            } else if site.analysis_failure.is_some_and(|failure| {
+                failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
+            }) {
+                OsrSiteStatus::CallBoundary
+            } else if site.analysis_failure.is_some() {
+                OsrSiteStatus::Rejected
+            } else {
+                OsrSiteStatus::Admitted
+            },
+            failure: site.analysis_failure,
+            call_boundary_pcs: site.call_boundary_pcs.as_deref().unwrap_or_default().to_vec(),
+            admitted: site.is_admitted(),
+            deferred_call: site.call_boundary_pcs.as_deref().is_some_and(|pcs| !pcs.is_empty())
+                || site.analysis_failure.is_some_and(|failure| {
+                    failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
+                }),
+            tier_threshold_reached: site.taken.get() >= LOOP_TIER_THRESHOLD,
+            lane_backedge_count: site.lane_backedge_count.get(),
+            analysis_rejection: site.analysis_failure.map(|failure| failure.reason),
+            compile_attempts: u64::from(site.compile_attempts.get()),
+            compile_successes: u64::from(site.compile_successes.get()),
+            native_entry_attempts: site.native_entry_attempts.get(),
+            native_region_runs: site.native_region_runs.get(),
+            entry_guard_misses: site.entry_guard_misses.get(),
+            exits: u64::from(site.native_exits.get()),
+            widenings: u64::from(site.widenings.get()),
+        }).collect::<Vec<_>>();
+        sites.sort_unstable_by_key(|site| (site.header_pc, site.backedge_pc));
         OsrDiagnostics {
             plain_backward_jump_sites: self.plain_backward_jump_sites,
-            admitted_sites: self.loops.iter().filter(|site| !site.promotion_only).count(),
+            admitted_sites: self.loops.iter().filter(|site| site.is_admitted()).count(),
             promotion_only_sites: self.loops.iter().filter(|site| site.promotion_only).count(),
             compile_attempts: self.loops.iter().map(|site| site.compile_attempts.get()).sum(),
             compile_successes: self.loops.iter().map(|site| site.compile_successes.get()).sum(),
@@ -266,6 +346,7 @@ impl LaneView {
                 .as_deref()
                 .unwrap_or_default()
                 .to_vec(),
+            sites,
         }
     }
 }
@@ -5848,6 +5929,10 @@ script_handler! {
     /// instruction outside its subset; a run its entry guards decline takes the jump.
     fn lane_loop_jump<>(cx, r, ip, i, view) {
         let site = i.loop_site();
+        if site.diagnostics {
+            site.lane_backedge_count
+                .set(site.lane_backedge_count.get().saturating_add(1));
+        }
         // SAFETY: the site records the distance to a validated jump target.
         let header = unsafe { ip.byte_offset(site.jump) };
         // SAFETY: the region carries its validated header and latch PCs, and
@@ -5891,7 +5976,21 @@ script_handler! {
             site.taken.set(site.taken.get() + 1);
             next!(cx, r, header, Carried::script(cx))
         }
+        if site.analysis_failure.is_some_and(|failure| {
+            failure.reason != super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
+        }) {
+            lane_loop_retire::<H>(cx, ip, site);
+            next!(cx, r, header, Carried::script(cx))
+        }
         // SAFETY: the lane's VM is live, and nothing borrows it across the read.
+        let layout_epoch = crate::heap::prototype_layout_epoch();
+        {
+            let mut tier = site.tier.borrow_mut();
+            if tier.native_field_epoch.is_some_and(|epoch| epoch != layout_epoch) {
+                tier.code = None;
+                tier.native_field_epoch = None;
+            }
+        }
         if site.exits.get() >= LOOP_TIER_MAX_EXITS
             || site.declines.get() >= LOOP_TIER_MAX_DECLINES
             || !site.tier.borrow().may_run(unsafe { vm(cx) }.heap.memory_policy())
@@ -6101,7 +6200,26 @@ fn lane_loop_run<H: Host>(
         unsafe { vm(cx) }.host.before_native_compilation();
         let captures = entry.captures(region.captures.len());
         let fields: Vec<Value> = (0..region.fields.len()).map(|index| entry.field_value(region, index)).collect();
-        let heap = &unsafe { vm(cx) }.heap;
+        let machine = unsafe { vm(cx) };
+        let (properties_base, properties_len) = machine.heap.native_property_values();
+        let native_heap_available =
+            machine.heap.object_record_base().is_some() && !properties_base.is_null() && properties_len > 0;
+        let native_field_loads = region
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(index, field)| {
+                (native_heap_available && region.inlining.is_none() && region.is_dynamic_field(index))
+                    .then(|| machine.native_field_load_descriptor(field.cache_site))
+                    .flatten()
+                    .map(|(shape, slot)| super::compiled::NativeFieldLoad {
+                        shape,
+                        slot,
+                        epoch: crate::heap::prototype_layout_epoch(),
+                    })
+            })
+            .collect::<Vec<_>>();
+        let heap = &machine.heap;
         // A field's array is the value its entry word holds, not yet the register's.
         let array_value = |register| match region.arrays.iter().find(|array| array.register == register) {
             Some(super::compiled::ArrayUse { field: Some(index), .. }) => entry.field_value(region, *index),
@@ -6120,6 +6238,7 @@ fn lane_loop_run<H: Host>(
             int32_elements: &int32_elements,
             captures: &captures,
             fields: &fields,
+            native_field_loads: &native_field_loads,
             widened: &tier.widened,
         };
         let track_backedges = unsafe { vm(cx) }
@@ -6133,6 +6252,13 @@ fn lane_loop_run<H: Host>(
                 heap.memory_policy(),
                 track_backedges,
             );
+        tier.native_field_epoch = tier.code.as_ref().and_then(|_| {
+            native_field_loads
+                .iter()
+                .flatten()
+                .next()
+                .map(|load| load.epoch)
+        });
         // SAFETY: as above; the observation's borrow of the heap has ended.
         unsafe { vm(cx) }.host.after_native_compilation();
         if site.diagnostics && tier.code.is_some() {
@@ -6157,7 +6283,9 @@ fn lane_loop_run<H: Host>(
     };
     // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
     // callback executes no guest code, allocates nothing, and retains no VM references.
-    let outcome = unsafe { code.run::<H>(r.0, entry, machine, program, site.function, interrupt) };
+    let outcome = unsafe {
+        code.run::<H>(r.0, entry, machine, program, site.function, (*cx).frame, interrupt)
+    };
     if site.diagnostics {
         site.native_entry_attempts
             .set(site.native_entry_attempts.get().saturating_add(1));
@@ -6322,6 +6450,11 @@ fn lane_loop_entry<H: Host>(
             vm.cached_field_store_pointer(code, object, field.atom, field.cache_site)
         }?;
         entry.push_field_store(pointer);
+    }
+    if region.has_dynamic_field_reads() && region.inlining.is_none() {
+        let object_base = vm.heap.object_record_base().unwrap_or(std::ptr::null());
+        let (properties_base, properties_len) = vm.heap.native_property_values();
+        entry.push_native_field_heap(object_base, properties_base, properties_len);
     }
     if let Some(inlining) = &region.inlining {
         // Leaving at an inlined instruction makes its callee's activation as the call would:
@@ -8914,6 +9047,12 @@ fn lane_frame_state<H: Host>(
 }
 
 impl<H: Host> Vm<H> {
+    /// Whether the running fast-lane activation stack is empty. OSR adapter reads that use
+    /// frame-local storage must decline while locals live in frameless lane activations.
+    pub(super) fn lane_has_activations(&self) -> bool {
+        !self.lane_stack.activations.is_empty()
+    }
+
     /// Make the lane's activations VM frames, innermost last, each with the
     /// pending call its push would have recorded; the lane continues in the
     /// innermost one. The bottom caller is the lane run's VM frame.
@@ -15791,7 +15930,7 @@ fn install_loop_sites<'live, H: Host>(
         .filter(|pc| records[*pc].handler == backward && decoded[*pc].op() == Op::Jump && !fused_into(*pc))
         .filter_map(|pc| {
             let header = decoded[pc].jump_target();
-            let (region, promotion_only) = match super::compiled::analyze_osr_region(
+            let (region, promotion_only, analysis_failure, call_boundary_pcs) = match super::compiled::analyze_osr_region_detailed(
                 function,
                 decoded,
                 constants,
@@ -15800,12 +15939,24 @@ fn install_loop_sites<'live, H: Host>(
                 header,
                 pc as u32,
             ) {
-                Ok(region) => (std::cell::OnceCell::from(region), false),
-                // A call may run inlined: the site makes its region once it is hot.
-                Err(super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)) if live().is_some() => {
-                    (std::cell::OnceCell::new(), false)
+                Ok(region) => {
+                    let call_boundary_pcs = if diagnostics { region.call_boundary_pcs() } else { Vec::new() };
+                    (std::cell::OnceCell::from(region), false, None, call_boundary_pcs)
                 }
-                Err(reason) => {
+                // A call may run inlined: the site makes its region once it is hot.
+                Err(failure)
+                    if failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
+                        && live().is_some() =>
+                {
+                    (
+                        std::cell::OnceCell::new(),
+                        false,
+                        Some(failure),
+                        diagnostics.then(|| vec![failure.pc]).unwrap_or_default(),
+                    )
+                }
+                Err(failure) => {
+                    let reason = failure.reason;
                     if diagnostics {
                         if let Some((_, count)) =
                             rejections.iter_mut().find(|(existing, _)| *existing == reason)
@@ -15816,9 +15967,13 @@ fn install_loop_sites<'live, H: Host>(
                         }
                     }
                     if !general_dispatch {
-                        return None;
+                        if !diagnostics {
+                            return None;
+                        }
+                        (std::cell::OnceCell::new(), false, Some(failure), Vec::new())
+                    } else {
+                        (std::cell::OnceCell::new(), true, Some(failure), Vec::new())
                     }
-                    (std::cell::OnceCell::new(), true)
                 }
             };
             Some((
@@ -15826,6 +15981,8 @@ fn install_loop_sites<'live, H: Host>(
                 LoopSite {
                     function: function_id,
                     promotion_only,
+                    analysis_failure,
+                    call_boundary_pcs: diagnostics.then(|| call_boundary_pcs.into_boxed_slice()),
                     region,
                     header,
                     backedge: pc as u32,
@@ -15836,6 +15993,7 @@ fn install_loop_sites<'live, H: Host>(
                     exits: std::cell::Cell::new(0),
                     declines: std::cell::Cell::new(0),
                     diagnostics,
+                    lane_backedge_count: std::cell::Cell::new(0),
                     native_entry_attempts: std::cell::Cell::new(0),
                     native_region_runs: std::cell::Cell::new(0),
                     entry_guard_misses: std::cell::Cell::new(0),

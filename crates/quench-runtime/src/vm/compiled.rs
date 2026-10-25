@@ -50,8 +50,8 @@ use std::rc::{Rc, Weak};
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 pub(super) use osr_loop::{
-    ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, LoopEntry, LoopOutcome, LoopRegion, Observation,
-    RegionRejection, Widening,
+    ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
+    Observation, RegionAnalysisFailure, RegionRejection, Widening,
 };
 
 #[derive(Clone, Copy)]
@@ -3316,19 +3316,25 @@ const MEMCPY_CACHE_FUNCTION: i32 = std::mem::offset_of!(EmscriptenMemcpyCache, f
 /// The callout's signature: (context, function index, arguments, result) ->
 /// status; arguments and result are Wasm bits, one word each.
 type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
-type OsrFieldProbeCallout = unsafe extern "C" fn(*mut CallContext, u64, u64, *mut u64) -> i64;
+type OsrProbeCallout = unsafe extern "C" fn(*mut CallContext, u64, u64, *mut u64) -> i64;
 
 #[repr(C)]
-struct OsrFieldProbePayload {
+struct OsrProbePayload {
     function: u32,
+    frame: usize,
     program: Option<Rc<ResidualProgram>>,
     diagnostics_enabled: bool,
 }
 
-/// A cache-only JavaScript OSR helper. `receiver_bits` is passed in the ABI's arguments word
-/// (it is deliberately not dereferenced as a pointer); the cache site is the function word.
-/// A miss returns before any accessor, proxy trap, or other guest-visible operation runs.
-unsafe extern "C" fn osr_field_probe<H: Host>(
+/// The OSR probe's first word is otherwise a cache site, which is bounded by `u16`.
+/// `u64::MAX` selects an initialized frame-owned local read; the second word is its slot.
+const OSR_INITIALIZED_LOCAL_READ: u64 = u64::MAX;
+
+/// A no-guest-effect JavaScript OSR helper. For a field probe, `receiver_bits` is passed in
+/// the ABI's arguments word as a raw `Value` and the first word is its cache site. For an
+/// initialized-local read, the first word is `OSR_INITIALIZED_LOCAL_READ` and the second is
+/// a local slot. A miss returns before a guest-visible operation runs.
+unsafe extern "C" fn osr_probe<H: Host>(
     context: *mut CallContext,
     cache_site: u64,
     receiver_bits: u64,
@@ -3342,12 +3348,21 @@ unsafe extern "C" fn osr_field_probe<H: Host>(
         if context_ref.vm.is_null() || result.is_null() {
             return None;
         }
-        let site = u16::try_from(cache_site).ok()?;
         // SAFETY: the stack payload lives through this native entry and owns a residual Rc,
         // avoiding a ProgramStore lookup/refcount on every probed field read.
-        let payload = unsafe { &*context_ref.adapter_payload.cast::<OsrFieldProbePayload>() };
+        let payload = unsafe { &*context_ref.adapter_payload.cast::<OsrProbePayload>() };
         let program = payload.program.as_deref()?;
         let vm = unsafe { &mut *context_ref.vm.cast::<Vm<H>>() };
+        if cache_site == OSR_INITIALIZED_LOCAL_READ {
+            if vm.lane_has_activations()
+                || vm.frames.get(payload.frame).is_none_or(|frame| frame.function != payload.function)
+            {
+                return None;
+            }
+            let slot = usize::try_from(receiver_bits).ok()?;
+            return vm.initialized_frame_binding(program, payload.frame, slot);
+        }
+        let site = u16::try_from(cache_site).ok()?;
         // The ABI slot is used as a raw 64-bit Value, never as an address.
         let receiver = Value::from_bits(receiver_bits);
         let probe = vm.cached_field_hit(program, receiver, site);
@@ -5012,26 +5027,28 @@ impl CompiledOsrRegion {
         vm: *mut Vm<H>,
         program: ProgramId,
         function: u32,
+        frame: usize,
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
     ) -> LoopOutcome {
         // SAFETY: the caller keeps the VM alive and excludes other mutable VM access while
         // native code runs. The interrupt reference is used only to construct raw ABI fields.
         let mut context = CallContext::interrupt_only(unsafe { &*interrupt });
         // Keep the immutable residual alive independently of the mutable VM borrow while the
-        // native region invokes its cache-only field probe.
+        // native region invokes its no-guest-effect field or initialized-local probe.
         let (program_data, diagnostics_enabled) = unsafe {
             let vm = &*vm;
             (vm.programs.get(program), vm.programs.js_jit_diagnostics_enabled())
         };
-        let mut payload = OsrFieldProbePayload {
+        let mut payload = OsrProbePayload {
             function,
+            frame,
             program: program_data,
             diagnostics_enabled,
         };
         context.vm = vm.cast();
         context.program = program;
-        context.callout = osr_field_probe::<H> as OsrFieldProbeCallout as usize;
-        context.adapter_payload = (&mut payload as *mut OsrFieldProbePayload).cast();
+        context.callout = osr_probe::<H> as OsrProbeCallout as usize;
+        context.adapter_payload = (&mut payload as *mut OsrProbePayload).cast();
         let mut word = 0u64;
         // SAFETY: as the caller promises; the code reads and writes only those and the
         // result word.
@@ -5078,7 +5095,8 @@ pub(super) fn analyze_inlining_osr_region<'a>(
 }
 
 /// Analyze a loop candidate through the shared region compiler's OSR mode.
-pub(super) fn analyze_osr_region(
+/// Analyze a loop candidate and preserve the function PC that blocked admission.
+pub(super) fn analyze_osr_region_detailed(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[crate::value::Value],
@@ -5086,7 +5104,7 @@ pub(super) fn analyze_osr_region(
     live: Option<&crate::compile::liveness::RegisterMasks>,
     header: u32,
     backedge: u32,
-) -> Result<LoopRegion, RegionRejection> {
+) -> Result<LoopRegion, RegionAnalysisFailure> {
     osr_loop::region(function, decoded, constants, sites, live, header, backedge)
 }
 
@@ -5612,9 +5630,9 @@ unsafe extern "C" fn js_step_callout<H: Host>(
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
-            let direct_call_target = if vm.programs.js_jit_diagnostics_enabled()
-                && matches!(current_instruction.op(), Op::Call | Op::CallArray)
-            {
+            let is_call = matches!(current_instruction.op(), Op::Call | Op::CallArray);
+            let diagnostics_enabled = is_call && vm.programs.js_jit_diagnostics_enabled();
+            let direct_call_target = if diagnostics_enabled && is_call {
                 vm.frames[dispatch.frame]
                     .registers
                     .get(usize::from(current_instruction.register_b()))
@@ -5629,8 +5647,17 @@ unsafe extern "C" fn js_step_callout<H: Host>(
             } else {
                 None
             };
+            let sample_call = diagnostics_enabled
+                && is_call
+                && vm.programs.should_sample_js_jit_call_site(
+                    dispatch.program_id,
+                    vm.frames[dispatch.frame].function,
+                    current_pc,
+                    current_instruction.op(),
+                );
+            let call_sample_started = sample_call.then(std::time::Instant::now);
             let step = if dispatch.allow_inline_calls
-                && matches!(current_instruction.op(), Op::Call | Op::CallArray)
+                && is_call
             {
                 match vm.try_inline_user_call(
                     &program,
@@ -5681,9 +5708,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     dispatch.allow_inline_calls,
                 )
             };
-            if matches!(current_instruction.op(), Op::Call | Op::CallArray)
-                && vm.programs.js_jit_diagnostics_enabled()
-            {
+            if is_call && diagnostics_enabled {
                 let outcome = match &step {
                     Ok(super::StepResult::Continue) => {
                         super::program_store::JsJitCallOutcome::Continue
@@ -5712,6 +5737,9 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     current_instruction.op(),
                     direct_call_target,
                     outcome,
+                    call_sample_started.map(|started| {
+                        u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
+                    }),
                 );
             }
             dispatch.array_record_base = vm

@@ -11860,6 +11860,308 @@ fn shared_osr_indexes_arrays_that_field_reads_give() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_reports_captured_environment_store_rejection_by_site() {
+    // A nested closure retains the mutable binding, so the loop reads and updates it through
+    // the environment. Guarded reads are supported; stores still reject before native entry.
+    let source = r#"
+      function run() {
+        let total = 0;
+        const read = () => total;
+        while (total < 2000) total += 1;
+        return total + read();
+      }
+      let result = 0;
+      for (let repeat = 0; repeat < 48; repeat++) result = run();
+      print(result);
+    "#;
+    let program = Engine::specialize(source, "osr-captured-env-store-rejection.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "run")
+        })
+        .unwrap();
+
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone()))
+        .execute(&program)
+        .unwrap();
+
+    let compiled_output = Rc::new(RefCell::new(Vec::new()));
+    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.execute(&program).unwrap();
+    assert_eq!(
+        compiled_output.borrow().as_slice(),
+        interpreted_output.borrow().as_slice()
+    );
+    assert_eq!(compiled_output.borrow().as_slice(), ["4000"]);
+
+    let views = compiled
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .unwrap();
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("captured loop lane view");
+    let osr = view.osr_diagnostics();
+    assert_eq!(
+        osr.sites.len(),
+        1,
+        "one source loop should produce one attributed OSR site: {osr:?}"
+    );
+    let site = &osr.sites[0];
+    assert_eq!(osr.admitted_sites, 0, "rejected candidates are not admitted OSR sites: {osr:?}");
+    assert!(
+        !site.admitted,
+        "StoreEnvLocal region must reject before native admission: {site:?}"
+    );
+    assert!(matches!(
+        site.analysis_rejection,
+        Some(super::compiled::RegionRejection::UnsupportedInstruction(
+            crate::bytecode::Op::StoreEnvLocal
+        ))
+    ), "StoreEnvLocal should be the first blocking operation: {site:?}");
+    assert_eq!(site.compile_attempts, 0);
+    assert_eq!(site.native_region_runs, 0);
+    assert!(
+        site.lane_backedge_count >= u64::from(super::dispatch_fast::LOOP_TIER_THRESHOLD),
+        "the diagnostic fixture must execute the rejected loop: {site:?}"
+    );
+
+    let body = program.function_get(function_id).unwrap();
+    let environment_store_pcs = body
+        .code
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, packed)| {
+            let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+            (instruction.op() == crate::bytecode::Op::StoreEnvLocal
+                && site.header_pc as usize <= pc
+                && pc < site.backedge_pc as usize)
+                .then_some(pc as u32)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !environment_store_pcs.is_empty(),
+        "the rejected bytecode range must contain StoreEnvLocal: {site:?}"
+    );
+    assert!(
+        site.failure.is_some_and(|failure| environment_store_pcs.contains(&failure.pc)),
+        "the reported rejection PC must identify the blocking StoreEnvLocal: {site:?}"
+    );
+    assert_eq!(
+        super::dispatch_fast::decoded_instruction(body, body.code[site.backedge_pc as usize]).op(),
+        crate::bytecode::Op::Jump
+    );
+    compiled.programs.record_js_jit_lane_entry(
+        super::program_store::ProgramId::MAIN,
+        function_id as u32,
+    );
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
+    // Five distinct loops call a polymorphic callback. Each reaches the OSR threshold, but
+    // no callback identity is stable enough to build an inlined native region. The callbacks
+    // force collection repeatedly and throw one unique object at the final call.
+    let source = r#"
+      const marker = {};
+      let calls = 0;
+      function effectA(value) {
+        calls++;
+        if (calls % 64 === 0) $262.gc();
+        if (calls === 5050) throw marker;
+        return value + 1;
+      }
+      function effectB(value) {
+        calls++;
+        if (calls % 64 === 0) $262.gc();
+        if (calls === 5050) throw marker;
+        return value + 1;
+      }
+      function run(effect) {
+        let caught = false;
+        let total = 0;
+        try {
+          let a = 0; while (a < 10) a = effect(a); total += a;
+          let b = 0; while (b < 10) b = effect(b); total += b;
+          let c = 0; while (c < 10) c = effect(c); total += c;
+          let d = 0; while (d < 10) d = effect(d); total += d;
+          let e = 0; while (e < 10) e = effect(e); total += e;
+        } catch (error) {
+          caught = error === marker;
+        }
+        return total + " " + calls + " " + caught;
+      }
+      let result = "";
+      for (let repeat = 0; repeat < 101; repeat++) result = run(repeat & 1 ? effectA : effectB);
+      print(result);
+    "#;
+    let program = Engine::specialize(source, "osr-deferred-callback-gc-throw.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "run")
+        })
+        .unwrap();
+
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone()).with_test262())
+        .execute(&program)
+        .unwrap();
+
+    let compiled_output = Rc::new(RefCell::new(Vec::new()));
+    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()).with_test262());
+    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.execute(&program).unwrap();
+    assert_eq!(
+        compiled_output.borrow().as_slice(),
+        interpreted_output.borrow().as_slice()
+    );
+    assert_eq!(compiled_output.borrow().as_slice(), ["40 5050 true"]);
+
+    let views = compiled
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .unwrap();
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("callback loop lane view");
+    let osr = view.osr_diagnostics();
+    assert_eq!(
+        osr.sites.len(),
+        5,
+        "all five source loops need distinct OSR PCs: {osr:?}"
+    );
+    assert_eq!(osr.admitted_sites, 5, "all five call-prefix regions are admitted: {osr:?}");
+    for site in &osr.sites {
+        assert!(
+            site.admitted && site.deferred_call,
+            "dynamic callback should defer region compilation: {site:?}"
+        );
+        assert!(
+            site.tier_threshold_reached
+                && site.lane_backedge_count >= u64::from(super::dispatch_fast::LOOP_TIER_THRESHOLD)
+        );
+        assert_eq!(site.analysis_rejection, None);
+        let body = program.function_get(function_id).unwrap();
+        let call_pcs = body
+            .code
+            .iter()
+            .enumerate()
+            .filter_map(|(pc, packed)| {
+                (site.header_pc as usize <= pc
+                    && pc <= site.backedge_pc as usize
+                    && super::dispatch_fast::decoded_instruction(body, *packed).op()
+                        == crate::bytecode::Op::Call)
+                    .then_some(pc as u32)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(call_pcs, site.call_boundary_pcs, "call boundary attribution: {site:?}");
+        assert_eq!(call_pcs.len(), 1, "one deferred callback per loop: {site:?}");
+        assert!(
+            site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits > 0,
+            "the call-free prefix must execute natively then leave for the callback: {site:?}"
+        );
+    }
+    compiled.programs.record_js_jit_lane_entry(
+        super::program_store::ProgramId::MAIN,
+        function_id as u32,
+    );
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_exact_effect_exit_preserves_prefix_across_gc_and_throw() {
+    // The hot loop has a long numeric prefix and one call site whose callee collects and
+    // throws a unique object. An exact-PC exit must preserve the numeric prefix, run the
+    // ordinary call once, and deliver that same thrown object to the surrounding catch.
+    let source = r#"
+      const marker = {};
+      let calls = 0;
+      function effect(value) {
+        calls++;
+        $262.gc();
+        if (value === 1040) throw marker;
+        return value;
+      }
+      function run() {
+        let total = 0;
+        let caught = false;
+        try {
+          for (let index = 0; index < 1100; index++) {
+            total += index;
+            if (index === 1040) effect(index);
+          }
+        } catch (error) {
+          caught = error === marker;
+        }
+        return total + " " + calls + " " + caught;
+      }
+      print(run());
+    "#;
+    let program = Engine::specialize(source, "osr-exact-effect-exit-gc-throw.js").unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "run")
+        })
+        .unwrap();
+
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone()).with_test262())
+        .execute(&program)
+        .unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["541320 1 true"]);
+
+    let compiled_output = Rc::new(RefCell::new(Vec::new()));
+    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()).with_test262());
+    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.execute(&program).unwrap();
+    assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+
+    let views = compiled
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .unwrap();
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("effectful loop lane view");
+    let osr = view.osr_diagnostics();
+    assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
+    if std::env::var_os("QUENCH_JS_JIT_STATS").is_some() {
+        assert!(
+            osr.native_region_runs > 0 && osr.exits > 0,
+            "the forced effect boundary must run and exit native code: {osr:?}"
+        );
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_inlines_method_calls_in_a_loop() {
     // Each iteration calls `x.am` twice: the region runs am3 in place, its object
     // parameter bound to the caller register it was moved from.
@@ -12649,6 +12951,13 @@ fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
         .iter()
         .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "run"))
         .expect("hot callback loop function");
+    let call_pc = program
+        .function_get(function_id)
+        .expect("hot callback loop bytecode")
+        .instructions()
+        .enumerate()
+        .find_map(|(pc, instruction)| (instruction.op() == crate::bytecode::Op::Call).then_some(pc as u32))
+        .expect("loop contains an ordinary callback call");
 
     let interpreted_output = Rc::new(RefCell::new(Vec::new()));
     Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
@@ -12672,15 +12981,20 @@ fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
         .osr_diagnostics();
     assert!(diagnostics.compile_successes > 0, "call boundary did not admit a native prefix: {diagnostics:?}");
     assert!(diagnostics.native_region_runs > 0, "native prefix never ran: {diagnostics:?}");
+    assert!(diagnostics.sites.iter().any(|site| {
+        site.backedge_pc > site.header_pc
+            && site.native_region_runs > 0
+            && site.call_boundary_pcs.contains(&call_pc)
+    }), "OSR diagnostics should report the native loop's call boundary at its exact PC: {diagnostics:?}");
 }
 
 #[test]
 #[cfg(not(quench_profiled))]
-fn shared_osr_exits_at_captured_environment_reads() {
+fn shared_osr_reads_initialized_captured_environment_locals_and_deopts_non_numbers() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
-          function run() {
-            let captured = 2;
+          function run(initial) {
+            let captured = initial;
             function readCaptured() { return captured; }
             let index = 0;
             let total = 0;
@@ -12692,8 +13006,9 @@ fn shared_osr_exits_at_captured_environment_reads() {
             return total + readCaptured();
           }
           let total = 0;
-          for (let invocation = 0; invocation < 50; invocation++) total += run();
+          for (let invocation = 0; invocation < 50; invocation++) total += run(2);
           print(total);
+          print(run("x"));
         "#,
         "osr-environment-local-boundary.js",
     ))
@@ -12705,14 +13020,16 @@ fn shared_osr_exits_at_captured_environment_reads() {
         .expect("captured local loop function");
     let interpreted_output = Rc::new(RefCell::new(Vec::new()));
     Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
-    assert_eq!(interpreted_output.borrow().as_slice(), ["257600"]);
+    let expected = interpreted_output.borrow().clone();
+    assert_eq!(expected.len(), 2);
+    assert_eq!(expected[0], "257600");
 
     let compiled_output = Rc::new(RefCell::new(Vec::new()));
     let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.enable_js_jit_diagnostics();
     compiled.execute(&program).unwrap();
-    assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+    assert_eq!(compiled_output.borrow().as_slice(), expected.as_slice());
 
     let views = compiled
         .programs
@@ -12725,7 +13042,7 @@ fn shared_osr_exits_at_captured_environment_reads() {
         .osr_diagnostics();
     assert!(diagnostics.compile_successes > 0, "environment-local boundary was not compiled: {diagnostics:?}");
     assert!(diagnostics.native_region_runs > 0, "environment-local boundary never ran natively: {diagnostics:?}");
-    assert!(diagnostics.exits > 0, "native execution did not exit to the exact environment-local PC: {diagnostics:?}");
+    assert!(diagnostics.exits > 0, "a non-Number local did not fall back at its load: {diagnostics:?}");
 }
 
 #[test]
@@ -12742,37 +13059,38 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
             return total;
           }
           let head = null;
-          for (let value = 32; value > 0; value--) head = { value, next: head };
+          for (let value = 32; value > 0; value--) head = { pad: 0, marker: 0, value, next: head };
+          globalThis.osrFieldHead = head;
           let repeated = 0;
           for (let call = 0; call < 300; call++) repeated += sumList(head);
           print(repeated);
 
           let getterCount = 0;
-          const getterNode = { next: null };
+          const getterNode = { pad: 0, marker: 0, next: null };
           Object.defineProperty(getterNode, 'value', {
             get() { getterCount++; return 7; }, enumerable: true
           });
-          print(sumList({ value: 1, next: getterNode }));
+          print(sumList({ pad: 0, marker: 0, value: 1, next: getterNode }));
           print(getterCount);
 
           let proxyGets = 0;
-          const proxyNode = new Proxy({ value: 9, next: null }, {
+          const proxyNode = new Proxy({ pad: 0, marker: 0, value: 9, next: null }, {
             get(target, key, receiver) {
               if (key === 'value' || key === 'next') proxyGets++;
               return Reflect.get(target, key, receiver);
             }
           });
-          print(sumList({ value: 1, next: proxyNode }));
+          print(sumList({ pad: 0, marker: 0, value: 1, next: proxyNode }));
           print(proxyGets);
 
           const thrown = Error('field getter');
           let throwCount = 0;
-          const throwingNode = { next: null };
+          const throwingNode = { pad: 0, marker: 0, next: null };
           Object.defineProperty(throwingNode, 'value', {
             get() { throwCount++; throw thrown; }, enumerable: true
           });
           let sameError = false;
-          try { sumList({ value: 1, next: throwingNode }); }
+          try { sumList({ pad: 0, marker: 0, value: 1, next: throwingNode }); }
           catch (error) { sameError = error === thrown; }
           print(throwCount);
           print(sameError);
@@ -12803,6 +13121,40 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
+    // A compiled raw field load embeds an object shape ID. Collection may compact and remap
+    // those IDs, so the next loop admission must retire and rebuild the old region before
+    // it can use the old slot descriptor.
+    let native_runs_before_collection = {
+        let views = vm
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let view = views
+            .get(function_id)
+            .and_then(std::cell::OnceCell::get)
+            .expect("hot changing receiver lane view");
+        view.osr_diagnostics().native_region_runs
+    };
+    let shape_count_before_churn = vm.shapes.len();
+    for index in 0..shape_count_before_churn * 2 {
+        let atom = vm.intern_atom(&format!("dead-osr-field-{index}"));
+        vm.transition_shape(0, atom);
+    }
+    let shape_count_before_collection = vm.shapes.len();
+    let epoch_before_collection = crate::heap::prototype_layout_epoch();
+    vm.collect_now(&program);
+    assert!(crate::heap::prototype_layout_epoch() > epoch_before_collection);
+    assert!(vm.shapes.len() < shape_count_before_collection, "collection did not compact the test shapes");
+
+    let sum_list_atom = vm.intern_atom("sumList");
+    let sum_list = vm.own_property(vm.realm.globals, sum_list_atom).expect("global sumList function");
+    let head_atom = vm.intern_atom("osrFieldHead");
+    let head = vm.own_property(vm.realm.globals, head_atom).expect("rooted linked-list head");
+    assert_eq!(
+        vm.call_value(&program, sum_list, Value::UNDEFINED, &[head]).unwrap(),
+        Value::number(528.0)
+    );
+
     let views = vm
         .programs
         .lane_views(super::program_store::ProgramId::MAIN)
@@ -12810,12 +13162,22 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
     let view = views
         .get(function_id)
         .and_then(std::cell::OnceCell::get)
-        .expect("hot changing receiver lane view");
+        .expect("hot changing receiver lane view after collection");
     let diagnostics = view.osr_diagnostics();
     assert_eq!(diagnostics.currently_compiled_sites, 1, "OSR diagnostics: {diagnostics:?}");
     assert!(
-        diagnostics.native_region_runs > 0,
+        diagnostics.compile_successes >= 2,
+        "shape compaction did not recompile its stale field region: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.native_region_runs > native_runs_before_collection,
         "changing receiver loop never entered native code: {diagnostics:?}"
+    );
+    assert_eq!(
+        vm.programs
+            .js_jit_field_cache_probes(super::program_store::ProgramId::MAIN, function_id as u32),
+        Some(0),
+        "the out-of-line changing-receiver loads still called the field probe"
     );
 }
 
@@ -14577,7 +14939,7 @@ fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
         .programs
         .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, caller)
         .expect("diagnostics should track call sites for the compiled caller");
-    assert!(call_sites.iter().any(|(_, opcode, attempts, outcomes, direct_target, target_calls, _, _)| {
+    assert!(call_sites.iter().any(|(_, opcode, attempts, outcomes, direct_target, target_calls, ..)| {
         *opcode == crate::bytecode::Op::CallArray as u16
             && *attempts > 0
             && *direct_target == Some((super::program_store::ProgramId::MAIN.raw(), callee))
@@ -14588,10 +14950,13 @@ fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
         .programs
         .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, callee)
         .expect("diagnostics should track call sites for the compiled callee");
-    assert!(callee_call_sites.iter().any(|(_, opcode, attempts, outcomes, _, _, _, _)| {
+    assert!(callee_call_sites.iter().any(|(_, opcode, attempts, outcomes, _, _, _, _, sampled_calls, sampled_ns)| {
         *opcode == crate::bytecode::Op::Call as u16
             && *attempts > 0
             && outcomes[super::program_store::JsJitCallOutcome::Continue as usize] > 0
+            && *sampled_calls > 0
+            && *sampled_calls < *attempts
+            && sampled_ns[super::program_store::JsJitCallOutcome::Continue as usize] > 0
     }));
 }
 
@@ -14664,7 +15029,7 @@ fn js_jit_calls_compiled_numeric_callees_with_materialized_array_arguments() {
         .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, drive)
         .expect("the compiled caller should have call-site diagnostics");
     assert!(call_sites.iter().any(
-        |(_, opcode, attempts, outcomes, target, target_calls, _, _)| {
+        |(_, opcode, attempts, outcomes, target, target_calls, ..)| {
             *opcode == crate::bytecode::Op::CallArray as u16
                 && *attempts > 0
                 && *target == Some((super::program_store::ProgramId::MAIN.raw(), add))
