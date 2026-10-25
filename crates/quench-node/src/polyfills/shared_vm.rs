@@ -911,6 +911,15 @@ if (globalThis.MessageChannel === undefined) {
     value: MessageChannel, writable: true, configurable: true,
   });
 }
+for (const name of ["MessageChannel", "MessagePort"]) {
+  const constructor = globalThis[name];
+  if (constructor?.prototype) {
+    Object.defineProperty(constructor.prototype, Symbol.toStringTag, {
+      configurable: true,
+      value: name,
+    });
+  }
+}
 }
 "#
 );

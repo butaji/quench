@@ -350,6 +350,27 @@ pub fn executable_path() -> std::io::Result<PathBuf> {
 pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<ExitCode, String> {
     crate::host::resident_pages::map_touched_pages_only();
     let args = arguments.into_iter().collect::<Vec<_>>();
+    let node_options = std::env::var("NODE_OPTIONS").ok();
+    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+    let warnings = match crate::modules::util_env::validate_startup_env_files(
+        node_options.as_deref(),
+        &args,
+        &cwd,
+    ) {
+        Ok(warnings) => warnings,
+        Err(message) => {
+            let executable = std::env::current_exe()
+                .map_err(|error| error.to_string())?
+                .to_string_lossy()
+                .into_owned();
+            eprintln!("{executable}: {message}");
+            return Ok(ExitCode::from(9));
+        }
+    };
+    for warning in warnings {
+        eprintln!("{warning}");
+    }
+    crate::modules::util_env::load_startup_env_files(node_options.as_deref(), &args, &cwd);
     if let Some(node_options) = std::env::var_os("NODE_OPTIONS") {
         if let Some(option) =
             crate::modules::cli_options::disallowed_node_option(&node_options.to_string_lossy())
@@ -433,6 +454,22 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
+            "--env-file" | "--env-file-if-exists" => {
+                let Some(path) = args.get(index + 1) else {
+                    return Ok(cli_usage_error(&format!(
+                        "{} requires an argument",
+                        args[index]
+                    )));
+                };
+                exec_argv.extend([args[index].clone(), path.clone()]);
+                index += 1;
+            }
+            option
+                if option.starts_with("--env-file=")
+                    || option.starts_with("--env-file-if-exists=") =>
+            {
+                exec_argv.push(args[index].clone());
+            }
             "--interactive" | "-i" => {
                 interactive = true;
                 exec_argv.push(args[index].clone());

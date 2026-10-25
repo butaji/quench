@@ -315,11 +315,28 @@ pub const LAZY_JS: &str = quench_js_check::checked_js!(r#"{
       unregister: () => undefined,
       registerBeforeExit: () => undefined
     };
-    const __quenchPermissionArgs = globalThis.process.execArgv || [];
+    // Keep the Permission Model projection in sync with Node's normalized
+    // startup options. `process.execArgv` contains only the original command
+    // line switches, while getOptionsAsFlags() also includes grants loaded
+    // from --config-file and NODE_OPTIONS through the shared CLI options
+    // layer.
+    const __quenchPermissionArgs = (() => {
+      const key = "\0quench:permission-options";
+      const getOptionsAsFlags = globalThis.process[key];
+      let flags;
+      try {
+        if (typeof getOptionsAsFlags === "function") {
+          flags = getOptionsAsFlags();
+        }
+      } catch {} finally {
+        delete globalThis.process[key];
+      }
+      return Array.isArray(flags) ? flags : globalThis.process.execArgv || [];
+    })();
     const __quenchPermissionEnabled = __quenchPermissionArgs.includes("--permission") ||
       __quenchPermissionArgs.includes("--permission-audit");
     if (__quenchPermissionEnabled) globalThis.process.permission ||= (() => {
-      const args = globalThis.process.execArgv || [];
+      const args = __quenchPermissionArgs;
       const enabled = args.includes("--permission");
       const audit = args.includes("--permission-audit");
       const known = new Set([

@@ -43,6 +43,21 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .scheduler
         .reset_shared();
     let process = context.object_rooted()?;
+    // Permission projection needs the same normalized flags used by Node's
+    // internal options layer, including values read from --config-file. Keep
+    // the accessor private and one-shot: process.binding('options') is denied
+    // under the Permission Model, but bootstrap still needs this trusted view.
+    let permission_options =
+        context.host_function(crate::host::shared_vm::operation("cliOptionsFlags"))?;
+    let permission_options_key = context.string_rooted("\0quench:permission-options");
+    context.define_data_property_rooted(
+        process,
+        permission_options_key,
+        permission_options,
+        false,
+        false,
+        true,
+    )?;
     let capture_state = context.object_rooted()?;
     let null = context.null();
     let auxiliary = context.array_rooted(&[])?;
@@ -2218,14 +2233,35 @@ pub(crate) fn load_env_file(
     } else {
         cwd.join(requested)
     };
-    let contents = std::fs::read_to_string(&path)
-        .map_err(|error| dotenv_file_error(context, &path_text, error))?;
     let process = context
         .host_mut()
         .shared_state()
         .borrow()
         .process_module
         .ok_or_else(|| RootedError::host("process.loadEnvFile called without process root"))?;
+    let permission_key = context.string_rooted("permission");
+    let permission = context.get_property_rooted(process, permission_key)?;
+    if context.is_object_rooted(permission)? {
+        let has_key = context.string_rooted("has");
+        let has = context.get_property_rooted(permission, has_key)?;
+        if context.is_callable_rooted(has)? {
+            let scope = context.string_rooted("fs.read");
+            let reference = context.string_rooted(&path_text);
+            let allowed = context.call_rooted(has, permission, &[scope, reference])?;
+            let allowed = context.truthy_rooted(allowed)?;
+            let audit = context
+                .host_mut()
+                .shared_state()
+                .borrow()
+                .cli_options
+                .enabled("--permission-audit");
+            if !allowed && !audit {
+                return Err(dotenv_permission_error(context, &path_text));
+            }
+        }
+    }
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|error| dotenv_file_error(context, &path_text, error))?;
     let env_key = context.string_rooted("env");
     let env = context.get_property_rooted(process, env_key)?;
     for (key_text, value_text) in crate::modules::util_env::parse_env_file(&contents) {
@@ -2249,6 +2285,50 @@ pub(crate) fn load_env_file(
         unsafe { std::env::set_var(&key_text, &value_text) };
     }
     Ok(context.undefined())
+}
+
+fn dotenv_permission_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    path: &str,
+) -> RootedError {
+    let error = match context.error_rooted(
+        "Access to this API has been restricted. Use --allow-fs-read to manage permissions.",
+    ) {
+        Ok(error) => error,
+        Err(error) => return error,
+    };
+    for (name, value) in [
+        ("code", "ERR_ACCESS_DENIED"),
+        ("permission", "FileSystemRead"),
+    ] {
+        if let Err(error) = set_text(context, error, name, value) {
+            return error;
+        }
+    }
+    if let Err(error) = set_text(context, error, "resource", path) {
+        return error;
+    }
+    let stack_key = context.string_rooted("stack");
+    let stack = match context.get_property_rooted(error, stack_key) {
+        Ok(stack) => stack,
+        Err(error) => return error,
+    };
+    if let Some(stack) = context.string_text(stack).ok().flatten() {
+        let escaped = path
+            .replace('\\', "\\\\")
+            .replace('\'', "\\'")
+            .replace('\r', "\\r")
+            .replace('\n', "\\n");
+        if let Err(error) = set_text(
+            context,
+            error,
+            "stack",
+            &format!("{stack}\n    code: 'ERR_ACCESS_DENIED',\n    permission: 'FileSystemRead',\n    resource: '{escaped}'"),
+        ) {
+            return error;
+        }
+    }
+    context.throw(error)
 }
 
 fn dotenv_file_error(

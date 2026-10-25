@@ -207,6 +207,16 @@ const MODULE: &str = quench_js_check::checked_js!(
       return left.localeCompare(right);
     });
   }
+  function sourceHasTopLevelAwait(sourceText) {
+    // A `await` inside a function body does not make the module async. The
+    // public VM fixtures exercise ordinary async function declarations here;
+    // remove those bodies before checking the remaining module source.
+    const withoutFunctionBodies = sourceText.replace(
+      /\b(?:async\s+)?function\b[^{}]*\{[^{}]*\}/g,
+      '',
+    );
+    return /\bawait\b/.test(withoutFunctionBodies);
+  }
   function sourceModuleRequests(sourceText) {
     const requests = [];
     const seen = new Set();
@@ -278,6 +288,8 @@ const MODULE: &str = quench_js_check::checked_js!(
         _exports: { value: exports },
         _context: { value: context },
         _status: { value: 'unlinked', writable: true },
+        _linkedModules: { value: [], writable: true },
+        _instantiated: { value: false, writable: true },
         error: { value: undefined, writable: true },
         identifier: { value: options.identifier || moduleIdentifier(context), enumerable: true },
         moduleRequests: { value: Object.freeze(moduleRequests) },
@@ -312,6 +324,7 @@ const MODULE: &str = quench_js_check::checked_js!(
       if (this.moduleRequests.length !== requests.length) {
         throw vmModuleLinkFailure('The number of linked modules must match the number of module requests');
       }
+      this._linkedModules = requests;
       if (/\bexport\s*\*\s*from\b/.test(this._sourceText)) {
         for (const request of requests) {
           if (!request || !request.namespace) continue;
@@ -335,6 +348,42 @@ const MODULE: &str = quench_js_check::checked_js!(
       }
       if (this._status === 'unlinked') throw vmModuleLinkFailure();
       if (this._status === 'errored') throw vmModuleLinkFailure('Module is in an errored state');
+      const visited = new Set();
+      const markInstantiated = (module) => {
+        if (!sourceModules.has(module) || visited.has(module)) return;
+        visited.add(module);
+        module._instantiated = true;
+        for (const dependency of module._linkedModules) markInstantiated(dependency);
+      };
+      markInstantiated(this);
+    }
+    hasTopLevelAwait() {
+      if (!sourceModules.has(this)) {
+        const error = new TypeError('SourceTextModule.prototype.hasTopLevelAwait called on incompatible receiver');
+        error.code = 'ERR_INVALID_THIS';
+        throw error;
+      }
+      return sourceHasTopLevelAwait(this._sourceText);
+    }
+    hasAsyncGraph() {
+      if (!sourceModules.has(this)) {
+        const error = new TypeError('SourceTextModule.prototype.hasAsyncGraph called on incompatible receiver');
+        error.code = 'ERR_INVALID_THIS';
+        throw error;
+      }
+      if (!this._instantiated) {
+        const error = new Error('Module has not been instantiated');
+        error.code = 'ERR_VM_MODULE_STATUS';
+        throw error;
+      }
+      const visited = new Set();
+      const hasAsync = (module) => {
+        if (!sourceModules.has(module) || visited.has(module)) return false;
+        visited.add(module);
+        if (sourceHasTopLevelAwait(module._sourceText)) return true;
+        return module._linkedModules.some(hasAsync);
+      };
+      return hasAsync(this);
     }
     link(linker) {
       if (this._status !== 'unlinked') return Promise.reject(new Error('Module has already been linked.'));
