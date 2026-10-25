@@ -2512,7 +2512,7 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
     let instruction = decoded_instruction(body, body.code[pc]);
-    if !matches!(instruction.op(), Op::ToPropertyKey | Op::GetIterator | Op::AppendArray) {
+    if !matches!(instruction.op(), Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray) {
         return exit(ip);
     }
     let [a, b] = super::dispatch::value_step_operands(instruction).map(|register| register.map(|register| r.get(register)));
