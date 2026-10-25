@@ -1125,6 +1125,7 @@ impl quench_runtime::Host for NodeHost {
         if let Some(entry) = self.compile_cache.entry(name, parts) {
             entry.store(bytes);
         }
+        crate::host::resident_pages::after_program_kept();
     }
     /// A decoded program after bootstrap (the entry and its modules, a builtin or library
     /// module loaded on first use) releases what loading it touched, as its compilation would
