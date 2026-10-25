@@ -183,6 +183,15 @@ impl Default for ValueArena {
 }
 
 impl ValueArena {
+    /// The current storage for out-of-line object properties.
+    ///
+    /// A native reader may use this address only during synchronous no-safepoint execution:
+    /// growth and compaction can move the vector. Every derived slot must be checked against
+    /// `len` before it is read.
+    pub(crate) fn native_values(&self) -> (*const Value, usize) {
+        (self.values.as_ptr(), self.values.len())
+    }
+
     /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {

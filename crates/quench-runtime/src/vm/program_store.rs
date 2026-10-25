@@ -1763,6 +1763,14 @@ impl ProgramStore {
         self.js_jit_diagnostics.get_or_insert_with(FxHashMap::default);
     }
 
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn js_jit_field_cache_probes(&self, id: ProgramId, function: u32) -> Option<u64> {
+        self.js_jit_diagnostics
+            .as_ref()?
+            .get(&(id.raw(), function))
+            .map(|counters| counters.field_cache_probes)
+    }
+
     pub(super) fn js_jit_dataview_float64_enabled(&self) -> bool {
         self.js_jit_dataview_float64_enabled
     }

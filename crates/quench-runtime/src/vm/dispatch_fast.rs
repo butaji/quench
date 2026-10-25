@@ -143,6 +143,9 @@ struct LoopTier {
     code: Option<super::compiled::CompiledOsrRegion>,
     widened: std::collections::BTreeSet<super::compiled::Widening>,
     compilations: u32,
+    /// A raw field load embeds a shape ID, which collection may remap. Such code is only
+    /// valid under the epoch in which its field descriptors were observed.
+    native_field_epoch: Option<u64>,
 }
 
 impl LoopTier {
@@ -5862,6 +5865,14 @@ script_handler! {
             next!(cx, r, header, Carried::script(cx))
         }
         // SAFETY: the lane's VM is live, and nothing borrows it across the read.
+        let layout_epoch = crate::heap::prototype_layout_epoch();
+        {
+            let mut tier = site.tier.borrow_mut();
+            if tier.native_field_epoch.is_some_and(|epoch| epoch != layout_epoch) {
+                tier.code = None;
+                tier.native_field_epoch = None;
+            }
+        }
         if site.exits.get() >= LOOP_TIER_MAX_EXITS
             || site.declines.get() >= LOOP_TIER_MAX_DECLINES
             || !site.tier.borrow().may_run(unsafe { vm(cx) }.heap.memory_policy())
@@ -6071,7 +6082,26 @@ fn lane_loop_run<H: Host>(
         unsafe { vm(cx) }.host.before_native_compilation();
         let captures = entry.captures(region.captures.len());
         let fields: Vec<Value> = (0..region.fields.len()).map(|index| entry.field_value(region, index)).collect();
-        let heap = &unsafe { vm(cx) }.heap;
+        let machine = unsafe { vm(cx) };
+        let (properties_base, properties_len) = machine.heap.native_property_values();
+        let native_heap_available =
+            machine.heap.object_record_base().is_some() && !properties_base.is_null() && properties_len > 0;
+        let native_field_loads = region
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(index, field)| {
+                (native_heap_available && region.inlining.is_none() && region.is_dynamic_field(index))
+                    .then(|| machine.native_field_load_descriptor(field.cache_site))
+                    .flatten()
+                    .map(|(shape, slot)| super::compiled::NativeFieldLoad {
+                        shape,
+                        slot,
+                        epoch: crate::heap::prototype_layout_epoch(),
+                    })
+            })
+            .collect::<Vec<_>>();
+        let heap = &machine.heap;
         // A field's array is the value its entry word holds, not yet the register's.
         let array_value = |register| match region.arrays.iter().find(|array| array.register == register) {
             Some(super::compiled::ArrayUse { field: Some(index), .. }) => entry.field_value(region, *index),
@@ -6090,6 +6120,7 @@ fn lane_loop_run<H: Host>(
             int32_elements: &int32_elements,
             captures: &captures,
             fields: &fields,
+            native_field_loads: &native_field_loads,
             widened: &tier.widened,
         };
         let track_backedges = unsafe { vm(cx) }
@@ -6103,6 +6134,13 @@ fn lane_loop_run<H: Host>(
                 heap.memory_policy(),
                 track_backedges,
             );
+        tier.native_field_epoch = tier.code.as_ref().and_then(|_| {
+            native_field_loads
+                .iter()
+                .flatten()
+                .next()
+                .map(|load| load.epoch)
+        });
         // SAFETY: as above; the observation's borrow of the heap has ended.
         unsafe { vm(cx) }.host.after_native_compilation();
         if site.diagnostics && tier.code.is_some() {
@@ -6292,6 +6330,11 @@ fn lane_loop_entry<H: Host>(
             vm.cached_field_store_pointer(code, object, field.atom, field.cache_site)
         }?;
         entry.push_field_store(pointer);
+    }
+    if region.has_dynamic_field_reads() && region.inlining.is_none() {
+        let object_base = vm.heap.object_record_base().unwrap_or(std::ptr::null());
+        let (properties_base, properties_len) = vm.heap.native_property_values();
+        entry.push_native_field_heap(object_base, properties_base, properties_len);
     }
     if let Some(inlining) = &region.inlining {
         // Leaving at an inlined instruction makes its callee's activation as the call would:

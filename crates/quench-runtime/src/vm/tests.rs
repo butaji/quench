@@ -12742,37 +12742,38 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
             return total;
           }
           let head = null;
-          for (let value = 32; value > 0; value--) head = { value, next: head };
+          for (let value = 32; value > 0; value--) head = { pad: 0, marker: 0, value, next: head };
+          globalThis.osrFieldHead = head;
           let repeated = 0;
           for (let call = 0; call < 300; call++) repeated += sumList(head);
           print(repeated);
 
           let getterCount = 0;
-          const getterNode = { next: null };
+          const getterNode = { pad: 0, marker: 0, next: null };
           Object.defineProperty(getterNode, 'value', {
             get() { getterCount++; return 7; }, enumerable: true
           });
-          print(sumList({ value: 1, next: getterNode }));
+          print(sumList({ pad: 0, marker: 0, value: 1, next: getterNode }));
           print(getterCount);
 
           let proxyGets = 0;
-          const proxyNode = new Proxy({ value: 9, next: null }, {
+          const proxyNode = new Proxy({ pad: 0, marker: 0, value: 9, next: null }, {
             get(target, key, receiver) {
               if (key === 'value' || key === 'next') proxyGets++;
               return Reflect.get(target, key, receiver);
             }
           });
-          print(sumList({ value: 1, next: proxyNode }));
+          print(sumList({ pad: 0, marker: 0, value: 1, next: proxyNode }));
           print(proxyGets);
 
           const thrown = Error('field getter');
           let throwCount = 0;
-          const throwingNode = { next: null };
+          const throwingNode = { pad: 0, marker: 0, next: null };
           Object.defineProperty(throwingNode, 'value', {
             get() { throwCount++; throw thrown; }, enumerable: true
           });
           let sameError = false;
-          try { sumList({ value: 1, next: throwingNode }); }
+          try { sumList({ pad: 0, marker: 0, value: 1, next: throwingNode }); }
           catch (error) { sameError = error === thrown; }
           print(throwCount);
           print(sameError);
@@ -12803,6 +12804,40 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
+    // A compiled raw field load embeds an object shape ID. Collection may compact and remap
+    // those IDs, so the next loop admission must retire and rebuild the old region before
+    // it can use the old slot descriptor.
+    let native_runs_before_collection = {
+        let views = vm
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let view = views
+            .get(function_id)
+            .and_then(std::cell::OnceCell::get)
+            .expect("hot changing receiver lane view");
+        view.osr_diagnostics().native_region_runs
+    };
+    let shape_count_before_churn = vm.shapes.len();
+    for index in 0..shape_count_before_churn * 2 {
+        let atom = vm.intern_atom(&format!("dead-osr-field-{index}"));
+        vm.transition_shape(0, atom);
+    }
+    let shape_count_before_collection = vm.shapes.len();
+    let epoch_before_collection = crate::heap::prototype_layout_epoch();
+    vm.collect_now(&program);
+    assert!(crate::heap::prototype_layout_epoch() > epoch_before_collection);
+    assert!(vm.shapes.len() < shape_count_before_collection, "collection did not compact the test shapes");
+
+    let sum_list_atom = vm.intern_atom("sumList");
+    let sum_list = vm.own_property(vm.realm.globals, sum_list_atom).expect("global sumList function");
+    let head_atom = vm.intern_atom("osrFieldHead");
+    let head = vm.own_property(vm.realm.globals, head_atom).expect("rooted linked-list head");
+    assert_eq!(
+        vm.call_value(&program, sum_list, Value::UNDEFINED, &[head]).unwrap(),
+        Value::number(528.0)
+    );
+
     let views = vm
         .programs
         .lane_views(super::program_store::ProgramId::MAIN)
@@ -12810,12 +12845,22 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
     let view = views
         .get(function_id)
         .and_then(std::cell::OnceCell::get)
-        .expect("hot changing receiver lane view");
+        .expect("hot changing receiver lane view after collection");
     let diagnostics = view.osr_diagnostics();
     assert_eq!(diagnostics.currently_compiled_sites, 1, "OSR diagnostics: {diagnostics:?}");
     assert!(
-        diagnostics.native_region_runs > 0,
+        diagnostics.compile_successes >= 2,
+        "shape compaction did not recompile its stale field region: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.native_region_runs > native_runs_before_collection,
         "changing receiver loop never entered native code: {diagnostics:?}"
+    );
+    assert_eq!(
+        vm.programs
+            .js_jit_field_cache_probes(super::program_store::ProgramId::MAIN, function_id as u32),
+        Some(0),
+        "the out-of-line changing-receiver loads still called the field probe"
     );
 }
 
