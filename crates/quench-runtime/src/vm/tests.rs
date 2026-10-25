@@ -12676,11 +12676,11 @@ fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
 
 #[test]
 #[cfg(not(quench_profiled))]
-fn shared_osr_exits_at_captured_environment_reads() {
+fn shared_osr_reads_initialized_captured_environment_locals_and_deopts_non_numbers() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
-          function run() {
-            let captured = 2;
+          function run(initial) {
+            let captured = initial;
             function readCaptured() { return captured; }
             let index = 0;
             let total = 0;
@@ -12692,8 +12692,9 @@ fn shared_osr_exits_at_captured_environment_reads() {
             return total + readCaptured();
           }
           let total = 0;
-          for (let invocation = 0; invocation < 50; invocation++) total += run();
+          for (let invocation = 0; invocation < 50; invocation++) total += run(2);
           print(total);
+          print(run("x"));
         "#,
         "osr-environment-local-boundary.js",
     ))
@@ -12705,14 +12706,16 @@ fn shared_osr_exits_at_captured_environment_reads() {
         .expect("captured local loop function");
     let interpreted_output = Rc::new(RefCell::new(Vec::new()));
     Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
-    assert_eq!(interpreted_output.borrow().as_slice(), ["257600"]);
+    let expected = interpreted_output.borrow().clone();
+    assert_eq!(expected.len(), 2);
+    assert_eq!(expected[0], "257600");
 
     let compiled_output = Rc::new(RefCell::new(Vec::new()));
     let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.enable_js_jit_diagnostics();
     compiled.execute(&program).unwrap();
-    assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+    assert_eq!(compiled_output.borrow().as_slice(), expected.as_slice());
 
     let views = compiled
         .programs
@@ -12725,7 +12728,7 @@ fn shared_osr_exits_at_captured_environment_reads() {
         .osr_diagnostics();
     assert!(diagnostics.compile_successes > 0, "environment-local boundary was not compiled: {diagnostics:?}");
     assert!(diagnostics.native_region_runs > 0, "environment-local boundary never ran natively: {diagnostics:?}");
-    assert!(diagnostics.exits > 0, "native execution did not exit to the exact environment-local PC: {diagnostics:?}");
+    assert!(diagnostics.exits > 0, "a non-Number local did not fall back at its load: {diagnostics:?}");
 }
 
 #[test]

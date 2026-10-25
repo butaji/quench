@@ -6195,7 +6195,9 @@ fn lane_loop_run<H: Host>(
     };
     // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
     // callback executes no guest code, allocates nothing, and retains no VM references.
-    let outcome = unsafe { code.run::<H>(r.0, entry, machine, program, site.function, interrupt) };
+    let outcome = unsafe {
+        code.run::<H>(r.0, entry, machine, program, site.function, (*cx).frame, interrupt)
+    };
     if site.diagnostics {
         site.native_entry_attempts
             .set(site.native_entry_attempts.get().saturating_add(1));
@@ -8957,6 +8959,12 @@ fn lane_frame_state<H: Host>(
 }
 
 impl<H: Host> Vm<H> {
+    /// Whether the running fast-lane activation stack is empty. OSR adapter reads that use
+    /// frame-local storage must decline while locals live in frameless lane activations.
+    pub(super) fn lane_has_activations(&self) -> bool {
+        !self.lane_stack.activations.is_empty()
+    }
+
     /// Make the lane's activations VM frames, innermost last, each with the
     /// pending call its push would have recorded; the lane continues in the
     /// innermost one. The bottom caller is the lane run's VM frame.

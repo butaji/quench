@@ -1729,12 +1729,24 @@ fn admit(
             }
             admission.tagged(instruction.register_b())?;
         }
+        Op::LoadEnvLocal => {
+            if instruction.result_flags() != 0
+                || instruction.returns_from_frame()
+                || instruction.numeric_local_target().is_some()
+            {
+                return None;
+            }
+            if tagged.contains(&instruction.result_register()) {
+                admission.tagged(instruction.result_register())?;
+            } else {
+                admission.result(instruction)?;
+            }
+        }
         // The ordinary lane owns these VM/effectful operations. Admit their surrounding
         // region but leave at the exact PC so it can perform binding lookup, call resolution,
         // activation, allocation, GC, and throws with the complete interpreter state
         // materialized.
         Op::RequireIteratorResult
-        | Op::LoadEnvLocal
         | Op::LoadName
         | Op::LoadNameCall
         | Op::LoadNameTypeof
@@ -1896,6 +1908,7 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
             | Op::ToNumeric
             | Op::GetIndex
             | Op::GetField
+            | Op::LoadEnvLocal
     )
     .then(|| instruction.result_register())
 }
@@ -2136,6 +2149,9 @@ fn definition(
         },
         Op::GetIndex => element_representation(instruction, observation),
         Op::GetField => entry.fields[*region.field_reads.get(&offset)?],
+        // Environment loads are dynamically checked at the exact instruction. Keep a
+        // numeric web in Float64 form so a changed/non-Number local falls back before use.
+        Op::LoadEnvLocal => Representation::Float64,
         _ => return None,
     };
     Some((instruction.result_register(), representation))
@@ -4533,6 +4549,37 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
             }
+            Op::LoadEnvLocal => {
+                let slot = i64::try_from(instruction.local_slot()).ok()?;
+                let operation = self
+                    .body
+                    .builder
+                    .ins()
+                    .iconst(types::I64, super::OSR_INITIALIZED_LOCAL_READ as i64);
+                let slot = self.body.builder.ins().iconst(types::I64, slot);
+                let context = self.body.core.context;
+                let callout = self.callout;
+                let signature = self.callout_signature;
+                let result = self.result;
+                let call = self.body.builder.ins().call_indirect(
+                    signature,
+                    callout,
+                    &[context, operation, slot, result],
+                );
+                let status = self.body.builder.inst_results(call)[0];
+                let miss = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
+                self.guard(pc, miss);
+                let bits = self.body.builder.ins().load(types::I64, flags(), result, 0);
+                let representation = self.result_representation();
+                let otherwise = if representation == Representation::Int32 {
+                    self.widen_block(pc, Widening::Register(instruction.result_register()))
+                } else {
+                    self.exit_block(pc)
+                };
+                let value = self.unbox(bits, representation, otherwise);
+                self.define(instruction.result_register(), Typed { value, representation });
+                self.fall_through(pc)
+            }
             Op::GetIndex => {
                 // An index sum just before checked this read's bounds (`index_sum`).
                 let bounded = self.bounded_reads.remove(&pc);
@@ -4607,7 +4654,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.fall_through(pc)
             }
             Op::RequireIteratorResult
-            | Op::LoadEnvLocal
             | Op::LoadName
             | Op::LoadNameCall
             | Op::LoadNameTypeof
