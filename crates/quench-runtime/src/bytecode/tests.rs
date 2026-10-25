@@ -706,3 +706,36 @@ fn compact_encoding_names_every_atom_by_its_text() {
     );
 }
 
+
+#[test]
+fn dead_call_results_are_the_liveness_masks_projection_and_round_trip() {
+    let source = "function g() { return 1; }\nfunction f(x) { g(); const kept = g(); x(); return kept + x(); }\nf(() => 2);";
+    let program = crate::Engine::specialize(source, "dead-call-results.js").unwrap();
+    let mut claimed = 0;
+    for (index, function) in program.functions.iter().enumerate() {
+        let Some(masks) = program.register_root_masks(index as u32) else {
+            assert!(function.register_roots.dead_call_results().is_empty());
+            continue;
+        };
+        let derived: Vec<u32> = function
+            .instructions()
+            .enumerate()
+            .filter(|(pc, instruction)| {
+                instruction.op() == Op::Call
+                    && instruction.result_flags() == 0
+                    && masks.get(pc + 1).is_some_and(|after| {
+                        crate::compile::liveness::register_dead(after, usize::from(instruction.a() & crate::bytecode::REGISTER_MASK))
+                    })
+            })
+            .map(|(pc, _)| pc as u32)
+            .collect();
+        assert_eq!(function.register_roots.dead_call_results(), derived.as_slice(), "function {index}");
+        claimed += derived.len();
+    }
+    assert!(claimed > 0, "the unused `g()` and `x()` results are dead");
+    let decoded = residual_round_trip(&program, "dead-call-results").unwrap();
+    for (original, decoded) in program.functions.iter().zip(&decoded.functions) {
+        assert_eq!(original.register_roots.dead_call_results(), decoded.register_roots.dead_call_results());
+    }
+    assert_eq!(decoded.validate(), Ok(()));
+}
