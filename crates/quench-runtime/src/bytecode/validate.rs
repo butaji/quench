@@ -1298,6 +1298,7 @@ mod tests {
             dynamic_scope_access: Default::default(),
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
+            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: crate::bytecode::RegisterRoots::new(root != u32::MAX),
             undefined_register: None,
