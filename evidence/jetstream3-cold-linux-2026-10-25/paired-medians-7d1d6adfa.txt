@@ -1,0 +1,9 @@
+hash-map                 qn-7d1     median=  26.28 min=  24.82 max=  27.95 rss=26872
+hash-map                 bun        median=  19.79 min=  19.10 max=  20.82 rss=41504
+hash-map                 qn-m336    median=  24.62 min=  22.74 max=  25.85 rss=26860
+stanford-crypto-sha256   qn-7d1     median=  48.49 min=  47.04 max=  49.83 rss=17388
+stanford-crypto-sha256   bun        median=  35.79 min=  32.82 max=  38.44 rss=36616
+stanford-crypto-sha256   qn-m336    median=  44.84 min=  43.75 max=  47.28 rss=17400
+stanford-crypto-pbkdf2   qn-7d1     median=  49.83 min=  46.95 max=  50.51 rss=17444
+stanford-crypto-pbkdf2   bun        median=  36.55 min=  31.46 max=  38.08 rss=36964
+stanford-crypto-pbkdf2   qn-m336    median=  42.65 min=  36.89 max=  46.59 rss=17460

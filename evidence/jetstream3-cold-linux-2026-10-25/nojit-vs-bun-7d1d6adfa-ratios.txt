@@ -1,0 +1,35 @@
+argon2-wasm                      0.55     2.57 score x0.214 rss x2.05 <
+web-ssr                         18.26    55.43 score x0.329 rss x1.14 <
+doxbee-async                    42.15   121.41 score x0.347 rss x1.02 <
+doxbee-promise                  30.77    82.95 score x0.371 rss x0.98 <
+validatorjs                     48.03   106.53 score x0.451 rss x1.75 <
+async-fs                        19.90    40.87 score x0.487 rss x1.86 <
+bigint-noble-ed25519            15.89    29.16 score x0.545 rss x1.24 <
+typescript-lib                   0.32     0.58 score x0.552 rss x1.12 <
+json-parse-inspector           148.10   264.07 score x0.561 rss x1.18 <
+babel-wtb                        9.41    16.43 score x0.573 rss x1.11 <
+json-stringify-inspector       194.72   320.67 score x0.607 rss x1.43 <
+sync-fs                         11.63    18.04 score x0.645 rss x1.54 <
+postcss-wtb                      3.04     4.59 score x0.662 rss x1.26 <
+babel-minify-wtb                 7.46    11.02 score x0.677 rss x1.17 <
+UniPoker                        26.26    37.57 score x0.699 rss x1.81 <
+babylon-wtb                      4.19     5.65 score x0.742 rss x1.59 <
+chai-wtb                        15.40    20.23 score x0.761 rss x1.73 <
+prettier-wtb                     5.79     7.03 score x0.824 rss x1.21 <
+lazy-collections                17.69    21.40 score x0.827 rss x2.48 <
+acorn-wtb                        2.91     3.32 score x0.877 rss x1.40 <
+source-map-wtb                  19.85    22.48 score x0.883 rss x1.42 <
+espree-wtb                       3.93     4.42 score x0.889 rss x1.49 <
+esprima-next-wtb                 5.08     5.49 score x0.925 rss x1.45 <
+js-tokens                       22.78    22.15 score x1.028 rss x2.55 <
+stanford-crypto-pbkdf2          47.59    38.61 score x1.233 rss x2.15
+stanford-crypto-aes             39.44    30.62 score x1.288 rss x1.08 <
+hash-map                        25.70    19.44 score x1.322 rss x1.57
+stanford-crypto-sha256          47.65    35.81 score x1.331 rss x2.14
+sqlite3-wasm                     3.62     1.75 score x2.069 rss x1.23
+tsf-wasm                        12.56     5.19 score x2.420 rss x1.92
+zlib-wasm                       16.79     6.36 score x2.640 rss x1.92
+quicksort-wasm                  41.22    12.74 score x3.235 rss x2.23
+HashSet-wasm                    21.00     5.51 score x3.811 rss x1.73
+gcc-loops-wasm                  17.82     4.29 score x4.154 rss x1.93
+geomean score x0.876 rss x1.53 n=34 score>=1.2: 10 rss>=1.2: 26 both: 9
