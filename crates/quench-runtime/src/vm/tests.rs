@@ -12074,6 +12074,47 @@ print(out);
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_counts_loops_whose_bodies_branch_forward() {
+    // The loop's body clamps a double and branches on an element, and `continue` skips its
+    // tail on some iterations: `pos` and `i` still step by one on every path, so the proof
+    // covers the indexed accesses through them, while `odd`, which the paths step apart,
+    // stays guarded.
+    let source = r#"
+function smear(d, d0, u, n, w, k) {
+  var pos = 0, odd = 0;
+  for (var i = 1; i <= n; i++) {
+    var x = i - 0.37 * u[++pos];
+    if (x < 0.5) x = 0.5; else if (x > w) x = w;
+    var i0 = x | 0;
+    if (u[pos] > 3) { odd++; d[pos] = d0[i0] * 0.5; } else d[pos] = d0[i0 + 1] - x;
+    if (k > 0) continue;
+    odd += 2;
+  }
+  return odd;
+}
+var n = 500, d = [], d0 = [], u = [];
+for (var i = 0; i < n + 3; i++) { d.push(0); d0.push(i * 0.25); u.push((i * 7919) % 11 - 2.5); }
+var t = 0;
+for (var c = 0; c < 400; c++) t += smear(d, d0, u, n, n - 0.5, c % 3);
+var s = 0;
+for (var i = 0; i < d.length; i++) s += d[i];
+print(t + " " + s.toFixed(6));
+"#;
+    let program = Engine::specialize(source, "osr-branching-counted-loop.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
