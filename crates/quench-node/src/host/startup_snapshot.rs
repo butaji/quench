@@ -256,7 +256,8 @@ const SNAPSHOT_EXTENSION: &str = "qss";
 const LOCK_EXTENSION: &str = "lock";
 /// Builds whose snapshots are kept: a few builds in use side by side (an installed one and a
 /// development one) keep theirs, while older ones go.
-/// A build lock older than this belongs to a builder that died: another may start.
+/// A build lock older than this belongs to a builder that died, or to a build that failed and
+/// kept it so that eligible processes do not each start a failing build: another may start.
 const STALE_BUILD: std::time::Duration = std::time::Duration::from_secs(60);
 /// The Node builtins a `Preloaded` snapshot loads, as Node's own startup snapshot does: the
 /// modules nearly every program that loads modules loads, whose loading is most of its run.
@@ -405,6 +406,7 @@ pub(crate) fn load_or_schedule(path: &std::path::Path) -> Option<quench_runtime:
         .and_then(|metadata| metadata.modified())
         .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > STALE_BUILD));
     if stale {
+        remove_unfinished_writes(path);
         let _ = std::fs::remove_file(&lock);
     }
     std::fs::create_dir_all(path.parent()?).ok()?;
@@ -457,15 +459,77 @@ pub(crate) fn build(path: &std::path::Path) -> Result<(), String> {
             })
             .map_err(|error| format!("{error:?}"))?;
         let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer))?;
-        let temporary = path.with_extension(format!("{SNAPSHOT_EXTENSION}.{}", std::process::id()));
-        std::fs::write(&temporary, &bytes).map_err(|error| error.to_string())?;
-        std::fs::rename(&temporary, path).map_err(|error| error.to_string())?;
+        let temporary = unfinished_write(path, std::process::id());
+        let written = std::fs::write(&temporary, &bytes).and_then(|()| std::fs::rename(&temporary, path));
+        if let Err(error) = written {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error.to_string());
+        }
         if let Some(builds) = path.parent().and_then(std::path::Path::parent) {
             crate::host::compile_cache::remove_other_builds(builds);
         }
         Ok(())
     })();
-    let _ = std::fs::remove_file(path.with_extension(LOCK_EXTENSION));
+    // A failed build keeps its lock until it is stale (`STALE_BUILD`), so the processes that
+    // find no snapshot meanwhile boot without one rather than each starting the build again.
+    if result.is_ok() {
+        let _ = std::fs::remove_file(path.with_extension(LOCK_EXTENSION));
+    }
     result
 }
 
+/// The file builder `pid` writes `path`'s snapshot into before renaming it to `path`, so no
+/// process maps a partly written snapshot.
+fn unfinished_write(path: &std::path::Path, pid: u32) -> std::path::PathBuf {
+    path.with_extension(format!("{SNAPSHOT_EXTENSION}.{pid}"))
+}
+
+/// Removes the unfinished writes of `path`'s builders, which only a builder that died leaves.
+fn remove_unfinished_writes(path: &std::path::Path) {
+    let (Some(directory), Some(prefix)) = (path.parent(), unfinished_write(path, 0).file_name().map(|name| {
+        let name = name.to_string_lossy();
+        name[..name.len() - 1].to_owned()
+    })) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.strip_prefix(&prefix).is_some_and(|pid| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit())) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_build_keeps_its_lock_and_leaves_no_unfinished_write() {
+        let directory = std::env::temp_dir().join(format!("quench-snapshot-build-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        // A file name naming no snapshot kind fails the build before it writes anything.
+        let path = directory.join("0123456789abcdef.unknown.qss");
+        let lock = path.with_extension(LOCK_EXTENSION);
+        std::fs::write(&lock, b"").unwrap();
+        assert!(build(&path).is_err());
+        assert!(lock.exists(), "a failed build backs off by keeping its lock");
+        assert!(!path.exists());
+        // A builder that died left an unfinished write; clearing its stale lock removes it,
+        // and nothing else.
+        let unfinished = unfinished_write(&path, 4242);
+        let other = directory.join("0123456789abcdef.unknown.qss.notes");
+        std::fs::write(&unfinished, b"partial").unwrap();
+        std::fs::write(&other, b"").unwrap();
+        remove_unfinished_writes(&path);
+        assert!(!unfinished.exists());
+        assert!(other.exists());
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+}
