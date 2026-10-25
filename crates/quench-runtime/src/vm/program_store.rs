@@ -3554,6 +3554,37 @@ mod general_promotion_tests {
 }
 
 #[cfg(test)]
+mod lane_diagnostic_tests {
+    #[test]
+    fn plain_lane_calls_remain_visible_after_numeric_tier_rejection() {
+        let program = crate::Engine::compile(crate::ExecutionRequest::script(
+            r#"
+                function label(value) { return value + '!'; }
+                function drive(count) {
+                    let result;
+                    for (let index = 0; index < count; index++) result = label(index);
+                    return result;
+                }
+                for (let round = 0; round < 4; round++) {
+                    if (drive(2000) !== '1999!') throw Error('lane call result');
+                }
+            "#,
+            "lane-diagnostic-entries.js",
+        )).unwrap();
+        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        let counters = vm.programs.js_jit_diagnostics.as_ref().unwrap().values()
+            .find(|counters| counters.function_name.as_deref() == Some("label"))
+            .expect("the called function must have diagnostic counters");
+        assert!(counters.lane_entries > 1000,
+            "hot plain calls must stay visible after tier rejection: {} tier entries, {} lane entries",
+            counters.entries, counters.lane_entries);
+    }
+}
+
+#[cfg(test)]
 mod jit_code_cache_tests {
     use super::{
         JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS, WASM_JIT_MAX_BASELINE_MAPPED_BYTES,

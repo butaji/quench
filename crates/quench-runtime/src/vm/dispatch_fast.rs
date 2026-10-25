@@ -12562,6 +12562,9 @@ fn lane_push_passed<H: Host, const GENERAL: bool>(
     if cross {
         lane_enter_program(cx, target.program);
     }
+    if vm.programs.js_jit_diagnostics_enabled() {
+        vm.programs.record_js_jit_lane_entry(target.program, target.function);
+    }
     // A construction runs its body from the first record; the tier enters plain calls.
     let start = if constructs { base } else { unsafe { (*target.view).start() } };
     (callee_registers, start)
