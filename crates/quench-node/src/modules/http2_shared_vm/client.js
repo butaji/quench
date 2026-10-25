@@ -440,6 +440,13 @@
       binding.setLocalWindowSize(nativeId, options.connectionWindowSize);
     }
     const session = new EventEmitter();
+    session[Symbol.for('nodejs.rejection')] = function captureSessionRejection(error, event, ...args) {
+      if (event === 'stream') {
+        args[0].destroy(error);
+      } else {
+        this.destroy(error);
+      }
+    };
     session.socket = socket;
     session[socketSymbol] = socket;
     session.encrypted = secure;

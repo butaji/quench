@@ -1379,6 +1379,34 @@
       return super.emit(event, ...args);
     }
 
+    [Symbol.for('nodejs.rejection')](error, event, ...args) {
+      switch (event) {
+        case 'stream': {
+          const stream = args[0];
+          if (stream.sentHeaders) {
+            stream.destroy(error);
+          } else {
+            stream.respond({ ':status': 500 });
+            stream.end();
+          }
+          break;
+        }
+        case 'request': {
+          const response = args[1];
+          if (!response.headersSent && !response.finished) {
+            for (const name of response.getHeaderNames()) response.removeHeader(name);
+            response.statusCode = 500;
+            response.end(http.STATUS_CODES[500]);
+          } else {
+            response.destroy();
+          }
+          break;
+        }
+        default:
+          this.emit('error', error);
+      }
+    }
+
     constructor(options, requestListener, secure) {
       super();
       this._secure = secure;
