@@ -39,7 +39,7 @@ impl FunctionCompiler<'_, '_> {
             return self.literal(Constant::Undefined);
         }
         self.expression(call);
-        let constructor = self.load_name("ReferenceError");
+        let constructor = self.load_name(crate::bytecode::INTRINSIC_REFERENCE_ERROR_BINDING);
         let error = self.reg();
         self.emit(Op::Construct, error, constructor, constructor, 0);
         self.emit(Op::Throw, error, 0, 0, 0);
@@ -197,7 +197,7 @@ impl FunctionCompiler<'_, '_> {
         if let Some(key) = key {
             self.expression(key);
         }
-        let constructor = self.load_name("ReferenceError");
+        let constructor = self.load_name(crate::bytecode::INTRINSIC_REFERENCE_ERROR_BINDING);
         let error = self.reg();
         self.emit(Op::Construct, error, constructor, constructor, 0);
         self.emit(Op::Throw, error, 0, 0, 0);

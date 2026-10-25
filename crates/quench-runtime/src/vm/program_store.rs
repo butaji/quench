@@ -2828,8 +2828,8 @@ impl ProgramStore {
     /// (`LANE_VIEW_DEFERRED_RUNS`), so code that runs a few times without looping (a module
     /// body) runs on the general path instead of first deriving a view of every instruction,
     /// which costs more than those runs.
-    pub(super) fn entry_lane_view(
-        &self,
+    pub(super) fn entry_lane_view<'s>(
+        &'s self,
         id: ProgramId,
         function: u32,
         may_loop: impl FnOnce(&crate::bytecode::Function) -> bool,
@@ -2837,7 +2837,7 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            Option<&crate::compile::liveness::RegisterMasks>,
+            &dyn Fn() -> Option<&'s crate::compile::liveness::RegisterMasks>,
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
@@ -2851,8 +2851,9 @@ impl ProgramStore {
             return None;
         }
         Some(view.get_or_init(|| {
-            let live = entry.residual.register_root_masks(function);
-            let view = derive(code, &entry.constants, entry.residual.kind, live, &entry.residual.field_sites);
+            // Only a loop tier reads the masks; a collection derives them otherwise.
+            let live = || entry.residual.register_root_masks(function);
+            let view = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();
@@ -2878,15 +2879,15 @@ impl ProgramStore {
                 .is_some_and(deferred_run_completes)
     }
 
-    pub(super) fn lane_view(
-        &self,
+    pub(super) fn lane_view<'s>(
+        &'s self,
         id: ProgramId,
         function: u32,
         derive: impl FnOnce(
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            Option<&crate::compile::liveness::RegisterMasks>,
+            &dyn Fn() -> Option<&'s crate::compile::liveness::RegisterMasks>,
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
@@ -2894,8 +2895,9 @@ impl ProgramStore {
         let code = entry.residual.function_get(function as usize)?;
         let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         Some(view.get_or_init(|| {
-            let live = entry.residual.register_root_masks(function);
-            let view = derive(code, &entry.constants, entry.residual.kind, live, &entry.residual.field_sites);
+            // Only a loop tier reads the masks; a collection derives them otherwise.
+            let live = || entry.residual.register_root_masks(function);
+            let view = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
             #[cfg(feature = "profile-lane-exits")]
             {
                 let (start, end) = view.record_range();
