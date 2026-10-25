@@ -12500,6 +12500,78 @@ fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_compiles_loose_nullish_equality_without_coercion() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function seed() { return 0; }
+          function countNonNull(value) {
+            let count = seed();
+            let hits = 0;
+            while (count < 4) {
+              if (value != null) hits++;
+              count++;
+            }
+            return hits;
+          }
+          let coercions = 0;
+          const object = { valueOf() { coercions++; throw Error('nullish equality coerced'); } };
+          let result = 0;
+          for (let call = 0; call < 400; call++) {
+            result += countNonNull(call % 2 ? object : undefined);
+          }
+          if (coercions !== 0) throw Error('nullish equality coerced an object');
+          print(result);
+          print(countNonNull(null));
+          print(countNonNull({}));
+        "#,
+        "osr-loose-nullish-equality.js",
+    ))
+    .unwrap();
+    let _disassembly = program.disassemble();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "countNonNull")
+        })
+        .expect("loose nullish loop function");
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
+    interpreter.execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["800", "0", "4"]);
+
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["800", "0", "4"]);
+
+    let views = vm
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(std::cell::OnceCell::get)
+        .expect("hot loose nullish loop lane view");
+    let diagnostics = view.osr_diagnostics();
+    assert_eq!(
+        diagnostics.currently_compiled_sites,
+        1,
+        "OSR diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.native_region_runs > 0,
+        "native OSR region never ran; diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_float_unary_uses_shared_number_denotation() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
