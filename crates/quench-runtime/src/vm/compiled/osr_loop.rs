@@ -174,15 +174,15 @@ pub(crate) struct LoopRegion {
     /// The registers that hold a field's value at every read (`held_registers`), with the
     /// path they hold and that field's index.
     held: std::collections::BTreeMap<Register, (FieldPath, usize)>,
-    /// Strict identity branches against `null` or `undefined` that read an unchanged
+    /// Nullish equality branches against `null` or `undefined` that read an unchanged
     /// tagged register directly from the activation's rooted register file.
     identity_branches: std::collections::BTreeMap<u32, IdentityBranch>,
     /// The region's instructions, from the header.
     instructions: Vec<WideInstruction>,
     /// The Number constants the region reads, by constant index.
-    constants: std::collections::BTreeMap<u16, f64>,
+    constants: std::collections::BTreeMap<usize, f64>,
     /// Tagged constants the region moves, by constant index.
-    tagged_constants: std::collections::BTreeMap<u16, Value>,
+    tagged_constants: std::collections::BTreeMap<usize, Value>,
     /// The function's live registers before each instruction (`compile::liveness`), when
     /// liveness covers it; for an inlining region, by its own PCs (`Inlining`).
     live: Option<crate::compile::liveness::RegisterMasks>,
@@ -373,18 +373,18 @@ struct IdentityBranch {
     register: Register,
     constant: Value,
     negated: bool,
+    loose_nullish: bool,
 }
 
-/// A branch whose exact identity comparison can be emitted from the tagged value word.
-/// Equality to null/undefined has no coercion or heap effect, and comparison against these
-/// constants cannot match a Number, string, BigInt, or object by contents.
+/// A nullish comparison branch that can be emitted from the tagged value word. Strict
+/// identity compares one constant. Loose equality against null or undefined matches either
+/// nullish value; Abstract Equality does not coerce an object when the other operand is null.
 fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<IdentityBranch> {
     if instruction.op() != Op::JumpBinaryFalse {
         return None;
     }
     let (strict, negated) =
         super::super::operations::equality_operator(instruction.binary_operator_field())?;
-    strict.then_some(())?;
     let (register, constant) = match (instruction.operand_b().kind()?, instruction.operand_c().kind()?) {
         (OperandKind::Register, OperandKind::Constant) => (
             instruction.operand_b().payload(),
@@ -396,16 +396,18 @@ fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<
         ),
         _ => return None,
     };
-    (constant.is_null() || constant.is_undefined()).then_some(IdentityBranch {
+    let nullish_constant = constant.is_null() || constant.is_undefined();
+    nullish_constant.then_some(IdentityBranch {
         register,
         constant,
         negated,
+        loose_nullish: !strict,
     })
 }
 
-/// Registers whose bytecode definitions must stay tagged because a nullish identity
-/// branch observes them. Propagate that fact backward only through moves and constants;
-/// other definitions need a general value denotation before they can be admitted.
+/// Registers whose bytecode definitions must stay tagged because a nullish comparison
+/// branch observes them. Propagate that fact along moves and through constants; other
+/// definitions need a general value denotation before they can be admitted.
 fn tagged_registers(
     instructions: &[WideInstruction],
     constants: &[Value],
@@ -414,6 +416,16 @@ fn tagged_registers(
     let mut tagged: std::collections::BTreeSet<Register> = instructions
         .iter()
         .filter_map(|instruction| identity_branch(*instruction, constants).map(|branch| branch.register))
+        .chain(instructions.iter().filter_map(|instruction| {
+            if instruction.op() != Op::LoadConst {
+                return None;
+            }
+            constants
+                .get(instruction.constant_index())?
+                .as_number()
+                .is_none()
+                .then_some(instruction.result_register())
+        }))
         .chain(held.iter().copied())
         .collect();
     loop {
@@ -422,16 +434,20 @@ fn tagged_registers(
             let Some(result) = number_definition(instruction) else {
                 continue;
             };
+            if instruction.op() == Op::Move {
+                let source = instruction.register_b();
+                if tagged.contains(&result) || tagged.contains(&source) {
+                    tagged.insert(result);
+                    tagged.insert(source);
+                }
+                continue;
+            }
             if !tagged.contains(&result) {
                 continue;
             }
             match instruction.op() {
-                Op::Move => {
-                    tagged.insert(instruction.register_b());
-                }
                 Op::LoadConst => {
-                    let index = u16::try_from(instruction.constant_index()).ok()?;
-                    constants.get(usize::from(index))?;
+                    constants.get(instruction.constant_index())?;
                 }
                 // A cached field's value, which the entry record carries tagged.
                 Op::GetField => {}
@@ -1191,8 +1207,8 @@ struct Admission<'a> {
     roles: std::collections::BTreeMap<Register, Role>,
     captures: Vec<u16>,
     pub(crate) fields: Vec<FieldUse>,
-    numbers: std::collections::BTreeMap<u16, f64>,
-    values: std::collections::BTreeMap<u16, Value>,
+    numbers: std::collections::BTreeMap<usize, f64>,
+    values: std::collections::BTreeMap<usize, Value>,
     /// The arrays registers hold that hold a field's value (`held_registers`), each with
     /// whether the region stores into it.
     field_arrays: std::collections::BTreeMap<Register, bool>,
@@ -1233,13 +1249,13 @@ impl Admission<'_> {
         self.note(register, Role::Tagged)
     }
 
-    fn any_constant(&mut self, index: u16) -> Option<Value> {
-        let value = *self.constants.get(usize::from(index))?;
+    fn any_constant(&mut self, index: usize) -> Option<Value> {
+        let value = *self.constants.get(index)?;
         self.values.insert(index, value);
         Some(value)
     }
 
-    fn constant(&mut self, index: u16) -> Option<f64> {
+    fn constant(&mut self, index: usize) -> Option<f64> {
         let number = self.any_constant(index)?.as_number()?;
         self.numbers.insert(index, number);
         Some(number)
@@ -1252,7 +1268,7 @@ impl Admission<'_> {
                 self.number(operand.payload())?;
                 Some(Source::Register(operand.payload()))
             }
-            OperandKind::Constant => Some(Source::Number(self.constant(operand.payload())?)),
+            OperandKind::Constant => Some(Source::Number(self.constant(usize::from(operand.payload()))?)),
             OperandKind::Field | OperandKind::Local => None,
         }
     }
@@ -1346,14 +1362,27 @@ fn admit_region(
             // A cached read of this atom could otherwise keep using its entry value after a
             // native store. Be conservative about aliases: reject every same-name read in
             // this small region.
-            if instructions.iter().any(|candidate| {
+            if let Some(read_offset) = instructions.iter().position(|candidate| {
                 candidate.op() == Op::GetField && candidate.atom_index() == atom
             }) {
+                if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                    eprintln!(
+                        "QUENCH_JS_JIT_OSR_FIELD_REJECT header={header} reason=read_after_or_before_store atom={atom} read_offset={read_offset} store_offset={offset} receiver={receiver}"
+                    );
+                }
                 return Err(RegionRejection::FieldMutation);
             }
             // The slot pointer is captured at entry. The receiver must therefore stay in its
             // tagged register for the entire region.
-            if instructions.iter().any(|candidate| candidate.defined_register() == Some(receiver)) {
+            if let Some(write_offset) = instructions
+                .iter()
+                .position(|candidate| candidate.defined_register() == Some(receiver))
+            {
+                if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                    eprintln!(
+                        "QUENCH_JS_JIT_OSR_FIELD_REJECT header={header} reason=store_receiver_redefined atom={atom} write_offset={write_offset} store_offset={offset} receiver={receiver}"
+                    );
+                }
                 return Err(RegionRejection::FieldMutation);
             }
             let site = FieldStore { receiver, atom, cache_site };
@@ -1366,8 +1395,26 @@ fn admit_region(
         if let Some(register) = object_reads(instruction).filter(|register| paths.contains_key(register)) {
             admission.field_arrays.entry(register).or_insert(false);
         }
-        admit(&mut admission, instruction, constants, &tagged, &defined_registers)
-            .ok_or(RegionRejection::UnsupportedInstruction(instruction.op()))?;
+        if admit(&mut admission, instruction, constants, &tagged, &defined_registers).is_none() {
+            if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                let constant = (instruction.op() == Op::LoadConst)
+                    .then(|| constants.get(instruction.constant_index()).copied());
+                eprintln!(
+                    "QUENCH_JS_JIT_OSR_REJECT header={header} offset={offset} op={:?} a={} b={} c={} imm={} constants_len={} tagged_result={} result_flags={} existing_role={} constant={:?}",
+                    instruction.op(),
+                    instruction.a(),
+                    instruction.b(),
+                    instruction.c(),
+                    instruction.imm(),
+                    constants.len(),
+                    tagged.contains(&instruction.result_register()),
+                    instruction.result_flags(),
+                    admission.roles.contains_key(&instruction.result_register()),
+                    constant.flatten(),
+                );
+            }
+            return Err(RegionRejection::UnsupportedInstruction(instruction.op()));
+        }
     }
     let held: std::collections::BTreeMap<Register, (FieldPath, usize)> = paths
         .into_iter()
@@ -1393,12 +1440,20 @@ fn admit_region(
     // receiver register another value. Element stores and admitted field stores preserve
     // receiver registers and object shapes. A field store to any name read in the region was
     // rejected above, so it cannot stale a cached field value.
-    if admission.fields.iter().any(|field| match field.receiver {
-        FieldReceiver::This | FieldReceiver::Field(_) => false,
-        FieldReceiver::Register(register) => instructions
+    if let Some((field, write_offset)) = admission.fields.iter().find_map(|field| {
+        let FieldReceiver::Register(register) = field.receiver else { return None };
+        instructions
             .iter()
-            .any(|instruction| number_definition(*instruction) == Some(register)),
+            .position(|instruction| number_definition(*instruction) == Some(register))
+            .map(|offset| (field, offset))
     }) {
+        if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+            eprintln!(
+                "QUENCH_JS_JIT_OSR_FIELD_REJECT header={header} reason=read_receiver_redefined atom={} receiver={:?} write_offset={write_offset}",
+                field.atom,
+                field.receiver,
+            );
+        }
         return Err(RegionRejection::FieldMutation);
     }
     if admission.roles.keys().any(|register| usize::from(*register) >= registers)
@@ -1472,7 +1527,7 @@ fn admit(
 ) -> Option<()> {
     match instruction.op() {
         Op::LoadConst => {
-            let index = u16::try_from(instruction.constant_index()).ok()?;
+            let index = instruction.constant_index();
             if tagged.contains(&instruction.result_register()) {
                 admission.any_constant(index)?;
                 admission.tagged(instruction.result_register())?;
@@ -1895,7 +1950,7 @@ fn definition(
     }
     let source = |operand: Operand| match operand.kind() {
         Some(OperandKind::Register) => registers(operand.payload()),
-        _ => match region.constants.get(&operand.payload()) {
+        _ => match region.constants.get(&usize::from(operand.payload())) {
             Some(number) if int32_number(*number) => Representation::Int32,
             _ => Representation::Float64,
         },
@@ -1909,7 +1964,7 @@ fn definition(
     };
     let representation = match instruction.op() {
         Op::LoadConst => {
-            let index = u16::try_from(instruction.constant_index()).ok()?;
+            let index = instruction.constant_index();
             match region.constants.get(&index) {
                 Some(number) if int32_number(*number) => Representation::Int32,
                 _ => Representation::Float64,
@@ -2134,10 +2189,10 @@ struct Int32Facts {
 
 /// The range of an operation's exact result from its operands' ranges; `None` while an
 /// operand's range is not known yet. An operation it does not bound may give any `i32`.
-fn exact_range(instruction: WideInstruction, operand: &dyn Fn(Operand) -> Option<Range>, register: &dyn Fn(Register) -> Option<Range>, constants: &std::collections::BTreeMap<u16, f64>) -> Option<Range> {
+fn exact_range(instruction: WideInstruction, operand: &dyn Fn(Operand) -> Option<Range>, register: &dyn Fn(Register) -> Option<Range>, constants: &std::collections::BTreeMap<usize, f64>) -> Option<Range> {
     use super::super::operations::NumberBitwise as Bitwise;
     let constant = |operand: Operand| match operand.kind() {
-        Some(OperandKind::Constant) => constants.get(&operand.payload()).copied().filter(|number| int32_number(*number)).map(|number| number as i64),
+        Some(OperandKind::Constant) => constants.get(&usize::from(operand.payload())).copied().filter(|number| int32_number(*number)).map(|number| number as i64),
         _ => None,
     };
     let corners = |(a, b): Range, (c, d): Range, f: fn(i64, i64) -> i64| {
@@ -2146,8 +2201,7 @@ fn exact_range(instruction: WideInstruction, operand: &dyn Fn(Operand) -> Option
     };
     Some(match instruction.op() {
         Op::LoadConst => {
-            let index = u16::try_from(instruction.constant_index()).ok();
-            match index.and_then(|index| constants.get(&index)) {
+            match constants.get(&instruction.constant_index()) {
                 Some(number) if int32_number(*number) => (*number as i64, *number as i64),
                 _ => INT32_RANGE,
             }
@@ -2209,7 +2263,7 @@ fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representati
     };
     let operand_range = |ranges: &[Option<Range>], pc: u32, operand: Operand| match operand.kind()? {
         OperandKind::Register => register_range(ranges, pc, operand.payload()),
-        OperandKind::Constant => match region.constants.get(&operand.payload()) {
+        OperandKind::Constant => match region.constants.get(&usize::from(operand.payload())) {
             Some(number) if int32_number(*number) => Some((*number as i64, *number as i64)),
             _ => Some(INT32_RANGE),
         },
@@ -2448,7 +2502,7 @@ fn counted_loop(
             Some((int32(webs.read(region, pc, register)), value(state, register)))
         }
         OperandKind::Constant => {
-            let number = *region.constants.get(&operand.payload())?;
+            let number = *region.constants.get(&usize::from(operand.payload()))?;
             Some((int32_number(number), constant(number)))
         }
         OperandKind::Field | OperandKind::Local => None,
@@ -2487,7 +2541,7 @@ fn counted_loop(
         let defined = || int32(webs.defined(region, pc));
         let result = match instruction.op() {
             Op::LoadConst => {
-                let index = u16::try_from(instruction.constant_index()).ok()?;
+                let index = instruction.constant_index();
                 constant(*region.constants.get(&index)?)
             }
             Op::LoadCapture => {
@@ -3503,7 +3557,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn source(&self, operand: Operand) -> Option<Source> {
         match operand.kind()? {
             OperandKind::Register => Some(Source::Register(operand.payload())),
-            OperandKind::Constant => Some(Source::Number(*self.region.constants.get(&operand.payload())?)),
+            OperandKind::Constant => Some(Source::Number(*self.region.constants.get(&usize::from(operand.payload()))?)),
             OperandKind::Field | OperandKind::Local => None,
         }
     }
@@ -4009,7 +4063,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let instruction = self.region.instructions[(pc - self.region.header) as usize];
         match instruction.op() {
             Op::LoadConst => {
-                let index = u16::try_from(instruction.constant_index()).ok()?;
+                let index = instruction.constant_index();
                 let source = if self.region.tagged.contains(&instruction.result_register()) {
                     Source::Tagged(*self.region.tagged_constants.get(&index)?)
                 } else {
@@ -4215,12 +4269,35 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     if value.representation != Representation::Tagged {
                         return None;
                     }
-                    let identity = self.body.builder.ins().icmp_imm_u(
-                        if branch.negated { IntCC::NotEqual } else { IntCC::Equal },
-                        value.value,
-                        branch.constant.to_bits() as i64,
-                    );
-                    return self.branch(pc, instruction.jump_target(), identity, false);
+                    let mut matches = |constant: Value| {
+                        self.body.builder.ins().icmp_imm_u(
+                            IntCC::Equal,
+                            value.value,
+                            constant.to_bits() as i64,
+                        )
+                    };
+                    let condition = if branch.loose_nullish {
+                        let is_null = matches(Value::NULL);
+                        let is_undefined = matches(Value::UNDEFINED);
+                        if branch.negated {
+                            let is_not_null = self.body.builder.ins().icmp_imm_u(
+                                IntCC::NotEqual,
+                                value.value,
+                                Value::NULL.to_bits() as i64,
+                            );
+                            let is_not_undefined = self.body.builder.ins().icmp_imm_u(
+                                IntCC::NotEqual,
+                                value.value,
+                                Value::UNDEFINED.to_bits() as i64,
+                            );
+                            self.body.builder.ins().band(is_not_null, is_not_undefined)
+                        } else {
+                            self.body.builder.ins().bor(is_null, is_undefined)
+                        }
+                    } else {
+                        matches(branch.constant)
+                    };
+                    return self.branch(pc, instruction.jump_target(), condition, false);
                 }
                 let operator = instruction.binary_operator_field();
                 let left = self.operand(instruction.operand_b())?;
@@ -4297,5 +4374,67 @@ fn unary_operand(dfg: &ir::DataFlowGraph, value: ir::Value, opcode: ir::Opcode) 
             _ => None,
         },
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn osr_admission_keeps_wide_load_const_indices() {
+        let constants = vec![Value::number(0.0); 65_537];
+        let mut admission = Admission {
+            constants: &constants,
+            roles: std::collections::BTreeMap::new(),
+            captures: Vec::new(),
+            fields: Vec::new(),
+            numbers: std::collections::BTreeMap::new(),
+            values: std::collections::BTreeMap::new(),
+            field_arrays: std::collections::BTreeMap::new(),
+        };
+        let instruction = WideInstruction::new(Op::LoadConst, 0, 0, 0, 65_536);
+
+        assert!(admit(
+            &mut admission,
+            instruction,
+            &constants,
+            &std::collections::BTreeSet::new(),
+            &std::collections::BTreeSet::new(),
+        )
+        .is_some());
+        assert_eq!(admission.numbers.get(&65_536), Some(&0.0));
+    }
+
+    #[test]
+    fn osr_admission_tags_non_number_constants() {
+        let constants = [Value::NULL];
+        let instruction = WideInstruction::new(Op::LoadConst, 3, 0, 0, 0);
+        let tagged = tagged_registers(
+            &[instruction],
+            &constants,
+            &std::collections::BTreeSet::new(),
+        )
+        .expect("valid constant operand");
+        let mut admission = Admission {
+            constants: &constants,
+            roles: std::collections::BTreeMap::new(),
+            captures: Vec::new(),
+            fields: Vec::new(),
+            numbers: std::collections::BTreeMap::new(),
+            values: std::collections::BTreeMap::new(),
+            field_arrays: std::collections::BTreeMap::new(),
+        };
+
+        assert!(tagged.contains(&3));
+        assert!(admit(
+            &mut admission,
+            instruction,
+            &constants,
+            &tagged,
+            &std::collections::BTreeSet::new(),
+        )
+        .is_some());
+        assert_eq!(admission.values.get(&0), Some(&Value::NULL));
     }
 }

@@ -2381,6 +2381,7 @@ impl<H: Host> Vm<H> {
         error: JsError,
     ) -> Result<usize, JsError> {
         if error.is_execution_terminated() { return Err(error); }
+        let error = self.name_non_callable_callee(program, frame, function, throwing_pc, error);
         let wasm = program.kind == crate::bytecode::ProgramKind::Wasm;
         // Wasm catches Wasm exceptions and JavaScript ones (`catch_all`, or
         // `WebAssembly.JSTag`), never a trap or a link failure.

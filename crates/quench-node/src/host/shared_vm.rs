@@ -217,7 +217,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "consoleGlobalInitialize" (0) => commonjs::initialize_console_global,
         method "consoleLog" (0) => crate::modules::console_shared_vm::log,
         method "consoleLoad" (0) => crate::modules::console_shared_vm::load,
-        method "processWarningListener" (0) => crate::modules::process_shared_vm::warning_listener,
+        method "processWarningListenerInitialize" (0) => crate::modules::process_shared_vm::initialize_warning_listener,
         method "processWarningLibrary" (1) => crate::modules::process_warning_shared_vm::library,
         method "processWarningOption" (1) => crate::modules::process_warning_shared_vm::option,
         method "processWarningBasename" (2) => crate::modules::process_warning_shared_vm::path_basename,
@@ -1145,6 +1145,10 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn proper_tail_calls(&self) -> bool {
+        false
+    }
+
+    fn nonextensible_applies_to_private(&self) -> bool {
         false
     }
 

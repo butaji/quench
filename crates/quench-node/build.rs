@@ -30,6 +30,12 @@ const NODE_API_DYNAMIC_LIST: &str = "link/node-api.dynamic-list";
 /// frames through `PT_GNU_EH_FRAME`, so the hooks resolve to null and the start code skips them.
 const FRAME_REGISTRATION_HOOKS: &[&str] = &["__register_frame_info", "__deregister_frame_info"];
 
+/// The fields of OpenSSL 3's `OPENSSL_VERSION_NUMBER` (0xMNN00PP0).
+const OPENSSL_MAJOR_SHIFT: u32 = 28;
+const OPENSSL_MINOR_SHIFT: u32 = 20;
+const OPENSSL_PATCH_SHIFT: u32 = 4;
+const OPENSSL_FIELD_MASK: u64 = 0xff;
+
 /// The linker that applies a symbol order.
 const ORDERING_LINKER: &str = "ld.lld";
 
@@ -42,9 +48,16 @@ fn main() {
 
     println!("cargo:rustc-check-cfg=cfg(quench_openssl_provider)");
     println!("cargo:rerun-if-env-changed=DEP_OPENSSL_VERSION_NUMBER");
-    let provider = std::env::var("DEP_OPENSSL_VERSION_NUMBER").ok()
-        .and_then(|v| u64::from_str_radix(&v,16).ok()).is_some_and(|v|v>=0x3000_0000);
+    let version_number = std::env::var("DEP_OPENSSL_VERSION_NUMBER").ok()
+        .and_then(|v| u64::from_str_radix(&v,16).ok());
+    let provider = version_number.is_some_and(|v|v>=0x3000_0000);
     if provider { println!("cargo:rustc-cfg=quench_openssl_provider"); }
+    // `process.versions.openssl`: the linked library's MAJOR.MINOR.PATCH, from its
+    // OPENSSL_VERSION_NUMBER (0xMNN00PP0 since OpenSSL 3).
+    let version = version_number.map_or_else(String::new, |number| {
+        format!("{}.{}.{}", number >> OPENSSL_MAJOR_SHIFT, (number >> OPENSSL_MINOR_SHIFT) & OPENSSL_FIELD_MASK, (number >> OPENSSL_PATCH_SHIFT) & OPENSSL_FIELD_MASK)
+    });
+    println!("cargo:rustc-env=QUENCH_OPENSSL_VERSION={version}");
     embed_node_sources();
     configure_icu();
     configure_native_zlib();

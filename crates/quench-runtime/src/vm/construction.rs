@@ -716,7 +716,7 @@ impl<H: Host> Vm<H> {
                     return vm.proxy_construct(p, callee, new_target, args);
                 }
                 if !vm.is_constructable(p, callee) {
-                    return Err(vm.type_error(p, "value is not a constructor".into()));
+                    return Err(vm.type_error(p, super::call_printer::NOT_CONSTRUCTOR_MESSAGE.into()));
                 }
                 if !vm.is_constructable(p, new_target) {
                     return Err(vm.type_error(p, "newTarget is not a constructor".into()));
@@ -749,7 +749,7 @@ impl<H: Host> Vm<H> {
                         return Err(vm.type_error(p, "function index is outside its program".into()));
                     };
                     if !function.constructible {
-                        return Err(vm.type_error(p, "value is not a constructor".into()));
+                        return Err(vm.type_error(p, super::call_printer::NOT_CONSTRUCTOR_MESSAGE.into()));
                     }
                     if function.is_async {
                         return Err(JsError("async function is not a constructor".into()));
