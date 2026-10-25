@@ -896,7 +896,7 @@ impl Native {
     /// error's stack or making a collection due (`Host::host_function_runs_beside_activations`
     /// for a host's), so a lane calls it with its activations frameless. Each of these reads
     /// its arguments and the heap, and reaches guest code only through getters, coercions,
-    /// proxy traps or species constructors, whose calls make the activations frames first
+    /// proxy traps, species constructors or a `JSON.parse` reviver, whose calls make the activations frames first
     /// (`Vm::materialize_deferred_lane`): `assert.deepEqual` calls `Object.prototype.toString`
     /// on every value it compares (10,210 materializations in the color-convert npm scenario).
     pub(crate) fn runs_beside_activations(self) -> bool {
@@ -918,6 +918,7 @@ impl Native {
                 | Self::StringSplit
                 | Self::StringMatch
                 | Self::RegExpTest
+                | Self::JsonParse
                 | Self::JsonStringify
                 | Self::ParseInt
                 | Self::ArrayShift
@@ -1486,15 +1487,11 @@ pub(crate) struct ArrayObject {
 }
 
 /// Native read-only layout facts for `ArrayObject`, kept beside its field declarations.
-#[cfg(test)]
 pub(super) const NATIVE_ARRAY_RECORD_SIZE: usize = std::mem::size_of::<ArrayObject>();
-#[cfg(test)]
 pub(super) const NATIVE_ARRAY_RECORD_ALIGN: usize = std::mem::align_of::<ArrayObject>();
-#[cfg(test)]
 pub(super) const NATIVE_ARRAY_ELEMENTS_OFFSET: usize =
     std::mem::offset_of!(ArrayObject, elements);
 
-#[cfg(test)]
 const _: () = assert!(
     NATIVE_ARRAY_ELEMENTS_OFFSET + std::mem::size_of::<super::ArrayElements>()
         <= NATIVE_ARRAY_RECORD_SIZE
@@ -2258,6 +2255,7 @@ impl Object {
             .is_some_and(|extras| extras.indexed_descriptors)
     }
     pub(crate) fn mark_indexed_descriptors(&mut self) {
+        self.note_prototype_layout_change();
         self.extras_mut().indexed_descriptors = true;
     }
     pub(crate) fn has_length_descriptor(&self) -> bool {

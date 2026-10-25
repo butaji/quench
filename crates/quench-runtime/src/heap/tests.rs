@@ -30,27 +30,22 @@ fn direct_array_record_base_resolves_the_current_live_array_value() {
     let record = unsafe { &*base.add(id as usize) };
     assert!(std::ptr::eq(record, heap.array(array).expect("live array record")));
 
-    let before = heap
-        .array_elements(array)
-        .expect("array elements")
-        .as_ptr();
-    // Keep a second owner so `make_mut` must exercise its copy-on-write path.
-    let shared_backing = heap
+    let shared_elements = heap
         .array_elements(array)
         .expect("array elements")
         .clone();
+    let shared = heap.alloc(Cell::Array {
+        object: ArrayObject::new(plain_object(), shared_elements),
+    });
     heap.array_elements_mut(array)
         .expect("array elements")
         .make_mut()
         .push(Value::integer(9));
-    assert_eq!(shared_backing.as_ptr(), before);
+    // Growing the elements may move the backing or keep it (the allocator decides); the
+    // record range stays put and each array sees its own elements.
     assert_eq!(heap.array_record_base(), Some(base));
-    let after = heap
-        .array_elements(array)
-        .expect("current array elements")
-        .as_ptr();
-    assert_ne!(before, after, "copy-on-write can replace the backing");
-    assert_eq!(heap.array(array).unwrap().elements().len(), 2);
+    assert_eq!(heap.array(array).unwrap().elements().as_slice(), &[Value::integer(7), Value::integer(9)][..]);
+    assert_eq!(heap.array(shared).unwrap().elements().as_slice(), &[Value::integer(7)][..]);
 }
 
 #[test]

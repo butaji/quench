@@ -50,7 +50,8 @@ use std::rc::{Rc, Weak};
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 pub(super) use osr_loop::{
-    FieldReceiver, LoopEntry, LoopOutcome, LoopRegion, Observation, RegionRejection, Widening,
+    ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, LoopEntry, LoopOutcome, LoopRegion, Observation,
+    RegionRejection, Widening,
 };
 
 #[derive(Clone, Copy)]
@@ -118,12 +119,19 @@ impl RegionExitBlocks {
 
     /// Sends control to the shared per-PC leave block, carrying the handoff word as an
     /// argument. The tier fills that block with its exact-PC live-state writeback.
-    pub(super) fn leave(&mut self, builder: &mut FunctionBuilder<'_>, outcome: RegionExit) {
+    /// A tier whose region PCs are not its function's hands off `reported`, its own PC of
+    /// the outcome (an inlining loop region); any other reports `outcome` itself.
+    pub(super) fn leave(
+        &mut self,
+        builder: &mut FunctionBuilder<'_>,
+        outcome: RegionExit,
+        reported: RegionExit,
+    ) {
         let pc = match outcome {
             RegionExit::Resume(pc) | RegionExit::Fallback(pc) | RegionExit::Recompile(pc) => pc,
             RegionExit::EntryMiss(_) => unreachable!("entry miss does not write back"),
         };
-        let word = builder.ins().iconst(types::I64, outcome.encode() as i64);
+        let word = builder.ins().iconst(types::I64, reported.encode() as i64);
         let block = match self.leave_blocks.get(&pc) {
             Some(block) => *block,
             None => {
@@ -500,7 +508,7 @@ pub(super) fn compile_js_numeric_region(
     let function = program.function_get(function_id as usize)?;
     let (reachable, predecessors) = js_numeric_control_flow(function)?;
     let params = usize::from(function.params);
-    let isa = super::jit_backend::target_isa("speed", true)?;
+    let isa = super::jit_backend::target_isa("speed")?;
 
     let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
     let name = UserFuncName::user(0x5155_454e, function_id);
@@ -935,15 +943,7 @@ const JS_GENERAL_RETURN_STATUS_BASE: u32 =
 const _: () = assert!(JS_GENERAL_RETURN_STATUS_BASE > TERMINATED_STATUS as u32);
 
 pub(super) fn js_general_dispatch_candidate(_program: &ResidualProgram, function: &Function) -> bool {
-    !function.code.is_empty()
-        && function.code.len() <= MAX_JS_GENERAL_DISPATCH_BLOCKS
-        && function.code.iter().all(|packed| {
-            let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-            !matches!(
-                instruction.op(),
-                Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-            ) || usize::try_from(instruction.jump_target()).is_ok()
-        })
+    js_general_dispatch_shape(function).is_some()
 }
 
 /// Preserve OSR as the owner of legacy hot-loop promotion. The generic
@@ -951,17 +951,28 @@ pub(super) fn js_general_dispatch_candidate(_program: &ResidualProgram, function
 /// this predicate only selects the earlier fallback for rejected/profiled
 /// legacy candidates.
 pub(super) fn js_general_dispatch_acyclic_candidate(
-    program: &ResidualProgram,
+    _program: &ResidualProgram,
     function: &Function,
 ) -> bool {
-    js_general_dispatch_candidate(program, function)
-        && function.code.iter().enumerate().all(|(pc, packed)| {
-            let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-            !matches!(
-                instruction.op(),
-                Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-            ) || usize::try_from(instruction.jump_target()).is_ok_and(|target| target > pc)
-        })
+    js_general_dispatch_shape(function) == Some(true)
+}
+
+/// Whether the general baseline admits `function` (a bounded body whose jumps all have
+/// targets) and, if so, whether it is acyclic (every jump goes forward): one pass over
+/// the bytecode for both facts.
+pub(super) fn js_general_dispatch_shape(function: &Function) -> Option<bool> {
+    if function.code.is_empty() || function.code.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
+        return None;
+    }
+    let mut acyclic = true;
+    for (pc, packed) in function.code.iter().enumerate() {
+        let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+        if matches!(instruction.op(), Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse) {
+            let target = usize::try_from(instruction.jump_target()).ok()?;
+            acyclic &= target > pc;
+        }
+    }
+    Some(acyclic)
 }
 
 fn read_js_tagged_operand(
@@ -1268,6 +1279,168 @@ fn emit_js_step_fallback(
     );
 }
 
+/// Continue native code only when one guard holds. All failures share the exact-PC
+/// VM fallback emitted after the direct path.
+fn emit_js_guard(
+    builder: &mut FunctionBuilder<'_>,
+    condition: ir::Value,
+    fallback: ir::Block,
+) {
+    let passed = builder.create_block();
+    builder.ins().brif(condition, passed, &[], fallback, &[]);
+    builder.switch_to_block(passed);
+    builder.seal_block(passed);
+}
+
+/// Lower a present dense own-array read. The receiver and key come from the
+/// canonical tagged frame on every execution; the record and its current
+/// backing are also reloaded per access so receiver changes and COW writes are
+/// visible. Every failed proof leaves the destination untouched and resumes
+/// `Vm::step` at this GetIndex PC.
+#[allow(clippy::too_many_arguments)]
+fn emit_js_dense_array_get(
+    builder: &mut FunctionBuilder<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    base_offset: i32,
+    key: ir::Value,
+    destination_offset: i32,
+    next: ir::Block,
+    context: ir::Value,
+    callout: ir::Value,
+    callout_signature: ir::SigRef,
+    result_pointer: ir::Value,
+    stopped_block: ir::Block,
+    continue_block: ir::Block,
+    pc: usize,
+) {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    use crate::value::ValueLayout;
+
+    let fallback = builder.create_block();
+    let base = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        arguments,
+        base_offset,
+    );
+    let family = builder
+        .ins()
+        .band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
+    let is_array = builder.ins().icmp_imm_u(
+        IntCC::Equal,
+        family,
+        ValueLayout::DIRECT_ARRAY_TAG as i64,
+    );
+    emit_js_guard(builder, is_array, fallback);
+
+    let index = builder.ins().ireduce(types::I32, key);
+    let key_tag = builder
+        .ins()
+        .band_imm_u(key, ValueLayout::TAG_MASK as i64);
+    let is_integer = builder
+        .ins()
+        .icmp_imm_u(IntCC::Equal, key_tag, ValueLayout::INT_TAG as i64);
+    emit_js_guard(builder, is_integer, fallback);
+    let nonnegative = builder
+        .ins()
+        .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, index, 0);
+    emit_js_guard(builder, nonnegative, fallback);
+
+    let record_id = builder.ins().ireduce(types::I32, base);
+    let record_id = builder.ins().uextend(types::I64, record_id);
+    let record_in_bounds = builder.ins().icmp_imm_u(
+        IntCC::UnsignedLessThan,
+        record_id,
+        i64::try_from(ARRAY.record_capacity).expect("array record capacity fits i64"),
+    );
+    emit_js_guard(builder, record_in_bounds, fallback);
+
+    let record_base_address = builder.ins().iadd_imm_s(
+        payload,
+        i64::try_from(std::mem::offset_of!(JsStepDispatch, array_record_base))
+            .expect("JS dispatch offset fits i64"),
+    );
+    let record_base = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        record_base_address,
+        0,
+    );
+    let base_is_present = builder
+        .ins()
+        .icmp_imm_u(IntCC::NotEqual, record_base, 0);
+    emit_js_guard(builder, base_is_present, fallback);
+
+    let record_size = i64::try_from(ARRAY.record_size).expect("array record size fits i64");
+    let record_offset = builder.ins().imul_imm_u(record_id, record_size);
+    let record = builder.ins().iadd(record_base, record_offset);
+    let elements = builder.ins().iadd_imm_s(
+        record,
+        i64::try_from(ARRAY.elements_offset).expect("array elements offset fits i64"),
+    );
+    let header = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        elements,
+        i32::try_from(ARRAY.elements_header_offset).expect("header pointer offset fits i32"),
+    );
+    let header_is_present = builder
+        .ins()
+        .icmp_imm_u(IntCC::NotEqual, header, 0);
+    emit_js_guard(builder, header_is_present, fallback);
+
+    let length = builder.ins().load(
+        types::I32,
+        MemFlagsData::trusted(),
+        header,
+        i32::try_from(ARRAY.header_length_offset).expect("array length offset fits i32"),
+    );
+    let index_is_present = builder
+        .ins()
+        .icmp(IntCC::UnsignedLessThan, index, length);
+    emit_js_guard(builder, index_is_present, fallback);
+
+    let value_offset = builder.ins().ishl_imm_u(index, 3);
+    let value_offset = builder.ins().uextend(types::I64, value_offset);
+    let values = builder.ins().iadd_imm_s(
+        header,
+        i64::try_from(ARRAY.header_values_offset).expect("array values offset fits i64"),
+    );
+    let value_address = builder.ins().iadd(values, value_offset);
+    let value = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        value_address,
+        0,
+    );
+    let is_present = builder.ins().icmp_imm_u(
+        IntCC::NotEqual,
+        value,
+        Value::DELETED.to_bits() as i64,
+    );
+    emit_js_guard(builder, is_present, fallback);
+
+    builder.ins().store(
+        MemFlagsData::trusted(),
+        value,
+        arguments,
+        destination_offset,
+    );
+    builder.ins().jump(next, &[]);
+    builder.switch_to_block(fallback);
+    emit_js_step_fallback(
+        builder,
+        context,
+        callout,
+        callout_signature,
+        result_pointer,
+        stopped_block,
+        continue_block,
+        pc,
+    );
+}
+
 /// Read the VM's atomic cancellation flag at a JS loop backedge. The caller
 /// sends a set flag to the exact-PC `Vm::step` callout, which reports the same
 /// interruption as the interpreter before consuming the branch.
@@ -1305,7 +1478,7 @@ pub(super) fn compile_js_general_dispatch(
         return Err("bytecode-candidate-rejected");
     }
 
-    let isa = super::jit_backend::target_isa("speed", true)
+    let isa = super::jit_backend::target_isa("speed")
         .ok_or("target-isa-unavailable")?;
     let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
     let name = UserFuncName::user(0x5155_454e, function_id);
@@ -1446,6 +1619,46 @@ pub(super) fn compile_js_general_dispatch(
             // accessor, and miss case resumes Vm::step at this exact PC.
             emit_js_step_fallback(
                 &mut builder,
+                context,
+                callout,
+                callout_signature,
+                result_pointer,
+                stopped_block,
+                continue_block,
+                pc,
+            );
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        if instruction.op() == Op::GetIndex
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && instruction.numeric_local_target().is_none()
+            && let Some(next) = next
+            && let Some(base_offset) = instruction
+                .operand_b()
+                .register_index()
+                .and_then(register_offset)
+            && js_tagged_operand_supported(program, instruction.operand_c(), &register_offset)
+            && let Some(destination_offset) = register_offset(instruction.result_register())
+        {
+            let key = read_js_tagged_operand(
+                &mut builder,
+                program,
+                instruction.operand_c(),
+                arguments,
+                &register_offset,
+            )
+            .expect("prevalidated tagged GetIndex key");
+            emit_js_dense_array_get(
+                &mut builder,
+                arguments,
+                payload,
+                base_offset,
+                key,
+                destination_offset,
+                next,
                 context,
                 callout,
                 callout_signature,
@@ -2466,23 +2679,54 @@ const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
 
+/// An opt-in JIT switch the environment sets ("1" or "true"), read once per process: a
+/// compiled call consults several, and reading the environment on each call cost more than
+/// the calls (HashSet-wasm `--jit`: `getenv` was 68% of the run's instructions).
+struct EnvSwitch {
+    name: &'static str,
+    enabled: std::sync::OnceLock<bool>,
+}
+
+impl EnvSwitch {
+    const fn new(name: &'static str) -> Self {
+        Self { name, enabled: std::sync::OnceLock::new() }
+    }
+
+    fn enabled(&self) -> bool {
+        *self.enabled.get_or_init(|| {
+            std::env::var(self.name).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+        })
+    }
+}
+
+static JIT_WASM_SELECTIVE: EnvSwitch = EnvSwitch::new(JIT_WASM_SELECTIVE_ENV);
+static JIT_DIRECT_COMPARE_BRANCHES: EnvSwitch = EnvSwitch::new(JIT_DIRECT_COMPARE_BRANCHES_ENV);
+static JIT_AFFINE_PAIR: EnvSwitch = EnvSwitch::new(JIT_AFFINE_PAIR_ENV);
+static JIT_REFERENCE_BODY_CACHE: EnvSwitch = EnvSwitch::new(JIT_REFERENCE_BODY_CACHE_ENV);
+static JIT_EMSCRIPTEN_MEMCPY_LEAF: EnvSwitch = EnvSwitch::new(JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV);
+static JIT_ROOT_ONLY: EnvSwitch = EnvSwitch::new(JIT_ROOT_ONLY_ENV);
+static JIT_ROOT_FIRST: EnvSwitch = EnvSwitch::new(JIT_ROOT_FIRST_ENV);
+
 fn jit_root_override() -> Result<Option<usize>, ()> {
     #[cfg(test)]
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return Ok(mode.root);
     }
-    let Some(root) = std::env::var_os(JIT_ROOT_ENV) else {
-        return Ok(None);
-    };
-    root.to_str()
-        .ok_or(())?
-        .parse::<usize>()
-        .map(Some)
-        .map_err(|_| ())
+    static ROOT: std::sync::OnceLock<Result<Option<usize>, ()>> = std::sync::OnceLock::new();
+    *ROOT.get_or_init(|| {
+        let Some(root) = std::env::var_os(JIT_ROOT_ENV) else {
+            return Ok(None);
+        };
+        root.to_str()
+            .ok_or(())?
+            .parse::<usize>()
+            .map(Some)
+            .map_err(|_| ())
+    })
 }
 
 fn jit_wasm_selective_enabled() -> bool {
-    std::env::var(JIT_WASM_SELECTIVE_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_WASM_SELECTIVE.enabled()
 }
 
 fn jit_direct_compare_branches_enabled() -> bool {
@@ -2491,24 +2735,21 @@ fn jit_direct_compare_branches_enabled() -> bool {
     {
         return enabled;
     }
-    std::env::var(JIT_DIRECT_COMPARE_BRANCHES_ENV)
-        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_DIRECT_COMPARE_BRANCHES.enabled()
 }
 
 /// Keep the screened affine pair loop opt-in; the benchmark harness can still
 /// run a same-binary, same-host comparison arm with it enabled.
 fn jit_affine_pair_enabled() -> bool {
-    std::env::var(JIT_AFFINE_PAIR_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_AFFINE_PAIR.enabled()
 }
 
 fn jit_reference_body_cache_enabled() -> bool {
-    std::env::var(JIT_REFERENCE_BODY_CACHE_ENV)
-        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_REFERENCE_BODY_CACHE.enabled()
 }
 
 fn jit_emscripten_memcpy_leaf_enabled() -> bool {
-    std::env::var(JIT_EMSCRIPTEN_MEMCPY_LEAF_ENV)
-        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_EMSCRIPTEN_MEMCPY_LEAF.enabled()
 }
 
 /// Run the guarded numeric hash-map loop by default. Set the environment
@@ -2526,7 +2767,7 @@ fn jit_wasm_root_only_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_only;
     }
-    std::env::var(JIT_ROOT_ONLY_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_ROOT_ONLY.enabled()
 }
 
 fn jit_wasm_root_first_enabled() -> bool {
@@ -2534,7 +2775,7 @@ fn jit_wasm_root_first_enabled() -> bool {
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return mode.root_first;
     }
-    std::env::var(JIT_ROOT_FIRST_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    JIT_ROOT_FIRST.enabled()
 }
 
 #[cfg(test)]
@@ -2551,6 +2792,33 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     static WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
         const { std::cell::Cell::new(None) };
+    static WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// Whether the eager artifact compiles functions holding `unreachable` (C asserts and aborts,
+/// which most Emscripten functions hold): the trap lowers to a return of the trap status. A test
+/// may reject them to keep such a function for the tier.
+fn eager_unreachable_admitted() -> bool {
+    #[cfg(test)]
+    if WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST.with(std::cell::Cell::get) {
+        return false;
+    }
+    true
+}
+
+#[cfg(test)]
+pub(super) fn with_eager_unreachable_rejected_for_test<R>(run: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST.with(|rejected| rejected.set(self.0));
+        }
+    }
+    let previous =
+        WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST.with(|rejected| rejected.replace(true));
+    let _restore = Restore(previous);
+    run()
 }
 
 #[cfg(test)]
@@ -4173,7 +4441,8 @@ impl Drop for CompiledProgram {
 }
 
 fn jit_diagnostics_enabled() -> bool {
-    std::env::var_os("QUENCH_WASM_JIT_STATS").is_some_and(|value| value == "1")
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("QUENCH_WASM_JIT_STATS").is_some_and(|value| value == "1"))
 }
 
 impl CompiledProgram {
@@ -4579,16 +4848,33 @@ impl CompiledOsrRegion {
     }
 }
 
+/// Analyze a loop candidate whose calls run inlined (`osr_loop::inline_region`), each
+/// callee from `resolve` of the cached field its function is read from.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn analyze_inlining_osr_region<'a>(
+    function: &Function,
+    decoded: &[WideInstruction],
+    constants: &[crate::value::Value],
+    sites: &[crate::bytecode::FieldSite],
+    live: &crate::compile::liveness::RegisterMasks,
+    header: u32,
+    backedge: u32,
+    resolve: &mut dyn FnMut(&[FieldUse]) -> Option<InlineCallee<'a>>,
+) -> Option<LoopRegion> {
+    osr_loop::inline_region(function, decoded, constants, sites, live, header, backedge, resolve)
+}
+
 /// Analyze a loop candidate through the shared region compiler's OSR mode.
 pub(super) fn analyze_osr_region(
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[crate::value::Value],
-    live: Option<&[crate::compile::liveness::RegisterSet]>,
+    sites: &[crate::bytecode::FieldSite],
+    live: Option<&crate::compile::liveness::RegisterMasks>,
     header: u32,
     backedge: u32,
 ) -> Result<LoopRegion, RegionRejection> {
-    osr_loop::region(function, decoded, constants, live, header, backedge)
+    osr_loop::region(function, decoded, constants, sites, live, header, backedge)
 }
 
 /// The Cranelift optimization level the loop tier compiles regions at under each memory
@@ -4610,19 +4896,20 @@ pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
     LOOP_TIER_OPT_LEVELS[policy as usize].is_some()
 }
 
-/// Whether the general-dispatch tier compiles whole functions under each memory policy
-/// (`MemoryPolicy` order). Its functions are the largest the JavaScript tiers compile, and
-/// regalloc2's state for one set memory-first's peak, as a loop region's did
-/// (`LOOP_TIER_OPT_LEVELS`): V8-v7 Crypto `--jit` peaked at the end of its run while one
-/// compiled (static BOLT x86_64, memory-first: 3220 -> 5496 KiB median once the tier
-/// landed, 2026-10-24). Memory-first compiles none, on the owner's direction that it may
-/// trade Score for memory under `--jit` (TOD-123).
-const GENERAL_DISPATCH_TIER: [bool; crate::MemoryPolicy::ALL.len()] = [true, false];
+/// Whether the JavaScript function tiers (the per-function tier and the general-dispatch
+/// tier, and the loop tier's site analysis) compile under each memory policy (`MemoryPolicy`
+/// order). Memory-first compiles
+/// none, on the owner's direction that it may trade Score for memory under `--jit` (TOD-123).
+/// Under memory-first their code and regalloc2 state set the `--jit` peaks: the general-dispatch
+/// tier took V8-v7 Crypto `--jit` from 3220 to 5496 KiB (median, bolted static x86_64). With
+/// both off, every V8-v7 `--jit` row peaked 84-380 KiB lower, at its no-JIT level. Scores moved
+/// both ways: EarleyBoyer +125%, Splay +15%, RayTrace +11%, NavierStokes +8%, but DeltaBlue -9%,
+/// Richards -7%, RegExp -7% (same unbolted static binary, 5 runs, 2026-10-24).
+const JS_FUNCTION_TIERS: [bool; crate::MemoryPolicy::ALL.len()] = [true, false];
 
-/// Whether the general-dispatch tier compiles functions under `policy`
-/// (`GENERAL_DISPATCH_TIER`).
-pub(super) fn general_dispatch_compiles(policy: crate::MemoryPolicy) -> bool {
-    GENERAL_DISPATCH_TIER[policy as usize]
+/// Whether the JavaScript function tiers compile under `policy` (`JS_FUNCTION_TIERS`).
+pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
+    JS_FUNCTION_TIERS[policy as usize]
 }
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
@@ -4633,7 +4920,7 @@ pub(super) fn compile_osr_region(
     policy: crate::MemoryPolicy,
     track_backedges: bool,
 ) -> Option<CompiledOsrRegion> {
-    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?, false)?;
+    let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?)?;
     let (function, widenings) = osr_loop::lower(
         region,
         observation,
@@ -4844,6 +5131,9 @@ struct JsStepDispatch {
     local_count: usize,
     native_pcs: *const u8,
     native_pc_count: usize,
+    /// Stable base of this VM's direct-array record reservation. The field is
+    /// refreshed after VM callouts because the reservation may be lazy.
+    array_record_base: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -5084,6 +5374,23 @@ unsafe extern "C" fn js_step_callout<H: Host>(
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
+            let direct_call_target = if vm.programs.js_jit_diagnostics_enabled()
+                && matches!(current_instruction.op(), Op::Call | Op::CallArray)
+            {
+                vm.frames[dispatch.frame]
+                    .registers
+                    .get(usize::from(current_instruction.register_b()))
+                    .copied()
+                    .and_then(|callee| vm.heap.function(callee))
+                    .and_then(|record| match &record.kind {
+                        crate::heap::FunctionKind::User(program, function) => {
+                            Some((program.raw(), *function))
+                        }
+                        _ => None,
+                    })
+            } else {
+                None
+            };
             let step = if dispatch.allow_inline_calls
                 && matches!(current_instruction.op(), Op::Call | Op::CallArray)
             {
@@ -5136,6 +5443,43 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     dispatch.allow_inline_calls,
                 )
             };
+            if matches!(current_instruction.op(), Op::Call | Op::CallArray)
+                && vm.programs.js_jit_diagnostics_enabled()
+            {
+                let outcome = match &step {
+                    Ok(super::StepResult::Continue) => {
+                        super::program_store::JsJitCallOutcome::Continue
+                    }
+                    Ok(super::StepResult::TailCall) => {
+                        super::program_store::JsJitCallOutcome::TailCall
+                    }
+                    Ok(super::StepResult::PushFrame { .. }) => {
+                        super::program_store::JsJitCallOutcome::PushFrame
+                    }
+                    Ok(super::StepResult::Return(_)) => {
+                        super::program_store::JsJitCallOutcome::Return
+                    }
+                    Ok(super::StepResult::Await { .. }) => {
+                        super::program_store::JsJitCallOutcome::Await
+                    }
+                    Ok(super::StepResult::Yield { .. }) => {
+                        super::program_store::JsJitCallOutcome::Yield
+                    }
+                    Err(_) => super::program_store::JsJitCallOutcome::Error,
+                };
+                vm.programs.record_js_jit_call_site(
+                    dispatch.program_id,
+                    frame_function,
+                    current_pc,
+                    current_instruction.op(),
+                    direct_call_target,
+                    outcome,
+                );
+            }
+            dispatch.array_record_base = vm
+                .heap
+                .array_record_base()
+                .map_or(0, |base| base as usize);
             match step {
                 Ok(super::StepResult::Continue) => {
                     if next >= body.code.len() {
@@ -6824,7 +7168,11 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
-            Op::WasmUnreachable if self.experimental_root_compilation => Some(()),
+            Op::WasmUnreachable
+                if self.experimental_root_compilation || eager_unreachable_admitted() =>
+            {
+                Some(())
+            }
             Op::Return => match result {
                 Some(ty) => (value(state, instruction.a())? == Kind::of(ty)?).then_some(()),
                 None => Some(()),
@@ -6982,7 +7330,11 @@ fn internal_signature(
 }
 
 /// Instructions a threaded copy may repeat between a constant's jump and the
-/// branch table the constant decides; bounds the code each copy adds.
+/// branch table the constant decides; bounds the code each copy adds. A
+/// dispatch copy repeats its table too, which counts as its edges: TSF's
+/// 290-way state table, copied at each of its 503 jumps, compiled one
+/// function to 10.6 MB of edge moves (3.5 s, 220 MiB peak); charged by its
+/// edges it compiles in 0.1 s.
 const THREAD_BUDGET: usize = 16;
 
 /// Where a threaded copy continues once its path is done.
@@ -7325,6 +7677,11 @@ fn dispatch_path(instructions: &[WideInstruction], plan: &Plan, start: usize) ->
             ControlFlowLayout::Fallthrough => pc + 1,
             ControlFlowLayout::Jump => instruction.jump_target() as usize,
             ControlFlowLayout::BranchTable => {
+                // The copy repeats every edge of the table, each a jump with its own moves.
+                let edges = crate::bytecode::branch_table_entries(pc, instruction).count();
+                if path.len() - 1 + edges > THREAD_BUDGET {
+                    return None;
+                }
                 return Some(Thread {
                     selector: instruction.a(),
                     value: 0,
@@ -10066,10 +10423,13 @@ impl<H: Host> Vm<H> {
         native_poll_page(&self.execution_interrupt)
     }
 
-    /// Whether the per-function JavaScript tier runs: compiled execution, in a build whose
-    /// profiles do not count interpreted work exactly.
+    /// Whether the JavaScript function tiers run: compiled execution under a memory policy
+    /// that compiles them (`JS_FUNCTION_TIERS`), in a build whose profiles do not count
+    /// interpreted work exactly.
     pub(super) fn js_tier_runs(&self) -> bool {
-        !cfg!(quench_profiled) && self.execution_mode == ExecutionMode::Compiled
+        !cfg!(quench_profiled)
+            && self.execution_mode == ExecutionMode::Compiled
+            && js_function_tiers_compile(self.memory_policy())
     }
 
     /// Keep usable legacy specialized candidates first. If that tier rejects a
@@ -10094,7 +10454,23 @@ impl<H: Host> Vm<H> {
         // Keep bounded candidates on a frame entry until the shared tier has
         // settled. Lane target caches otherwise preserve a frameless route
         // across the later promotion and no longer consult tiering.
-        facts.candidate || facts.general
+        facts.candidate || self.js_general_tier_takes(program, function, &facts)
+    }
+
+    /// Whether the general baseline may take `function`: a general candidate the tier admits
+    /// (`ProgramStore::general_tier_admits`). Every general-tier path on entry asks this
+    /// first, so a function it may not take costs those paths nothing.
+    fn js_general_tier_takes(
+        &self,
+        program: &ResidualProgram,
+        function: u32,
+        facts: &super::js_compiled::JsEntryFacts,
+    ) -> bool {
+        facts.general
+            && program.function_get(function as usize).is_some_and(|body| {
+                self.programs
+                    .general_tier_admits(body.code.len(), facts.general_acyclic, self.memory_policy())
+            })
     }
 
     /// Whether the general tier holds `function`: pending, due or compiled.
@@ -10133,7 +10509,10 @@ impl<H: Host> Vm<H> {
         facts: &super::js_compiled::JsEntryFacts,
         frame: Option<usize>,
     ) -> (bool, bool) {
-        let Some(body) = program.function_get(function as usize).filter(|_| facts.general) else {
+        let Some(body) = program
+            .function_get(function as usize)
+            .filter(|_| self.js_general_tier_takes(program, function, facts))
+        else {
             if let Some(frame) = frame {
                 self.frames[frame].js_general_dispatch_work_tracking = false;
             }
@@ -10213,6 +10592,7 @@ impl<H: Host> Vm<H> {
             parameters: parameters.iter().copied().collect(),
             captures: TierCaptures::Environment(env),
             allocates: false,
+            facts: self.programs.js_entry_facts(id, function)?,
         };
         let mut specialized_guard_miss = false;
         let entered = self.js_jit_at_entry(program, &entry, &mut specialized_guard_miss);
@@ -10226,8 +10606,8 @@ impl<H: Host> Vm<H> {
                     function,
                     instructions,
                 );
-            } else if let Some(facts) = self.programs.js_entry_facts(id, function) {
-                self.js_tier_note_general_entry(program, id, function, &facts, None);
+            } else {
+                self.js_tier_note_general_entry(program, id, function, &entry.facts, None);
             }
             self.programs.record_js_jit_fallback_entry(id, function);
         }
@@ -10280,12 +10660,13 @@ impl<H: Host> Vm<H> {
         let Some(facts) = self
             .programs
             .js_entry_facts(program_id, function)
-            .filter(|facts| facts.enters || facts.general || self.programs.js_jit_diagnostics_enabled())
+            .filter(|facts| facts.enters || self.programs.js_jit_diagnostics_enabled() || self.js_general_tier_takes(program, function, facts))
         else {
             return JsTierFrameEntry::Interpreter;
         };
+        let general = self.js_general_tier_takes(program, function, &facts);
         if allow_inline_calls
-            && facts.general
+            && general
             && let Some(outcome) = self.js_jit_general_dispatch_at_entry(
                 program, frame, 0, true, false,
             )
@@ -10304,6 +10685,7 @@ impl<H: Host> Vm<H> {
                 parameters: record.registers.iter().copied().take(usize::from(params)).collect(),
                 captures: TierCaptures::Frame(frame),
                 allocates: true,
+                facts: Rc::clone(&facts),
             })
         });
         let (general_candidate, mut promote_general) =
@@ -10359,6 +10741,7 @@ impl<H: Host> Vm<H> {
         promote: bool,
     ) -> Option<JsNativeDispatchResult> {
         if !self.js_tier_runs()
+            || !self.programs.js_jit_general_dispatch_enabled()
             || program.kind == crate::bytecode::ProgramKind::Wasm
             || start_pc >= program.function_get(self.frames.get(frame)?.function as usize)?.code.len()
         {
@@ -10406,7 +10789,7 @@ impl<H: Host> Vm<H> {
                     .programs
                     .install_js_tier(program_id, function_id, compiled.clone(), false);
                 if let Some(compile_started) = compile_started {
-                    self.programs.record_js_jit_compile(
+                    self.programs.record_js_jit_general_compile(
                         program_id,
                         function_id,
                         u64::try_from(compile_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
@@ -10435,6 +10818,10 @@ impl<H: Host> Vm<H> {
             local_count: 0,
             native_pcs: std::ptr::null(),
             native_pc_count: 0,
+            array_record_base: self
+                .heap
+                .array_record_base()
+                .map_or(0, |base| base as usize),
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]
@@ -10610,7 +10997,7 @@ impl<H: Host> Vm<H> {
         }
         let (program_id, function_id) = (entry.program, entry.function);
         let function = program.function_get(function_id as usize)?;
-        let facts = self.programs.js_entry_facts(program_id, function_id)?;
+        let facts = &*entry.facts;
         // Most entries are of functions no entry path can claim; diagnostics still count them.
         if !facts.enters && !self.programs.js_jit_diagnostics_enabled() {
             return None;
@@ -11009,6 +11396,8 @@ impl<H: Host> Vm<H> {
             Some(super::program_store::JsTierState::Hot { .. })
             | Some(super::program_store::JsTierState::PromotionPending)
             | None => {
+                let general_candidate =
+                    self.js_general_tier_takes(program, function_id, facts);
                 if !self.programs.note_js_function_entry(
                     program_id,
                     function_id,
@@ -11023,7 +11412,7 @@ impl<H: Host> Vm<H> {
                         || (!capture_arguments.is_empty() && captures_numeric)
                         || string_hash_units.is_some()
                         || string_transform_units.is_some(),
-                    facts.general_acyclic,
+                    general_candidate,
                 ) || (!numeric
                     && !(field_reject_candidate && arguments.len() == 1)
                     && string_hash_units.is_none()
@@ -11566,7 +11955,7 @@ impl<H: Host> Vm<H> {
         if diagnostics_enabled {
             eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
         }
-        let isa = super::jit_backend::target_isa(opt_level, false)?;
+        let isa = super::jit_backend::target_isa(opt_level)?;
         // The full plan of a callable function, derived again where needed.
         let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
         let mut reference_site_ids = vec![Vec::new(); count];
@@ -12050,6 +12439,7 @@ impl<H: Host> Vm<H> {
                         function.code.len() <= MAX_JIT_TIER_BYTECODES_PER_FUNCTION
                     })
             })
+            && self.programs.wasm_tier_has_room()
             && self.programs.note_wasm_tier_entry(program, id)
         {
             let tier = self
@@ -12747,6 +13137,8 @@ pub(super) struct TierEntry {
     captures: TierCaptures,
     /// Whether a native result may allocate: not in a lane activation, where nothing collects.
     allocates: bool,
+    /// The function's entry facts, looked up once per entry (`ProgramStore::js_entry_facts`).
+    facts: Rc<super::js_compiled::JsEntryFacts>,
 }
 
 /// Where an entry's captures are read.
