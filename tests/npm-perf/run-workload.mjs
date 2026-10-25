@@ -14,9 +14,11 @@ const phase = process.argv[3] ?? "no-jit";
 const runs = Number(process.argv[4] ?? 1);
 const outputPath = process.argv[5];
 const workload = path.resolve(root, "workloads", `${workloadName}.cjs`);
+const linuxRssSampleIntervalMs = Number(process.env.QUENCH_NPM_PERF_RSS_SAMPLE_MS ?? 5);
 
 if (!workloadName || !["no-jit", "jit"].includes(phase) ||
-  !Number.isSafeInteger(runs) || runs < 1 || !fs.existsSync(workload)) {
+  !Number.isSafeInteger(runs) || runs < 1 || !fs.existsSync(workload) ||
+  !Number.isFinite(linuxRssSampleIntervalMs) || linuxRssSampleIntervalMs <= 0) {
   console.error(
     "usage: node run-workload.mjs WORKLOAD no-jit|jit RUNS [REPORT.json]",
   );
@@ -45,8 +47,6 @@ function rssCommand(binary, args) {
 }
 
 function parseRss(stderr) {
-  const linux = stderr.match(/__QUENCH_MAX_RSS_KB=(\d+)/);
-  if (linux) return Number(linux[1]) * 1024;
   const mac = stderr.match(/([\d,]+)\s+maximum resident set size/);
   if (mac) return Number(mac[1].replaceAll(",", ""));
   throw new Error("timing tool did not report maximum resident set size");
@@ -83,35 +83,34 @@ function engineSpecs() {
   return specs;
 }
 
-function linuxProcessTreeRssBytes(rootPid) {
-  const childrenByParent = new Map();
-  const rssByPid = new Map();
-  for (const entry of fs.readdirSync("/proc")) {
-    if (!/^\d+$/.test(entry)) continue;
-    try {
-      const status = fs.readFileSync(`/proc/${entry}/status`, "utf8");
-      const parent = Number(status.match(/^PPid:\s+(\d+)$/m)?.[1]);
-      const resident = Number(status.match(/^VmRSS:\s+(\d+)\s+kB$/m)?.[1] ?? 0) * 1024;
-      rssByPid.set(Number(entry), resident);
-      const children = childrenByParent.get(parent) ?? [];
-      children.push(Number(entry));
-      childrenByParent.set(parent, children);
-    } catch {
-      // A process can exit between reading the proc directory and its status.
-    }
-  }
-
+function linuxProcessTreeSnapshot(rootPid) {
   let total = 0;
+  let rootHighWaterRssBytes = 0;
   const pending = [rootPid];
   const visited = new Set();
+  const descendants = [];
   while (pending.length) {
     const pid = pending.pop();
     if (visited.has(pid)) continue;
     visited.add(pid);
-    total += rssByPid.get(pid) ?? 0;
-    pending.push(...(childrenByParent.get(pid) ?? []));
+    try {
+      const status = fs.readFileSync(`/proc/${pid}/status`, "utf8");
+      const resident = Number(status.match(/^VmRSS:\s+(\d+)\s+kB$/m)?.[1] ?? 0) * 1024;
+      const highWater = Number(status.match(/^VmHWM:\s+(\d+)\s+kB$/m)?.[1] ?? 0) * 1024;
+      total += resident;
+      if (pid === rootPid) rootHighWaterRssBytes = highWater;
+      if (pid !== rootPid) descendants.push({ pid, highWaterRssBytes: highWater });
+      const children = fs.readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(Number);
+      pending.push(...children);
+    } catch {
+      // A process can exit between reading its status and its children list.
+    }
   }
-  return total;
+  return { rssBytes: total, rootHighWaterRssBytes, descendants };
 }
 
 async function runLinuxChild(spec, env) {
@@ -119,10 +118,24 @@ async function runLinuxChild(spec, env) {
   let stdout = "";
   let stderr = "";
   let maxRssBytes = 0;
+  let maxProcessRssBytes = 0;
+  const descendantSamples = new Map();
   child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
   child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
-  const sample = () => { maxRssBytes = Math.max(maxRssBytes, linuxProcessTreeRssBytes(child.pid)); };
-  const sampler = setInterval(sample, 50);
+  const sample = () => {
+    const tree = linuxProcessTreeSnapshot(child.pid);
+    // VmHWM is maintained by the kernel; the short interval gives us a chance
+    // to read it before a fast workload exits. Descendant RSS remains sampled.
+    maxProcessRssBytes = Math.max(maxProcessRssBytes, tree.rootHighWaterRssBytes ?? 0);
+    maxRssBytes = Math.max(maxRssBytes, tree.rssBytes);
+    for (const { pid, highWaterRssBytes } of tree.descendants) {
+      const observed = descendantSamples.get(pid) ?? { samples: 0, highWaterRssBytes: 0 };
+      observed.samples += 1;
+      observed.highWaterRssBytes = Math.max(observed.highWaterRssBytes, highWaterRssBytes);
+      descendantSamples.set(pid, observed);
+    }
+  };
+  const sampler = setInterval(sample, linuxRssSampleIntervalMs);
   sample();
   const timeout = setTimeout(() => child.kill("SIGKILL"), 300_000);
   const result = await new Promise((resolve, reject) => {
@@ -132,7 +145,20 @@ async function runLinuxChild(spec, env) {
   sample();
   clearInterval(sampler);
   clearTimeout(timeout);
-  return { ...result, stdout, stderr, maxRssBytes };
+  return {
+    ...result,
+    stdout,
+    stderr,
+    maxRssBytes,
+    maxProcessRssBytes,
+    descendantProcessCount: descendantSamples.size,
+    maxObservedDescendantSamples: Math.max(
+      0,
+      ...[...descendantSamples.values()].map(({ samples }) => samples),
+    ),
+    observedProcessTreeHwmSumBytes: maxProcessRssBytes + [...descendantSamples.values()]
+      .reduce((total, { highWaterRssBytes }) => total + highWaterRssBytes, 0),
+  };
 }
 
 async function runOne(spec, round) {
@@ -179,6 +205,14 @@ async function runOne(spec, round) {
     round,
     measurement,
     maxRssBytes: timed ? parseRss(result.stderr) : result.maxRssBytes,
+    ...(result.maxProcessRssBytes === undefined ? {} : {
+      maxProcessRssBytes: result.maxProcessRssBytes,
+    }),
+    ...(result.descendantProcessCount === undefined ? {} : {
+      descendantProcessCount: result.descendantProcessCount,
+      maxObservedDescendantSamples: result.maxObservedDescendantSamples,
+      observedProcessTreeHwmSumBytes: result.observedProcessTreeHwmSumBytes,
+    }),
     wallTimeMs,
     stderr: result.stderr.replace(/__QUENCH_MAX_RSS_KB=\d+\n?/g, "").trim(),
     command: [spec.binary, ...spec.args],
@@ -203,6 +237,7 @@ async function runOne(spec, round) {
         "QUENCH_GC_ALLOCATION_CAP_DEN",
         "QUENCH_GC_MIN_ALLOCATION_CAP",
         "QUENCH_NPM_PERF_SKIP_NODE_NO_JIT",
+        "QUENCH_NPM_PERF_RSS_SAMPLE_MS",
       ].flatMap((name) => env[name] === undefined ? [] : [[name, env[name]]])),
     },
   };
@@ -232,6 +267,23 @@ const summaries = Object.fromEntries(specs.map(({ name }) => {
     medianOperationsPerSecond: median(rows.map(({ measurement }) => measurement.operationsPerSecond)),
     medianElapsedMs: median(rows.map(({ measurement }) => measurement.elapsedMs)),
     medianMaximumRssBytes: median(rows.map(({ maxRssBytes }) => maxRssBytes)),
+    ...(rows.some(({ maxProcessRssBytes }) => maxProcessRssBytes !== undefined) ? {
+      medianMaximumProcessRssBytes: median(
+        rows.map(({ maxProcessRssBytes }) => maxProcessRssBytes),
+      ),
+    } : {}),
+    ...(rows.some(({ descendantProcessCount }) => descendantProcessCount !== undefined) ? {
+      medianObservedDescendantProcessCount: median(
+        rows.map(({ descendantProcessCount }) => descendantProcessCount),
+      ),
+      maximumObservedDescendantSamples: Math.max(
+        0,
+        ...rows.map(({ maxObservedDescendantSamples }) => maxObservedDescendantSamples),
+      ),
+      medianObservedProcessTreeHwmSumBytes: median(
+        rows.map(({ observedProcessTreeHwmSumBytes }) => observedProcessTreeHwmSumBytes),
+      ),
+    } : {}),
   }];
 }));
 const source = fs.readFileSync(workload);
@@ -249,7 +301,7 @@ const report = {
   } : {}),
   host: { platform: process.platform, arch: process.arch, cpus: os.cpus().length },
   rssMeasurement: process.platform === "linux"
-    ? "sampled process-tree sum of /proc/<pid>/status VmRSS every 50 ms (diagnostic only; can miss short-lived children and counts shared pages per process)"
+    ? `kernel VmHWM for the engine process sampled every ${linuxRssSampleIntervalMs} ms plus descendant RSS sampling and a sum of VmHWM for observed descendant PIDs (may miss short-lived children and counts shared pages per process; not qualification-ready)`
     : "maximum RSS from /usr/bin/time -l",
   inputs: {
     workloadSha256: crypto.createHash("sha256").update(source).digest("hex"),

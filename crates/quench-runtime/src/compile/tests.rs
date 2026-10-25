@@ -296,3 +296,31 @@ fn completion_capturing_host_scripts_keep_script_declarations() {
     assert_eq!(eval.kind, crate::bytecode::ProgramKind::Eval);
     assert!(eval.root_variables_are_local());
 }
+
+#[test]
+fn parenthesized_function_expressions_keep_their_records() {
+    // A bundle's module functions and a UMD factory are marked as about to run by
+    // parentheses; the load keeps their records instead of releasing them to a replay.
+    let source = "var modules = { a: (function marked(exports) { return exports; }) };\n\
+                  (function (global, factory) { factory(global); })(this, (function factory(exports) {}));\n\
+                  var later = function released() { return 1; };\n\
+                  function declared() { return 2; }";
+    let program = Engine::specialize(source, "parenthesized-functions.js").unwrap();
+    let kept = |name: &str| {
+        program
+            .functions
+            .iter()
+            .find(|slot| {
+                slot.header()
+                    .name
+                    .is_some_and(|atom| program.atoms[atom as usize] == *name)
+            })
+            .unwrap_or_else(|| panic!("{name} is compiled"))
+            .record()
+            .is_some()
+    };
+    assert!(kept("marked"));
+    assert!(kept("factory"));
+    assert!(!kept("released"));
+    assert!(!kept("declared"));
+}

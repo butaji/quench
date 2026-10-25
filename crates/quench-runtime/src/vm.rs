@@ -101,6 +101,7 @@ mod bigint;
 mod boolean;
 mod builtins;
 mod call_arguments;
+mod call_printer;
 mod coercion;
 mod collections;
 mod construction;

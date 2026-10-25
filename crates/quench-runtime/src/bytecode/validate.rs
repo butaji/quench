@@ -531,6 +531,11 @@ impl ResidualProgram {
             if function.registers > REGISTER_MASK {
                 return Err(format!("function {index} has too many registers"));
             }
+            // A call plan decides how an activation is laid out, so a seeded one is the
+            // function's own derivation, as is every other fact an encoding keeps.
+            if !function.derived_facts_hold(self) {
+                return Err(format!("function {index} carries facts its code does not derive"));
+            }
             // A lane lets the callee of a dead result skip building it, so each claim is the
             // compiler's own derivation (`liveness::register_roots`).
             if !function.register_roots.dead_call_results().is_empty()
