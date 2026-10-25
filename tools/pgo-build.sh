@@ -135,7 +135,11 @@ if (( react_training_rounds > 0 )); then
 fi
 unset LLVM_PROFILE_FILE
 
-"$llvm_profdata" merge -o "$profdata" "$data_dir"/*.profraw
+# A training process the per-program wall limit kills writes a truncated profile, and one
+# whose counters overflow writes a "too much profile data" one; both are still merged. The
+# default failure mode rejects the run when the last of them is truncated, so ask for
+# warnings instead of an abort and let a genuinely empty corpus fail below.
+"$llvm_profdata" merge --failure-mode=warn -o "$profdata" "$data_dir"/*.profraw
 rm -rf "$data_dir"
 # Indirect call promotion turns a profiled indirect call into a guarded direct call and may
 # inline the callee there. The lane's dispatches are indirect tail calls between handlers;
