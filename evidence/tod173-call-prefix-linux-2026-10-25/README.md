@@ -82,9 +82,10 @@ Five rounds, 50,000 operations per round, 5,000 warmups; Node 24.19.0 and Bun
 Quench loses throughput in all four rows. In the JIT rows it is about 11.6x
 and 18.4x slower on Zod, and 8.1x and 11.2x slower on Pino, against Node and
 Bun respectively. Some sampled RSS values are lower, but that does not offset
-the speed failures or qualify the Linux samples. The original gate remains at
-least 20% higher throughput and at least 20% lower maximum RSS than both peers
-for all ten packages in both modes. Zero package/mode rows are qualified.
+the speed failures or qualify the Linux samples. The gate remains at least
+`1.20x` the fastest peer's throughput and at most `0.80x` the lowest peer's
+maximum RSS for all ten packages in both modes. Zero package/mode rows are
+qualified.
 
 Raw five-round reports and one-round JIT attribution reports are in
 [`tests/npm-perf/reports/call-prefix-2026-10-25/`](../../tests/npm-perf/reports/call-prefix-2026-10-25/).
