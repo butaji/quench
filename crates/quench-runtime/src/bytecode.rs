@@ -2315,16 +2315,18 @@ impl Function {
 
     /// Whether the body reaches its `arguments` binding only by reading its length or an
     /// element (`ArgumentsLength`, `ArgumentGet`), with no closure capturing the binding, so
-    /// the values passed answer every read: the object is unmapped, mapped onto no
-    /// parameters, or mapped without a write that could observe it (`unaliased_arguments`).
-    /// An environment activation then keeps those values after its locals.
+    /// the values passed and the parameters answer every read: an element a parameter
+    /// aliases (`arguments_alias_parameters`) is that parameter's local, which no closure
+    /// captures, and any other the value passed. An environment activation then keeps those
+    /// values after its locals.
     pub(crate) fn reads_passed_arguments_only(&self) -> bool {
         let Some(slot) = self.arguments_slot else {
             return false;
         };
         !self.is_generator
             && !self.is_async
-            && !(self.arguments_alias_parameters() && self.params != 0)
+            && (!self.arguments_alias_parameters()
+                || (0..usize::from(self.params)).all(|parameter| !self.local_slot_uses_environment(parameter)))
             && !self.local_slot_uses_environment(usize::from(slot))
             && !self.has_dynamic_scope_access()
             && self.instructions().all(|instruction| {
