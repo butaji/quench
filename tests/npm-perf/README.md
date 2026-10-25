@@ -115,7 +115,9 @@ short-lived descendants and counts shared pages once per process, so process-
 tree RSS remains diagnostic and cannot qualify the memory gate yet. macOS
 qualification reads process maximum RSS from `/usr/bin/time -l`. Set
 `QUENCH_NODE_BIN`, `NODE_BIN` and `BUN_BIN` when the binaries are outside their
-defaults.
+defaults. A one-round report-generation smoke with separate process and tree
+RSS fields is in
+[`reports/rss-hwm-smoke-2026-10-25/`](reports/rss-hwm-smoke-2026-10-25/).
 
 After each package's no-JIT win is established, run the JIT-enabled phase:
 
