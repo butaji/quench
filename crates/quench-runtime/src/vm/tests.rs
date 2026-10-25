@@ -11963,6 +11963,45 @@ fn shared_osr_reports_zod_like_load_env_local_rejection_by_site() {
 }
 
 #[test]
+fn lane_define_property_record_matches_interpreter_across_gc_and_throw() {
+    let source = r#"
+      const marker = {};
+      function readThroughGetter(value) {
+        const record = {
+          get value() {
+            if ((value & 63) === 0) $262.gc();
+            if (value === 5050) throw marker;
+            return value;
+          }
+        };
+        return record.value;
+      }
+      let total = 0;
+      let caught = false;
+      for (let value = 0; value < 6000; value++) {
+        try { total += readThroughGetter(value); }
+        catch (error) { caught = error === marker; }
+      }
+      print(total + " " + caught);
+    "#;
+    let program = Engine::specialize(source, "lane-define-property-record.js").unwrap();
+
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone()).with_test262())
+        .execute(&program)
+        .unwrap();
+
+    let compiled_output = Rc::new(RefCell::new(Vec::new()));
+    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()).with_test262());
+    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+    assert_eq!(compiled_output.borrow().as_slice(), ["17991950 true"]);
+}
+
+#[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
     // Five distinct loops call a polymorphic callback. Each reaches the OSR threshold, but
