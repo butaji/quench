@@ -63,7 +63,11 @@ struct JsJitCallSiteCounters {
     alternate_target_calls: u64,
     other_target_calls: u64,
     outcomes: [u64; JsJitCallOutcome::COUNT],
+    sampled_calls: u64,
+    sampled_call_ns: [u64; JsJitCallOutcome::COUNT],
 }
+
+const JS_JIT_CALL_DIAGNOSTIC_SAMPLE_INTERVAL: u64 = 256;
 
 /// A bounded VM-local entry for GeneralDispatch code shared by equivalent
 /// dynamic functions. Idle artifacts remain available for later dynamic-code
@@ -2517,6 +2521,7 @@ impl ProgramStore {
         opcode: crate::bytecode::Op,
         direct_target: Option<(u32, u32)>,
         outcome: JsJitCallOutcome,
+        sampled_call_ns: Option<u64>,
     ) {
         let Some(counters) = self
             .js_jit_diagnostics
@@ -2567,6 +2572,41 @@ impl ProgramStore {
         }
         let outcome_count = &mut site.outcomes[outcome as usize];
         *outcome_count = outcome_count.saturating_add(1);
+        if let Some(elapsed_ns) = sampled_call_ns {
+            site.sampled_calls = site.sampled_calls.saturating_add(1);
+            let outcome_elapsed = &mut site.sampled_call_ns[outcome as usize];
+            *outcome_elapsed = outcome_elapsed.saturating_add(elapsed_ns);
+        }
+    }
+
+    /// Sample the first call and then one in each interval at a static call site.
+    /// The attempt count is advanced by `record_js_jit_call_site` after the call.
+    pub(super) fn should_sample_js_jit_call_site(
+        &self,
+        id: ProgramId,
+        function: u32,
+        pc: usize,
+        opcode: crate::bytecode::Op,
+    ) -> bool {
+        let Some(counters) = self
+            .js_jit_diagnostics
+            .as_ref()
+            .and_then(|diagnostics| diagnostics.get(&(id.raw(), function)))
+        else {
+            return false;
+        };
+        let Ok(pc) = u32::try_from(pc) else {
+            return false;
+        };
+        let key = (pc, opcode as u16);
+        let attempts = match counters
+            .call_sites
+            .binary_search_by_key(&key, |site| (site.pc, site.opcode))
+        {
+            Ok(index) => counters.call_sites[index].attempts,
+            Err(_) => 0,
+        };
+        attempts % JS_JIT_CALL_DIAGNOSTIC_SAMPLE_INTERVAL == 0
     }
 
     #[cfg(all(test, not(quench_profiled)))]
@@ -2583,6 +2623,8 @@ impl ProgramStore {
         u64,
         u64,
         u64,
+        u64,
+        [u64; JsJitCallOutcome::COUNT],
     )>> {
         self.js_jit_diagnostics
             .as_ref()?
@@ -2601,6 +2643,8 @@ impl ProgramStore {
                             site.direct_target_calls,
                             site.alternate_target_calls,
                             site.other_target_calls,
+                            site.sampled_calls,
+                            site.sampled_call_ns,
                         )
                     })
                     .collect()
@@ -3196,11 +3240,23 @@ impl Drop for ProgramStore {
                 }
                 let _ = write!(
                     stderr,
-                    ",\"direct_target_calls\":{},\"alternate_target_calls\":{},\"other_target_calls\":{},\"outcomes\":{{",
+                    ",\"direct_target_calls\":{},\"alternate_target_calls\":{},\"other_target_calls\":{},\"sampled_calls\":{},\"sampled_call_ns_by_outcome\":{{",
                     site.direct_target_calls,
                     site.alternate_target_calls,
                     site.other_target_calls,
+                    site.sampled_calls,
                 );
+                for (sample_index, (outcome, elapsed_ns)) in JsJitCallOutcome::ALL
+                    .into_iter()
+                    .zip(site.sampled_call_ns)
+                    .enumerate()
+                {
+                    if sample_index != 0 {
+                        let _ = write!(stderr, ",");
+                    }
+                    let _ = write!(stderr, "\"{}\":{}", outcome.name(), elapsed_ns);
+                }
+                let _ = write!(stderr, "}},\"outcomes\":{{");
                 for (outcome_index, (outcome, count)) in JsJitCallOutcome::ALL
                     .into_iter()
                     .zip(site.outcomes)

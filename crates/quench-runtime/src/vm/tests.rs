@@ -14625,7 +14625,7 @@ fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
         .programs
         .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, caller)
         .expect("diagnostics should track call sites for the compiled caller");
-    assert!(call_sites.iter().any(|(_, opcode, attempts, outcomes, direct_target, target_calls, _, _)| {
+    assert!(call_sites.iter().any(|(_, opcode, attempts, outcomes, direct_target, target_calls, ..)| {
         *opcode == crate::bytecode::Op::CallArray as u16
             && *attempts > 0
             && *direct_target == Some((super::program_store::ProgramId::MAIN.raw(), callee))
@@ -14636,10 +14636,13 @@ fn js_jit_general_dispatch_call_continuations_preserve_throw_and_gc_roots() {
         .programs
         .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, callee)
         .expect("diagnostics should track call sites for the compiled callee");
-    assert!(callee_call_sites.iter().any(|(_, opcode, attempts, outcomes, _, _, _, _)| {
+    assert!(callee_call_sites.iter().any(|(_, opcode, attempts, outcomes, _, _, _, _, sampled_calls, sampled_ns)| {
         *opcode == crate::bytecode::Op::Call as u16
             && *attempts > 0
             && outcomes[super::program_store::JsJitCallOutcome::Continue as usize] > 0
+            && *sampled_calls > 0
+            && *sampled_calls < *attempts
+            && sampled_ns[super::program_store::JsJitCallOutcome::Continue as usize] > 0
     }));
 }
 
@@ -14712,7 +14715,7 @@ fn js_jit_calls_compiled_numeric_callees_with_materialized_array_arguments() {
         .js_jit_call_site_counts(super::program_store::ProgramId::MAIN, drive)
         .expect("the compiled caller should have call-site diagnostics");
     assert!(call_sites.iter().any(
-        |(_, opcode, attempts, outcomes, target, target_calls, _, _)| {
+        |(_, opcode, attempts, outcomes, target, target_calls, ..)| {
             *opcode == crate::bytecode::Op::CallArray as u16
                 && *attempts > 0
                 && *target == Some((super::program_store::ProgramId::MAIN.raw(), add))

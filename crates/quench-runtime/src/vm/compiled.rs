@@ -5629,9 +5629,9 @@ unsafe extern "C" fn js_step_callout<H: Host>(
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
-            let direct_call_target = if vm.programs.js_jit_diagnostics_enabled()
-                && matches!(current_instruction.op(), Op::Call | Op::CallArray)
-            {
+            let is_call = matches!(current_instruction.op(), Op::Call | Op::CallArray);
+            let diagnostics_enabled = is_call && vm.programs.js_jit_diagnostics_enabled();
+            let direct_call_target = if diagnostics_enabled && is_call {
                 vm.frames[dispatch.frame]
                     .registers
                     .get(usize::from(current_instruction.register_b()))
@@ -5646,8 +5646,17 @@ unsafe extern "C" fn js_step_callout<H: Host>(
             } else {
                 None
             };
+            let sample_call = diagnostics_enabled
+                && is_call
+                && vm.programs.should_sample_js_jit_call_site(
+                    dispatch.program_id,
+                    vm.frames[dispatch.frame].function,
+                    current_pc,
+                    current_instruction.op(),
+                );
+            let call_sample_started = sample_call.then(std::time::Instant::now);
             let step = if dispatch.allow_inline_calls
-                && matches!(current_instruction.op(), Op::Call | Op::CallArray)
+                && is_call
             {
                 match vm.try_inline_user_call(
                     &program,
@@ -5698,9 +5707,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     dispatch.allow_inline_calls,
                 )
             };
-            if matches!(current_instruction.op(), Op::Call | Op::CallArray)
-                && vm.programs.js_jit_diagnostics_enabled()
-            {
+            if is_call && diagnostics_enabled {
                 let outcome = match &step {
                     Ok(super::StepResult::Continue) => {
                         super::program_store::JsJitCallOutcome::Continue
@@ -5729,6 +5736,9 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     current_instruction.op(),
                     direct_call_target,
                     outcome,
+                    call_sample_started.map(|started| {
+                        u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
+                    }),
                 );
             }
             dispatch.array_record_base = vm
