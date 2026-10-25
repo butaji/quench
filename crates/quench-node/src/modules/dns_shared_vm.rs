@@ -1,7 +1,7 @@
 //! Shared-VM `dns.lookup` projection over the operating system resolver.
 
 use crate::host::NodeHost;
-use quench_runtime::{NativeContext, RootId, RootedError, Value};
+use quench_runtime::{NativeContext, RootId, RootedError, Value, ValueType};
 use std::net::IpAddr;
 
 use super::net_config::{ANY_FAMILY, IPV4_FAMILY, IPV6_FAMILY};
@@ -137,22 +137,27 @@ fn lookup_impl(
     capability: Option<RootId>,
 ) -> Result<RootId, RootedError> {
     let hostname_root = args.first().copied().unwrap_or_else(|| context.undefined());
-    let name = context.string_rooted("hostname");
-    validate(
-        context,
-        "validateStringWithoutNullBytes",
-        &[hostname_root, name],
-    )?;
-    let hostname = context
-        .string_text(hostname_root)?
-        .expect("SDK validated hostname string");
-    if hostname.is_empty() {
-        invalid_argument_value(
+    // Node validates a truthy hostname before lookup options. Falsy values
+    // pass through option validation first, so invalid `hints` wins over the
+    // eventual empty/invalid hostname error (for example lookup(false, opts)).
+    if context.truthy_rooted(hostname_root)? {
+        let name = context.string_rooted("hostname");
+        validate(
             context,
-            "hostname",
-            hostname_root,
-            Some("must be a non-empty string"),
+            "validateStringWithoutNullBytes",
+            &[hostname_root, name],
         )?;
+    }
+    if capability.is_some() {
+        let options = args.get(1).copied().unwrap_or_else(|| context.undefined());
+        if context.is_callable_rooted(options)? {
+            return Err(super::util_shared_vm::argument_type_error(
+                context,
+                options,
+                "options",
+                "Object",
+            )?);
+        }
     }
 
     let (family, all, callback) = lookup_arguments(context, args)?;
@@ -223,6 +228,30 @@ fn lookup_impl(
             }
         }
     }
+    if !context.truthy_rooted(hostname_root)? {
+        let error = match invalid_argument_value(
+            context,
+            "hostname",
+            hostname_root,
+            Some("must be a non-empty string"),
+        ) {
+            Err(error) => error,
+            Ok(()) => unreachable!("invalid hostname validation unexpectedly succeeded"),
+        };
+        if let Some(capability) = capability {
+            let Some(exception) = error.exception else {
+                return Err(error);
+            };
+            let key = context.string_rooted("reject");
+            let reject = context.get_property_rooted(capability, key)?;
+            context.call_rooted(reject, capability, &[exception])?;
+            return Ok(context.undefined());
+        }
+        return Err(error);
+    }
+    let hostname = context
+        .string_text(hostname_root)?
+        .expect("SDK validated hostname string");
     if let Ok(address) = hostname.parse::<IpAddr>() {
         let callback_args = if all {
             success_all(context, vec![address])?
@@ -357,11 +386,18 @@ fn lookup_arguments(
         return Ok((ANY_FAMILY, false, callback));
     }
     if value.as_number().is_some() {
-        return Ok((validated_family(context, second)?, false, callback));
+        return Ok((validated_family(context, second, "family")?, false, callback));
     }
-    if !value.is_heap() || context.string_text(second)?.is_some() {
-        let name = context.string_rooted("options");
-        validate(context, "validateObject", &[second, name])?;
+    match context.value_type_rooted(second) {
+        Some(ValueType::Object | ValueType::Function) => {}
+        _ => {
+            return Err(super::util_shared_vm::argument_type_error(
+                context,
+                second,
+                "options",
+                "Object",
+            )?);
+        }
     }
     let key = context.string_rooted("family");
     let family_root = context.get_property_rooted(second, key)?;
@@ -374,7 +410,7 @@ fn lookup_arguments(
         match context.string_text(family_root)?.as_deref() {
             Some("IPv4") => IPV4_FAMILY,
             Some("IPv6") => IPV6_FAMILY,
-            _ => validated_family(context, family_root)?,
+            _ => validated_family(context, family_root, "options.family")?,
         }
     };
     let key = context.string_rooted("all");
@@ -392,8 +428,9 @@ fn lookup_arguments(
 fn validated_family(
     context: &mut NativeContext<'_, NodeHost>,
     value: RootId,
+    argument_name: &str,
 ) -> Result<u8, RootedError> {
-    let name = context.string_rooted("family");
+    let name = context.string_rooted(argument_name);
     let values = [
         context.number(ANY_FAMILY as f64),
         context.number(IPV4_FAMILY as f64),

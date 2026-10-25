@@ -128,14 +128,20 @@ const __quenchDnsValidateServers = (servers) => {
 // Node's lookup validation has intentionally ordered diagnostics.
 // eslint-disable-next-line max-lines-per-function, complexity
 const __quenchDnsLookup = (hostname, options, callback) => {
-  if (hostname === null) {
-    throw Object.assign(new TypeError("Invalid hostname"), {
-      code: "ERR_INVALID_ARG_VALUE",
-    });
-  }
-  if (typeof hostname !== "string") {
+  // Match Node's ordering: validate a hostname's type only when it is truthy.
+  // Falsy values are rejected after lookup options have been validated, so an
+  // invalid `hints` option takes precedence for calls such as lookup(false, …).
+  if (hostname && typeof hostname !== "string") {
     const received = hostname === null ? "null" : `${typeof hostname}`;
     throw Object.assign(new TypeError(`The "hostname" argument must be of type string. Received type ${received}`), { code: "ERR_INVALID_ARG_TYPE" });
+  }
+  if (hostname && hostname.includes("\0")) {
+    throw Object.assign(
+      new TypeError(
+        "The argument 'hostname' must be a string without null bytes.",
+      ),
+      { code: "ERR_INVALID_ARG_VALUE" },
+    );
   }
   if (typeof options === "function") {
     callback = options;
@@ -158,19 +164,6 @@ const __quenchDnsLookup = (hostname, options, callback) => {
         : "ERR_INVALID_ARG_VALUE",
     });
   }
-  if (hostname.length === 0) {
-    throw Object.assign(new TypeError("Invalid hostname"), {
-      code: "ERR_INVALID_ARG_VALUE",
-    });
-  }
-  if (hostname.includes("\0")) {
-    throw Object.assign(
-      new TypeError(
-        "The argument 'hostname' must be a string without null bytes.",
-      ),
-      { code: "ERR_INVALID_ARG_VALUE" },
-    );
-  }
   if (
     options?.family !== undefined &&
     options.family !== 0 &&
@@ -186,6 +179,11 @@ const __quenchDnsLookup = (hostname, options, callback) => {
   }
   if (options?.hints !== undefined && options.hints % 2) {
     throw Object.assign(new TypeError(`The argument 'hints' is invalid. Received ${options.hints}`), { code: "ERR_INVALID_ARG_VALUE" });
+  }
+  if (!hostname) {
+    throw Object.assign(new TypeError("Invalid hostname"), {
+      code: "ERR_INVALID_ARG_VALUE",
+    });
   }
   if (typeof callback !== "function") {
     throw Object.assign(
@@ -782,14 +780,7 @@ const __quenchDns = {
           { code: "ERR_INVALID_ARG_TYPE" },
         );
       }
-      if (!hostname) {
-        return Promise.reject(
-          Object.assign(new TypeError("Invalid hostname"), {
-            code: "ERR_INVALID_ARG_VALUE",
-          }),
-        );
-      }
-      if (hostname.includes("\0")) {
+      if (hostname && hostname.includes("\0")) {
         throw Object.assign(
           new TypeError(
             "The argument 'hostname' must be a string without null bytes.",
@@ -817,6 +808,11 @@ const __quenchDns = {
           ),
           { code: "ERR_INVALID_ARG_VALUE" },
         );
+      }
+      if (!hostname) {
+        throw Object.assign(new TypeError("Invalid hostname"), {
+          code: "ERR_INVALID_ARG_VALUE",
+        });
       }
       return new Promise((resolve, reject) =>
         __quenchDnsLookup(
