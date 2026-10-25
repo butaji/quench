@@ -69,3 +69,61 @@ pub(crate) fn parse_env_file(input: &str) -> BTreeMap<String, String> {
     }
     values
 }
+
+/// Apply variables from startup `--env-file` options before Node's process
+/// surface is initialized. Existing host variables keep precedence, while
+/// later files override values from earlier files.
+pub(crate) fn load_startup_env_files(
+    node_options: Option<&str>,
+    arguments: &[String],
+    cwd: &std::path::Path,
+) {
+    let mut options = node_options
+        .and_then(|value| crate::modules::cli_options::parse_node_options(value).ok())
+        .unwrap_or_default();
+    options.extend(arguments.iter().cloned());
+
+    let inherited: std::collections::HashSet<String> = std::env::vars_os()
+        .filter_map(|(key, _)| key.into_string().ok())
+        .collect();
+    let mut loaded = BTreeMap::new();
+    let mut index = 0;
+    while index < options.len() {
+        let argument = &options[index];
+        if argument == "--" {
+            break;
+        }
+        let mut path = None;
+        if let Some(value) = argument.strip_prefix("--env-file=") {
+            path = Some(value.to_owned());
+        } else if let Some(value) = argument.strip_prefix("--env-file-if-exists=") {
+            path = Some(value.to_owned());
+        } else if argument == "--env-file" || argument == "--env-file-if-exists" {
+            if let Some(value) = options.get(index + 1) {
+                path = Some(value.clone());
+                index += 1;
+            }
+        }
+        if let Some(path) = path {
+            let requested = std::path::Path::new(&path);
+            let path = if requested.is_absolute() {
+                requested.to_path_buf()
+            } else {
+                cwd.join(requested)
+            };
+            if let Ok(contents) = std::fs::read_to_string(path) {
+                loaded.extend(parse_env_file(&contents));
+            }
+        }
+        index += 1;
+    }
+
+    for (key, value) in loaded {
+        if inherited.contains(&key) {
+            continue;
+        }
+        // SAFETY: startup happens synchronously before guest code observes
+        // process.env or starts child processes.
+        unsafe { std::env::set_var(key, value) };
+    }
+}

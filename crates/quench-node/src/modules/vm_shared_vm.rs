@@ -223,7 +223,10 @@ const MODULE: &str = quench_js_check::checked_js!(
       if (seen.has(identity)) continue;
       seen.add(identity);
       Object.freeze(attributes);
-      requests.push(Object.freeze({ specifier: match[1], attributes, phase }));
+      const request = Object.assign(Object.create(null), {
+        specifier: match[1], attributes, phase,
+      });
+      requests.push(Object.freeze(request));
     }
     return requests;
   }
