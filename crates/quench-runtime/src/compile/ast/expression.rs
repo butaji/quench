@@ -605,6 +605,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(crate) fn emit_binary(&mut self, op: u32, left: Operand, right: Operand) -> Register {
+        let (op, left, right) = constant_right(op, left, right);
         let dst = self.reg();
         self.emit(Op::Binary, dst, left.0, right.0, op);
         dst
@@ -879,13 +880,8 @@ impl FunctionCompiler<'_, '_> {
                 } else {
                     Operand::register(self.last_operand(&binary.right))
                 };
-            return self.emit(
-                Op::JumpBinaryFalse,
-                binary.operator as u16,
-                left.0,
-                right.0,
-                0,
-            );
+            let (operator, left, right) = constant_right(binary.operator as u32, left, right);
+            return self.emit(Op::JumpBinaryFalse, operator as u16, left.0, right.0, 0);
         }
         // `!x` is false exactly when `x` is truthy, and ToBoolean has no effects.
         if let Expression::UnaryExpression(unary) = value
@@ -911,5 +907,33 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::LoadThis, dst, 0, 0, 0);
         }
         dst
+    }
+}
+
+/// A comparison of a constant with a register, `C < r`, as the mirrored comparison of the
+/// register with the constant, `r > C`: the forms the lane specializes take the constant on the
+/// right. A constant is a primitive, so neither order has an effect to keep, and each relation
+/// holds of its mirror exactly (NaN makes both false). Any other operation stays as it is.
+fn constant_right(op: u32, left: Operand, right: Operand) -> (u32, Operand, Operand) {
+    use crate::bytecode::OperandKind;
+    use oxc_ast::ast::BinaryOperator as B;
+    if left.kind() != Some(OperandKind::Constant) || right.kind() != Some(OperandKind::Register) {
+        return (op, left, right);
+    }
+    let mirrored = [
+        (B::LessThan, B::GreaterThan),
+        (B::GreaterThan, B::LessThan),
+        (B::LessEqualThan, B::GreaterEqualThan),
+        (B::GreaterEqualThan, B::LessEqualThan),
+        (B::Equality, B::Equality),
+        (B::Inequality, B::Inequality),
+        (B::StrictEquality, B::StrictEquality),
+        (B::StrictInequality, B::StrictInequality),
+    ]
+    .into_iter()
+    .find(|(operator, _)| *operator as u32 == op);
+    match mirrored {
+        Some((_, mirror)) => (mirror as u32, right, left),
+        None => (op, left, right),
     }
 }

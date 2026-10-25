@@ -16186,3 +16186,31 @@ print(JSON.stringify(out));
         assert_eq!(output.borrow().as_slice(), [expected]);
     }
 }
+
+#[test]
+fn comparisons_with_a_constant_on_the_left_compare_like_node() {
+    // `C < r` compiles as `r > C` (`constant_right`), as values and as branch tests; results
+    // and conversion calls match Node's (v26.12).
+    let source = r#"
+const vals = [0, -0, 1, -1, 2.5, NaN, Infinity, -Infinity, "1", "a", "", null, undefined, true, false, 10n, {valueOf() { return 3; }}, [2], [], Symbol.iterator];
+const out = [];
+for (const v of vals) {
+  const r = [];
+  for (const f of [x => 1 < x, x => 1 > x, x => 1 <= x, x => 1 >= x, x => 1 == x, x => 1 != x, x => 1 === x, x => 1 !== x,
+                   x => "1" < x, x => null >= x, x => undefined == x, x => NaN < x, x => 0 === x, x => -0 >= x, x => 2n > x]) {
+    try { r.push(f(v) ? 1 : 0); } catch (e) { r.push("E"); }
+    try { if (f(v)) r.push("t"); else r.push("f"); } catch (e) { r.push("E"); }
+  }
+  out.push(r.join(""));
+}
+let calls = 0; const o = { valueOf() { calls++; return 5; } };
+out.push(3 < o, 3 > o, 5 <= o, calls);
+for (let i = 0; 64 > i; i++) calls++;
+out.push(calls);
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "constant-left.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"["0f1t0f1t0f1t0f1t0f1t0f0f1t1t1t","0f1t0f1t0f1t0f1t0f1t0f0f1t1t1t","0f0f1t1t1t0f1t0f0f0f0f0f0f0f1t","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f0f0f0f0f1t0f1t0f0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","0f0f1t1t1t0f0f1t0f0f0f0f0f0f1t","0f0f0f0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","0f1t0f1t0f1t0f1t0f1t1t0f0f1t1t","0f0f0f0f0f1t0f1t0f0f1t0f0f0f0f","0f0f1t1t1t0f0f1t0f0f0f0f0f0f1t","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","1t0f1t0f0f1t0f1t1t0f0f0f0f0f0f","0f1t0f1t0f1t0f1t0f1t0f0f0f1t1t","EEEEEEEE0f1t0f1tEEEE0fEE0fEEEE",true,false,true,3,67]"#]);
+}
