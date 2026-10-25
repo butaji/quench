@@ -1635,6 +1635,18 @@ impl<H: Host> Vm<H> {
         ty: crate::WasmType,
         declarations: Option<&crate::WasmTypes>,
     ) -> Result<crate::WasmValue, JsError> {
+        // The commonest operands, 32-bit addresses and the 64-bit effective addresses computed
+        // from them, held in place: the scalar decode below reaches the same values after the
+        // reference and vector checks (an integer value is tagged, an in-place payload is not).
+        match ty {
+            crate::WasmType::I32 if let Some(bits) = value.as_int() => {
+                return Ok(crate::WasmValue::I32(bits));
+            }
+            crate::WasmType::I64 if let Some(bits) = value.bits64() => {
+                return Ok(crate::WasmValue::I64(bits as i64));
+            }
+            _ => {}
+        }
         if let crate::WasmType::Reference { kind, .. } = ty {
             if ty.requires_declarations() && declarations.is_none() {
                 return Err(JsError::validation(
