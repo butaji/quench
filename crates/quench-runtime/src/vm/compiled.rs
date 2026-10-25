@@ -9743,10 +9743,118 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 }
 
+/// The machine code of a built function and its calls to other compiled functions; `None`
+/// when Cranelift refuses it or its code needs a relocation other than such a call. It reads
+/// only the function and the target, so any thread may run it.
+fn compile_built(
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    func: ir::Function,
+) -> Option<(Vec<u8>, Vec<Call>)> {
+    let mut context = cranelift_codegen::Context::for_function(func);
+    let compiled = context
+        .compile(isa, &mut cranelift_codegen::control::ControlPlane::default())
+        .ok()?;
+    let code = compiled.code_buffer().to_vec();
+    let relocations = compiled.buffer.relocs().to_vec();
+    let names = context.func.params.user_named_funcs();
+    let calls = relocations
+        .iter()
+        .map(|relocation| {
+            let cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(
+                name,
+            )) = relocation.target
+            else {
+                return None;
+            };
+            let name = names.get(name)?;
+            (name.namespace == FUNCTION_NAMESPACE).then_some(Call {
+                offset: relocation.offset as usize,
+                kind: relocation.kind,
+                addend: relocation.addend,
+                callee: name.index as usize,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some((code, calls))
+}
+
+/// Built functions queued for each compile worker: one compiling and one ready keeps every
+/// worker busy while the building thread stays ahead, and bounds the Cranelift functions
+/// alive at once (each holds its whole body's IR) to a few per worker.
+const BUILT_FUNCTIONS_QUEUED_PER_WORKER: usize = 2;
+
+/// Each of `count` functions' compiled body, by index, from the built functions `build`
+/// yields in index order: the building stays on this thread, which owns the VM, and the
+/// compiling, which needs only the function and the target, runs on one worker per
+/// available CPU. `None` when any function fails to build or compile, as the sequential
+/// artifact fails.
+fn compile_built_functions(
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    count: usize,
+    build: impl Iterator<Item = Option<(usize, ir::Function)>>,
+) -> Option<Vec<Option<(Vec<u8>, Vec<Call>)>>> {
+    let workers = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(count);
+    let mut bodies: Vec<Option<(Vec<u8>, Vec<Call>)>> = std::iter::repeat_with(|| None).take(count).collect();
+    if workers <= 1 {
+        for built in build {
+            let (index, func) = built?;
+            bodies[index] = Some(compile_built(isa, func)?);
+        }
+        return Some(bodies);
+    }
+    let failed = std::sync::atomic::AtomicBool::new(false);
+    let (work, queue) =
+        std::sync::mpsc::sync_channel::<(usize, ir::Function)>(workers * BUILT_FUNCTIONS_QUEUED_PER_WORKER);
+    let queue = std::sync::Mutex::new(queue);
+    let (done, results) = std::sync::mpsc::channel();
+    let built_all = std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let (queue, done, failed) = (&queue, done.clone(), &failed);
+            scope.spawn(move || {
+                loop {
+                    let next = queue.lock().ok().and_then(|queue| queue.recv().ok());
+                    let Some((index, func)) = next else { break };
+                    if failed.load(std::sync::atomic::Ordering::Relaxed) {
+                        continue;
+                    }
+                    match compile_built(isa, func) {
+                        Some(body) => {
+                            let _ = done.send((index, body));
+                        }
+                        None => failed.store(true, std::sync::atomic::Ordering::Relaxed),
+                    }
+                }
+            });
+        }
+        drop(done);
+        let mut built_all = true;
+        for built in build {
+            let Some(built) = built else {
+                built_all = false;
+                break;
+            };
+            if failed.load(std::sync::atomic::Ordering::Relaxed) || work.send(built).is_err() {
+                break;
+            }
+        }
+        drop(work);
+        built_all
+    });
+    if !built_all || failed.into_inner() {
+        return None;
+    }
+    for (index, body) in results {
+        bodies[index] = Some(body);
+    }
+    Some(bodies)
+}
+
 impl<'a, H: Host> Analysis<'a, H> {
-    /// Compile `index` with `plan`; `None` when Cranelift refuses it or its
-    /// code needs a relocation other than a call to a compiled function.
-    fn compile_function(
+    /// The Cranelift function of `index` with `plan`, ready for `compile_built`; `None` when
+    /// a construct has no lowering.
+    fn build_function(
         &self,
         isa: &dyn cranelift_codegen::isa::TargetIsa,
         index: usize,
@@ -9757,7 +9865,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         globals: &[u32],
         reference_site_ids: &'a [(usize, usize)],
         diagnostics_enabled: bool,
-    ) -> Option<(Vec<u8>, Vec<Call>)> {
+    ) -> Option<ir::Function> {
         let function = &self.code.function(index);
         let call_conv = isa.default_call_conv();
         let memory = MemoryArguments::of(fixed_base, guarded);
@@ -9972,35 +10080,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         emitter.finish_traps();
         emitter.body.core.builder.seal_all_blocks();
         emitter.body.into_builder().finalize(isa.frontend_config());
-        let mut context = cranelift_codegen::Context::for_function(func);
-        let compiled = context
-            .compile(
-                isa,
-                &mut cranelift_codegen::control::ControlPlane::default(),
-            )
-            .ok()?;
-        let code = compiled.code_buffer().to_vec();
-        let relocations = compiled.buffer.relocs().to_vec();
-        let names = context.func.params.user_named_funcs();
-        let calls = relocations
-            .iter()
-            .map(|relocation| {
-                let cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(
-                    name,
-                )) = relocation.target
-                else {
-                    return None;
-                };
-                let name = names.get(name)?;
-                (name.namespace == FUNCTION_NAMESPACE).then_some(Call {
-                    offset: relocation.offset as usize,
-                    kind: relocation.kind,
-                    addend: relocation.addend,
-                    callee: name.index as usize,
-                })
-            })
-            .collect::<Option<Vec<_>>>()?;
-        Some((code, calls))
+        Some(func)
     }
 
     /// The C entry of `index`: unpack arguments, call through the table and
@@ -12179,14 +12259,11 @@ impl<H: Host> Vm<H> {
                 .map(|aligned| aligned / FUNCTION_ALIGNMENT * FUNCTION_ALIGNMENT)?
                 .checked_add(appended)
         };
-        for index in 0..count {
-            if plans[index].is_none() {
-                continue;
-            }
+        let build = (0..count).filter(|&index| plans[index].is_some()).map(|index| {
             let full_plan = plan(index)?;
-            let body_compile_started = diagnostics_enabled.then(std::time::Instant::now);
-            let body_memory_before = body_compile_started.and_then(|_| jit_memory_snapshot());
-            let body_result = analysis.compile_function(
+            let body_build_started = diagnostics_enabled.then(std::time::Instant::now);
+            let body_memory_before = body_build_started.and_then(|_| jit_memory_snapshot());
+            let built = analysis.build_function(
                 &*isa,
                 index,
                 &full_plan,
@@ -12197,7 +12274,7 @@ impl<H: Host> Vm<H> {
                 &reference_site_ids[index],
                 diagnostics_enabled,
             );
-            if let Some(started) = body_compile_started {
+            if let Some(started) = body_build_started {
                 let memory_after = jit_memory_snapshot();
                 eprintln!(
                     "QUENCH_WASM_JIT_BODY_MEMORY function={index} elapsed_us={} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
@@ -12208,7 +12285,14 @@ impl<H: Host> Vm<H> {
                     memory_after.map(|memory| memory.1),
                 );
             }
-            let (body, function_calls) = body_result?;
+            Some((index, built?))
+        });
+        let mut bodies = compile_built_functions(&*isa, count, build)?;
+        for index in 0..count {
+            if plans[index].is_none() {
+                continue;
+            }
+            let (body, function_calls) = bodies[index].take()?;
             let body_projected_len = projected_code_len(bytes.len(), body.len())?;
             if root.is_some() && body_projected_len > MAX_JIT_ROOT_CODE_BYTES {
                 if diagnostics_enabled {
