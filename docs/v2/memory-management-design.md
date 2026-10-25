@@ -315,7 +315,20 @@ production` (non-PGO static, link order and BOLT profile retrained on that binar
 about 550 KiB higher. The retrained link order carried the last step: pinned RayTrace 2796 →
 2684 KiB, Crypto `--jit` 3068 → 2816 against the committed order. Score against Node
 `--jitless` stays behind on RayTrace, EarleyBoyer, RegExp and DeltaBlue
-(TOD-197 (s4-proof)).
+(TOD-197 (s4-proof)). Re-qualified at trunk `9d19ce8fd2` with the board's pinned round
+(`--rss-cpu`, every engine pinned): 16 of 16 rows pass unpinned (0.42–0.92) and pinned
+(0.43–0.98; RayTrace 0.94, Crypto `--jit` 0.98) (TOD-197 (requalify-9d19ce8fd2)).
+Under MemoryFirst the preloaded startup snapshot is never restored automatically: it keeps
+every preloaded builtin resident, and a scan that took a comment's `require` for a module
+load had tripled DeltaBlue and Crypto (2852 → 9112 KiB pinned).
+
+MemoryFirst's Score cost is the code release at collections. Without it, RayTrace gains
++28% Score for +192 KiB and EarleyBoyer +9 to +20% for +260 to +312 KiB; elsewhere the
+gain is at most 13% for +250 to +1000 KiB. Releasing once per collection gains no Score
+anywhere. RayTrace, which would gain most, has no RSS margin left, and no program
+behaviour (code share of RSS, release rate) separates it from the rows that do have margin.
+Recovering its Score needs less code touched per collection, not a different release policy
+(TOD-197 (memory-first-cost-split)).
 
 ### 8.1 What is in force
 
