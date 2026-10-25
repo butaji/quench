@@ -97,6 +97,12 @@ impl LaneInstruction {
 /// A loop the shared compiler may run natively: the region its backward jump
 /// closes, the jump's distance to the header record, and the tier's state for it.
 pub(super) struct LoopSite {
+    /// The bytecode function whose lane view owns this site. A lane activation may be
+    /// frameless, so the VM frame's function is not necessarily the one taking this edge.
+    function: u32,
+    /// Observe backedge work for the JS function tier when OSR rejected this loop. These
+    /// sites never attempt native loop code; the shared function compiler owns promotion.
+    promotion_only: bool,
     /// The admitted region; a loop whose calls run inlined makes its region once it is hot
     /// (`lane_inlining_region`), when its callees are known.
     region: std::cell::OnceCell<super::compiled::LoopRegion>,
@@ -198,6 +204,7 @@ pub(super) struct LaneView {
 pub(super) struct OsrDiagnostics {
     pub(super) plain_backward_jump_sites: usize,
     pub(super) admitted_sites: usize,
+    pub(super) promotion_only_sites: usize,
     pub(super) compile_attempts: u64,
     pub(super) compile_successes: u64,
     pub(super) currently_compiled_sites: usize,
@@ -214,7 +221,8 @@ impl LaneView {
     pub(super) fn osr_diagnostics(&self) -> OsrDiagnostics {
         OsrDiagnostics {
             plain_backward_jump_sites: self.plain_backward_jump_sites,
-            admitted_sites: self.loops.len(),
+            admitted_sites: self.loops.iter().filter(|site| !site.promotion_only).count(),
+            promotion_only_sites: self.loops.iter().filter(|site| site.promotion_only).count(),
             compile_attempts: self.loops.iter().map(|site| site.compile_attempts.get()).sum(),
             compile_successes: self.loops.iter().map(|site| site.compile_successes.get()).sum(),
             currently_compiled_sites: self
@@ -5803,11 +5811,11 @@ script_handler! {
             && runtime.programs.js_jit_general_dispatch_enabled()
             && unsafe { &*(*cx).code }.kind != crate::bytecode::ProgramKind::Wasm
         {
-            let (program_id, frame_id, code) = unsafe {
+            let (program_id, code) = unsafe {
                 let context = &*cx;
-                (context.program, context.frame, &*context.code)
+                (context.program, &*context.code)
             };
-            let function = runtime.frames[frame_id].function;
+            let function = site.function;
             let instruction_count = code
                 .function_get(function as usize)
                 .map_or(0, |body| body.code.len());
@@ -5820,9 +5828,12 @@ script_handler! {
                 instruction_count,
             ) {
                 // The shared whole-function CFG starts at this exact loop header
-                // after run_fast_lane hands control back to the dispatcher.
+                // after run_fast_lane materializes any frameless lane activations.
                 return exit(header);
             }
+        }
+        if site.promotion_only {
+            next!(cx, r, header, Carried::script(cx))
         }
         if site.taken.get() < LOOP_TIER_THRESHOLD {
             site.taken.set(site.taken.get() + 1);
@@ -6001,7 +6012,7 @@ fn lane_loop_run<H: Host>(
             let work = backedges;
             if work > 0 {
                 let context = unsafe { &*cx };
-                let function = runtime.frames[context.frame].function;
+                let function = site.function;
                 let instruction_count = unsafe { &*context.code }
                     .function_get(function as usize)
                     .map_or(0, |body| body.code.len());
@@ -8660,7 +8671,17 @@ fn lane_frame_state<H: Host>(
     let Some(lane_view) = vm
         .programs
         .lane_view(program, function, |code, constants, kind, live, sites| {
-            derive_lane_view::<H>(code, constants, kind, live, sites, vm.js_tier_runs(), diagnostics)
+            derive_lane_view::<H>(
+                function,
+                code,
+                constants,
+                kind,
+                live,
+                sites,
+                vm.js_tier_runs(),
+                vm.programs.js_jit_general_dispatch_enabled(),
+                diagnostics,
+            )
         })
     else {
         unreachable!("an inline Wasm frame runs a function of its program");
@@ -9314,7 +9335,17 @@ impl<H: Host> Vm<H> {
     fn lane_view_any(&self, program: ProgramId, function: u32) -> Option<*const LaneView> {
         let diagnostics = self.programs.reports_on_drop();
         self.programs.lane_view(program, function, |code, constants, kind, live, sites| {
-            derive_lane_view::<H>(code, constants, kind, live, sites, self.js_tier_runs(), diagnostics)
+            derive_lane_view::<H>(
+                function,
+                code,
+                constants,
+                kind,
+                live,
+                sites,
+                self.js_tier_runs(),
+                self.programs.js_jit_general_dispatch_enabled(),
+                diagnostics,
+            )
         })
     }
 }
@@ -14316,12 +14347,14 @@ const ACCUMULATOR: bool = cfg!(quench_lane_tail_calls);
 /// Derive a function's lane view from its bytecode and its program's
 /// constants.
 fn derive_lane_view<H: Host>(
+    function_id: u32,
     function: &Function,
     constants: &[Value],
     kind: crate::bytecode::ProgramKind,
     live: Option<&crate::compile::liveness::RegisterMasks>,
     sites: &[crate::bytecode::FieldSite],
     loop_tier: bool,
+    general_dispatch: bool,
     diagnostics: bool,
 ) -> LaneView {
     // Each pass below reads instructions by PC; they are decoded once, here.
@@ -15304,7 +15337,17 @@ fn derive_lane_view<H: Host>(
     specialize_outer_captures::<H>(&mut records);
     let environment_window = specialize_environment_window::<H>(function, &decoded, &mut records);
     let (loops, osr_rejections) = if loop_tier && kind != crate::bytecode::ProgramKind::Wasm {
-        install_loop_sites::<H>(function, &decoded, constants, sites, live, diagnostics, &mut records)
+        install_loop_sites::<H>(
+            function_id,
+            function,
+            &decoded,
+            constants,
+            sites,
+            live,
+            general_dispatch,
+            diagnostics,
+            &mut records,
+        )
     } else {
         (Box::default(), Vec::new())
     };
@@ -15367,11 +15410,13 @@ fn derive_lane_view<H: Host>(
 /// record that counts it and enters its native code (`lane_loop_jump`). Runs after every
 /// other pass, which read a jump record's distance from its operand.
 fn install_loop_sites<H: Host>(
+    function_id: u32,
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[Value],
     sites: &[crate::bytecode::FieldSite],
     live: Option<&crate::compile::liveness::RegisterMasks>,
+    general_dispatch: bool,
     diagnostics: bool,
     records: &mut [LaneInstruction],
 ) -> (Box<[LoopSite]>, Vec<(super::compiled::RegionRejection, usize)>) {
@@ -15397,7 +15442,7 @@ fn install_loop_sites<H: Host>(
         .filter(|pc| records[*pc].handler == backward && decoded[*pc].op() == Op::Jump && !fused_into(*pc))
         .filter_map(|pc| {
             let header = decoded[pc].jump_target();
-            let region = match super::compiled::analyze_osr_region(
+            let (region, promotion_only) = match super::compiled::analyze_osr_region(
                 function,
                 decoded,
                 constants,
@@ -15406,10 +15451,10 @@ fn install_loop_sites<H: Host>(
                 header,
                 pc as u32,
             ) {
-                Ok(region) => std::cell::OnceCell::from(region),
+                Ok(region) => (std::cell::OnceCell::from(region), false),
                 // A call may run inlined: the site makes its region once it is hot.
                 Err(super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)) if live.is_some() => {
-                    std::cell::OnceCell::new()
+                    (std::cell::OnceCell::new(), false)
                 }
                 Err(reason) => {
                     if diagnostics {
@@ -15421,12 +15466,17 @@ fn install_loop_sites<H: Host>(
                             rejections.push((reason, 1));
                         }
                     }
-                    return None;
+                    if !general_dispatch {
+                        return None;
+                    }
+                    (std::cell::OnceCell::new(), true)
                 }
             };
             Some((
                 pc,
                 LoopSite {
+                    function: function_id,
+                    promotion_only,
                     region,
                     header,
                     backedge: pc as u32,
@@ -16061,7 +16111,17 @@ impl<H: Host> Vm<H> {
         let wasm = self.programs.residual(program).is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm);
         self.programs
             .entry_lane_view(program, function, |code| wasm && may_loop(code), |code, constants, kind, live, sites| {
-                derive_lane_view::<H>(code, constants, kind, live, sites, self.js_tier_runs(), diagnostics)
+                derive_lane_view::<H>(
+                    function,
+                    code,
+                    constants,
+                    kind,
+                    live,
+                    sites,
+                    self.js_tier_runs(),
+                    self.programs.js_jit_general_dispatch_enabled(),
+                    diagnostics,
+                )
             })
             .unwrap_or(std::ptr::null())
     }
