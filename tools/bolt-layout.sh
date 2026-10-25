@@ -24,7 +24,9 @@
 # 4. Writes crates/quench-node/link/x86_64-linux-static.order, converts the profiles for
 #    BOLT, relinks, and writes the bolted binary beside the relinked one (`-bolt`).
 #
-# Requires valgrind and llvm-bolt (BOLT 20; LLVM_BOLT names it when it is not on PATH).
+# Requires valgrind, llvm-bolt (BOLT 20; LLVM_BOLT names it when it is not on PATH) and the
+# Wasm testsuite submodule. QUENCH_PGO_HOT_CALLSITE_THRESHOLD bounds a profile's hot-call-site
+# inlining in the --pgo builds.
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -66,6 +68,11 @@ if [[ -n "${RUSTFLAGS:-}" ]]; then
     printf 'unset RUSTFLAGS: it would replace the layout build flags and the repository rustflags\n' >&2
     exit 1
 fi
+wasm_testsuite=crates/quench-wasm-test/testsuite
+if [[ ! -f "$wasm_testsuite/address.wast" ]]; then
+    printf 'the Wasm testsuite is missing: git submodule update --init %s\n' "$wasm_testsuite" >&2
+    exit 1
+fi
 for tool in valgrind "$llvm_bolt"; do
     command -v "$tool" >/dev/null || { printf '%s not found\n' "$tool" >&2; exit 1; }
 done
@@ -74,6 +81,12 @@ done
 build_flags='"-Ctarget-feature=+crt-static", "-Crelocation-model=static"'
 if [[ -n "$profdata" ]]; then
     build_flags+=", \"-Cprofile-use=$profdata\", \"-Cllvm-args=-disable-icp\""
+    # The inlining cost a profile lets a hot call site's callee reach (LLVM's default 3000,
+    # against 225 without a profile). Unset keeps LLVM's; a lower value bounds the hot code
+    # the layout keeps resident.
+    if [[ -n "${QUENCH_PGO_HOT_CALLSITE_THRESHOLD:-}" ]]; then
+        build_flags+=", \"-Cllvm-args=-hot-callsite-threshold=$QUENCH_PGO_HOT_CALLSITE_THRESHOLD\""
+    fi
 fi
 build() {
     CARGO_TARGET_DIR="$target_dir" cargo build --locked --profile "$profile" -p quench-node \
@@ -141,7 +154,7 @@ done < <(find "$test262/test/built-ins/RegExp" -name '*.js' ! -name '*_FIXTURE.j
 if [[ -n "${QUENCH_LAYOUT_NODE_MODULES:-}" ]]; then
     cp tools/layout-corpus/npm-*.js "$corpus/"
 fi
-"$tools_dir/wasm-esm-corpus" "$corpus/wasm-esm" crates/quench-wasm-test/testsuite/{address,block,br,\
+"$tools_dir/wasm-esm-corpus" "$corpus/wasm-esm" "$wasm_testsuite"/{address,block,br,\
 br_if,br_table,bulk,call,call_indirect,conversions,data,elem,endianness,exports,f32,f64,fac,\
 forward,func,global,i32,i64,if,imports,int_exprs,int_literals,labels,left-to-right,load,\
 local_get,local_set,local_tee,loop,memory,memory_copy,memory_fill,memory_grow,memory_size,nop,\
