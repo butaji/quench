@@ -1024,3 +1024,35 @@ and 8.0%. Route generation improved 11.4% no-JIT and 2.2% JIT, with RSS down
 route generation remains slower than both, so these are component gains rather
 than a Next win. Reports use `*entries-production-paired-*` in
 `evidence/tod173-next-response-2026-10-23/`.
+
+### Guarded OSR field-store JIT screen (2026-10-25)
+
+The shared OSR loop tier now lowers guarded writes of numeric values to
+warmed own data fields on flat objects. Entry rechecks the exact atom/slot and
+current writable data descriptor; accessors, proxies, frozen properties, cache
+misses and reference-valued stores stay on the interpreter path. The focused
+runtime regression covers multiple fields, accessor/proxy effects, frozen
+objects, and reference values. The integrated runtime suite passes 966 tests.
+
+A five-round production JIT screen compared the field-store candidate with the
+pre-change Quench binary and Node/Bun on React SSR, Pino JSON logging, and Zod
+parse. Checksums matched. Candidate/control Quench throughput was flat on Pino
+and Zod, and +1.4% on React. It did not change package-level JIT coverage for
+these workloads; React, Pino, and Zod still had no native OSR field-store
+regions. These three rows remain far below the 20% throughput margin against
+Node and Bun. Sampled Linux RSS is diagnostic only and cannot qualify the RSS
+gate; Bun's sub-50ms Pino/Zod samples in particular understate peak memory.
+
+| Workload | Quench candidate ops/s | Node ops/s | Bun ops/s | Candidate RSS MiB (sampled) |
+| --- | ---: | ---: | ---: | ---: |
+| React SSR | 1,328 | 39,063 | 31,847 | 24.16 |
+| Pino JSON logger | 58,824 | 357,143 | 454,545 | 19.68 |
+| Zod parse | 104,167 | 869,565 | 1,111,111 | 20.24 |
+
+Raw paired reports, input hashes, binary hashes, versions, and run samples are
+in [`reports/field-store-jit-screen-2026-10-25/`](reports/field-store-jit-screen-2026-10-25/).
+The binary was `829333615a419b9884effe43768e8fac349d83a047163ce29d570cd89dcee3c3`,
+built from the field-store implementation before the final descriptor-guard
+tightening. This was a diagnostic screen, not qualification. The ten-package
+goal remains open: no package/mode is claimed to have both the throughput and
+maximum-RSS margins.
