@@ -1,0 +1,681 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "77f4b5671b87e94d",
+  "timeout_secs": 60,
+  "jobs": 5,
+  "node_version": "v26.12.1",
+  "runtime_commit": "6318e862f1588c3827be571470ff8af64b89add3",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-buffer.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-destroy.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-destroyed.js",
+      "status": "timeout",
+      "observation": {
+        "Ok": {
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true,
+          "worker": null,
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-drain-writable-length.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ <ref *1> Socket {\n+   __quenchHttpSocketId: 3,\n+   _events: [Object: null prototype] {\n+     close: [Function: wrapper] {\n+       listener: [Function (anonymous)]\n+     }\n+   },\n+   _eventsCount: 1,\n+   connecting: false,\n+   destroy: [Function: httpServerSocketDestroy],\n+   destroyed: false,\n+   end: [Function: httpServerSocketEnd],\n+   parser: {\n+     close: [Function: close],\n+     free: [Function: free],\n+     incoming: IncomingMessage {\n+       Symbol(kAbortController): null,\n+       Symbol(kAbortSignalDetached): false,\n+       Symbol(kAbortSignalListener): null,\n+       Symbol(kAbortSignalSocket): null,\n+       Symbol(kCapture): false,\n+       Symbol(kHeaders): null,\n+       Symbol(kHeadersCount): 2,\n+       Symbol(kTrailers): {},\n+       Symbol(kTrailersCount): 0,\n+       Symbol(kTrailersDistinct): [Object: null prototype] {},\n+       Symbol(shapeMode): true,\n+       _consuming: false,\n+       _destroy: [Function: _destroy],\n+       _dumped: false,\n+       _events: {\n+         close: [Function: wrapper] {\n+           listener: [Function: clearIncoming]\n+         },\n+         data: undefined,\n+         end: [Function: wrapper] {\n+           listener: [Function: clearIncoming]\n+         },\n+         error: undefined,\n+         readable: undefined\n+       },\n+       _eventsCount: 2,\n+       _maxListeners: undefined,\n+       _quenchAbort: [Function (anonymous)],\n+       _read: [Function: _read],\n+       _readableState: ReadableState {\n+         Symbol(kState): 538186508,\n+         awaitDrainWriters: null,\n+         buffer: [],\n+         bufferIndex: 0,\n+         fastChunk: null,\n+         highWaterMark: 65536,\n+         length: 0,\n+         pipeOnData: null,\n+         pipePause: null,\n+         pipes: [],\n+         readable: true\n+       },\n+       aborted: false,\n+       client: [Circular *1],\n+       complete: true,\n+       httpVersion: '1.1',\n+       httpVersionMajor: 1,\n+       httpVersionMinor: 1,\n+       joinDuplicateHeaders: false,\n+       method: 'GET',\n+       rawHeaders: [\n+         'Host',\n+         'localhost:41973'\n+       ],\n+       rawTrailers: [],\n+       socket: [Circular *1],\n+       statusCode: null,\n+       statusMessage: null,\n+       upgrade: null,\n+       url: '/2'\n+     }\n+   },\n+   readable: true,\n+   readableHighWaterMark: 65536,\n+   resume: [Function: httpServerSocketResume],\n+   writable: true,\n+   writableHighWaterMark: 65536,\n+   write: [Function: httpServerSocketWriteById]\n+ }\n- null\n"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-end-cork.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [
+            83,
+            101,
+            110,
+            100,
+            105,
+            110,
+            103,
+            32,
+            114,
+            101,
+            113,
+            32,
+            110,
+            111,
+            32,
+            49,
+            10,
+            50,
+            50,
+            32,
+            98,
+            121,
+            116,
+            101,
+            115,
+            32,
+            119,
+            101,
+            114,
+            101,
+            32,
+            114,
+            101,
+            99,
+            101,
+            105,
+            118,
+            101,
+            100,
+            32,
+            102,
+            111,
+            114,
+            32,
+            114,
+            101,
+            113,
+            117,
+            101,
+            115,
+            116,
+            32,
+            49,
+            10,
+            83,
+            101,
+            110,
+            100,
+            105,
+            110,
+            103,
+            32,
+            114,
+            101,
+            113,
+            32,
+            110,
+            111,
+            32,
+            50,
+            10,
+            70,
+            79,
+            85,
+            78,
+            68,
+            32,
+            82,
+            69,
+            85,
+            83,
+            69,
+            68,
+            32,
+            83,
+            79,
+            67,
+            75,
+            69,
+            84,
+            33,
+            10,
+            54,
+            53,
+            54,
+            51,
+            54,
+            32,
+            98,
+            121,
+            116,
+            101,
+            115,
+            32,
+            119,
+            101,
+            114,
+            101,
+            32,
+            114,
+            101,
+            99,
+            101,
+            105,
+            118,
+            101,
+            100,
+            32,
+            102,
+            111,
+            114,
+            32,
+            114,
+            101,
+            113,
+            117,
+            101,
+            115,
+            116,
+            32,
+            50,
+            10,
+            67,
+            108,
+            111,
+            115,
+            105,
+            110,
+            103,
+            32,
+            115,
+            101,
+            114,
+            118,
+            101,
+            114,
+            10
+          ],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-end-multiple.js",
+      "status": "timeout",
+      "observation": {
+        "Ok": {
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true,
+          "worker": null,
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-end-types.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-finish-writable.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-finish.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [
+            111,
+            107,
+            32,
+            45,
+            32,
+            114,
+            101,
+            113,
+            117,
+            101,
+            115,
+            116,
+            32,
+            101,
+            110,
+            100,
+            67,
+            98,
+            10,
+            111,
+            107,
+            32,
+            45,
+            32,
+            114,
+            101,
+            113,
+            117,
+            101,
+            115,
+            116,
+            32,
+            102,
+            105,
+            110,
+            105,
+            115,
+            104,
+            69,
+            118,
+            101,
+            110,
+            116,
+            10,
+            111,
+            107,
+            32,
+            45,
+            32,
+            83,
+            101,
+            114,
+            118,
+            101,
+            114,
+            82,
+            101,
+            115,
+            112,
+            111,
+            110,
+            115,
+            101,
+            32,
+            101,
+            110,
+            100,
+            67,
+            98,
+            10,
+            111,
+            107,
+            32,
+            45,
+            32,
+            83,
+            101,
+            114,
+            118,
+            101,
+            114,
+            82,
+            101,
+            115,
+            112,
+            111,
+            110,
+            115,
+            101,
+            32,
+            102,
+            105,
+            110,
+            105,
+            115,
+            104,
+            69,
+            118,
+            101,
+            110,
+            116,
+            10
+          ],
+          "stderr": [
+            114,
+            101,
+            113,
+            117,
+            101,
+            115,
+            116,
+            32,
+            101,
+            110,
+            100,
+            67,
+            98,
+            10,
+            114,
+            101,
+            113,
+            117,
+            101,
+            115,
+            116,
+            32,
+            102,
+            105,
+            110,
+            105,
+            115,
+            104,
+            32,
+            101,
+            118,
+            101,
+            110,
+            116,
+            10,
+            83,
+            101,
+            114,
+            118,
+            101,
+            114,
+            82,
+            101,
+            115,
+            112,
+            111,
+            110,
+            115,
+            101,
+            32,
+            101,
+            110,
+            100,
+            67,
+            98,
+            10,
+            83,
+            101,
+            114,
+            118,
+            101,
+            114,
+            82,
+            101,
+            115,
+            112,
+            111,
+            110,
+            115,
+            101,
+            32,
+            102,
+            105,
+            110,
+            105,
+            115,
+            104,
+            32,
+            101,
+            118,
+            101,
+            110,
+            116,
+            10
+          ]
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-finished.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-first-chunk-singlebyte-encoding.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-flush-drain.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-message-capture-rejection.js",
+      "status": "timeout",
+      "observation": {
+        "Ok": {
+          "exit_code": null,
+          "signal": 9,
+          "timed_out": true,
+          "worker": null,
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-message-inheritance.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-message-write-callback.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-properties.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n11 !== 8\n"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-proto.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-renderHeaders.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-settimeout.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-writableFinished.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/workspace/work/node-stable-release/node-v26.12.1/lib/internal/assert/utils.js:146\n  throw error;\n  ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ null\n- Error: forced write failure\n-     at Object.<anonymous> (/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-writableFinished.js:42:22)\n\n    at Object.<anonymous> (/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-writableFinished.js:63:12)\n    at /workspace/work/node-stable-release/node-v26.12.1/test/common/index.js:512:15\n    at afterWrite (node:internal/streams/writable:749:5)\n    at onwrite (node:internal/streams/writable:727:7)\n    at WritableState.onwrite (node:internal/streams/writable:351:26)\n    at process.processTicksAndRejections (native)\n\nNode.js v26.12.1"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.1/test/parallel/test-http-outgoing-write-types.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}

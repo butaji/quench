@@ -1,0 +1,11 @@
+# TOD-20 HTTP outgoing-message backpressure experiment
+
+This experiment is rejected and was reverted. It attempted to delay `ServerResponse` Writable callbacks until the batched response bytes were queued to the transport, to restore backpressure in drain loops. Source patch SHA-256: `689a290d69ad0a7572223f126d31ec226fe1690c8ffeebcdf0d4fd297848383f`; patch: `http-outgoing-backpressure-experiment-v293.patch`.
+
+The exact official Node v26.12.1 `http-outgoing` filter selected 21 fixtures (inventory `77f4b5671b87e94d`), five jobs, 60-second cap. Result: 15 pass / 0 skip / 3 fail / 3 timeout / 0 crash / 0 unclassified; artifact SHA-256 `bdd8bace2d5ee3332158951e2c138897dcd7f635abd5ba06a097b41adee90e60`. It ran on source commit `6318e862f1588c3827be571470ff8af64b89add3` plus the temporary response-writer patch, using runner SHA-256 `acfb26b6992b786aff9a6b020a61af13c81ad3681edb6ba4251f6f29498115fd`.
+
+Against the same 21 fixtures in frozen lane v167, transitions were: 13 pass→pass, 2 timeout→timeout, 2 fail→fail, 1 fail→pass (`test-http-outgoing-end-cork.js`), 1 timeout→pass (`test-http-outgoing-finish.js`), 1 pass→timeout (`test-http-outgoing-end-multiple.js`), and 1 pass→fail (`test-http-outgoing-properties.js`). The target `test-http-outgoing-message-capture-rejection.js` remained a timeout. The family stayed at 15 passes, so the experiment provides no net improvement and regresses two prior passes. I reverted the source change; only its patch and raw result remain.
+
+The runner used the pinned official Node executable `/workspace/work/node-v26.12.1-linux-x64/bin/node` (v26.12.1, SHA-256 `08f12d42fb304468e8ee86247fe686aae5b225836ea65e9d6566c11ae6ba2e8e`) and official fixture root `/workspace/work/node-stable-release/node-v26.12.1/test/parallel`. The test-source submodule remains at `26e72d85a611e222e3f06025de8a3c496923bacd` with the preserved dirty overlay (SHA-256 `85c4f965a863c9c66844ef65e1483505ec01d6c4f6edbed7bbe68afb6ef321b7`).
+
+No process is live. Frozen full acceptance remains 3,388 pass / 650 skip / 784 fail / 196 timeout / 5 crash / 0 unclassified of 5,023; this selected family is not acceptance credit. The HTTP/2 rejection fix remains committed separately at `d063720dc1854041aa7aabafc590b450f261c571`.
