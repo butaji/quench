@@ -99,14 +99,19 @@ fn code(n: i32) -> &'static str {
 impl Codec {
     pub(crate) fn params(&mut self, level: i32, strategy: i32) -> Result<(), Failure> {
         if !self.encoding {
-            return Err(Failure {
-                errno: Z_STREAM_ERROR,
-                code: code(Z_STREAM_ERROR).into(),
-                message: "stream error".into(),
-            });
+            return Ok(());
         }
+        // deflateParams requires a live output range even when the preceding
+        // JavaScript flush has drained all pending bytes. Native Node keeps
+        // its stream output buffer attached between calls; supply a bounded
+        // scratch range here because params is only called after that flush.
+        let mut output = [0_u8; 4096];
+        self.stream.next_out = output.as_mut_ptr();
+        self.stream.avail_out = output.len() as c_uint;
         let status = unsafe { deflateParams(&mut *self.stream, level, strategy) };
-        if status == Z_OK {
+        self.stream.next_out = ptr::null_mut();
+        self.stream.avail_out = 0;
+        if status == Z_OK || status == Z_BUF_ERROR {
             Ok(())
         } else {
             Err(Failure {

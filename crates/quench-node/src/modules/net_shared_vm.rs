@@ -25,7 +25,7 @@ const CALLABLE_FACADE: &str = quench_js_check::checked_js!(
 })"#
 );
 
-const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation, serverOptionsOperation, initEndOperation, onReadableStreamEnd, initServerEmitterOperation, initSocketOptionsOperation, setNoDelay, setKeepAlive, initServerOptionsOperation, getConnections, initializeRead, readSocket, endStreamOperation, normalizedArgsSymbol, ownerSymbol, asyncIdSymbol) => {
+const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation, serverOptionsOperation, initEndOperation, onReadableStreamEnd, initServerEmitterOperation, initSocketOptionsOperation, setNoDelay, setKeepAlive, initServerOptionsOperation, getConnections, initializeRead, readSocket, endStreamOperation, normalizedArgsSymbol, ownerSymbol, asyncIdSymbol, pipeBinding, streamBinding) => {
   class Socket extends Duplex {
     constructor(options = {}) {
       options = { ...socketOptionsOperation(options, false) };
@@ -42,7 +42,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
             { code: 'ERR_ACCESS_DENIED', permission: 'Net' },
           );
         }
-        const { Pipe, constants } = process.binding('pipe_wrap');
+        const { Pipe, constants } = pipeBinding;
         const handle = new Pipe(constants.SOCKET);
         const status = handle.open(options.fd);
         if (status < 0) {
@@ -68,8 +68,8 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
           }
           if (handle?.__quenchPipeHandle) {
             try {
-              const { WriteWrap } = process.binding('stream_wrap');
-              const { streamBaseState, kLastWriteWasAsync, kLastWriteErr } = process.binding('stream_wrap');
+              const { WriteWrap } = streamBinding;
+              const { streamBaseState, kLastWriteWasAsync, kLastWriteErr } = streamBinding;
               const request = new WriteWrap();
               request.oncomplete = (status) => callback(status < 0
                 ? Object.assign(new Error(`write failed with status ${status}`), { errno: status })
@@ -152,7 +152,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
         this._handle[ownerSymbol] = this;
         this._handle.onread = function onStreamRead(arrayBuffer) {
           const { streamBaseState, kReadBytesOrError, kArrayBufferOffset } =
-            process.binding('stream_wrap');
+            streamBinding;
           const nread = streamBaseState[kReadBytesOrError];
           const socket = this[ownerSymbol];
           if (nread > 0 && !socket.destroyed) {
@@ -1966,9 +1966,8 @@ fn connect_resolved_address(
             address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
         })?;
     if local_address.is_none() && local_port == 0 {
-        return TcpStream::connect_timeout(&address, TCP_CONNECT_TIMEOUT).map_err(|error| {
-            TcpConnectFailure::Connect { error, address }
-        });
+        return TcpStream::connect_timeout(&address, TCP_CONNECT_TIMEOUT)
+            .map_err(|error| TcpConnectFailure::Connect { error, address });
     }
 
     let source_ip = local_address.unwrap_or_else(|| match address.ip() {
@@ -2195,6 +2194,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let owner_symbol = context.get_property_rooted(symbols, owner_symbol_key)?;
     let async_id_symbol_key = context.string_rooted("async_id_symbol");
     let async_id_symbol = context.get_property_rooted(symbols, async_id_symbol_key)?;
+    let tcp_binding = super::tcp_binding::binding(context)?;
+    let pipe_binding = super::pipe_binding::binding(context)?;
+    let stream_binding = super::stream_binding::binding(context)?;
     let factory = context.evaluate_script_rooted(NET_MODULE_FACTORY, "node:net/module.js")?;
     let undefined = context.undefined();
     let surface = context.call_rooted(
@@ -2231,6 +2233,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             normalized_args_symbol,
             owner_symbol,
             async_id_symbol,
+            pipe_binding,
+            stream_binding,
         ],
     )?;
     let options_data = context
@@ -2265,6 +2269,44 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         if !context.set_property_rooted(module, key, value, module)? {
             return Err(RootedError::host(format!("cannot install net.{name}")));
         }
+    }
+    let uv_einval = context.number(-22.0);
+    let create_server_handle_factory = context.evaluate_script_rooted(
+        quench_js_check::checked_js!(
+            r#"(() => {
+  return function createServerHandleFactory({ TCP, constants }, UV_EINVAL) {
+  function bind(address, port, addressType, flags) {
+    const handle = new TCP(constants.SERVER);
+    const status = addressType === 6 ?
+      handle.bind6(address, port, flags) : handle.bind(address, port, flags);
+    if (status !== 0) {
+      handle.close();
+      return status;
+    }
+    return handle;
+  }
+  return function createServerHandle(address, port, addressType, fd, flags) {
+    if (typeof fd === 'number' && fd >= 0) return UV_EINVAL;
+    if (!address) {
+      const ipv6 = bind('::', port, 6, flags);
+      if (typeof ipv6 !== 'number') return ipv6;
+      return bind('0.0.0.0', port, 4, flags);
+    }
+    return bind(address, port, addressType, flags);
+  };
+  };
+})()"#
+        ),
+        "node:net/create-server-handle.js",
+    )?;
+    let create_server_handle = context.call_rooted(
+        create_server_handle_factory,
+        undefined,
+        &[tcp_binding, uv_einval],
+    )?;
+    let key = context.string_rooted("_createServerHandle");
+    if !context.set_property_rooted(module, key, create_server_handle, module)? {
+        return Err(RootedError::host("cannot install net._createServerHandle"));
     }
     let socket_key = context.string_rooted("Socket");
     let socket_constructor = context.get_property_rooted(surface, socket_key)?;
@@ -3970,7 +4012,7 @@ pub(crate) fn udp_close_has_ref(transport: &Transport, id: u64) -> Option<bool> 
         .find_map(|(key, owner)| (*key == CloseTarget::Datagram(id)).then_some(owner.referenced))
 }
 
-/// Load the unchanged SDK owner of BoundSocket's private handle and bind policy.
+/// Project BoundSocket helpers from Node's net implementation.
 pub(crate) fn bound_socket_projection(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,

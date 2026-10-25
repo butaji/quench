@@ -38,6 +38,9 @@ pub(crate) struct Codec {
 }
 impl Codec {
     pub(crate) fn params(&mut self, _level: i32, _strategy: i32) -> Result<(), Failure> {
+        if !self.mode.native_encoding() {
+            return Ok(());
+        }
         Err(stream_error())
     }
 
