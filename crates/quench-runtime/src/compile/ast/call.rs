@@ -109,6 +109,18 @@ impl FunctionCompiler<'_, '_> {
             }
             expression
         }
+        // `typeof a === typeof b`: each name is one kind's (`TYPEOF_NAMES`), so the names are
+        // equal exactly when the kinds' indices are, compared as integers.
+        if let (Expression::UnaryExpression(left), Expression::UnaryExpression(right)) =
+            (unparenthesized(&value.left), unparenthesized(&value.right))
+            && left.operator == UnaryOperator::Typeof
+            && right.operator == UnaryOperator::Typeof
+        {
+            let left = self.typeof_index(&left.argument);
+            let right = self.typeof_index(&right.argument);
+            let operator = if negated { BinaryOperator::StrictInequality } else { BinaryOperator::StrictEquality };
+            return Some(self.emit_binary(operator as u32, Operand::register(left), Operand::register(right)));
+        }
         let (typeof_argument, operator) = match (unparenthesized(&value.left), unparenthesized(&value.right)) {
             (Expression::UnaryExpression(unary), Expression::StringLiteral(name))
             | (Expression::StringLiteral(name), Expression::UnaryExpression(unary))
@@ -122,6 +134,14 @@ impl FunctionCompiler<'_, '_> {
         let dst = self.reg();
         self.emit(Op::Unary, dst, input, 0, operator);
         Some(dst)
+    }
+
+    /// The index in `TYPEOF_NAMES` of `typeof argument`'s name (`UNARY_TYPEOF_INDEX`).
+    pub(super) fn typeof_index(&mut self, argument: &Expression<'_>) -> Register {
+        let input = self.typeof_operand(argument);
+        let index = self.reg();
+        self.emit(Op::Unary, index, input, 0, crate::bytecode::UNARY_TYPEOF_INDEX);
+        index
     }
 
     fn delete_expression(&mut self, argument: &Expression<'_>) -> Register {
@@ -141,7 +161,7 @@ impl FunctionCompiler<'_, '_> {
             }
             Expression::StaticMemberExpression(member) => {
                 let target = self.expression(&member.object);
-                let key = self.literal(Constant::String(member.property.name.to_string()));
+                let key = self.literal(Constant::String(member.property.name.as_str().into()));
                 (target, key)
             }
             Expression::ComputedMemberExpression(member) => {

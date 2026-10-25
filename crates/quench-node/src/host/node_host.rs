@@ -51,11 +51,6 @@ pub struct NodeHost {
     pub(crate) net_pending_destroys: Vec<(u64, bool)>,
     /// The kind of startup snapshot this host builds, ending `initialize` at its point.
     pub(crate) building_snapshot: Option<crate::host::startup_snapshot::SnapshotKind>,
-    /// Module paths' real paths, as Node's ESM resolver keeps them for the process
-    /// (lib/internal/modules/esm/resolve.js `realpathCache`): every import of a module
-    /// resolves through one, and canonicalizing reads each path component's link. Keyed by
-    /// the path's text: `Path`'s own hash walks its components.
-    pub(crate) real_paths: rustc_hash::FxHashMap<std::ffi::OsString, std::path::PathBuf>,
     /// Each referrer's resolved import specifiers (`NodeHost::import_location`).
     pub(crate) resolved_imports: rustc_hash::FxHashMap<
         Box<str>,
@@ -64,19 +59,10 @@ pub struct NodeHost {
 }
 
 impl NodeHost {
-    /// `path`'s real path through `real_paths`; a path that cannot be resolved is returned
-    /// as it is and not kept.
+    /// `path`'s real path through the loaders' known-real paths (`real_path`); a path that
+    /// cannot be resolved is returned as it is.
     pub(crate) fn real_path(&mut self, path: std::path::PathBuf) -> std::path::PathBuf {
-        if let Some(real) = self.real_paths.get(path.as_os_str()) {
-            return real.clone();
-        }
-        match std::fs::canonicalize(&path) {
-            Ok(real) => {
-                self.real_paths.insert(path.into_os_string(), real.clone());
-                real
-            }
-            Err(_) => path,
-        }
+        crate::host::real_path::real_path(&path).unwrap_or(path)
     }
 }
 
@@ -464,7 +450,6 @@ impl NodeHost {
             eval_builtin_globals: false,
             eval_source_nonempty: false,
             initial_node_debug: std::env::var_os("NODE_DEBUG").map(|value| value.to_string_lossy().into_owned()),
-            real_paths: Default::default(),
             resolved_imports: Default::default(),
             net_pending_writes: Vec::new(),
             net_pending_ends: Vec::new(),

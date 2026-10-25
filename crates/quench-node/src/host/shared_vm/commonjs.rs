@@ -50,6 +50,26 @@ pub(super) fn with_commonjs_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver:
     COMMONJS_RESOLVER.with(use_resolver)
 }
 
+thread_local! {
+    /// The resolver of an ES module's imports. It shares the CommonJS resolver's cache, as
+    /// Node's loaders share what they learned of the filesystem: a path either one resolved
+    /// keeps its real path for the other (a symlink retargeted after a `require` still names
+    /// its old target for an `import`, and the reverse).
+    static IMPORT_RESOLVER: oxc_resolver::Resolver = COMMONJS_RESOLVER.with(|resolver| {
+        resolver.clone_with_options(oxc_resolver::ResolveOptions {
+            extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
+            main_files: vec!["index".into()],
+            condition_names: vec!["node".into(), "import".into(), "default".into()],
+            ..Default::default()
+        })
+    });
+}
+
+/// Runs `use_resolver` with the resolver of an ES module's imports.
+pub(crate) fn with_import_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver::Resolver) -> R) -> R {
+    IMPORT_RESOLVER.with(use_resolver)
+}
+
 /// Resolves through a kept resolver. One that finds nothing clears its cache and resolves
 /// again, so a file created since a lookup cached its absence is found: Node keeps resolved
 /// requests, never failed ones.
@@ -96,7 +116,7 @@ pub(crate) fn entry_path(path: &Path) -> Result<PathBuf, String> {
         cwd.join(path)
     };
     if let Some(path) = exact_file_path(&cwd, &path.to_string_lossy()) {
-        return std::fs::canonicalize(path).map_err(|error| error.to_string());
+        return crate::host::real_path::real_path(&path).map_err(|error| error.to_string());
     }
     with_commonjs_resolver(|resolver| resolve_kept(resolver, |resolver| resolver.resolve(&cwd, &path.to_string_lossy())))
         .map(|resolution| resolution.full_path())
@@ -122,7 +142,7 @@ fn inline_directory(context: &mut Context<'_>) -> Result<PathBuf, RootedError> {
 pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     // Only a `.js` or extensionless file asks its package scope, which is its real path's.
     if matches!(path.extension().and_then(|extension| extension.to_str()), Some("js") | None) {
-        let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
+        let path = crate::host::real_path::real_path(path).map_err(|error| error.to_string())?;
         return source_kind_of_real(&path);
     }
     source_kind_of_real(path)
@@ -2236,7 +2256,7 @@ fn resolve_filename_in(
     });
     let outcome = match outcome {
         Ok(Err(exact)) => {
-            return std::fs::canonicalize(exact).map_err(|error| RootedError::host(error.to_string()));
+            return crate::host::real_path::real_path(&exact).map_err(|error| RootedError::host(error.to_string()));
         }
         Ok(Ok(resolution)) => Ok(resolution),
         Err(error) => Err(error),

@@ -7,8 +7,13 @@
 //!
 //! The child inherits stdin, stdout and stderr. After it exits, the last line on stderr is
 //! `rss-exec maxrss_kib=N status=S`; `status` is the exit code, or 128 plus the signal that
-//! ended it. `--evict PATH` drops PATH's cached pages first (`POSIX_FADV_DONTNEED`), so each
-//! run faults its executable in as a cold start does.
+//! ended it. `--evict PATH` drops PATH's cached pages first on Linux
+//! (`POSIX_FADV_DONTNEED`), so each run faults its executable in as a cold start does.
+//! Darwin has no per-file page-cache eviction: there `--evict` only marks the descriptor
+//! `F_NOCACHE`, so a page an earlier run faulted in stays resident, and a Darwin board
+//! must use `/usr/bin/time -l` instead of claiming eviction here.
+//!
+//! `ru_maxrss` counts KiB on Linux and bytes on Darwin; the report is KiB on both.
 //!
 //! The child is started with `posix_spawn`, which shares this process's memory until the
 //! exec, so the launcher's own pages never count toward the child's peak.
@@ -49,6 +54,7 @@ fn parse(arguments: impl Iterator<Item = OsString>) -> Result<Request, String> {
 }
 
 /// Drops `path`'s pages from the page cache; a path that cannot be opened is reported.
+#[cfg(target_os = "linux")]
 fn evict(path: &OsString) -> Result<(), String> {
     let file = std::fs::File::open(path).map_err(|error| format!("{path:?}: {error}"))?;
     use std::os::fd::AsRawFd;
@@ -57,6 +63,20 @@ fn evict(path: &OsString) -> Result<(), String> {
         unsafe { libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED) };
     if result != 0 {
         return Err(format!("{path:?}: posix_fadvise failed ({result})"));
+    }
+    Ok(())
+}
+
+/// Darwin has no per-file page-cache eviction; `F_NOCACHE` keeps this descriptor from
+/// populating the cache and leaves already-resident pages alone.
+#[cfg(target_vendor = "apple")]
+fn evict(path: &OsString) -> Result<(), String> {
+    use std::os::fd::AsRawFd;
+    let file = std::fs::File::open(path).map_err(|error| format!("{path:?}: {error}"))?;
+    // SAFETY: the descriptor is open for the call; the flag changes no file contents.
+    let result = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_NOCACHE, 1) };
+    if result < 0 {
+        return Err(format!("{path:?}: F_NOCACHE failed ({})", std::io::Error::last_os_error()));
     }
     Ok(())
 }
@@ -113,8 +133,21 @@ fn run(command: &[OsString]) -> Result<(i32, i64), String> {
     } else {
         SIGNAL_STATUS_BASE + libc::WTERMSIG(status)
     };
-    // Linux reports ru_maxrss in KiB.
-    Ok((code, usage.ru_maxrss))
+    Ok((code, maxrss_kib(&usage)))
+}
+
+/// Bytes in one `ru_maxrss` unit: Linux counts KiB, Darwin counts bytes.
+#[cfg(target_os = "linux")]
+const MAXRSS_UNIT_BYTES: i64 = 1024;
+#[cfg(target_vendor = "apple")]
+const MAXRSS_UNIT_BYTES: i64 = 1;
+
+/// The report's unit, KiB, which every board reads.
+const BYTES_PER_KIB: i64 = 1024;
+
+/// `usage`'s peak resident set in KiB, whatever unit the platform counts.
+fn maxrss_kib(usage: &libc::rusage) -> i64 {
+    usage.ru_maxrss * MAXRSS_UNIT_BYTES / BYTES_PER_KIB
 }
 
 fn main() {

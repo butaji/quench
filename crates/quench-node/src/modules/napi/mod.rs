@@ -313,6 +313,13 @@ fn declared_api_version(library: *mut c_void) -> i32 {
     unsafe { version() }
 }
 
+/// Whether this binary links the C runtime statically (the qualification builds,
+/// `docs/README.md`). An addon links the shared C runtime, and `dlopen` would load a second
+/// copy beside the static one, with its own thread-local storage and heap: addon code running
+/// on a thread the static runtime created reads another runtime's thread state and faults
+/// (the vitest scenario's rolldown binding, 2026-10-24).
+const STATIC_C_RUNTIME: bool = cfg!(target_feature = "crt-static");
+
 /// `process.dlopen(module, filename[, flags])`: load an addon and run its registration with
 /// `module.exports`, replacing the exports when registration returns another value.
 pub(crate) fn dlopen(
@@ -340,6 +347,13 @@ pub(crate) fn dlopen(
     let exports = c.get_property_rooted(module, exports_key)?;
     let path =
         CString::new(filename.as_str()).map_err(|_| RootedError::host("invalid addon path"))?;
+    if STATIC_C_RUNTIME {
+        let message = format!(
+            "{filename}: native addons need a dynamically linked quench-node; this build links \
+             the C runtime statically, and the addon's libc would run beside it"
+        );
+        return Err(errors::coded_error(c, "ERR_DLOPEN_FAILED", &message));
+    }
     REGISTERED.with(|registered| registered.set(None));
     // SAFETY: loading a native library runs its constructors, which is the purpose of dlopen.
     let library = unsafe { libc::dlopen(path.as_ptr(), flags) };

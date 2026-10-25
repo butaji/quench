@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 mod access;
 mod array_elements;
-pub(crate) use array_elements::{ArrayElements, UniqueElements};
+pub(crate) use array_elements::{ArrayElements, LENGTH_FROM_VALUES, UniqueElements};
 mod cell;
 mod cell_access;
 mod buffer_bytes;
@@ -37,12 +37,49 @@ pub(crate) use collection_entries::{CollectionEntries, CollectionEntry};
 use external::array_payload_bytes;
 use records::{
     ArrayRecordSpace, AwaitRecordSpace, FunctionRecordSpace, IteratorRecordSpace, V128RecordSpace,
-    ObjectRecordSpace, PromiseRecordSpace, RecordFamily, StringRecordSpace,
-    RecordId, RecordSweep,
+    ObjectRecordSpace, PromiseRecordSpace, RecordFamily, StringRecordSpace, RecordId, RecordSweep,
 };
+use records::RECORD_SPACE_CAPACITY;
 pub use root::RootId;
 pub(crate) use root::{RootTable, WeakHandle};
 use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
+
+/// The native reader's view of an ordinary array's fixed record and dense backing.
+///
+/// Every field is derived from the storage types below; this is a projection of the heap's
+/// representation, not a second copy of its length or element state. A consumer resolves the
+/// current live array record from the current rooted `Value`, then loads its current
+/// `ArrayElements` header and backing on every access. It must not retain a record or backing
+/// pointer across a VM safepoint: record addresses are stable for the heap lifetime, but a
+/// copy-on-write array mutation can replace and free its backing. The read itself must not
+/// call into the VM or permit collection while the borrowed raw pointers are in use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeArrayLayout {
+    pub(crate) record_capacity: usize,
+    pub(crate) record_size: usize,
+    pub(crate) record_align: usize,
+    pub(crate) elements_offset: usize,
+    pub(crate) elements_header_offset: usize,
+    pub(crate) header_length_offset: usize,
+    pub(crate) header_values_offset: usize,
+}
+
+/// Layout facts for code generators which emit read-only ordinary-array accesses.
+pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
+    record_capacity: RECORD_SPACE_CAPACITY,
+    record_size: cell::NATIVE_ARRAY_RECORD_SIZE,
+    record_align: cell::NATIVE_ARRAY_RECORD_ALIGN,
+    elements_offset: cell::NATIVE_ARRAY_ELEMENTS_OFFSET,
+    elements_header_offset: array_elements::NATIVE_HEADER_POINTER_OFFSET,
+    header_length_offset: array_elements::NATIVE_HEADER_LENGTH_OFFSET,
+    header_values_offset: array_elements::NATIVE_HEADER_VALUES_OFFSET,
+};
+
+const _: () = assert!(
+    NATIVE_ARRAY_LAYOUT
+        .record_size
+        .is_multiple_of(NATIVE_ARRAY_LAYOUT.record_align)
+);
 
 // Keep implicit holes in dense storage when their one-time allocation is
 // bounded. 1 MiB covers the measured 16,900-slot NavierStokes grids and the
@@ -2759,6 +2796,7 @@ impl Heap {
                     value,
                     array,
                     &self.properties,
+                    &mut self.string_records,
                     work,
                     object_roots,
                     trace_kind,
@@ -3597,6 +3635,7 @@ impl Heap {
         owner: Value,
         array: &ArrayObject,
         properties: &ValueArena,
+        string_records: &mut StringRecordSpace,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
@@ -3616,8 +3655,24 @@ impl Heap {
                 .elements()
                 .iter()
                 .copied()
-                .filter(|value| value.is_heap()),
+                .filter(|value| value.is_heap() && !Self::mark_leaf(string_records, *value)),
         );
+    }
+
+    /// Marks `value` where the trace finds it when it is a string, and says whether it was
+    /// one. A string holds no heap edges, so marking it is the whole visit (`mark_work`): an
+    /// array of strings adds nothing to the mark stack, which had held a value per element at
+    /// the heap's peak (V8-v7 RegExp: 141 KiB). Profiling builds leave every value to
+    /// `mark_work`, which counts each visit.
+    fn mark_leaf(string_records: &mut StringRecordSpace, value: Value) -> bool {
+        if cfg!(feature = "profile-aggregate") {
+            return false;
+        }
+        let Some(record_id) = value.direct_string_index() else {
+            return false;
+        };
+        string_records.mark(record_id);
+        true
     }
     /// An iterator's edges besides its object: its source, cached next method, helper
     /// state and suspended generator.

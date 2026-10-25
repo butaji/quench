@@ -11,14 +11,17 @@ use std::sync::{Arc, Mutex, OnceLock};
 type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 
 /// Reuse immutable host target configuration across JS function tiers and
-/// Wasm module compilation. The verifier choice remains part of the key:
-/// JavaScript currently verifies generated functions while the mature Wasm
-/// compiler opts out after its own structural checks.
-pub(super) fn target_isa(opt_level: &str, enable_verifier: bool) -> Option<Arc<TargetIsa>> {
-    type IsaCache = HashMap<(String, bool), Arc<TargetIsa>>;
+/// Wasm module compilation, one per optimization level.
+/// Whether Cranelift verifies the IR of every compile: in debug builds, where tests check
+/// each lowering, and not in release, where the verifier cost about a quarter of every JIT
+/// compile's instructions (npm semver/browserslist `--jit`, 2026-10-24).
+const VERIFY_IR: bool = cfg!(debug_assertions);
+
+pub(super) fn target_isa(opt_level: &str) -> Option<Arc<TargetIsa>> {
+    type IsaCache = HashMap<String, Arc<TargetIsa>>;
     static CACHE: OnceLock<Mutex<IsaCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = (opt_level.to_owned(), enable_verifier);
+    let key = opt_level.to_owned();
     let mut entries = cache.lock().ok()?;
     if let Some(isa) = entries.get(&key) {
         return Some(Arc::clone(isa));
@@ -29,7 +32,7 @@ pub(super) fn target_isa(opt_level: &str, enable_verifier: bool) -> Option<Arc<T
     flags
         .set(
             "enable_verifier",
-            if enable_verifier { "true" } else { "false" },
+            if VERIFY_IR { "true" } else { "false" },
         )
         .ok()?;
     let isa = cranelift_native::builder()

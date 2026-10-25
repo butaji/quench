@@ -249,7 +249,7 @@ impl GenerationalPacing {
 /// (`Runtime::set_memory_policy`), that selects the collection pacing table, whether the
 /// host returns pages at collection boundaries (`Host::at_collection_boundary`),
 /// whether and how the loop tier compiles (`LOOP_TIER_OPT_LEVELS`), and whether the
-/// general-dispatch tier compiles (`GENERAL_DISPATCH_TIER`).
+/// JavaScript function tiers compile (`JS_FUNCTION_TIERS`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum MemoryPolicy {
     /// Fewer, larger collections, and pages stay resident across them (`THROUGHPUT_PACING`).
@@ -342,7 +342,7 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     minimum_allocation_cap: THROUGHPUT_MINIMUM_FULL_INTERVAL,
     productive_full: Ratio::new(1, 8),
     maximum_cap_backoff: 2,
-    survival_limit: SURVIVAL_SCALE / 2,
+    survival_limit: THROUGHPUT_SURVIVAL_LIMIT,
     full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
@@ -423,6 +423,17 @@ const THROUGHPUT_MINIMUM_YOUNG: usize = 1 << 16;
 /// half of EarleyBoyer in about 1190M instructions instead of 2318M, with 816 fewer
 /// collections of the whole live set (v2-cloud-c, x86_64 4 vCPU).
 const THROUGHPUT_MINIMUM_FULL_INTERVAL: usize = 1 << 18;
+/// Smoothed young survival past which throughput collects fully (`Regime::FullOnly`): three
+/// quarters. npm module loading keeps about 52% of each young generation (QUENCH_GC_TRACE,
+/// typescript-eslint: 531/1024), and at half the heap went FullOnly and fully re-marked the
+/// growing module graph four times (live weight 159K -> 248K -> 383K -> 603K). At three
+/// quarters it stays generational there (v2-npm, Throughput, no JIT, warm snapshot, 4-vCPU
+/// x86_64 VM, 2026-10-24, 9 interleaved runs, CPU / max RSS): typescript-eslint
+/// 841 -> 767 ms / 126.4 -> 122.6 MB (fulls 4 -> 2, full mark 115 -> 28 ms),
+/// @typescript-eslint/eslint-plugin 940 -> 841 / 125.8 -> 124.1, @testing-library/dom
+/// 728 -> 719 / 97.6 -> 93.6, playwright 476 -> 472 / 77.9 -> 77.9, jsdom (median of 15)
+/// 500 -> 428 / 85.6 -> 83.8; packages without full collections within noise.
+const THROUGHPUT_SURVIVAL_LIMIT: u32 = SURVIVAL_SCALE * 3 / 4;
 
 #[cfg(test)]
 mod tests {
@@ -525,8 +536,11 @@ mod tests {
         let next = pacing.plan(&mut state, minor(live, live, live / 2));
         assert_eq!(state.regime(&pacing), Regime::Generational);
         assert!(!next.full);
-        // Nearly everything young survives, twice: full collections with full-only headroom.
-        pacing.plan(&mut state, minor(live + live / 2, live, live / 2));
+        // Nearly everything young survives until smoothed survival passes the table's limit:
+        // full collections with full-only headroom.
+        while (state.survival + SURVIVAL_SCALE) / 2 <= pacing.survival_limit {
+            pacing.plan(&mut state, minor(live + live / 2, live, live / 2));
+        }
         let next = pacing.plan(&mut state, minor(2 * live, 3 * live / 2, live / 2));
         assert_eq!(state.regime(&pacing), Regime::FullOnly);
         // The next full collection keeps the interval measured from the last full one.

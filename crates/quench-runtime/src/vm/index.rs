@@ -329,8 +329,10 @@ impl<H: Host> Vm<H> {
                     self.heap.ordinary_object(current)?;
                 }
             }
+            let base_checked = current == base;
             current = data.proto();
-            if current.is_null() {
+            // Past the base, its prototype chain is proved once or walked.
+            if current.is_null() || (base_checked && self.chain_holds_no_index(current)) {
                 return Some(Value::UNDEFINED);
             }
         }
