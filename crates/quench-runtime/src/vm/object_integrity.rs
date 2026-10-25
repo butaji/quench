@@ -76,6 +76,9 @@ impl<H: Host> Vm<H> {
                     Ok(Value::TRUE)
                 });
             }
+            if vm.is_wasm_gc_object(target) {
+                return Err(vm.wasm_gc_opaque_error(p));
+            }
             let property_key = if matches!(vm.heap.get(key), Some(Cell::Symbol(_))) {
                 vm.materialize_watched_lazy_member(p, target, PropertyKey::symbol(key))?;
                 PropertyKey::symbol(key)
@@ -344,6 +347,9 @@ impl<H: Host> Vm<H> {
             }
             return outcome;
         }
+        if self.is_wasm_gc_object(target) {
+            return Ok(false);
+        }
         let data = self
             .object_data(target)
             .expect("SetPrototypeOf target is an object");
@@ -503,6 +509,9 @@ impl<H: Host> Vm<H> {
                 self.heap.release_root(root);
             }
             return outcome;
+        }
+        if self.is_wasm_gc_object(source) {
+            return Err(self.wasm_gc_opaque_error(p));
         }
         // An object that gains keys when its lazy members materialize gains them first.
         self.complete_lazy_keys(p, source)?;
@@ -669,7 +678,7 @@ impl<H: Host> Vm<H> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
         if matches!(
             self.heap.get(source),
-            Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+            Some(Cell::Proxy { .. } | Cell::TypedArray { .. } | Cell::WasmGc { .. })
         ) || self
             .object_data(source)
             .is_some_and(Object::is_module_namespace)

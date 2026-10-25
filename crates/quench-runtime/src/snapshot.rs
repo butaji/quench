@@ -141,7 +141,7 @@ impl Writer {
 pub(crate) struct Reader<'a> {
     bytes: &'a [u8],
     cursor: usize,
-    /// Given each stretch of read bytes once (`Host::snapshot_bytes_read`).
+    /// Given each stretch of read bytes once (`Host::kept_bytes_read`).
     release: Option<fn(&[u8])>,
     /// Where the bytes not yet given to `release` start.
     released: usize,

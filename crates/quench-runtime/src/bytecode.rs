@@ -33,6 +33,12 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
         "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
         "\0quench:object-define-property" => Native::ObjectDefineProperty,
         "\0quench:object-freeze" => Native::ObjectFreeze,
+        // What the compiler's own throws, class setup and `using` declarations call: the
+        // realm's intrinsics, which a binding of the same name in scope does not replace.
+        INTRINSIC_TYPE_ERROR_BINDING => Native::TypeError,
+        INTRINSIC_REFERENCE_ERROR_BINDING => Native::ReferenceError,
+        INTRINSIC_SET_PROTOTYPE_OF_BINDING => Native::ObjectSetPrototypeOf,
+        INTRINSIC_DISPOSABLE_STACK_BINDING => Native::DisposableStack,
         // The iteration helpers each realm also installs on its global object.
         ITERATOR_CLOSE_BINDING => Native::IteratorClose,
         FOR_IN_KEYS_BINDING => Native::ForInKeys,
@@ -46,6 +52,10 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
 pub(crate) fn is_intrinsic_name(name: &str) -> bool {
     name == INTRINSIC_REGEXP_BINDING || intrinsic_name_native(name).is_some()
 }
+pub(crate) const INTRINSIC_TYPE_ERROR_BINDING: &str = "\0quench:intrinsic-type-error";
+pub(crate) const INTRINSIC_REFERENCE_ERROR_BINDING: &str = "\0quench:intrinsic-reference-error";
+pub(crate) const INTRINSIC_SET_PROTOTYPE_OF_BINDING: &str = "\0quench:intrinsic-set-prototype-of";
+pub(crate) const INTRINSIC_DISPOSABLE_STACK_BINDING: &str = "\0quench:intrinsic-disposable-stack";
 /// The engine-internal global a `with` statement calls to enter its object scope.
 pub(crate) const WITH_ENTER_BINDING: &str = "\0quench:with-enter";
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
@@ -1493,6 +1503,9 @@ pub(crate) struct CallPlan {
     /// it kept and makes the object only at its last read (`KeptArguments::Passes`). Its
     /// frame makes the object on entry.
     pub(crate) keeps_arguments: bool,
+    /// `Function::reads_passed_arguments_only`: an environment activation keeps every value
+    /// passed after its locals, past its parameters too.
+    pub(crate) reads_passed_arguments: bool,
     /// The activation's whole state is its registers, plus the values it was passed when it
     /// forwards them: it reaches no local but a forwarded `arguments` binding, and legacy
     /// reflection, if any, reads its parameter registers or the forwarded values. A lane
@@ -1525,22 +1538,39 @@ pub(crate) struct SourcePosition {
 pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 
 /// Whether register liveness covers a function's register forms, so a frame may leave its
-/// dead registers stale; and the per-pc live register masks the collector scans, derived
-/// when a collection first finds the function on the stack. Most of a program's functions
-/// never run during a collection, so their masks are never built.
+/// dead registers stale; the pcs of its `Call`s whose result register is dead after the
+/// call, which the compiler derives once from the same liveness (`liveness::mark_register_roots`);
+/// and the per-pc live register masks the collector scans, derived when a collection first
+/// finds the function on the stack. Most of a program's functions never run during a
+/// collection, so their masks are never built.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RegisterRoots {
     covered: bool,
+    dead_call_results: Box<[u32]>,
     masks: std::cell::OnceCell<crate::compile::liveness::RegisterMasks>,
 }
 
 impl RegisterRoots {
     pub(crate) fn new(covered: bool) -> Self {
-        Self { covered, masks: std::cell::OnceCell::new() }
+        Self::with_dead_call_results(covered, Box::default())
+    }
+
+    /// `dead_call_results` in increasing pc order.
+    pub(crate) fn with_dead_call_results(covered: bool, dead_call_results: Box<[u32]>) -> Self {
+        Self { covered, dead_call_results, masks: std::cell::OnceCell::new() }
     }
 
     pub(crate) fn covered(&self) -> bool {
         self.covered
+    }
+
+    pub(crate) fn dead_call_results(&self) -> &[u32] {
+        &self.dead_call_results
+    }
+
+    /// Whether the `Call` at `pc` leaves its result register dead.
+    pub(crate) fn call_result_dead(&self, pc: usize) -> bool {
+        u32::try_from(pc).is_ok_and(|pc| self.dead_call_results.binary_search(&pc).is_ok())
     }
 
     /// The masks a collection derived so far; none until one finds the function running.
@@ -2232,7 +2262,7 @@ impl Function {
                 && self.self_binding_slot.is_none()
                 && !self.inherited_with_scope
                 && self.local_registers.is_empty()
-                && self.arguments_slot.is_none()
+                && (self.arguments_slot.is_none() || self.reads_passed_arguments_only())
                 && self.binding_sites.is_empty()
                 && self.selective_capture_slots.is_some()
                 && self.initial_register == InitialRegister::Undefined
@@ -2256,7 +2286,9 @@ impl Function {
                             // A read whose base is a plain local reads the window's local
                             // (`lane_plain_local_operand`).
                             || (op == Op::GetField
-                                && instruction.addressed_local_slots().eq(instruction.local_field_base())))
+                                && instruction.addressed_local_slots().eq(instruction.local_field_base()))
+                            // The window keeps every value passed, which these answer.
+                            || matches!(op, Op::ArgumentsLength | Op::ArgumentGet))
                 });
             CallPlan {
                 environment_activation,
@@ -2268,6 +2300,7 @@ impl Function {
                 addresses_locals,
                 forwards_arguments,
                 keeps_arguments: kept_arguments.is_some(),
+                reads_passed_arguments: self.reads_passed_arguments_only(),
                 registers_only: (ordinary_with_rest && in_loop || constructs_frameless)
                     && self.initial_register == InitialRegister::Undefined
                     && if self.arguments_slot.is_none() {
@@ -2318,6 +2351,30 @@ impl Function {
                 }
                 _ => false,
             }
+    }
+
+    /// Whether the body reaches its `arguments` binding only by reading its length or an
+    /// element (`ArgumentsLength`, `ArgumentGet`), with no closure capturing the binding, so
+    /// the values passed and the parameters answer every read: an element a parameter
+    /// aliases (`arguments_alias_parameters`) is that parameter's local, which no closure
+    /// captures, and any other the value passed. An environment activation then keeps those
+    /// values after its locals.
+    pub(crate) fn reads_passed_arguments_only(&self) -> bool {
+        let Some(slot) = self.arguments_slot else {
+            return false;
+        };
+        !self.is_generator
+            && !self.is_async
+            && (!self.arguments_alias_parameters()
+                || (0..usize::from(self.params)).all(|parameter| !self.local_slot_uses_environment(parameter)))
+            && !self.local_slot_uses_environment(usize::from(slot))
+            && !self.has_dynamic_scope_access()
+            && self.instructions().all(|instruction| {
+                matches!(instruction.op(), Op::ArgumentsLength | Op::ArgumentGet)
+                    || !instruction
+                        .addressed_local_slots()
+                        .any(|addressed| addressed == slot)
+            })
     }
 
     /// What a derived constructor whose whole body constructs its parent and returns the
@@ -3599,7 +3656,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 107;
+    pub const FORMAT_VERSION: u8 = 108;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

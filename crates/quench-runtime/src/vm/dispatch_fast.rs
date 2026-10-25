@@ -97,6 +97,12 @@ impl LaneInstruction {
 /// A loop the shared compiler may run natively: the region its backward jump
 /// closes, the jump's distance to the header record, and the tier's state for it.
 pub(super) struct LoopSite {
+    /// The bytecode function whose lane view owns this site. A lane activation may be
+    /// frameless, so the VM frame's function is not necessarily the one taking this edge.
+    function: u32,
+    /// Observe backedge work for the JS function tier when OSR rejected this loop. These
+    /// sites never attempt native loop code; the shared function compiler owns promotion.
+    promotion_only: bool,
     /// The admitted region; a loop whose calls run inlined makes its region once it is hot
     /// (`lane_inlining_region`), when its callees are known.
     region: std::cell::OnceCell<super::compiled::LoopRegion>,
@@ -104,10 +110,20 @@ pub(super) struct LoopSite {
     header: u32,
     backedge: u32,
     jump: isize,
+    /// The header record's own handler while the site holds that record
+    /// (`lane_loop_header`), which enters the loop's native code wherever control arrives at
+    /// the header; null otherwise.
+    header_handler: std::cell::Cell<*const ()>,
+    /// Whether the site may hold its header record (`lane_loop_hold_header`): one that is
+    /// no call record, whose `call_link` names a call target, and the header of no other
+    /// site. The record's `call_link` then names the site.
+    hookable: bool,
     /// Backward jumps taken before the region compiles, up to `LOOP_TIER_THRESHOLD`.
     taken: std::cell::Cell<u32>,
     /// Native runs that left at an instruction the general path executes.
     exits: std::cell::Cell<u32>,
+    /// Entries declined since the last that ran native code.
+    declines: std::cell::Cell<u32>,
     /// Whether this VM requested OSR diagnostics when its lane view was derived.
     diagnostics: bool,
     native_entry_attempts: std::cell::Cell<u64>,
@@ -146,6 +162,10 @@ pub(super) const LOOP_TIER_THRESHOLD: u32 = 1000;
 /// Native runs that may leave at a general-path instruction before the site stops entering
 /// native code: a loop whose values keep leaving the subset is the interpreter's.
 const LOOP_TIER_MAX_EXITS: u32 = 1000;
+/// Entries a site's guards may decline in a row before it stops trying: a field whose cache
+/// never hits at entry (an array's `length`) made V8-v7 Crypto's sum loop decline at each of
+/// its iterations.
+const LOOP_TIER_MAX_DECLINES: u32 = 64;
 /// Elements of an array read to guess whether it holds `i32`s; a wrong guess costs one
 /// compilation.
 const LOOP_TIER_ELEMENT_SAMPLE: usize = 8;
@@ -198,6 +218,7 @@ pub(super) struct LaneView {
 pub(super) struct OsrDiagnostics {
     pub(super) plain_backward_jump_sites: usize,
     pub(super) admitted_sites: usize,
+    pub(super) promotion_only_sites: usize,
     pub(super) compile_attempts: u64,
     pub(super) compile_successes: u64,
     pub(super) currently_compiled_sites: usize,
@@ -214,7 +235,8 @@ impl LaneView {
     pub(super) fn osr_diagnostics(&self) -> OsrDiagnostics {
         OsrDiagnostics {
             plain_backward_jump_sites: self.plain_backward_jump_sites,
-            admitted_sites: self.loops.len(),
+            admitted_sites: self.loops.iter().filter(|site| !site.promotion_only).count(),
+            promotion_only_sites: self.loops.iter().filter(|site| site.promotion_only).count(),
             compile_attempts: self.loops.iter().map(|site| site.compile_attempts.get()).sum(),
             compile_successes: self.loops.iter().map(|site| site.compile_successes.get()).sum(),
             currently_compiled_sites: self
@@ -372,8 +394,7 @@ struct ActivationShape {
 }
 
 impl LaneView {
-    /// The address range its records span (`lane_exits::register_view`).
-    #[cfg(feature = "profile-lane-exits")]
+    /// The address range its records span (`lane_exits::register_view`, `lane_header_site`).
     pub(super) fn record_range(&self) -> (usize, usize) {
         let start = self.records().addr();
         (start, start + self.records.len() * std::mem::size_of::<LaneInstruction>())
@@ -420,10 +441,19 @@ impl LaneView {
 /// the record's state machine, taken when an execution of the record shows the handler it has
 /// does not fit the site. Every handler a record may switch between computes the same result.
 #[inline(always)]
-fn requicken(ip: Ip, handler: Handler) {
+fn requicken<H: Host>(ip: Ip, handler: Handler) {
     // SAFETY: `ip` comes from `LaneView::records`, whose records live in `UnsafeCell`s; the
-    // lane runs on the view's thread, and no reference to the handler field is live.
-    unsafe { (*ip.cast_mut()).handler = handler as *const () };
+    // lane runs on the view's thread, and no reference to the handler field is live. A
+    // header record a loop site holds keeps `lane_loop_header`, and the site the handler.
+    unsafe {
+        if (*ip).handler == lane_loop_header::<H> as Handler as *const ()
+            && let Some(site) = lane_header_site::<H>(lane_context::<H>(), ip)
+        {
+            (*site).header_handler.set(handler as *const ());
+            return;
+        }
+        (*ip.cast_mut()).handler = handler as *const ();
+    }
 }
 
 /// The active frame's registers. Lane instructions never resize registers or
@@ -2980,7 +3010,7 @@ script_handler! {
     /// registers; the first other operand switches the record to `lane_operator_numbers`.
     fn lane_operator<OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::operations::integer_operator::<OP>(r.get(i.b), r.get(i.c)) else {
-            requicken(ip, lane_operator_numbers::<H, OP>);
+            requicken::<H>(ip, lane_operator_numbers::<H, OP>);
             sibling!(lane_operator_numbers::<H, OP>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
@@ -3071,7 +3101,7 @@ script_handler! {
     fn lane_operator_constant<OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::operations::integer_operator::<OP>(r.get(i.b), i.constant())
         else {
-            requicken(ip, lane_operator_constant_numbers::<H, OP>);
+            requicken::<H>(ip, lane_operator_constant_numbers::<H, OP>);
             sibling!(lane_operator_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
@@ -3372,7 +3402,7 @@ fn lane_typed_array_store<H: Host>(ip: Ip, vm: &mut Vm<H>, object: Value, key: V
         .array_index_key(key)
         .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value));
     if stored {
-        requicken(ip, lane_set_index_typed::<H>);
+        requicken::<H>(ip, lane_set_index_typed::<H>);
     }
     stored
 }
@@ -3383,7 +3413,7 @@ fn lane_typed_array_store<H: Host>(ip: Ip, vm: &mut Vm<H>, object: Value, key: V
 fn lane_string_key_store<H: Host>(ip: Ip, vm: &mut Vm<H>, object: Value, key: Value, value: Value) -> bool {
     let stored = vm.try_plain_string_key_set(object, key, value);
     if stored {
-        requicken(ip, lane_set_index_string::<H>);
+        requicken::<H>(ip, lane_set_index_string::<H>);
     }
     stored
 }
@@ -4265,7 +4295,7 @@ script_handler! {
         }
         let vm = unsafe { vm(cx) };
         if vm.is_private_name(i.imm()) && i.b != crate::bytecode::FieldBase::NESTED {
-            requicken(ip, lane_get_private_field::<H>);
+            requicken::<H>(ip, lane_get_private_field::<H>);
             sibling!(lane_get_private_field::<H>, r, ip, Carried::script(cx))
         }
         if vm.reads_function_info(i.imm()) {
@@ -4279,7 +4309,7 @@ script_handler! {
             } else {
                 lane_get_field::<H>
             };
-            requicken(ip, handler);
+            requicken::<H>(ip, handler);
             sibling!(handler, r, ip, Carried::script(cx))
         }
         let own = single_base_handler(
@@ -4288,7 +4318,7 @@ script_handler! {
             lane_get_field_own::<H, false>,
             lane_get_field_miss::<H>,
         );
-        requicken(ip, own);
+        requicken::<H>(ip, own);
         sibling!(own, r, ip, Carried::script(cx))
     }
 }
@@ -4316,7 +4346,7 @@ script_handler! {
             sibling!(lane_get_length_arguments::<H>, r, ip, Carried::script(cx))
         };
         // A site that reads a string's length mostly reads strings, as a scan over one does.
-        requicken(ip, lane_get_length_string::<H>);
+        requicken::<H>(ip, lane_get_length_string::<H>);
         r.set(i.a, Value::length(length));
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -4417,7 +4447,7 @@ script_handler! {
             FieldSiteTier::Own => None,
         };
         if let Some(handler) = handler {
-            requicken(ip, handler);
+            requicken::<H>(ip, handler);
         }
         sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
     }
@@ -4804,7 +4834,7 @@ unsafe fn lane_getter_read<H: Host>(
         // SAFETY: as `lane_call_read`; the context's program outlives the lane run.
         let (entry, code) = unsafe { ((*target.view).records(), &*(*cx).code) };
         if unsafe { (*entry).handler } == lane_returning_field_first::<H> as *const () {
-            requicken(entry, returning_field_first_kind(unsafe { vm(cx) }, code, unsafe { &*entry }));
+            requicken::<H>(entry, returning_field_first_kind(unsafe { vm(cx) }, code, unsafe { &*entry }));
         }
     } else if !target.entry.reads() && target.entry != CallEntry::ForwardsRead {
         return None;
@@ -4868,10 +4898,10 @@ script_handler! {
                     && site.second.is_none_or(|(atom, _)| !vm.reads_function_info(atom))
             });
         if own {
-            requicken(ip, lane_get_field_sink_own::<H>);
+            requicken::<H>(ip, lane_get_field_sink_own::<H>);
             sibling!(lane_get_field_sink_own::<H>, r, ip, Carried::script(cx))
         }
-        requicken(ip, lane_get_field_sink::<H>);
+        requicken::<H>(ip, lane_get_field_sink::<H>);
         sibling!(lane_get_field_sink::<H>, r, ip, Carried::script(cx))
     }
 }
@@ -5271,7 +5301,7 @@ script_handler! {
             None
         };
         if let Some(handler) = handler {
-            requicken(ip, handler);
+            requicken::<H>(ip, handler);
         }
         if THIS {
             sibling!(lane_set_this_field::<H>, r, ip, Carried::script(cx))
@@ -5338,7 +5368,7 @@ script_handler! {
         let object = if THIS { unsafe { lane_fixed_this(cx) } } else { Some(r.get(i.b)) };
         if !object.is_some_and(|object| lane_field_add(vm, code, object, i)) {
             let general: Handler = if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> };
-            requicken(ip, general);
+            requicken::<H>(ip, general);
             if THIS {
                 sibling!(lane_set_this_field::<H>, r, ip, Carried::script(cx))
             }
@@ -5803,11 +5833,11 @@ script_handler! {
             && runtime.programs.js_jit_general_dispatch_enabled()
             && unsafe { &*(*cx).code }.kind != crate::bytecode::ProgramKind::Wasm
         {
-            let (program_id, frame_id, code) = unsafe {
+            let (program_id, code) = unsafe {
                 let context = &*cx;
-                (context.program, context.frame, &*context.code)
+                (context.program, &*context.code)
             };
-            let function = runtime.frames[frame_id].function;
+            let function = site.function;
             let instruction_count = code
                 .function_get(function as usize)
                 .map_or(0, |body| body.code.len());
@@ -5820,9 +5850,12 @@ script_handler! {
                 instruction_count,
             ) {
                 // The shared whole-function CFG starts at this exact loop header
-                // after run_fast_lane hands control back to the dispatcher.
+                // after run_fast_lane materializes any frameless lane activations.
                 return exit(header);
             }
+        }
+        if site.promotion_only {
+            next!(cx, r, header, Carried::script(cx))
         }
         if site.taken.get() < LOOP_TIER_THRESHOLD {
             site.taken.set(site.taken.get() + 1);
@@ -5830,6 +5863,7 @@ script_handler! {
         }
         // SAFETY: the lane's VM is live, and nothing borrows it across the read.
         if site.exits.get() >= LOOP_TIER_MAX_EXITS
+            || site.declines.get() >= LOOP_TIER_MAX_DECLINES
             || !site.tier.borrow().may_run(unsafe { vm(cx) }.heap.memory_policy())
         {
             lane_loop_retire::<H>(cx, ip, site);
@@ -5847,22 +5881,133 @@ script_handler! {
                 }
             },
         };
-        // The record is filled where it lives, so its words are neither cleared nor copied.
-        let mut entry = super::compiled::LoopEntry::new();
-        if lane_loop_entry(cx, r, region, &mut entry).is_none() {
-            next!(cx, r, header, Carried::script(cx))
+        match lane_loop_native::<H>(cx, r, ip, header, site, region) {
+            LoopAttempt::Declined => lane_at_header!(cx, r, header, site),
+            LoopAttempt::At(next) => next!(cx, r, next, Carried::script(cx)),
+            LoopAttempt::Leave(next) => next,
         }
-        // The tier's state is borrowed only here, so the dispatch below holds no borrow.
-        let continuation = lane_loop_run(cx, r, site, region, &mut entry);
-        match continuation {
-            LoopContinuation::Jump => next!(cx, r, header, Carried::script(cx)),
-            LoopContinuation::Resume(pc) => next!(cx, r, at(pc), Carried::script(cx)),
-            LoopContinuation::Exit(pc) => match region.inlined_exit(pc) {
-                Some((frame, callee_pc)) => exit(lane_inlined_activation(cx, r, region, &entry, *frame, at(frame.call), pc, callee_pc)),
-                None => exit(at(pc)),
-            },
-            LoopContinuation::Safepoint => lane_safepoint::<H>(ip, header),
+    }
+}
+
+/// The header record's own handler at `header`, as the interpreter runs it: the one `site`
+/// holds while it holds the record (`lane_loop_header`), which the backward jump thus does
+/// not try again.
+macro_rules! lane_at_header {
+    ($cx:expr, $r:expr, $header:expr, $site:expr) => {{
+        let held = $site.header_handler.get();
+        if held.is_null() {
+            next!($cx, $r, $header, Carried::script($cx))
         }
+        // SAFETY: the site holds the record's handler, which has the shared signature.
+        let handler: Handler = unsafe { std::mem::transmute::<*const (), Handler>(held) };
+        sibling!(handler, $r, $header, Carried::script($cx))
+    }};
+}
+use lane_at_header;
+
+/// What a loop site's native attempt leaves the lane to do.
+enum LoopAttempt {
+    /// Nothing ran natively: the header record runs as the interpreter's.
+    Declined,
+    /// Continue at this record.
+    At(Ip),
+    /// Return this from the handler: an exit, or a safepoint's continuation.
+    Leave(Ip),
+}
+
+/// Runs `site`'s region on `r` from its `header` record, reached at `record` (the backward
+/// jump, or the header itself): the entry guards, then native code, which resumes the lane
+/// where control leaves the region or leaves to the general path. Once the region has code,
+/// the site holds its header record, so a loop entered from outside runs natively from its
+/// first iteration.
+#[inline(always)]
+fn lane_loop_native<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    record: Ip,
+    header: Ip,
+    site: &LoopSite,
+    region: &super::compiled::LoopRegion,
+) -> LoopAttempt {
+    // SAFETY: the region carries its validated header and latch PCs, and every instruction
+    // record remains contiguous in this lane view.
+    let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
+    // The record is filled where it lives, so its words are neither cleared nor copied.
+    let mut entry = super::compiled::LoopEntry::new();
+    if lane_loop_entry(cx, r, region, &mut entry).is_none() {
+        site.declines.set(site.declines.get() + 1);
+        return LoopAttempt::Declined;
+    }
+    // The tier's state is borrowed only here, so the dispatch below holds no borrow.
+    let continuation = lane_loop_run(cx, r, site, region, &mut entry);
+    site.declines.set(if matches!(continuation, LoopContinuation::Jump) { site.declines.get() + 1 } else { 0 });
+    lane_loop_hold_header::<H>(header, site);
+    match continuation {
+        LoopContinuation::Jump => LoopAttempt::Declined,
+        LoopContinuation::Resume(pc) => LoopAttempt::At(at(pc)),
+        LoopContinuation::Exit(pc) => LoopAttempt::Leave(match region.inlined_exit(pc) {
+            Some((frame, callee_pc)) => exit(lane_inlined_activation(cx, r, region, &entry, *frame, at(frame.call), pc, callee_pc)),
+            None => exit(at(pc)),
+        }),
+        LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header)),
+    }
+}
+
+/// Gives `site` its `header` record (`LoopSite::hookable`) once its region has code: the
+/// record runs `lane_loop_header`, and the site keeps the record's own handler.
+fn lane_loop_hold_header<H: Host>(header: Ip, site: &LoopSite) {
+    if !site.hookable || !site.header_handler.get().is_null() || site.tier.borrow().code.is_none() {
+        return;
+    }
+    // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view.
+    unsafe {
+        site.header_handler.set((*header).handler);
+        (*header.cast_mut()).handler = lane_loop_header::<H> as Handler as *const ();
+    }
+}
+
+/// The site whose header record is at `ip` (`LoopSite::hookable`), in the view that holds
+/// the record: the running activation's, else another of the program's.
+unsafe fn lane_header_site<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Option<*const LoopSite> {
+    // SAFETY: the context's VM and views are live while the lane runs.
+    let (machine, views) = unsafe { (vm(cx), &*(*cx).views) };
+    let function = machine
+        .lane_stack
+        .activations
+        .last()
+        .map_or(machine.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+    let holds = |view: &&LaneView| {
+        let (start, end) = view.record_range();
+        (start..end).contains(&ip.addr())
+    };
+    let view = views
+        .get(function as usize)
+        .and_then(std::cell::OnceCell::get)
+        .filter(holds)
+        .or_else(|| views.iter().filter_map(std::cell::OnceCell::get).find(holds))?;
+    // SAFETY: a record of the view; a held header's `call_link` names its site.
+    view.loops.get(usize::from(unsafe { (*ip).call_link.get() })).map(std::ptr::from_ref)
+}
+
+script_handler! {
+    /// A loop's header record while its site holds it (`lane_loop_hold_header`): arriving at
+    /// the header enters the loop's native code as its backward jump does, and otherwise
+    /// runs the record's own handler.
+    fn lane_loop_header<>(cx, r, ip, i, view) {
+        // SAFETY: a record runs this handler only while a site holds it.
+        let site = unsafe { &*lane_header_site::<H>(cx, ip).expect("a held header names its site") };
+        if !below_floor()
+            && site.exits.get() < LOOP_TIER_MAX_EXITS
+            && site.declines.get() < LOOP_TIER_MAX_DECLINES
+            && let Some(region) = site.region.get()
+        {
+            match lane_loop_native::<H>(cx, r, ip, ip, site, region) {
+                LoopAttempt::Declined => {}
+                LoopAttempt::At(next) => next!(cx, r, next, Carried::script(cx)),
+                LoopAttempt::Leave(next) => return next,
+            }
+        }
+        lane_at_header!(cx, r, ip, site)
     }
 }
 
@@ -5877,8 +6022,15 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
     // the jump reads its distance from the operand, which the site kept (`LoopSite::jump`).
-    unsafe { (*ip.cast_mut()).operand = LaneOperand { jump: site.jump } };
-    requicken(ip, lane_jump_always::<H, true>);
+    // A header record the site holds gets its own handler back.
+    unsafe {
+        let held = site.header_handler.replace(std::ptr::null());
+        if !held.is_null() {
+            (*ip.byte_offset(site.jump).cast_mut()).handler = held;
+        }
+        (*ip.cast_mut()).operand = LaneOperand { jump: site.jump };
+    }
+    requicken::<H>(ip, lane_jump_always::<H, true>);
 }
 
 /// Where the lane goes after a loop site's native attempt.
@@ -6001,7 +6153,7 @@ fn lane_loop_run<H: Host>(
             let work = backedges;
             if work > 0 {
                 let context = unsafe { &*cx };
-                let function = runtime.frames[context.frame].function;
+                let function = site.function;
                 let instruction_count = unsafe { &*context.code }
                     .function_get(function as usize)
                     .map_or(0, |body| body.code.len());
@@ -8675,7 +8827,17 @@ fn lane_frame_state<H: Host>(
     let Some(lane_view) = vm
         .programs
         .lane_view(program, function, |code, constants, kind, live, sites| {
-            derive_lane_view::<H>(code, constants, kind, live, sites, vm.js_tier_runs(), diagnostics)
+            derive_lane_view::<H>(
+                function,
+                code,
+                constants,
+                kind,
+                live,
+                sites,
+                vm.js_tier_runs(),
+                vm.programs.js_jit_general_dispatch_enabled(),
+                diagnostics,
+            )
         })
     else {
         unreachable!("an inline Wasm frame runs a function of its program");
@@ -8906,7 +9068,23 @@ impl<H: Host> Vm<H> {
                         frame.captured = true;
                         let locals = held + usize::from(WINDOW_LOCALS);
                         let count = frame.locals.len();
+                        // The activation never binds `arguments`: its body only reads the
+                        // values passed and its parameters (`Function::reads_passed_arguments_only`),
+                        // so the object the push made from the values is the binding, with
+                        // each element a parameter aliases holding that parameter now.
+                        let body = code.function(activation.function as usize);
+                        let arguments = body.arguments_slot.map(usize::from);
+                        let object = arguments.map(|slot| frame.locals[slot]);
                         frame.locals.copy_from_slice(&registers[locals..locals + count]);
+                        if let (Some(slot), Some(object)) = (arguments, object) {
+                            frame.locals[slot] = object;
+                            if body.arguments_alias_parameters() {
+                                for parameter in 0..usize::from(body.params).min(argc) {
+                                    let value = registers[locals + parameter];
+                                    self.store_mapped_argument(object, parameter, value);
+                                }
+                            }
+                        }
                     }
                     // Its frame closes the iterators its loops pushed (`LaneStack::iterators`).
                     let frame = self.frames.last_mut().expect("the activation pushed a frame");
@@ -9329,7 +9507,17 @@ impl<H: Host> Vm<H> {
     fn lane_view_any(&self, program: ProgramId, function: u32) -> Option<*const LaneView> {
         let diagnostics = self.programs.reports_on_drop();
         self.programs.lane_view(program, function, |code, constants, kind, live, sites| {
-            derive_lane_view::<H>(code, constants, kind, live, sites, self.js_tier_runs(), diagnostics)
+            derive_lane_view::<H>(
+                function,
+                code,
+                constants,
+                kind,
+                live,
+                sites,
+                self.js_tier_runs(),
+                self.programs.js_jit_general_dispatch_enabled(),
+                diagnostics,
+            )
         })
     }
 }
@@ -9362,7 +9550,7 @@ script_handler! {
                 CallEntry::Keeps | CallEntry::Gathers => lane_script_call_keeping::<H>,
                 _ => lane_script_call_full::<H>,
             };
-            requicken(ip, handler);
+            requicken::<H>(ip, handler);
             sibling!(handler, r, ip, Carried::script(cx))
         }
         #[cfg(feature = "profile-lane-exits")]
@@ -9557,7 +9745,7 @@ script_handler! {
         else {
             // A site this form serves since `lane_script_call` saw an environment target
             // calls the full form once its callee differs.
-            requicken(ip, lane_script_call_full::<H>);
+            requicken::<H>(ip, lane_script_call_full::<H>);
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         };
         let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
@@ -9618,7 +9806,7 @@ script_handler! {
             sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
         }
         let Some(target) = vm.cross_call_entry(callee) else {
-            requicken(ip, lane_script_call::<H>);
+            requicken::<H>(ip, lane_script_call::<H>);
             sibling!(lane_script_call::<H>, r, ip, Carried::script(cx))
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
@@ -9659,7 +9847,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         if vm.cross_call_entry(callee).is_some() {
-            requicken(ip, lane_script_call_cross::<H>);
+            requicken::<H>(ip, lane_script_call_cross::<H>);
             sibling!(lane_script_call_cross::<H>, r, ip, Carried::script(cx))
         }
         if let Some(target) = vm.resolve_script_call_target(code, callee) {
@@ -9671,7 +9859,7 @@ script_handler! {
             if target.entry != CallEntry::Activates {
                 sibling!(lane_frame_call::<H>, r, ip, Carried::script(cx))
             }
-            requicken(ip, lane_script_call_cross::<H>);
+            requicken::<H>(ip, lane_script_call_cross::<H>);
             sibling!(lane_script_call_cross::<H>, r, ip, Carried::script(cx))
         }
         // A site calling a native takes the native handler from now on, which hands any other
@@ -9680,10 +9868,10 @@ script_handler! {
             Some(FunctionRecord { kind: FunctionKind::Native(Native::StringCharCodeAt), .. })
                 if i.a & crate::bytecode::RETURN_REGISTER == 0 =>
             {
-                requicken(ip, lane_call_char_code_at::<H>);
+                requicken::<H>(ip, lane_call_char_code_at::<H>);
             }
             Some(FunctionRecord { kind: FunctionKind::Native(_), .. }) => {
-                requicken(ip, lane_native_call::<H>);
+                requicken::<H>(ip, lane_native_call::<H>);
             }
             _ => {}
         }
@@ -9737,14 +9925,14 @@ script_handler! {
             && (!vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
                 || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&vm.atom_name(i.imm())));
         if global {
-            requicken(ip, lane_load_global_name::<H, KIND>);
+            requicken::<H>(ip, lane_load_global_name::<H, KIND>);
             sibling!(lane_load_global_name::<H, KIND>, r, ip, Carried::script(cx))
         }
         if crate::bytecode::is_intrinsic_name(vm.atom_name(i.imm())) {
-            requicken(ip, lane_load_intrinsic_name::<H, KIND>);
+            requicken::<H>(ip, lane_load_intrinsic_name::<H, KIND>);
             sibling!(lane_load_intrinsic_name::<H, KIND>, r, ip, Carried::script(cx))
         }
-        requicken(ip, lane_exit::<H>);
+        requicken::<H>(ip, lane_exit::<H>);
         exit(ip)
     }
 }
@@ -10077,6 +10265,25 @@ fn lane_passed_frame_call<H: Host>(
         return exit(ip);
     }
     let Some(target) = vm.in_loop_call_target(code, callee) else {
+        #[cfg(feature = "profile-lane-exits")]
+        super::lane_exits::record_detail(format!(
+            "passed frame call declined kind={:?} realm_matches={} name={:?}",
+            vm.heap.function(callee).map(|record| match record.kind {
+                FunctionKind::Native(Native::HostFunction) => vm.host_function_name(callee).unwrap_or_default().to_string(),
+                FunctionKind::Native(native) => format!("{native:?}"),
+                FunctionKind::User(..) => "user".to_string(),
+            }),
+            vm.heap.function(callee).is_some_and(|record| record.realm == vm.realm.globals),
+            vm.heap.function(callee).and_then(|record| match record.kind {
+                FunctionKind::User(program, function) => vm.programs.residual(program).and_then(|code| {
+                    let body = code.function_get(function as usize)?;
+                    Some(format!("{} @{:?} async={} generator={} in_loop={}",
+                        body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+                        body.source_span.map(|span| span.start), body.is_async, body.is_generator, body.call_plan(code).in_loop))
+                }),
+                _ => None,
+            }),
+        ));
         return exit(ip);
     };
     lane_push_frame_call(cx, r, ip, i, target, callee, receiver, passed)
@@ -10189,6 +10396,22 @@ fn lane_apply_activation<H: Host>(
         _ => (argument(0), argument(1), *args.get(2)?),
     };
     let listed = !(native == Native::FunctionApply && (list.is_undefined() || list.is_null()));
+    #[cfg(feature = "profile-lane-exits")]
+    {
+        let vm = unsafe { vm(cx) };
+        super::lane_exits::record_detail(format!(
+            "apply callee={:?} array={} arguments_object={} sparse={} holes={} activations={}",
+            vm.heap.function(callee).map(|record| match record.kind {
+                FunctionKind::User(..) => "user",
+                FunctionKind::Native(_) => "native",
+            }),
+            vm.heap.array(list).is_some(),
+            vm.heap.array(list).is_some_and(|array| array.is_arguments_object()),
+            vm.heap.sparse_length(list).is_some(),
+            vm.heap.array(list).is_some_and(|array| array.elements().as_slice().iter().any(|value| value.is_deleted())),
+            vm.lane_stack.activations.len(),
+        ));
+    }
     lane_list_activation(cx, r, ip, i, callee, receiver, list, listed)
 }
 
@@ -10217,6 +10440,39 @@ fn lane_list_activation<H: Host>(
     };
     if listed && !dense(vm) {
         return None;
+    }
+    // A bound function or `Function.prototype.call` forwards the list to the function it
+    // names (`Vm::forwarded_call`), which a forwarded call activates; the elements are copied
+    // out first, as a frame call's are.
+    if matches!(
+        vm.heap.function(callee),
+        Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall | Native::FunctionCall), .. })
+    ) {
+        let elements = if listed {
+            vm.heap.array_elements(list)?.as_slice().iter().copied().collect()
+        } else {
+            smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::new()
+        };
+        let Some((target, receiver, args)) = vm.forwarded_list_call(callee, receiver, elements) else {
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::record_detail("applied forwarding declined".into());
+            return None;
+        };
+        let args = args.as_slice();
+        if !matches!(vm.heap.function(target), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::record_detail("applied forwarding to a native".into());
+            return None;
+        }
+        let Some(activated) = lane_passed_target(cx, target, args.len()) else {
+            return Some(Err(lane_passed_frame_call(cx, r, ip, i, target, receiver, FrameCallArguments::List(args))));
+        };
+        let Some(this) = lane_call_this(vm, &activated, receiver) else {
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::record_detail("applied forwarding this declined".into());
+            return Some(Err(exit(ip)));
+        };
+        return Some(lane_activate_passed(cx, r, ip, &activated, args, this));
     }
     let length = if listed { vm.heap.array(list).map_or(0, |array| array.elements().len()) } else { 0 };
     let Some(target) = lane_passed_target(cx, callee, length) else {
@@ -10893,7 +11149,7 @@ script_handler! {
             && let Some(this) = lane_planned_construction(vm, callee, r, i)
         {
             // Later runs of the site try the plan first.
-            requicken(ip, lane_planned_construct::<H>);
+            requicken::<H>(ip, lane_planned_construct::<H>);
             // Allocating the receiver can make a collection due.
             note_allocation(vm);
             r.set(i.a, this);
@@ -10903,7 +11159,7 @@ script_handler! {
         if target.forwards() {
             // The site constructs a forwarding target: later runs enter the keeping
             // construction directly, which moves the record back for any other target.
-            requicken(ip, lane_script_construct_keeping::<H>);
+            requicken::<H>(ip, lane_script_construct_keeping::<H>);
             sibling!(lane_script_construct_keeping::<H>, r, ip, Carried::script(cx))
         }
         let built = if target.initializes {
@@ -10955,7 +11211,7 @@ script_handler! {
             return exit(ip);
         }
         let Some(this) = lane_planned_construction(vm, r.get(i.b), r, i) else {
-            requicken(ip, lane_script_construct::<H>);
+            requicken::<H>(ip, lane_script_construct::<H>);
             sibling!(lane_script_construct::<H>, r, ip, Carried::script(cx))
         };
         // Allocating the receiver can make a collection due.
@@ -10977,7 +11233,7 @@ script_handler! {
             // A site this form serves since `lane_script_call` saw a keeping target calls
             // the full form once its callee keeps nothing.
             Err(None) => {
-                requicken(ip, lane_script_call_full::<H>);
+                requicken::<H>(ip, lane_script_call_full::<H>);
                 sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
             }
         }
@@ -11026,7 +11282,7 @@ script_handler! {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
             Err(Some(next)) => next,
             Err(None) => {
-                requicken(ip, lane_script_construct::<H>);
+                requicken::<H>(ip, lane_script_construct::<H>);
                 sibling!(lane_script_construct::<H>, r, ip, Carried::script(cx))
             }
         }
@@ -11463,9 +11719,35 @@ script_handler! {
     /// a mapped element (which aliases a parameter) among them, takes the general path.
     #[inline(never)]
     fn lane_frame_arguments<GET: bool>(cx, r, ip, i, view) {
-        // Only a frame's own run reads its binding; no activation runs such a function.
+        // An environment activation keeps the values passed after its locals
+        // (`Function::reads_passed_arguments_only`); no other activation runs such a function.
         if !unsafe { (*cx).env }.is_deleted() {
-            return exit(ip);
+            let vm = unsafe { vm(cx) };
+            let Some((function, argc)) = vm.lane_stack.activations.last().and_then(|activation| {
+                let script = activation.script().filter(|script| script.environment)?;
+                Some((activation.function, script.argc))
+            }) else {
+                return exit(ip);
+            };
+            // SAFETY: the context's program outlives the lane run.
+            let body = unsafe { &*(*cx).code }.function(function as usize);
+            let value = if GET {
+                let Some(index) = r.get(i.b).as_int().and_then(|index| u16::try_from(index).ok()).filter(|index| *index < argc)
+                else {
+                    return exit(ip);
+                };
+                // A parameter's element is the parameter while the mapping aliases it.
+                let local = if index < body.params && body.arguments_alias_parameters() {
+                    index
+                } else {
+                    body.locals + index
+                };
+                r.get(body.registers + WINDOW_LOCALS + local)
+            } else {
+                Value::integer(i32::from(argc))
+            };
+            r.set(i.a, value);
+            next!(cx, r, following(ip), view)
         }
         let vm = unsafe { vm(cx) };
         let frame = unsafe { (*cx).frame };
@@ -11805,11 +12087,13 @@ fn lane_activate_environment<H: Host>(
     if returns && !lane_returning_call_admitted(cx) {
         return Err(exit(ip));
     }
-    let Some(body) = vm.programs.residual(target.program).map(|code| code.function(target.function as usize)) else {
+    let Some(code) = vm.programs.residual(target.program) else {
         return Err(exit(ip));
     };
+    let body = code.function(target.function as usize);
     let rest = body.rest;
-    if argc > target.params && !rest || vm.with_scope_entered {
+    // A body reading its `arguments` keeps every value passed past its parameters too.
+    if argc > target.params && !(rest || body.call_plan(code).reads_passed_arguments) || vm.with_scope_entered {
         return Err(exit(ip));
     }
     // A rest body keeps every value passed, the room sized for its parameters and the rest.
@@ -13220,7 +13504,7 @@ fn lane_memoize_read<H: Host>(
         this_binding: target.this_binding,
         read,
     };
-    requicken(site, lane_script_call_memo::<H>);
+    requicken::<H>(site, lane_script_call_memo::<H>);
 }
 
 /// The value the memo of the call record at `ip` answers its call with (`ReadMemo`); `None`
@@ -13281,7 +13565,7 @@ script_handler! {
             unsafe { lane_memo_read(cx, r, ip, i) }
         };
         let Some(value) = value else {
-            requicken(ip, lane_script_call_full::<H>);
+            requicken::<H>(ip, lane_script_call_full::<H>);
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         };
         if !returns {
@@ -13388,7 +13672,7 @@ script_handler! {
     fn lane_returning_field_first<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let handler = returning_field_first_kind(unsafe { vm(cx) }, unsafe { &*(*cx).code }, i);
-        requicken(ip, handler);
+        requicken::<H>(ip, handler);
         sibling!(handler, r, ip, Carried::script(cx))
     }
 }
@@ -13438,7 +13722,7 @@ script_handler! {
             FieldSiteTier::Own => None,
         };
         if let Some(handler) = handler {
-            requicken(ip, handler);
+            requicken::<H>(ip, handler);
         }
         sibling!(lane_returning::<H, RETURNING_FIELD>, r, ip, Carried::script(cx))
     }
@@ -13464,7 +13748,7 @@ script_handler! {
             script_calls && (!returns || lane_returning_call_admitted(cx))
         };
         let Some(target) = target.filter(admitted) else {
-            requicken(ip, lane_script_call::<H>);
+            requicken::<H>(ip, lane_script_call::<H>);
             return exit(ip);
         };
         lane_push_frame_call(cx, r, ip, i, target, callee, r.get(i.c), FrameCallArguments::Window(0))
@@ -13524,6 +13808,12 @@ fn lane_push_frame_call<H: Host>(
     if target.0 != unsafe { (*cx).program }
         && !vm.programs.residual(target.0).is_some_and(|callee_code| vm.lane_admits(callee_code))
     {
+        return exit(ip);
+    }
+    // A callee that has not made its deferred runs takes the general path, as a lane call's
+    // does (`ProgramStore::lane_call_may_derive`): entering its frame here derived its view at
+    // its first call, a callee run once included (jiti npm scenario: -2.1% instructions).
+    if !vm.programs.lane_call_may_derive(target.0, target.1) {
         return exit(ip);
     }
     #[cfg(feature = "profile-lane-exits")]
@@ -14233,17 +14523,10 @@ fn lane_call_fits(instruction: WideInstruction) -> bool {
 fn lane_call_result_marked(
     operand: LaneOperand,
     instruction: WideInstruction,
-    live: Option<&crate::compile::liveness::RegisterMasks>,
+    function: &Function,
     pc: usize,
 ) -> LaneOperand {
-    if instruction.op() != Op::Call || instruction.result_flags() != 0 {
-        return operand;
-    }
-    let result = instruction.a() & crate::bytecode::REGISTER_MASK;
-    let dead = live
-        .and_then(|live| live.get(pc + 1))
-        .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(result)));
-    if !dead {
+    if instruction.op() != Op::Call || !function.register_roots.call_result_dead(pc) {
         return operand;
     }
     // SAFETY: a `Call`'s operand is its immediate (`lane_operand`).
@@ -14330,13 +14613,15 @@ const ACCUMULATOR: bool = cfg!(quench_lane_tail_calls);
 
 /// Derive a function's lane view from its bytecode and its program's
 /// constants.
-fn derive_lane_view<H: Host>(
+fn derive_lane_view<'live, H: Host>(
+    function_id: u32,
     function: &Function,
     constants: &[Value],
     kind: crate::bytecode::ProgramKind,
-    live: Option<&crate::compile::liveness::RegisterMasks>,
+    live: &dyn Fn() -> Option<&'live crate::compile::liveness::RegisterMasks>,
     sites: &[crate::bytecode::FieldSite],
     loop_tier: bool,
+    general_dispatch: bool,
     diagnostics: bool,
 ) -> LaneView {
     // Each pass below reads instructions by PC; they are decoded once, here.
@@ -14385,7 +14670,7 @@ fn derive_lane_view<H: Host>(
                 .filter(|_| {
                     keeps_view && lane_fields_fit(instruction, function) && lane_call_fits(instruction)
                 })
-                .map(|operand| lane_call_result_marked(operand, instruction, live, pc));
+                .map(|operand| lane_call_result_marked(operand, instruction, function, pc));
             // Control reaches this record only from the previous one when no
             // jump targets it; the general loop never enters at a record that
             // reads the accumulator.
@@ -15319,7 +15604,17 @@ fn derive_lane_view<H: Host>(
     specialize_outer_captures::<H>(&mut records);
     let environment_window = specialize_environment_window::<H>(function, &decoded, &mut records);
     let (loops, osr_rejections) = if loop_tier && kind != crate::bytecode::ProgramKind::Wasm {
-        install_loop_sites::<H>(function, &decoded, constants, sites, live, diagnostics, &mut records)
+        install_loop_sites::<H>(
+            function_id,
+            function,
+            &decoded,
+            constants,
+            sites,
+            live(),
+            general_dispatch,
+            diagnostics,
+            &mut records,
+        )
     } else {
         (Box::default(), Vec::new())
     };
@@ -15378,15 +15673,35 @@ fn derive_lane_view<H: Host>(
     }
 }
 
+/// Whether an instruction's record leaves its `call_link` unread: any but a call's, whose
+/// handlers keep their target hint there (`linked_script_call_entry`).
+fn holds_no_call_link(op: Op) -> bool {
+    !matches!(
+        op,
+        Op::Call
+            | Op::CallArray
+            | Op::CallForwardingArguments
+            | Op::CallKnown
+            | Op::CallMethod
+            | Op::CallSpread
+            | Op::CallThisMethod
+            | Op::LoadNameCall
+            | Op::Construct
+            | Op::SuperCallCheck
+    )
+}
+
 /// Gives each backward `Jump` whose loop the shared compiler admits (`analyze_osr_region`) the
 /// record that counts it and enters its native code (`lane_loop_jump`). Runs after every
 /// other pass, which read a jump record's distance from its operand.
 fn install_loop_sites<H: Host>(
+    function_id: u32,
     function: &Function,
     decoded: &[WideInstruction],
     constants: &[Value],
     sites: &[crate::bytecode::FieldSite],
     live: Option<&crate::compile::liveness::RegisterMasks>,
+    general_dispatch: bool,
     diagnostics: bool,
     records: &mut [LaneInstruction],
 ) -> (Box<[LoopSite]>, Vec<(super::compiled::RegionRejection, usize)>) {
@@ -15412,7 +15727,7 @@ fn install_loop_sites<H: Host>(
         .filter(|pc| records[*pc].handler == backward && decoded[*pc].op() == Op::Jump && !fused_into(*pc))
         .filter_map(|pc| {
             let header = decoded[pc].jump_target();
-            let region = match super::compiled::analyze_osr_region(
+            let (region, promotion_only) = match super::compiled::analyze_osr_region(
                 function,
                 decoded,
                 constants,
@@ -15421,10 +15736,10 @@ fn install_loop_sites<H: Host>(
                 header,
                 pc as u32,
             ) {
-                Ok(region) => std::cell::OnceCell::from(region),
+                Ok(region) => (std::cell::OnceCell::from(region), false),
                 // A call may run inlined: the site makes its region once it is hot.
                 Err(super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)) if live.is_some() => {
-                    std::cell::OnceCell::new()
+                    (std::cell::OnceCell::new(), false)
                 }
                 Err(reason) => {
                     if diagnostics {
@@ -15436,18 +15751,26 @@ fn install_loop_sites<H: Host>(
                             rejections.push((reason, 1));
                         }
                     }
-                    return None;
+                    if !general_dispatch {
+                        return None;
+                    }
+                    (std::cell::OnceCell::new(), true)
                 }
             };
             Some((
                 pc,
                 LoopSite {
+                    function: function_id,
+                    promotion_only,
                     region,
                     header,
                     backedge: pc as u32,
                     jump: records[pc].jump(),
+                    header_handler: std::cell::Cell::new(std::ptr::null()),
+                    hookable: holds_no_call_link(decoded[header as usize].op()),
                     taken: std::cell::Cell::new(0),
                     exits: std::cell::Cell::new(0),
+                    declines: std::cell::Cell::new(0),
                     diagnostics,
                     native_entry_attempts: std::cell::Cell::new(0),
                     native_region_runs: std::cell::Cell::new(0),
@@ -15461,11 +15784,20 @@ fn install_loop_sites<H: Host>(
             ))
         })
         .collect();
+    let mut sites = sites;
+    let headers: Vec<u32> = sites.iter().map(|(_, site)| site.header).collect();
+    for (_, site) in &mut sites {
+        site.hookable &= headers.iter().filter(|header| **header == site.header).count() == 1
+            && u16::try_from(headers.len()).is_ok_and(|count| count < NO_CALL_LINK);
+    }
     let pcs: Vec<usize> = sites.iter().map(|(pc, _)| *pc).collect();
     let sites: Box<[LoopSite]> = sites.into_iter().map(|(_, site)| site).collect();
-    for (pc, site) in pcs.into_iter().zip(sites.iter()) {
+    for (index, (pc, site)) in pcs.into_iter().zip(sites.iter()).enumerate() {
         records[pc].handler = lane_loop_jump::<H> as Handler as *const ();
         records[pc].operand = LaneOperand { site };
+        if site.hookable {
+            records[site.header as usize].call_link.set(index as u16);
+        }
     }
     (sites, rejections)
 }
@@ -15768,7 +16100,7 @@ fn specialize_environment_window<H: Host>(
 ) -> Option<EnvironmentWindow> {
     if function.locals == 0
         || u32::from(function.locals) > u64::BITS
-        || function.arguments_slot.is_some()
+        || (function.arguments_slot.is_some() && !function.reads_passed_arguments_only())
         || !function.local_registers.is_empty()
         || function.selective_capture_slots.is_none()
     {
@@ -16076,7 +16408,17 @@ impl<H: Host> Vm<H> {
         let wasm = self.programs.residual(program).is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm);
         self.programs
             .entry_lane_view(program, function, |code| wasm && may_loop(code), |code, constants, kind, live, sites| {
-                derive_lane_view::<H>(code, constants, kind, live, sites, self.js_tier_runs(), diagnostics)
+                derive_lane_view::<H>(
+                    function,
+                    code,
+                    constants,
+                    kind,
+                    live,
+                    sites,
+                    self.js_tier_runs(),
+                    self.programs.js_jit_general_dispatch_enabled(),
+                    diagnostics,
+                )
             })
             .unwrap_or(std::ptr::null())
     }

@@ -685,8 +685,12 @@ pub(super) fn inline_region<'a>(
     struct Site<'b> {
         frame: InlineFrame,
         callee: InlineCallee<'b>,
-        /// The callee's read.
-        read: u32,
+        /// The path the callee's read reads it through, from a root the region does not
+        /// write (a receiver given its own register reads through its path).
+        callee_path: FieldPath,
+        /// Where leaving in the call's setup resumes: the receiver's own read, else the
+        /// callee's.
+        resume: u32,
         window: Register,
         result: Register,
         reached: Vec<bool>,
@@ -786,7 +790,8 @@ pub(super) fn inline_region<'a>(
                     registers: callee.registers,
                     bound,
                 },
-                read,
+                callee_path: callee_path.clone(),
+                resume,
                 window,
                 result: instruction.result_register(),
                 reached,
@@ -881,8 +886,8 @@ pub(super) fn inline_region<'a>(
                 continue;
             }
             instructions.push(WideInstruction::new(Op::Move, frame.base + parameter, site.window + parameter, 0, 0));
-            origins.push(Origin::Caller(site.read));
-            masks.push(mask(site.read)?);
+            origins.push(Origin::Caller(site.resume));
+            masks.push(mask(site.resume)?);
         }
         let continuation = caller_flat.get(offset + 1).copied().unwrap_or_else(|| caller_target(pc + 1, &mut leaves));
         for (callee_pc, instruction) in site.callee.instructions.iter().copied().enumerate() {
@@ -931,7 +936,18 @@ pub(super) fn inline_region<'a>(
         let mut frame = site.frame;
         let written = frame.receiver >= caller_registers || defines(frame.receiver);
         (!written || held.contains_key(&frame.receiver)).then_some(())?;
-        let path = field_path(caller[(site.read - header) as usize], sites, &held)?;
+        let FieldPath { root, steps } = site.callee_path;
+        let path = match root {
+            FieldReceiver::Register(register) => match held.get(&register) {
+                Some(path) => FieldPath { root: path.root, steps: path.steps.iter().copied().chain(steps).collect() },
+                None => FieldPath { root, steps },
+            },
+            _ => FieldPath { root, steps },
+        };
+        // The root is `this`, or a register the region does not write (`field_path`).
+        if let FieldReceiver::Register(register) = path.root {
+            (!defines(register)).then_some(())?;
+        }
         frame.field = intern_field(&mut region.fields, &path, true);
         frames.push(frame);
     }
@@ -2046,9 +2062,10 @@ struct ElementIndex {
     displacement: i32,
 }
 
-/// A counted loop of a region: a loop whose body, header to backward jump, is one path but
-/// for the test that leaves it, and whose test compares an induction variable with a bound
-/// the body leaves unchanged. Every arrival at its header from outside it runs the proof of
+/// A counted loop of a region: a loop whose body, header to backward jump, reaches the test
+/// that leaves it on every path and otherwise branches only forward within itself, and
+/// whose test compares an induction variable with a bound the body leaves unchanged on
+/// every path. Every arrival at its header from outside it runs the proof of
 /// its facts (`Lowering::proof`), which selects the copy of the body without their guards
 /// or the copy with them.
 #[derive(Clone, Debug)]
@@ -2242,13 +2259,22 @@ fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representati
         .collect();
     // Whether every read of `web` treats its -0 as +0: a bitwise operand (ToInt32), a
     // comparison, or a sum with an `i32`, which is never -0 itself.
-    let signless_reads = |web: Definition| {
-        region.instructions.iter().copied().enumerate().all(|(offset, instruction)| {
-            let pc = region.header + offset as u32;
-            let reads = |register: Register| webs.read(region, pc, register) == web;
-            if !number_reads(instruction).into_iter().any(reads) {
-                return true;
+    // The PC offsets of each web's reads, once.
+    let mut readers: Vec<Vec<usize>> = vec![Vec::new(); webs.parent.len()];
+    for (offset, instruction) in region.instructions.iter().copied().enumerate() {
+        let pc = region.header + offset as u32;
+        for register in number_reads(instruction) {
+            let web = webs.read(region, pc, register);
+            if readers[web].last() != Some(&offset) {
+                readers[web].push(offset);
             }
+        }
+    }
+    let signless_reads = |web: Definition| {
+        readers[web].iter().all(|offset| {
+            let instruction = region.instructions[*offset];
+            let pc = region.header + *offset as u32;
+            let reads = |register: Register| webs.read(region, pc, register) == web;
             match instruction.op() {
                 Op::JumpBinaryFalse => true,
                 Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
@@ -2283,11 +2309,9 @@ fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representati
             .iter()
             .copied()
             .filter(|web| {
-                region.instructions.iter().copied().enumerate().all(|(offset, instruction)| {
-                    let pc = region.header + offset as u32;
-                    if !number_reads(instruction).into_iter().any(|register| webs.read(region, pc, register) == *web) {
-                        return true;
-                    }
+                readers[*web].iter().all(|offset| {
+                    let instruction = region.instructions[*offset];
+                    let pc = region.header + *offset as u32;
                     match sums(instruction) {
                         Some(Arithmetic::Int32(_)) => true,
                         Some(Arithmetic::Float(NumberArithmetic::Add | NumberArithmetic::Subtract)) => {
@@ -2368,28 +2392,32 @@ fn counted_loop(
     use std::collections::{BTreeMap, BTreeSet};
     let at = |pc: u32| region.instructions[(pc - region.header) as usize];
     let body = header..backedge;
-    // One path: the test is the body's only branch, and it leaves the loop.
+    let jumps = |instruction: WideInstruction| {
+        matches!(instruction.op(), Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
+    };
+    // The test leaves the loop, and every path of the body reaches it: before it, the body
+    // branches nowhere. Every other branch of the body jumps forward within it.
     let mut test = None;
+    let mut branched = false;
     for pc in body.clone() {
         let instruction = at(pc);
-        match instruction.op() {
-            Op::Jump => return None,
-            Op::JumpBinaryFalse if test.is_none() && !(header..=backedge).contains(&instruction.jump_target()) => {
-                test = Some(pc);
-            }
-            Op::JumpBinaryFalse => return None,
-            Op::JumpFalse | Op::JumpTrue => return None,
-            _ => {}
+        if !jumps(instruction) {
+            continue;
+        }
+        let target = instruction.jump_target();
+        if (pc + 1..=backedge).contains(&target) {
+            branched = true;
+        } else if instruction.op() == Op::JumpBinaryFalse && test.is_none() && !branched && !(header..=backedge).contains(&target) {
+            test = Some(pc);
+        } else {
+            return None;
         }
     }
     let test = test?;
     // Control enters only at the header.
     let enters_inside = (region.header..=region.backedge).any(|pc| {
         let instruction = at(pc);
-        matches!(
-            instruction.op(),
-            Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse
-        ) && (header + 1..=backedge).contains(&instruction.jump_target())
+        !(header..=backedge).contains(&pc) && jumps(instruction) && (header + 1..=backedge).contains(&instruction.jump_target())
     });
     if enters_inside {
         return None;
@@ -2427,7 +2455,33 @@ fn counted_loop(
     };
     let mut candidates: Vec<Fact> = Vec::new();
     let mut tested = None;
+    // The states forward branches carry to their targets, merged where paths join: a
+    // register keeps a value all its paths agree on.
+    let mut pending: BTreeMap<u32, Vec<BTreeMap<Register, Option<Affine>>>> = BTreeMap::new();
+    let mut reached = true;
+    let merge = |state: &mut BTreeMap<Register, Option<Affine>>, reached: bool, others: Vec<BTreeMap<Register, Option<Affine>>>| {
+        let mut states: Vec<BTreeMap<Register, Option<Affine>>> = others;
+        if reached {
+            states.push(std::mem::take(state));
+        }
+        let registers: BTreeSet<Register> = states.iter().flat_map(|state| state.keys().copied()).collect();
+        *state = registers
+            .into_iter()
+            .map(|register| {
+                let mut values = states.iter().map(|state| value(state, register));
+                let first = values.next().flatten();
+                (register, first.filter(|first| values.all(|other| other == Some(*first))))
+            })
+            .collect();
+    };
     for pc in body.clone() {
+        if let Some(others) = pending.remove(&pc) {
+            merge(&mut state, reached, others);
+            reached = true;
+        }
+        if !reached {
+            continue;
+        }
         let instruction = at(pc);
         let register = |register: Register| (int32(webs.read(region, pc, register)), value(&state, register));
         let defined = || int32(webs.defined(region, pc));
@@ -2511,7 +2565,7 @@ fn counted_loop(
                 }
                 None
             }
-            Op::JumpBinaryFalse => {
+            Op::JumpBinaryFalse if pc == test => {
                 let left = source(&state, pc, instruction.operand_b())?;
                 let right = source(&state, pc, instruction.operand_c())?;
                 tested = Some((instruction.binary_operator_field(), left, right));
@@ -2522,6 +2576,13 @@ fn counted_loop(
         if let Some(register) = number_definition(instruction) {
             state.insert(register, result);
         }
+        if jumps(instruction) && (pc + 1..=backedge).contains(&instruction.jump_target()) {
+            pending.entry(instruction.jump_target()).or_default().push(state.clone());
+            reached = instruction.op() != Op::Jump;
+        }
+    }
+    if let Some(others) = pending.remove(&backedge) {
+        merge(&mut state, reached, others);
     }
     let steps: BTreeMap<Register, i64> = state
         .iter()
@@ -2706,6 +2767,9 @@ struct Lowering<'a, 'b> {
     element_reads: std::collections::HashMap<(Register, ir::Value, Representation), (Typed, ir::Block, usize)>,
     /// The element stores lowered so far; any may write any array's elements.
     element_stores: usize,
+    /// The PCs of element reads whose key an index sum lowered just before bounded
+    /// (`Lowering::index_sum`), with that sum as an `i64`.
+    bounded_reads: std::collections::BTreeMap<u32, ir::Value>,
     /// The Number each canonical encoding read from memory unboxes to, mapped to the bits as
     /// read: boxing the Number gives those bits back, so a store of it stores them.
     encodings: std::collections::HashMap<ir::Value, ir::Value>,
@@ -2811,6 +2875,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             exact: std::collections::BTreeMap::new(),
             element_reads: std::collections::HashMap::new(),
             element_stores: 0,
+            bounded_reads: std::collections::BTreeMap::new(),
             encodings: std::collections::HashMap::new(),
             straight,
             registers,
@@ -3566,6 +3631,42 @@ impl<'a, 'b> Lowering<'a, 'b> {
         }
     }
 
+    /// The `i32` sum at `pc` of `left` and `right` into `register` when the next instruction
+    /// reads an element at it, with no proof covering either: the sum in `i64`, which is
+    /// exact, checked below the array's length, which also proves it an `i32`, so it needs
+    /// no overflow guard and the read no bounds check. Leaving there leaves at `pc`, before
+    /// the sum. `None` for any other sum.
+    fn index_sum(&mut self, pc: u32, register: Register, left: Typed, right: Typed) -> Option<Typed> {
+        (left.representation == Representation::Int32
+            && right.representation == Representation::Int32
+            && self.result_representation() == Representation::Int32
+            && !self.proved(pc)
+            && !self.facts.exact.contains(&pc)
+            && !self.facts.truncated.contains(&pc)
+            && pc < self.region.backedge)
+            .then_some(())?;
+        let next = pc + 1;
+        let offset = (next - self.region.header) as usize;
+        let read = self.region.instructions[offset];
+        (read.op() == Op::GetIndex
+            && read.operand_c().register_index() == Some(register)
+            && self.straight[offset]
+            && !self.proved(next))
+            .then_some(())?;
+        let array = *self.arrays.get(&read.operand_b().register_index()?)?;
+        let (left, right) = (
+            self.body.builder.ins().sextend(types::I64, left.value),
+            self.body.builder.ins().sextend(types::I64, right.value),
+        );
+        let sum = self.body.builder.ins().iadd(left, right);
+        let length = self.length(array);
+        let beyond = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, sum, length);
+        self.guard(pc, beyond);
+        self.bounded_reads.insert(next, sum);
+        let value = self.body.builder.ins().ireduce(types::I32, sum);
+        Some(Typed { value, representation: Representation::Int32 })
+    }
+
     /// Exits at `pc` unless `index` is below `array`'s length; an `i32` key a proof covers is.
     fn read_index(&mut self, pc: u32, array: ArrayView, index: ir::Value) {
         if self.proved(pc) {
@@ -3912,6 +4013,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     {
                         left
                     }
+                    Arithmetic::Float(NumberArithmetic::Add) => match self.index_sum(pc, result, left, right) {
+                        Some(value) => value,
+                        None => self.arithmetic(pc, operator, result, left, right),
+                    },
                     _ => self.arithmetic(pc, operator, result, left, right),
                 };
                 self.define(result, value);
@@ -3989,6 +4094,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.fall_through(pc)
             }
             Op::GetIndex => {
+                // An index sum just before checked this read's bounds (`index_sum`).
+                let bounded = self.bounded_reads.remove(&pc);
                 let base = instruction.operand_b().register_index()?;
                 let array = self.arrays[&base];
                 let key = self.operand(instruction.operand_c())?;
@@ -4003,8 +4110,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     self.define(instruction.result_register(), value);
                     return self.fall_through(pc);
                 }
-                let (index, element) = self.element_index(pc, key);
-                self.read_index(pc, array, index);
+                let element = match bounded {
+                    Some(wide) => ElementIndex { wide, displacement: 0 },
+                    None => {
+                        let (index, element) = self.element_index(pc, key);
+                        self.read_index(pc, array, index);
+                        element
+                    }
+                };
                 let (address, displacement) = self.element_address(array.elements, element);
                 // A hole is tagged, so unboxing sends it to the general path too. A Float64
                 // element loads straight into a float register.
