@@ -148,10 +148,33 @@ pub(crate) fn remove_other_builds(builds: &std::path::Path) {
 
 /// The file at `path`, mapped where the platform maps files; files the cache and snapshots
 /// keep are replaced by rename, never written in place, so a mapping keeps its contents.
+///
+/// An entry no larger than a page is read into anonymous memory instead: a mapping faults in
+/// whole pages, and most entries are smaller than one (407 of 540 entries in the ten-package
+/// cache, 163 of the 242 a fastify run loads), so a read costs the entry's bytes where a
+/// mapping costs a whole page plus a fault per load. Larger entries stay mapped, so the
+/// records of a function that never runs stay out of memory (`EncodedRecords`).
 #[cfg(unix)]
 pub(crate) fn map_file(path: &std::path::Path) -> Option<quench_runtime::KeptBytes> {
+    let length = usize::try_from(std::fs::metadata(path).ok()?.len()).ok()?;
+    if length <= page_bytes() {
+        return std::fs::read(path).ok().map(|bytes| std::rc::Rc::new(bytes) as quench_runtime::KeptBytes);
+    }
     MappedFile::open(path).map(|file| std::rc::Rc::new(file) as quench_runtime::KeptBytes)
 }
+
+/// The system's page size, which decides whether a mapping would round an entry up.
+#[cfg(unix)]
+fn page_bytes() -> usize {
+    // SAFETY: `sysconf` reads a system constant and touches nothing else. A page size the
+    // query cannot answer falls back to the smallest page Unix platforms use.
+    let queried = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    usize::try_from(queried).ok().filter(|bytes| *bytes > 0).unwrap_or(MINIMUM_PAGE_BYTES)
+}
+
+/// The smallest page size a Unix platform uses, for a host that cannot answer `sysconf`.
+#[cfg(unix)]
+const MINIMUM_PAGE_BYTES: usize = 4096;
 
 #[cfg(not(unix))]
 pub(crate) fn map_file(path: &std::path::Path) -> Option<quench_runtime::KeptBytes> {
