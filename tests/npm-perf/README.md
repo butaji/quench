@@ -1063,3 +1063,12 @@ proves a reference-valued field-store loop compiles and runs natively. This is
 not yet package-screened: the preceding three-workload report used a binary
 from before the tagged-store extension, and the measured packages had no numeric
 field-store regions. No package win is inferred from the new capability.
+
+A second five-round screen after adding tagged stores used the freshly rebuilt
+binary (`bdb8322c…`) on the same React, Pino, and Zod workloads. It again found
+no field-store cache hits or native OSR regions containing field stores in
+fresh-binary JIT stats. Throughput remained far below Node/Bun; sampled RSS is
+still diagnostic. See
+[`reports/field-store-followup-jit-screen-2026-10-25/`](reports/field-store-followup-jit-screen-2026-10-25/)
+for raw runs and the limitation that the paired control predates other current
+source changes. This is not a qualified win.
