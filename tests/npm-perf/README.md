@@ -1072,3 +1072,28 @@ still diagnostic. See
 [`reports/field-store-followup-jit-screen-2026-10-25/`](reports/field-store-followup-jit-screen-2026-10-25/)
 for raw runs and the limitation that the paired control predates other current
 source changes. This is not a qualified win.
+
+### Linux qualification questions still open (2026-10-25)
+
+The pinned `esbuild@0.28.2` satisfies Vite 8.3.5's optional peer range
+`^0.27.0 || ^0.28.0`. The clean-PGO 11-round no-JIT screen completed on
+Quench, Node `--jitless`, and Bun 1.4.4 (416, 1,661, and 1,693 transforms/s
+respectively). The earlier Bun esbuild failure is therefore not explained by
+the pinned peer version; retain the successful matched run and investigate
+runtime-specific failures against its exact command and stderr if they recur.
+These numbers are diagnostics because Linux RSS is sampled, not a qualified
+maximum-RSS comparison.
+
+The sharp workload includes native libvips resizing and WebP encoding, but the
+current measurements do not prove a native-library floor for the runtime gap.
+In the four-way concurrent follow-up, Quench reached 642 operations/s with
+sampled RSS 45.43 MiB in JIT, versus Node at 678 / 110.26 MiB and Bun at 675 /
+75.37 MiB. That is near throughput parity, still short of the required 20%
+lead; the single-resize workload remains slower. Keep both sharp workloads and
+both execution modes in the acceptance matrix.
+
+Node's Vite and Undici no-JIT rows remain unavailable because the pinned Oxc
+and llhttp WebAssembly paths cannot load under Node `--jitless`. Bun and Quench
+rows are recorded, but these missing peers cannot be treated as wins. No-JIT
+peer alternatives and the Linux process-tree maximum-RSS measurement still
+need resolution before any of the ten-package rows can qualify.
