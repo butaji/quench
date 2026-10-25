@@ -57,6 +57,16 @@ component. Measured on x86_64 Linux against the plain production build, V8-v7
 Score rose 7-24% on six fixtures (Splay and NavierStokes flat) and peak RSS fell
 about 1 MiB on all eight.
 
+`tools/pgo-build.sh --static [PROFILE]` builds the static x86_64 Linux binary the
+same way: both builds add `-Ctarget-feature=+crt-static -Crelocation-model=static`
+for the host triple, and the binary lands at `target/<host>/PROFILE/quench-node`.
+That binary is the input of the BOLT layout step below, so one recipe yields the
+qualification binary: `tools/pgo-build.sh --static`, then the callgrind training,
+`bolt-profile` and `llvm-bolt` steps. Every mode keeps the repository's
+`.cargo/config.toml` rustflags (`-D warnings`, the function alignment): the script
+appends its flags with `--config`, which cargo concatenates with the configured
+array. It refuses to run with `RUSTFLAGS` set, as that variable replaces both.
+
 ```sh
 TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 \
   cargo run --profile iteration -p quench-test262 --bin run-stages -- 10 10
