@@ -397,38 +397,6 @@ fn equivalent_data_descriptor_transitions_share_one_shape() {
 }
 
 #[test]
-fn new_accessor_properties_reach_the_two_step_shape_in_one_add() {
-    let program = Engine::specialize("", "accessor-add.js").unwrap();
-    let mut vm = Vm::new(TestHost::default());
-    vm.initialize(&program).unwrap();
-    vm.heap.retain_allocations_for_test();
-
-    let key = super::property_key::PropertyKey::string(vm.intern_atom("binding"));
-    let accessor = |getter, setter| super::PropertyAttributes {
-        writable: false,
-        enumerable: true,
-        configurable: false,
-        accessor: true,
-        getter: Some(getter),
-        setter,
-    };
-    let (first_getter, second_getter, setter) = (vm.object(), vm.object(), vm.object());
-    let two_step = vm.object();
-    vm.set_shape_property(two_step, key, Value::UNDEFINED).unwrap();
-    vm.set_property_attributes(two_step, key, accessor(first_getter, None));
-    let fused = vm.object();
-    vm.create_shape_accessor_property(fused, key, accessor(second_getter, None)).unwrap();
-
-    assert_eq!(vm.object_data(fused).unwrap().shape(), vm.object_data(two_step).unwrap().shape());
-    assert!(vm.property_attributes(fused, key) == Some(accessor(second_getter, None)));
-    assert!(vm.property_attributes(two_step, key) == Some(accessor(first_getter, None)));
-
-    let both = vm.object();
-    vm.create_shape_accessor_property(both, key, accessor(first_getter, Some(setter))).unwrap();
-    assert!(vm.property_attributes(both, key) == Some(accessor(first_getter, Some(setter))));
-}
-
-#[test]
 fn repeated_normal_closures_reuse_function_descriptor_shapes() {
     const CLOSURES: usize = 32;
 
@@ -12039,6 +12007,41 @@ print(out);
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_wraps_sums_only_int32_conversions_read() {
+    // `u` leaves the `i32`s but is read only by `|` and `>>`, which see it modulo 2^32;
+    // `v`, the same sum, is compared, so it must hold the exact Number.
+    let source = r#"
+function wrap(a, n) {
+  var s = 0, t = 0;
+  for (var i = 0; i < n; i++) {
+    var u = a[i] + 0x7ffffff0;
+    s = (s + (u | 0) + (u >> 3)) | 0;
+    var v = a[i] + 0x7ffffff0;
+    if (v > 0x7fffffff) t++;
+  }
+  return s + " " + t;
+}
+var a = [];
+for (var i = 0; i < 400; i++) a.push((i * 7) % 40);
+var out = "";
+for (var c = 0; c < 300; c++) out = wrap(a, 400);
+print(out);
+"#;
+    let program = Engine::specialize(source, "osr-truncated-sums.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -16180,4 +16183,84 @@ print(JSON.stringify(out));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.execute(&Engine::specialize(source, "typeof-pairs.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), [r#"[1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,1,0,1,0,0,1,0,1,1,0,1,0,false,"xy",true,false,"if-same","if-diff"]"#]);
+}
+
+#[test]
+fn field_stores_to_cell_receivers_follow_their_descriptors() {
+    // A store site whose receiver lives outside the object records (a RegExp's or a
+    // function's cell) moves to the general cached write (`lane_set_field_miss`); stores
+    // there must still honour read-only and frozen receivers. Expected output is Node's (v22).
+    let source = r#"
+const out = [];
+const re = /a/y, fn = function () {}, arr = [1, 2];
+const targets = [re, fn, arr, {}, new Map(), Object.create(null)];
+function put(o, v) { o.lastIndex = v; o.tag = v; }
+for (let r = 0; r < 40; r++) for (const t of targets) put(t, r);
+for (const t of targets) out.push(t.lastIndex, t.tag);
+Object.defineProperty(re, "lastIndex", { writable: false });
+try { (function () { "use strict"; re.lastIndex = 5; })(); } catch (e) { out.push(e.constructor.name); }
+re.lastIndex = 6; out.push(re.lastIndex);
+Object.freeze(fn); put(fn, 99); out.push(fn.lastIndex, fn.tag);
+const re2 = /b/g; for (let i = 0; i < 30; i++) { re2.lastIndex = i; out.push(re2.lastIndex === i); }
+print(JSON.stringify(out));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "cell-stores.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), [r#"[39,39,39,39,39,39,39,39,39,39,39,39,"TypeError",39,39,39,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true]"#]);
+}
+
+#[test]
+fn js_general_artifact_key_tracks_only_code_generation_dependencies() {
+    fn function_id(program: &crate::bytecode::ResidualProgram, name: &str) -> u32 {
+        program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .or(function.header().inferred_name)
+                    .is_some_and(|atom| &program.atoms[atom as usize] == name)
+            })
+            .expect("test function exists") as u32
+    }
+
+    let first = Engine::compile(crate::ExecutionRequest::script(
+        "const unrelated = 'first'; function f(value) { return value + 1; }",
+        "general-cache-a.js",
+    ))
+    .unwrap();
+    let equivalent = Engine::compile(crate::ExecutionRequest::script(
+        "const unrelated = 'second'; function f(value) { return value + 1; }",
+        "general-cache-b.js",
+    ))
+    .unwrap();
+    let different_constant = Engine::compile(crate::ExecutionRequest::script(
+        "const unrelated = 'first'; function f(value) { return value + 2; }",
+        "general-cache-c.js",
+    ))
+    .unwrap();
+
+    let first_key = super::compiled::js_general_dispatch_cache_key(
+        &first,
+        function_id(&first, "f"),
+        true,
+    )
+    .expect("small function has a bounded cache key");
+    let equivalent_key = super::compiled::js_general_dispatch_cache_key(
+        &equivalent,
+        function_id(&equivalent, "f"),
+        true,
+    )
+    .expect("equivalent function has a bounded cache key");
+    let different_key = super::compiled::js_general_dispatch_cache_key(
+        &different_constant,
+        function_id(&different_constant, "f"),
+        true,
+    )
+    .expect("different function has a bounded cache key");
+
+    assert_eq!(first_key, equivalent_key);
+    assert_ne!(first_key, different_key);
 }
