@@ -332,6 +332,15 @@ fn rebuild_shape(
 impl<H: Host> Vm<H> {
     pub(crate) fn set_memory_policy(&mut self, policy: crate::MemoryPolicy) {
         self.heap.set_memory_policy(policy);
+        self.shape_slot_memo.fit(policy);
+        self.plain_copy_shapes.fit(policy);
+        self.plain_assign_shapes.fit(policy);
+        self.shape_attribute_memo.fit(policy);
+        self.function_name_shapes.fit(policy);
+        self.symbol_write_proofs.fit(policy);
+        self.symbol_load_proofs.fit(policy);
+        self.private_site_homes.fit(policy);
+        self.name_atom_memo.fit(policy);
     }
 
     pub(crate) fn memory_policy(&self) -> crate::MemoryPolicy {

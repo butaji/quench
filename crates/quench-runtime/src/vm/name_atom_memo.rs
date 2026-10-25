@@ -78,4 +78,10 @@ impl NameAtomMemo {
         self.entries.clear();
         self.strings.clear();
     }
+
+    /// Sizes the tables for the runtime's memory policy (`DirectMappedTable::fit`).
+    pub(super) fn fit(&mut self, policy: crate::MemoryPolicy) {
+        self.entries.fit(policy);
+        self.strings.fit(policy);
+    }
 }

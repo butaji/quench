@@ -91,4 +91,10 @@ impl SymbolWriteProofs {
         self.entries.clear();
         self.sites.clear();
     }
+
+    /// Sizes the tables for the runtime's memory policy (`DirectMappedTable::fit`).
+    pub(super) fn fit(&mut self, policy: crate::MemoryPolicy) {
+        self.entries.fit(policy);
+        self.sites.fit(policy);
+    }
 }

@@ -245,6 +245,9 @@ impl GenerationalPacing {
     }
 }
 
+/// `MemoryPolicy::memo_entry_shift` under memory-first: a quarter of each memo's entries.
+const MEMORY_FIRST_MEMO_ENTRY_SHIFT: u32 = 2;
+
 /// How a runtime trades memory for speed (TOD-167): one choice per runtime, made at startup
 /// (`Runtime::set_memory_policy`), that selects the collection pacing table, whether the
 /// host returns pages at collection boundaries (`Host::at_collection_boundary`),
@@ -287,6 +290,20 @@ impl MemoryPolicy {
     /// and ~0.11 s of system time per run against ~15K and ~0.035 s without; v2-web).
     pub const fn returns_pages_at_collections(self) -> bool {
         matches!(self, Self::MemoryFirst)
+    }
+
+    /// The bits a direct-mapped memo drops from its full entry count under this policy
+    /// (`DirectMappedTable::fit`): memory-first memos hold a quarter of the entries. Builtin
+    /// initialization alone records into five memos (shape slots, shape attributes, symbol
+    /// loads, name atoms), about 100 KiB of peak RSS at full size. A quarter (plain x86_64
+    /// production build, memory-first, 11 interleaved runs, 2026-10-25): worst max RSS
+    /// RayTrace -68 KiB, `--jit` -132; Richards -136, -128; RegExp -124, -124; Crypto -112,
+    /// -36; DeltaBlue +4, -64; scores within run-to-run spread.
+    pub const fn memo_entry_shift(self) -> u32 {
+        match self {
+            Self::Throughput => 0,
+            Self::MemoryFirst => MEMORY_FIRST_MEMO_ENTRY_SHIFT,
+        }
     }
 
     /// The policy's own pacing table.

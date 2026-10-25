@@ -12,18 +12,27 @@ use std::hash::{Hash, Hasher};
 /// of the 4096 sized for the Node HTTP stack's working set.
 const SHAPE_MEMO_ENTRIES: usize = 1 << 10;
 
+/// The fewest entries a policy leaves a table (`DirectMappedTable::fit`): the index mask
+/// needs a power of two above one.
+const MINIMUM_FITTED_ENTRIES: usize = 2;
+
 /// A direct-mapped memo of `ENTRIES` entries (a power of two) that allocates them on its
 /// first record. A memo a program never records into costs no memory: built at VM
 /// construction, the memos cost every run 48 to 254 KiB of peak RSS on V8-v7 whether or
 /// not it used private names, symbol keys or enumeration
 /// (`evidence/tod137-lazy-memo-tables-linux-2026-10-22`).
+/// `ENTRIES` is the index space callers hash into; the runtime's memory policy picks how many
+/// of them the first record allocates (`fit`), and an index lands on the allocated entries by
+/// its low bits.
 pub(super) struct DirectMappedTable<T: Copy, const ENTRIES: usize> {
     entries: OnceCell<Box<[Cell<Option<T>>]>>,
+    /// The entries the first record allocates: `ENTRIES` scaled to the memory policy.
+    allocated: usize,
 }
 
 impl<T: Copy, const ENTRIES: usize> Default for DirectMappedTable<T, ENTRIES> {
     fn default() -> Self {
-        Self { entries: OnceCell::new() }
+        Self { entries: OnceCell::new(), allocated: ENTRIES }
     }
 }
 
@@ -33,7 +42,8 @@ impl<T: Copy, const ENTRIES: usize> DirectMappedTable<T, ENTRIES> {
     /// The entry at `index`, if one was recorded since the last clear.
     #[inline(always)]
     pub(super) fn get(&self, index: usize) -> Option<T> {
-        self.entries.get()?[index].get()
+        let entries = self.entries.get()?;
+        entries[index & (entries.len() - 1)].get()
     }
 
     /// Records `value` at `index`, replacing what the entry held.
@@ -43,7 +53,7 @@ impl<T: Copy, const ENTRIES: usize> DirectMappedTable<T, ENTRIES> {
             Some(entries) => entries,
             None => self.allocate(),
         };
-        entries[index].set(Some(value));
+        entries[index & (entries.len() - 1)].set(Some(value));
     }
 
     /// The first record's allocation, kept out of line so the record and probe paths that
@@ -53,7 +63,15 @@ impl<T: Copy, const ENTRIES: usize> DirectMappedTable<T, ENTRIES> {
     #[inline(never)]
     fn allocate(&self) -> &[Cell<Option<T>>] {
         let () = Self::POWER_OF_TWO;
-        self.entries.get_or_init(|| (0..ENTRIES).map(|_| Cell::new(None)).collect())
+        self.entries.get_or_init(|| (0..self.allocated).map(|_| Cell::new(None)).collect())
+    }
+
+    /// Sizes the table for `policy` (`MemoryPolicy::memo_entry_shift`), dropping what it
+    /// recorded: entries allocated before the policy was chosen were sized for the default.
+    pub(super) fn fit(&mut self, policy: crate::MemoryPolicy) {
+        let () = Self::POWER_OF_TWO;
+        self.allocated = (ENTRIES >> policy.memo_entry_shift()).max(MINIMUM_FITTED_ENTRIES);
+        self.entries = OnceCell::new();
     }
 
     pub(super) fn clear(&self) {
@@ -131,5 +149,33 @@ impl<K: Copy + Eq + Hash, V: Copy> ShapeMemo<K, V> {
 
     pub(super) fn clear(&self) {
         self.entries.clear();
+    }
+
+    pub(super) fn fit(&mut self, policy: crate::MemoryPolicy) {
+        self.entries.fit(policy);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DirectMappedTable;
+    use crate::MemoryPolicy;
+
+    const ENTRIES: usize = 1 << 6;
+
+    #[test]
+    fn a_fitted_table_allocates_its_policy_share_and_keeps_every_index_in_range() {
+        for policy in MemoryPolicy::ALL {
+            let mut table = DirectMappedTable::<usize, ENTRIES>::default();
+            table.set(0, 1);
+            table.fit(policy);
+            assert_eq!(table.get(0), None, "fitting drops what the default size recorded");
+            for index in 0..ENTRIES {
+                table.set(index, index);
+                assert_eq!(table.get(index), Some(index));
+            }
+            let allocated = table.entries.get().map_or(0, |entries| entries.len());
+            assert_eq!(allocated, ENTRIES >> policy.memo_entry_shift());
+        }
     }
 }

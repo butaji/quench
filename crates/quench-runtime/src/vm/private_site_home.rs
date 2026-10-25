@@ -94,4 +94,9 @@ impl PrivateSiteHomes {
     pub(super) fn clear(&self) {
         self.entries.clear();
     }
+
+    /// Sizes the tables for the runtime's memory policy (`DirectMappedTable::fit`).
+    pub(super) fn fit(&mut self, policy: crate::MemoryPolicy) {
+        self.entries.fit(policy);
+    }
 }

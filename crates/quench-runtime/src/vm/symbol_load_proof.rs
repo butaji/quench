@@ -109,6 +109,12 @@ impl SymbolLoadProofs {
         self.entries.clear();
         self.sites.clear();
     }
+
+    /// Sizes the tables for the runtime's memory policy (`DirectMappedTable::fit`).
+    pub(super) fn fit(&mut self, policy: crate::MemoryPolicy) {
+        self.entries.fit(policy);
+        self.sites.fit(policy);
+    }
 }
 
 /// Lane records are at least this many bytes apart (a handler pointer and an operand word),
