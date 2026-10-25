@@ -11931,7 +11931,7 @@ fn shared_osr_reports_zod_like_load_env_local_rejection_by_site() {
     assert_eq!(site.compile_attempts, 0);
     assert_eq!(site.native_region_runs, 0);
     assert!(
-        site.backedge_count >= 2000,
+        site.lane_backedge_count >= 2000,
         "the diagnostic fixture must execute the rejected loop: {site:?}"
     );
 
@@ -12051,7 +12051,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
         );
         assert!(
             site.tier_threshold_reached
-                && site.backedge_count >= super::dispatch_fast::LOOP_TIER_THRESHOLD
+                && site.lane_backedge_count >= super::dispatch_fast::LOOP_TIER_THRESHOLD
         );
         assert_eq!(site.analysis_rejection, None);
         assert_eq!(

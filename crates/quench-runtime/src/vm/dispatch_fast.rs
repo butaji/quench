@@ -117,6 +117,8 @@ pub(super) struct LoopSite {
     jump: isize,
     /// Backward jumps taken before the region compiles, up to `LOOP_TIER_THRESHOLD`.
     taken: std::cell::Cell<u32>,
+    /// Opt-in count of lane backedges, separate from tiering's bounded counter.
+    diagnostic_backedges: std::cell::Cell<u32>,
     /// Native runs that left at an instruction the general path executes.
     exits: std::cell::Cell<u32>,
     /// Whether this VM requested OSR diagnostics when its lane view was derived.
@@ -230,7 +232,7 @@ pub(super) struct OsrSiteDiagnostics {
     pub(super) promotion_only: bool,
     pub(super) deferred_call: bool,
     pub(super) analysis_rejection: Option<super::compiled::RegionRejection>,
-    pub(super) backedge_count: u32,
+    pub(super) lane_backedge_count: u32,
     pub(super) tier_threshold_reached: bool,
     pub(super) compile_attempts: u64,
     pub(super) compile_successes: u64,
@@ -291,8 +293,8 @@ impl LaneView {
                     promotion_only: site.promotion_only,
                     deferred_call: site.deferred_call,
                     analysis_rejection: site.analysis_rejection,
-                    backedge_count: site.taken.get(),
-                    tier_threshold_reached: site.taken.get() >= LOOP_TIER_THRESHOLD,
+                    lane_backedge_count: site.diagnostic_backedges.get(),
+                    tier_threshold_reached: site.diagnostic_backedges.get() >= LOOP_TIER_THRESHOLD,
                     compile_attempts: site.compile_attempts.get(),
                     compile_successes: site.compile_successes.get(),
                     native_entry_attempts: site.native_entry_attempts.get(),
@@ -5851,13 +5853,12 @@ script_handler! {
         // SAFETY: the region carries its validated header and latch PCs, and
         // every instruction record remains contiguous in this lane view.
         let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
+        if site.diagnostics {
+            site.diagnostic_backedges
+                .set(site.diagnostic_backedges.get().saturating_add(1));
+        }
         if below_floor() {
             return lane_safepoint::<H>(ip, header);
-        }
-        // Rejected and promotion-only loops only get site-local backedge counts in opt-in
-        // diagnostic runs. They remain on the interpreter path.
-        if site.diagnostics && (!site.osr_enabled || site.promotion_only) {
-            site.taken.set(site.taken.get().saturating_add(1));
         }
         // Keep the ordinary interpreter and JIT-off lane free of tier metadata
         // lookups. Only the opt-in shared JS baseline observes loop work here.
@@ -15660,6 +15661,7 @@ fn install_loop_sites<H: Host>(
                     osr_enabled,
                     jump: records[pc].jump(),
                     taken: std::cell::Cell::new(0),
+                    diagnostic_backedges: std::cell::Cell::new(0),
                     exits: std::cell::Cell::new(0),
                     diagnostics,
                     native_entry_attempts: std::cell::Cell::new(0),

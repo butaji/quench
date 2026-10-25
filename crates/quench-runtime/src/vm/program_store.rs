@@ -3202,8 +3202,8 @@ impl Drop for ProgramStore {
                 }
                 let _ = write!(
                     stderr,
-                    ",\"backedge_count\":{},\"tier_threshold_reached\":{},\"compile_attempts\":{},\"compile_successes\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"native_exits\":{},\"widenings\":{}",
-                    site.backedge_count,
+                    ",\"lane_backedge_count\":{},\"tier_threshold_reached\":{},\"compile_attempts\":{},\"compile_successes\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"native_exits\":{},\"widenings\":{}",
+                    site.lane_backedge_count,
                     site.tier_threshold_reached,
                     site.compile_attempts,
                     site.compile_successes,
