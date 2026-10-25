@@ -2232,9 +2232,13 @@ fn drain_checkpoint(
                     .min(crate::modules::child_process_shared_vm::poll_interval());
                 #[cfg(quench_node_cares)]
                 let poll_interval = shared_state.borrow().cares.next_timeout().map_or(poll_interval, |timeout| poll_interval.min(timeout));
-                let wait = next_timer
-                    .map(|due| due.saturating_duration_since(std::time::Instant::now()))
-                    .map_or(poll_interval, |delay| delay.min(poll_interval));
+                let until_timer =
+                    next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
+                let wait = match until_timer {
+                    Some(delay) if !has_polled_shared_work(&shared_state) => delay,
+                    Some(delay) => delay.min(poll_interval),
+                    None => poll_interval,
+                };
                 if !wait.is_zero() {
                     crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, wait);
                 }
@@ -2291,9 +2295,13 @@ fn drain_checkpoint(
                     .min(crate::modules::child_process_shared_vm::poll_interval());
                 #[cfg(quench_node_cares)]
                 let poll_interval = shared_state.borrow().cares.next_timeout().map_or(poll_interval, |timeout| poll_interval.min(timeout));
-                let wait = next_timer
-                    .map(|due| due.saturating_duration_since(std::time::Instant::now()))
-                    .map_or(poll_interval, |delay| delay.min(poll_interval));
+                let until_timer =
+                    next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
+                let wait = match until_timer {
+                    Some(delay) if !has_polled_shared_work(&shared_state) => delay,
+                    Some(delay) => delay.min(poll_interval),
+                    None => poll_interval,
+                };
                 if !wait.is_zero() {
                     crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, wait);
                 }
@@ -2330,6 +2338,17 @@ fn run_and_clear_native_immediates(
 }
 
 fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
+    has_polled_shared_work(shared_state)
+        || shared_state.borrow().scheduler.has_refed_shared_timers()
+        || shared_state
+            .borrow()
+            .scheduler
+            .has_refed_shared_immediates()
+}
+
+/// Whether referenced work other than timers and immediates is pending: work the loop polls
+/// for at the subsystems' poll interval. Without it the loop sleeps until the next timer.
+fn has_polled_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
     if crate::modules::worker_threads_shared_vm::has_work(&shared_state.borrow().workers) { return true; }
     #[cfg(quench_node_cares)]
     if shared_state.borrow().cares.has_work() { return true; }
@@ -2346,11 +2365,6 @@ fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeS
         || crate::modules::worker_shared_vm::has_work(shared_state)
         || super::fs_watch_shared_vm::has_work(&shared_state.borrow().fs_watch)
         || super::fs_stat_watch_shared_vm::has_work(&shared_state.borrow().fs_stat_watch)
-        || shared_state.borrow().scheduler.has_refed_shared_timers()
-        || shared_state
-            .borrow()
-            .scheduler
-            .has_refed_shared_immediates()
 }
 
 fn mark_timer_destroyed(runtime: &mut quench_runtime::Runtime<NodeHost>, handle: RootId) -> Result<(), RootedError> {
