@@ -33,7 +33,7 @@ addon on a glibc host. Node fails it too (`oracle-failed`).
   `undici` from a built-in module, and jiti chooses its native TypeScript loader
   when `"Bun" in globalThis` (`tryNative`). Under Node 26 and Quench, both run
   the npm package's own JavaScript; Quench beats Node on both (jiti 126 vs
-  211 ms, undici 80 vs 127 ms, no JIT). Matching Bun would take
+  214 ms, undici 80 vs 120 ms, no JIT). Matching Bun would take
   package-identity behaviour, which the repository rules forbid.
 - **Single-thread.**
   - color-convert (1.36x no JIT, 1.53x JIT) is compute-bound: 2,176 conversion
