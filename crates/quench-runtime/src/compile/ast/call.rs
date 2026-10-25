@@ -39,7 +39,7 @@ impl FunctionCompiler<'_, '_> {
             return self.literal(Constant::Undefined);
         }
         self.expression(call);
-        let constructor = self.load_name("ReferenceError");
+        let constructor = self.load_name(crate::bytecode::INTRINSIC_REFERENCE_ERROR_BINDING);
         let error = self.reg();
         self.emit(Op::Construct, error, constructor, constructor, 0);
         self.emit(Op::Throw, error, 0, 0, 0);
@@ -197,7 +197,7 @@ impl FunctionCompiler<'_, '_> {
         if let Some(key) = key {
             self.expression(key);
         }
-        let constructor = self.load_name("ReferenceError");
+        let constructor = self.load_name(crate::bytecode::INTRINSIC_REFERENCE_ERROR_BINDING);
         let error = self.reg();
         self.emit(Op::Construct, error, constructor, constructor, 0);
         self.emit(Op::Throw, error, 0, 0, 0);
@@ -476,7 +476,7 @@ impl FunctionCompiler<'_, '_> {
 
     pub(super) fn super_constructor(&mut self) -> Register {
         let active = self.load_name("\0quench:super");
-        let get_prototype = self.load_name("\0quench:super-base");
+        let get_prototype = self.load_name(crate::bytecode::SUPER_BASE_BINDING);
         let receiver = self.literal(Constant::Undefined);
         let argument = self.reg();
         self.emit(Op::Move, argument, active, 0, 0);

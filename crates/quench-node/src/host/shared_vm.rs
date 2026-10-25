@@ -831,7 +831,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoRsaCrypt" (8) => crate::modules::crypto_shared_vm::rsa_crypt,
         method "cryptoEcdh" (5) => crate::modules::crypto_shared_vm::ecdh,
         method "asyncResourceInit" (2) => crate::modules::async_hooks_shared_vm::initialize_resource,
-        method "asyncResourceRunInAsyncScope" (2) => crate::modules::async_hooks_shared_vm::run_in_async_scope,
+        method "asyncResourceEnterScope" (1) => crate::modules::async_hooks_shared_vm::enter_async_scope,
+        method "asyncResourceExitScope" (0) => crate::modules::async_hooks_shared_vm::exit_async_scope,
         method "asyncResourceEmitDestroy" (0) => crate::modules::async_hooks_shared_vm::emit_destroy,
         method "asyncLocalStorageInit" (1) => crate::modules::async_hooks_shared_vm::initialize_storage,
         method "asyncLocalStorageEnterWith" (1) => crate::modules::async_hooks_shared_vm::enter_with,
@@ -1056,6 +1057,8 @@ const BESIDE_ACTIVATIONS: &[&str] = &[
     "httpResponseInitialize",
     "httpIncomingDestroy",
     "asyncResourceInit",
+    "asyncResourceEnterScope",
+    "asyncResourceExitScope",
     "stringDecoderDecode",
     "markAsUncloneable",
 ];
@@ -1109,8 +1112,9 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_free_heap_pages();
     }
 
-    /// The snapshot is a tracked read-only mapping (`startup_snapshot::load_or_schedule`).
-    fn snapshot_bytes_read(bytes: &[u8]) {
+    /// Snapshots and compile-cache entries are tracked read-only mappings
+    /// (`startup_snapshot::load_or_schedule`, `CacheEntry::load`).
+    fn kept_bytes_read(bytes: &[u8]) {
         crate::host::resident_pages::release_tracked_bytes(bytes);
     }
 
@@ -1121,6 +1125,7 @@ impl quench_runtime::Host for NodeHost {
         if let Some(entry) = self.compile_cache.entry(name, parts) {
             entry.store(bytes);
         }
+        crate::host::resident_pages::after_program_kept();
     }
     /// A decoded program after bootstrap (the entry and its modules, a builtin or library
     /// module loaded on first use) releases what loading it touched, as its compilation would

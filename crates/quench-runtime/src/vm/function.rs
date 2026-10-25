@@ -81,6 +81,8 @@ impl<H: Host> Vm<H> {
     /// (`Function::prototype_unobservable`) gets it first, as its creation would have made
     /// it, so the value is the ordinary function it stands for.
     pub(super) fn function_caller_value(&mut self, function: Value) -> Result<Value, JsError> {
+        // Legacy reflection reads the frame stack (`Vm::materialize_deferred_lane`).
+        self.materialize_deferred_lane();
         let caller = self.function_caller(function);
         let Some(&FunctionRecord { kind: FunctionKind::User(program, id), realm, .. }) = self.heap.function(caller) else {
             return Ok(caller);
@@ -143,6 +145,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn function_arguments(&mut self, function: Value) -> Result<Value, JsError> {
+        self.materialize_deferred_lane();
         let Some(frame) = self
             .frames
             .iter()
@@ -360,6 +363,32 @@ impl<H: Host> Vm<H> {
                     callee = receiver;
                     receiver = args.first().copied().unwrap_or(Value::UNDEFINED);
                     args = args.get(1..).unwrap_or_default();
+                }
+                _ => return (depth != 0).then_some((callee, receiver, args)),
+            }
+        }
+        None
+    }
+
+    /// `forwarded_call` of a call whose `args` the caller owns, as an applied list's copied
+    /// elements: a bound function's bound arguments then lead the values it passes on
+    /// (ECMA-262 10.4.1.1), which `forwarded_call` leaves to the original call.
+    pub(super) fn forwarded_list_call<const N: usize>(
+        &self,
+        mut callee: Value,
+        mut receiver: Value,
+        mut args: smallvec::SmallVec<[Value; N]>,
+    ) -> Option<(Value, Value, smallvec::SmallVec<[Value; N]>)> {
+        for depth in 0..CALL_FORWARDING_DEPTH {
+            match self.heap.function(callee) {
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) => {
+                    let (target, this, bound) = self.bound_function_parts(*env)?;
+                    args.insert_many(0, bound.iter().copied());
+                    (callee, receiver) = (target, this);
+                }
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }) => {
+                    callee = receiver;
+                    receiver = if args.is_empty() { Value::UNDEFINED } else { args.remove(0) };
                 }
                 _ => return (depth != 0).then_some((callee, receiver, args)),
             }

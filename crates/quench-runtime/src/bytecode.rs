@@ -7,6 +7,8 @@ pub(crate) const INTRINSIC_REGEXP_BINDING: &str = "\0quench:intrinsic-regexp";
 pub(crate) const FOR_IN_KEYS_BINDING: &str = "\0quench:for-in-keys";
 pub(crate) const FOR_IN_KEY_IS_ENUMERABLE_BINDING: &str = "\0quench:for-in-key-is-enumerable";
 pub(crate) const ITERATOR_CLOSE_BINDING: &str = "\0quench:iterator-close";
+/// The intrinsic a `super` access reads its home's parent with (`Native::ReflectGetPrototypeOf`).
+pub(crate) const SUPER_BASE_BINDING: &str = "\0quench:super-base";
 pub(crate) const WITH_EXIT_BINDING: &str = "\0quench:with-exit";
 /// Every internal global the realm installs on its global object.
 pub(crate) const INTERNAL_GLOBAL_BINDINGS: [&str; 5] = [
@@ -27,10 +29,16 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
         "\0quench:intrinsic-promise" => Native::Promise,
         "\0quench:super-get" => Native::ReflectGet,
         "\0quench:super-set" => Native::SuperSet,
-        "\0quench:super-base" => Native::ReflectGetPrototypeOf,
+        SUPER_BASE_BINDING => Native::ReflectGetPrototypeOf,
         "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
         "\0quench:object-define-property" => Native::ObjectDefineProperty,
         "\0quench:object-freeze" => Native::ObjectFreeze,
+        // What the compiler's own throws, class setup and `using` declarations call: the
+        // realm's intrinsics, which a binding of the same name in scope does not replace.
+        INTRINSIC_TYPE_ERROR_BINDING => Native::TypeError,
+        INTRINSIC_REFERENCE_ERROR_BINDING => Native::ReferenceError,
+        INTRINSIC_SET_PROTOTYPE_OF_BINDING => Native::ObjectSetPrototypeOf,
+        INTRINSIC_DISPOSABLE_STACK_BINDING => Native::DisposableStack,
         // The iteration helpers each realm also installs on its global object.
         ITERATOR_CLOSE_BINDING => Native::IteratorClose,
         FOR_IN_KEYS_BINDING => Native::ForInKeys,
@@ -44,6 +52,10 @@ pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
 pub(crate) fn is_intrinsic_name(name: &str) -> bool {
     name == INTRINSIC_REGEXP_BINDING || intrinsic_name_native(name).is_some()
 }
+pub(crate) const INTRINSIC_TYPE_ERROR_BINDING: &str = "\0quench:intrinsic-type-error";
+pub(crate) const INTRINSIC_REFERENCE_ERROR_BINDING: &str = "\0quench:intrinsic-reference-error";
+pub(crate) const INTRINSIC_SET_PROTOTYPE_OF_BINDING: &str = "\0quench:intrinsic-set-prototype-of";
+pub(crate) const INTRINSIC_DISPOSABLE_STACK_BINDING: &str = "\0quench:intrinsic-disposable-stack";
 /// The engine-internal global a `with` statement calls to enter its object scope.
 pub(crate) const WITH_ENTER_BINDING: &str = "\0quench:with-enter";
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
@@ -1441,6 +1453,16 @@ impl From<Function> for FunctionSlot {
 
 /// Call-setup facts derived once per function from its static layout, so an activation reads
 /// one cached word instead of re-testing each flag.
+/// What a constructor that only constructs its parent passes on
+/// (`Function::super_forwarding`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SuperForwarded {
+    /// Every value it was passed.
+    Passed,
+    /// Its parameters, those not passed `undefined`.
+    Parameters(u16),
+}
+
 /// How an activation keeps its `arguments` binding as the values it was passed
 /// (`Function::kept_arguments`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1481,6 +1503,9 @@ pub(crate) struct CallPlan {
     /// it kept and makes the object only at its last read (`KeptArguments::Passes`). Its
     /// frame makes the object on entry.
     pub(crate) keeps_arguments: bool,
+    /// `Function::reads_passed_arguments_only`: an environment activation keeps every value
+    /// passed after its locals, past its parameters too.
+    pub(crate) reads_passed_arguments: bool,
     /// The activation's whole state is its registers, plus the values it was passed when it
     /// forwards them: it reaches no local but a forwarded `arguments` binding, and legacy
     /// reflection, if any, reads its parameter registers or the forwarded values. A lane
@@ -1513,22 +1538,39 @@ pub(crate) struct SourcePosition {
 pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 
 /// Whether register liveness covers a function's register forms, so a frame may leave its
-/// dead registers stale; and the per-pc live register masks the collector scans, derived
-/// when a collection first finds the function on the stack. Most of a program's functions
-/// never run during a collection, so their masks are never built.
+/// dead registers stale; the pcs of its `Call`s whose result register is dead after the
+/// call, which the compiler derives once from the same liveness (`liveness::mark_register_roots`);
+/// and the per-pc live register masks the collector scans, derived when a collection first
+/// finds the function on the stack. Most of a program's functions never run during a
+/// collection, so their masks are never built.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RegisterRoots {
     covered: bool,
+    dead_call_results: Box<[u32]>,
     masks: std::cell::OnceCell<crate::compile::liveness::RegisterMasks>,
 }
 
 impl RegisterRoots {
     pub(crate) fn new(covered: bool) -> Self {
-        Self { covered, masks: std::cell::OnceCell::new() }
+        Self::with_dead_call_results(covered, Box::default())
+    }
+
+    /// `dead_call_results` in increasing pc order.
+    pub(crate) fn with_dead_call_results(covered: bool, dead_call_results: Box<[u32]>) -> Self {
+        Self { covered, dead_call_results, masks: std::cell::OnceCell::new() }
     }
 
     pub(crate) fn covered(&self) -> bool {
         self.covered
+    }
+
+    pub(crate) fn dead_call_results(&self) -> &[u32] {
+        &self.dead_call_results
+    }
+
+    /// Whether the `Call` at `pc` leaves its result register dead.
+    pub(crate) fn call_result_dead(&self, pc: usize) -> bool {
+        u32::try_from(pc).is_ok_and(|pc| self.dead_call_results.binary_search(&pc).is_ok())
     }
 
     /// The masks a collection derived so far; none until one finds the function running.
@@ -2220,7 +2262,7 @@ impl Function {
                 && self.self_binding_slot.is_none()
                 && !self.inherited_with_scope
                 && self.local_registers.is_empty()
-                && self.arguments_slot.is_none()
+                && (self.arguments_slot.is_none() || self.reads_passed_arguments_only())
                 && self.binding_sites.is_empty()
                 && self.selective_capture_slots.is_some()
                 && self.initial_register == InitialRegister::Undefined
@@ -2244,7 +2286,9 @@ impl Function {
                             // A read whose base is a plain local reads the window's local
                             // (`lane_plain_local_operand`).
                             || (op == Op::GetField
-                                && instruction.addressed_local_slots().eq(instruction.local_field_base())))
+                                && instruction.addressed_local_slots().eq(instruction.local_field_base()))
+                            // The window keeps every value passed, which these answer.
+                            || matches!(op, Op::ArgumentsLength | Op::ArgumentGet))
                 });
             CallPlan {
                 environment_activation,
@@ -2256,6 +2300,7 @@ impl Function {
                 addresses_locals,
                 forwards_arguments,
                 keeps_arguments: kept_arguments.is_some(),
+                reads_passed_arguments: self.reads_passed_arguments_only(),
                 registers_only: (ordinary_with_rest && in_loop || constructs_frameless)
                     && self.initial_register == InitialRegister::Undefined
                     && if self.arguments_slot.is_none() {
@@ -2306,6 +2351,127 @@ impl Function {
                 }
                 _ => false,
             }
+    }
+
+    /// Whether the body reaches its `arguments` binding only by reading its length or an
+    /// element (`ArgumentsLength`, `ArgumentGet`), with no closure capturing the binding, so
+    /// the values passed and the parameters answer every read: an element a parameter
+    /// aliases (`arguments_alias_parameters`) is that parameter's local, which no closure
+    /// captures, and any other the value passed. An environment activation then keeps those
+    /// values after its locals.
+    pub(crate) fn reads_passed_arguments_only(&self) -> bool {
+        let Some(slot) = self.arguments_slot else {
+            return false;
+        };
+        !self.is_generator
+            && !self.is_async
+            && (!self.arguments_alias_parameters()
+                || (0..usize::from(self.params)).all(|parameter| !self.local_slot_uses_environment(parameter)))
+            && !self.local_slot_uses_environment(usize::from(slot))
+            && !self.has_dynamic_scope_access()
+            && self.instructions().all(|instruction| {
+                matches!(instruction.op(), Op::ArgumentsLength | Op::ArgumentGet)
+                    || !instruction
+                        .addressed_local_slots()
+                        .any(|addressed| addressed == slot)
+            })
+    }
+
+    /// What a derived constructor whose whole body constructs its parent and returns the
+    /// receiver passes on (`SuperForwarded`): the implicit `constructor(...args) {
+    /// super(...args); }`, or `constructor(a, b) { super(a, b); }` with its parameters in
+    /// order. Each reads the active function's parent (`SUPER_BASE_BINDING` of the
+    /// `\0quench:super` binding) and makes the `super` construction, then binds the
+    /// receiver. Without fields or private elements of its own (`instance_initializer`), its
+    /// construction is the parent's with the class as `new.target`.
+    pub(crate) fn super_forwarding(&self, atoms: &AtomTable, constants: &[Constant]) -> Option<SuperForwarded> {
+        if !self.derived_constructor
+            || !self.handlers.is_empty()
+            || self.arguments_slot.is_some()
+            || self.instance_initializer.is_some()
+            || self.is_async
+            || self.is_generator
+        {
+            return None;
+        }
+        let records = self.instructions().collect::<SmallVec<[WideInstruction; 16]>>();
+        // The parent: the active function's [[GetPrototypeOf]], called with no receiver.
+        let parent_of = |active: &WideInstruction, base: &WideInstruction, receiver: &WideInstruction, call: &WideInstruction| {
+            active.op() == Op::LoadCapture
+                && base.op() == Op::LoadName
+                && usize::try_from(base.atom_index()).ok().and_then(|atom| atoms.get(atom)) == Some(SUPER_BASE_BINDING)
+                && receiver.op() == Op::LoadConst
+                && matches!(constants.get(receiver.constant_index()), Some(Constant::Undefined))
+                && call.op() == Op::Call
+                && call.b() == base.result_register()
+                && call.c() == receiver.result_register()
+                && ImmediateLayout::argument_count(call.imm()) == 1
+                && ImmediateLayout::call_window_base(call.imm()) == active.result_register()
+        };
+        if self.rest {
+            // The implicit constructor spreads its rest list, then returns the receiver; the
+            // records past its return are unreachable.
+            let [list, active, base, receiver, call, construct, binds, completion, ..] = records.as_slice() else {
+                return None;
+            };
+            let shaped = self.params == 1
+                && list.op() == Op::LoadLocalPlain
+                && list.local_slot() == 0
+                && parent_of(active, base, receiver, call)
+                && construct.op() == Op::Construct
+                && construct.is_super_construct()
+                && construct.result_flags() == 0
+                && construct.b() == call.result_register()
+                && matches!(
+                    construct.construct_arguments(),
+                    crate::bytecode::ConstructArguments::Array(spread) if spread == list.result_register()
+                )
+                && binds.op() == Op::InitializeThis
+                && binds.a() == construct.result_register()
+                && completion.op() == Op::Return
+                && completion.register_a() == construct.result_register();
+            return shaped.then_some(SuperForwarded::Passed);
+        }
+        if !self.simple_parameters {
+            return None;
+        }
+        let count = usize::from(self.params);
+        let (head, tail) = records.split_at_checked(5)?;
+        let (loads, tail) = tail.split_at_checked(count)?;
+        let ([active, base, receiver, parent, spare], [construct, check, binds, undefined, completion]) =
+            (head, tail)
+        else {
+            return None;
+        };
+        let undefined_load = |load: &WideInstruction| {
+            load.op() == Op::LoadConst
+                && load.result_flags() == 0
+                && matches!(constants.get(load.constant_index()), Some(Constant::Undefined))
+        };
+        let crate::bytecode::ConstructArguments::Registers(window) = construct.construct_arguments() else {
+            return None;
+        };
+        let forwards_parameters = usize::from(window.count) == count
+            && loads.iter().enumerate().all(|(index, load)| {
+                load.op() == Op::LoadLocalPlain
+                    && load.result_flags() == 0
+                    && load.local_slot() == index
+                    && usize::from(load.result_register()) == usize::from(window.base) + index
+            });
+        let shaped = parent_of(active, base, receiver, parent)
+            && undefined_load(spare)
+            && construct.op() == Op::Construct
+            && construct.is_super_construct()
+            && construct.result_flags() == 0
+            && construct.b() == parent.result_register()
+            && forwards_parameters
+            && check.op() == Op::SuperCallCheck
+            && binds.op() == Op::InitializeThis
+            && binds.a() == construct.result_register()
+            && undefined_load(undefined)
+            && completion.op() == Op::Return
+            && completion.register_a() == undefined.result_register();
+        shaped.then_some(SuperForwarded::Parameters(self.params))
     }
 
     /// The method a constructor body forwards its construction to, when the body is exactly
@@ -3490,7 +3656,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 107;
+    pub const FORMAT_VERSION: u8 = 108;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

@@ -28,6 +28,8 @@ mod capture_scope;
 mod class;
 mod early;
 mod frame_registers;
+#[cfg(feature = "verify-replay")]
+mod free_names;
 mod syntax_message;
 pub(crate) mod liveness;
 mod locals;
@@ -1008,6 +1010,8 @@ impl Engine {
         let private_name_ids = private_name_ids(&semantic.semantic);
         let private_name_labels = private_name_labels(&semantic.semantic);
         let prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program);
+        #[cfg(feature = "verify-replay")]
+        let free_names = free_names::free_names(&semantic.semantic, &parsed.program);
         let inherited_private_ids = if wrapped_eval
         {
             let mut ids = FxHashSet::default();
@@ -1078,6 +1082,10 @@ impl Engine {
         };
         let mut compiler = Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids);
         compiler.prototype_unobservable = prototype_unobservable;
+        #[cfg(feature = "verify-replay")]
+        {
+            compiler.free_names = free_names;
+        }
         compiler.source_type = source_type;
         // Eval code and dynamic functions are compiled from a wrapper, or a tree changed after
         // parsing, that their source text alone does not give back. A released function
@@ -1590,6 +1598,10 @@ struct Compiler<'a> {
     /// The source starts of the function expressions whose `prototype` no program text
     /// observes (`call_only`); empty where the source was not analyzed.
     prototype_unobservable: FxHashSet<u32>,
+    /// Each function's free names (`free_names`), which `verify_predicted_captures` checks
+    /// against what the function's compilation captured.
+    #[cfg(feature = "verify-replay")]
+    free_names: free_names::FreeNames,
     private_name_labels: FxHashMap<(u32, u32), String>,
     private_name_overrides: FxHashMap<u32, String>,
     constants: SiteTable<'a, Constant>,
@@ -1985,6 +1997,8 @@ impl<'a> Compiler<'a> {
             private_name_references: 0,
             private_name_ids,
             prototype_unobservable: FxHashSet::default(),
+            #[cfg(feature = "verify-replay")]
+            free_names: FxHashMap::default(),
             private_name_labels: FxHashMap::default(),
             private_name_overrides: FxHashMap::default(),
             constants: SiteTable::default(),
@@ -2263,9 +2277,82 @@ impl<'a> Compiler<'a> {
                 ..FunctionOptions::default()
             },
         );
+        #[cfg(feature = "verify-replay")]
+        self.verify_predicted_captures(id, function.span.start, &context.scopes);
         context.scopes = context.scopes.into_memo();
         self.record_replay_call(id, entry, private_names, replay::ReplayCall::Plain(context));
         id
+    }
+
+    /// Checks, under `QUENCH_LAZY_FACTS_LOG`, that the free names of function `id` (starting
+    /// at `start`), resolved through the scopes it closes over, are the captures its compiled
+    /// subtree made of bindings outside it: what a lazily compiled function would report to
+    /// the layouts around it without its code (TOD-196).
+    #[cfg(feature = "verify-replay")]
+    fn verify_predicted_captures(&self, id: u32, start: u32, scopes: &capture_scope::ScopeChain) {
+        // Only a replayable source's functions can compile lazily.
+        if std::env::var_os("QUENCH_LAZY_FACTS_LOG").is_none() || self.replay_target.is_some() || !self.replayable_source {
+            return;
+        }
+        let Some(names) = self.free_names.get(&start) else {
+            eprintln!("lazy-facts missing start={start}");
+            return;
+        };
+        let chain = capture_scope::ScopeChain::new(scopes.levels().to_vec());
+        let mut predicted: Vec<(u32, u16)> = names
+            .iter()
+            .filter_map(|name| self.atoms.find(name))
+            .filter_map(|atom| chain.find(atom))
+            .map(|(depth, slot)| (depth as u32 + 1, slot))
+            .collect();
+        predicted.sort_unstable();
+        predicted.dedup();
+        let id = id as usize;
+        let exit = self.function_exits[id].functions as usize;
+        let depth_below = |mut function: usize| {
+            let mut depth = 0u32;
+            while function != id {
+                function = self.function_facts[function].parent.expect("a descendant has a parent") as usize;
+                depth += 1;
+            }
+            depth
+        };
+        let mut actual: Vec<(u32, u16)> = (id..exit)
+            .flat_map(|function| {
+                let depth = depth_below(function);
+                self.function_facts[function]
+                    .captures
+                    .iter()
+                    .filter(move |(distance, _)| *distance > depth)
+                    .map(move |(distance, slot)| (distance - depth, *slot))
+            })
+            .collect();
+        actual.sort_unstable();
+        actual.dedup();
+        let verdict = if predicted == actual {
+            "same"
+        } else if actual.iter().all(|capture| predicted.contains(capture)) {
+            "superset"
+        } else {
+            "missing"
+        };
+        // The names of captures the prediction lacks, from the scope level holding each slot.
+        let unpredicted: Vec<String> = actual
+            .iter()
+            .filter(|capture| !predicted.contains(capture))
+            .map(|&(distance, slot)| {
+                chain
+                    .levels()
+                    .get(distance as usize - 1)
+                    .and_then(|level| level.iter().find(|(_, s)| **s == slot).map(|(atom, _)| self.atoms[*atom as usize].to_string()))
+                    .unwrap_or_else(|| format!("?{distance}:{slot}"))
+            })
+            .collect();
+        eprintln!(
+            "lazy-facts {verdict} source={} start={start} functions={} unpredicted={unpredicted:?} predicted={predicted:?} actual={actual:?}",
+            self.source,
+            exit - id
+        );
     }
 
     /// A method of an object literal, compiled from its syntax and `context`.
@@ -3202,7 +3289,6 @@ impl<'a> Compiler<'a> {
         // unless the body rebinds no parameter and cannot observe the mapping
         // (`FixedRegisterLocalFacts::arguments_mapping_unobserved`).
         let unaliased_arguments = eligible
-            && register_local_facts.safe
             && own_arguments.is_some_and(|(strict, parameters)| {
                 !strict
                     && !rebinds_parameter(parameters)
