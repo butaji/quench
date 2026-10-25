@@ -6083,6 +6083,8 @@ fn lane_loop_entry<H: Host>(
     entry: &mut super::compiled::LoopEntry,
 ) -> Option<()> {
     let vm = unsafe { vm(cx) };
+    // SAFETY: the running program outlives this lane's OSR entry setup.
+    let code = unsafe { &*(*cx).code };
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
         if slots.is_null() {
@@ -6126,6 +6128,19 @@ fn lane_loop_entry<H: Host>(
             let elements = vm.heap.record_array(value)?.elements().as_slice();
             entry.push_array(elements.as_ptr().cast_mut(), elements.len(), elements.len())?;
         }
+    }
+    // A raw field slot stays valid for this native run because OSR regions make no calls or
+    // allocations, the receiver is unchanged and rooted in its register, and these stores
+    // write only Number values (which need no collector barrier). Every miss exits before the
+    // store through the interpreter's exact SetField PC.
+    // SAFETY: the runtime cache probe proves a primary own-data slot. `osr_loop::admit_region`
+    // admits only Number values and rejects receiver rewrites and same-name field reads.
+    for field in &region.field_store_sites {
+        let object = r.get(field.receiver);
+        let pointer = unsafe {
+            vm.cached_field_store_pointer(code, object, field.atom, field.cache_site)
+        }?;
+        entry.push_field_store(pointer);
     }
     if let Some(inlining) = &region.inlining {
         // Leaving at an inlined instruction makes its callee's activation as the call would:

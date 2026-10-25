@@ -3252,6 +3252,7 @@ impl Drop for ProgramStore {
                     super::compiled::RegionRejection::CaptureLimit => "capture-limit",
                     super::compiled::RegionRejection::ArrayLimit => "array-limit",
                     super::compiled::RegionRejection::FieldLimit => "field-limit",
+                    super::compiled::RegionRejection::FieldStoreLimit => "field-store-limit",
                     super::compiled::RegionRejection::FieldMutation => "field-mutation",
                 };
                 let _ = write!(stderr, "[");
