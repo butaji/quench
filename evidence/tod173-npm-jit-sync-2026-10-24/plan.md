@@ -28,4 +28,11 @@ For each of the 10 npm workloads, in both no-JIT and JIT modes, Quench must be a
 - Dynamic per-PC attribution is implemented and identifies React `pushStartGenericElement` PC 14 `GetIterator` at 504,380 dispatches over 2,500 rounds. An adaptive site specialization with a sticky native-site bit passed output parity and a fresh exact-source PGO build, but 11-round paired deltas were only React +1.91%, Zod -1.19%, and Pino +1.01%; it was reverted. See `opcode-site-attribution/` and `adaptive-iterator-site-trial/`. Next: compile a larger, proven hot bytecode region so repeated interpreter callouts are removed together; preserve `Vm::step` for effectful exits and compare paired results before expanding the matrix.
 - The goal remains unmet. Every workload/mode row misses the throughput gate, and RSS remains unqualified.
 
+## 2026-10-25 continuation
+
+- Synced the latest `origin/v2-merged` shared runtime/JIT integration into `v2-zod`. Merge commit `7f3372f29` is pushed to `origin/v2-zod`. The two conflicts were resolved by retaining both branch-local general-dispatch attribution and upstream call-site counters, and by preserving upstream tier admission together with branch-local sampler reset behavior.
+- `cargo check -p quench-runtime` passed; `cargo test -p quench-runtime` passed all 962 tests.
+- A fresh production PGO build is in progress. The training script excludes all ten scored npm fixtures. The previous production binary was saved as an A/B control before rebuilding.
+- Next: compare merged JIT and pre-merge control on React, Zod, and Pino with matched runs and output checks. Keep the shared JIT change only if the evidence supports its broader integration; then refresh package-wide JIT and no-JIT rows as time permits. This sync is not a goal win: the last qualified-by-parity diagnostic scorecard still had 0/22 throughput rows passing and Linux RSS remains unqualified.
+
 The authoritative current scorecard is [`final-pgo-recheck/scorecard.md`](final-pgo-recheck/scorecard.md), with the per-row reports beside it. The root `scorecard.md` records the earlier baseline.
