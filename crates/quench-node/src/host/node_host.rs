@@ -450,6 +450,11 @@ impl NodeHost {
 
     /// Retain the Node invocation flags supplied by the fixture adapter.
     pub fn with_exec_argv(self, exec_argv: Vec<String>) -> Result<Self, String> {
+        let (cwd, node_options) = {
+            let shared = self.shared_state.borrow();
+            (shared.cwd.path(), shared.initial_node_options.clone())
+        };
+        crate::modules::util_env::load_startup_env_files(node_options.as_deref(), &exec_argv, &cwd);
         let mode =
             crate::modules::process_state::UnhandledRejectionMode::from_exec_argv(&exec_argv)?;
         let net_timeout =
@@ -458,11 +463,15 @@ impl NodeHost {
             );
         let net_family = crate::modules::net_config::auto_select_family_from_exec_argv(&exec_argv);
         let mut shared = self.shared_state.borrow_mut();
+        let node_options = std::env::var("NODE_OPTIONS")
+            .ok()
+            .or_else(|| shared.initial_node_options.clone());
         shared.cli_options = crate::modules::cli_options::CliOptions::parse(
-            shared.initial_node_options.as_deref(),
+            node_options.as_deref(),
             &exec_argv,
             shared.initial_pending_deprecation,
         )?;
+        shared.initial_node_options = std::env::var("NODE_OPTIONS").ok();
         shared.report_config = crate::modules::report_configuration_shared_vm::State::from_options(
             &shared.cli_options,
         );

@@ -261,11 +261,15 @@
       const name = String(pair[0]);
       const value = String(pair[1]);
       if (Object.hasOwn(result, name)) {
-        result[name] = Array.isArray(result[name])
-          ? [...result[name], value]
-          : [result[name], value];
+        const previous = result[name];
+        if (name === 'set-cookie') {
+          result[name] = Array.isArray(previous) ? [...previous, value] : [previous, value];
+        } else {
+          const separator = name === 'cookie' ? '; ' : ', ';
+          result[name] = `${previous}${separator}${value}`;
+        }
       } else {
-      result[name] = name === ':status' ? Number(value) : value;
+        result[name] = name === ':status' ? Number(value) : value;
       }
     }
     return result;
